@@ -52,6 +52,22 @@ Complete real-world example generating ESG/sustainability reports:
 python examples/sustainability_report.py
 ```
 
+### 4. Framework Adapters Demo (`framework_adapters_demo.py`)
+
+Demonstrates OpenBench as a universal control plane for multiple AI frameworks:
+- FrameworkAdapter: Minimal interface for integrating any framework
+- LangChain, AG2, CrewAI, E2B adapter examples
+- Mixed-framework workflows (combine agents from different frameworks)
+- Zero migration cost - use existing agents as-is
+- Custom adapter creation
+
+**Key concept:** Bring your own agents from ANY framework without rewriting them.
+
+**Run it:**
+```bash
+python examples/framework_adapters_demo.py
+```
+
 ## Creating Your Own Workflow
 
 Use these examples as templates:

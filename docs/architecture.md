@@ -15,6 +15,7 @@ OpenBench is built on a **three-layer architecture** with **composable abstracti
 3. **Implementation Independence** - Swap providers without changing code
 4. **Two-Level Orchestration** - Compose components (L1) into systems (L2)
 5. **DAG Workflows** - Support complex directed acyclic graphs, not just sequences
+6. **Universal Control Plane** - Bring your own agents from any framework (LangChain, AG2, CrewAI, etc.)
 
 ---
 

@@ -49,6 +49,37 @@ The AI landscape is fragmented. You have:
 Data Sources → Intelligent Processing → Beautiful Outputs
 ```
 
+### 🔌 Universal Control Plane
+
+**OpenBench is not another framework. It's the control plane that connects them all.**
+
+Bring your own agents from ANY framework:
+- **LangChain** - Wrap any LangChain Runnable
+- **AG2 (AutoGen)** - Use your existing AG2 agents
+- **CrewAI** - Integrate role-based agent crews
+- **Google ADK** - Connect Google's agent framework
+- **E2B** - Run custom code in sandboxed environments
+- **Mastra** - TypeScript agent orchestration
+
+```python
+from openbench.adapters.langchain import LangChainAdapter
+from openbench import Workflow
+
+# Your existing LangChain agent
+my_langchain_agent = AgentExecutor(...)
+
+# Use it in OpenBench
+workflow = Workflow(
+    chain=(
+        WebSource("https://example.com")      # OpenBench data layer
+        | LangChainAdapter(my_langchain_agent)  # Your LangChain agent
+        | PDFGenerator()                       # OpenBench output layer
+    )
+)
+```
+
+**No rewrites. No lock-in. Pure interoperability.**
+
 ---
 
 ## 🔧 Implementation Status
