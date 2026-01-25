@@ -49,6 +49,72 @@ The AI landscape is fragmented. You have:
 Data Sources → Intelligent Processing → Beautiful Outputs
 ```
 
+---
+
+## 🔧 Implementation Status
+
+**Current Version**: 0.1.0 (Alpha)
+**Status**: 🟡 Active Development
+
+### ✅ Phase 1: Core Abstractions (COMPLETED)
+- ✅ Abstract interfaces for all components
+- ✅ Registry pattern for provider selection
+- ✅ DAG workflow system (Chainable)
+- ✅ State management & checkpointing
+
+### 🔄 Phase 2: Layer Rewrite (IN PROGRESS)
+- ⏳ Data Layer using abstractions
+- ⏳ Intelligence Layer using abstractions
+- ⏳ Output Layer using abstractions
+- ⏳ Workflow system migration
+
+**See [STATUS.md](STATUS.md) for detailed progress tracking.**
+
+**Want to try it?** See our world-class workflow API in action:
+```bash
+pip install -e .
+python examples/sustainability_report_new.py
+```
+
+**See**: [World-Class Achievement](docs/WORLD_CLASS_ACHIEVEMENT.md) - How we built it.
+
+---
+
+## 🌟 World-Class Workflow API
+
+**No compromises. No average solutions.**
+
+```python
+from openbench.workflows import Workflow
+from openbench.core import DataLayer, IntelligenceLayer, OutputLayer
+
+# Define your DAG structure visibly in code
+workflow = Workflow(
+    name="sustainability-report",
+    chain=(
+        (data_source1 & data_source2 & data_source3)  # Parallel data
+        | research                                      # Then research
+        | analysis                                      # Then analysis
+        | (pdf_generator & pptx_generator)             # Parallel outputs
+    ),
+    checkpoints=True
+)
+
+# Execute
+result = workflow.run({"project": "Q1 2026"})
+```
+
+**Key Features:**
+- ✅ Structure visible in code (no hidden `parallel=True/False`)
+- ✅ Express any DAG via composition (`|` for sequential, `&` for parallel)
+- ✅ Full L1/L2 orchestration support
+- ✅ Automatic checkpointing and resume
+- ✅ World-class abstraction - deleted old design, rebuilt from first principles
+
+**See**: [Workflow API Redesign](docs/WORKFLOW_API_REDESIGN.md)
+
+---
+
 All open source. All extensible. All yours.
 
 ## ⚡ Quick Start

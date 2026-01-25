@@ -1,0 +1,107 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openbench"
+version = "0.1.0"
+description = "The Open Source Agentic AI Workbench - Build. Orchestrate. Export. Scale."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "OpenBench Contributors", email = "openbench2026@gmail.com"}
+]
+keywords = [
+    "ai",
+    "agents",
+    "agentic-ai",
+    "workflow",
+    "llm",
+    "data-processing",
+    "automation"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+data = [
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "sqlalchemy>=2.0.0",
+    "chromadb>=0.4.0",
+]
+
+intelligence = [
+    "langchain>=0.1.0",
+    "openai>=1.0.0",
+    "anthropic>=0.18.0",
+]
+
+output = [
+    "matplotlib>=3.7.0",
+    "plotly>=5.17.0",
+    "python-pptx>=0.6.21",
+    "reportlab>=4.0.0",
+]
+
+all = [
+    "openbench[dev,data,intelligence,output]"
+]
+
+[project.urls]
+Homepage = "https://github.com/ai-kitchen-inc/openbench"
+Documentation = "https://github.com/ai-kitchen-inc/openbench/tree/main/docs"
+Repository = "https://github.com/ai-kitchen-inc/openbench"
+Issues = "https://github.com/ai-kitchen-inc/openbench/issues"
+
+[project.scripts]
+openbench = "openbench.cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
