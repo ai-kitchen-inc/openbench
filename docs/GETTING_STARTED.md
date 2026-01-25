@@ -17,7 +17,7 @@ cd openbench
 pip install -e .
 
 # Verify
-python -c "from openbench.core import Workflow; print('✓ OpenBench installed')"
+python -c "from openbench.core import Chainable; print('✓ OpenBench installed')"
 ```
 
 ### With Development Dependencies
