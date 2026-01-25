@@ -72,8 +72,12 @@ output = [
     "reportlab>=4.0.0",
 ]
 
+security = [
+    "cryptography>=41.0.0",
+]
+
 all = [
-    "openbench[dev,data,intelligence,output]"
+    "openbench[dev,data,intelligence,output,security]"
 ]
 
 [project.urls]

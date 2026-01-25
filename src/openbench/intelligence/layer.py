@@ -1,59 +1,47 @@
 """
-Intelligence Layer - Agent Orchestration Engine
+Intelligence Layer - Agent Factory and Helpers.
+
+NOTE: For L2 workflow orchestration, use IntelligenceLayer from openbench.core.layers.
+This module provides factory functions for creating agents.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, List, Optional
 
 
-class IntelligenceLayer:
+class AgentFactory:
     """
-    The Intelligence Layer orchestrates AI agents to perform complex tasks.
+    Factory for creating AI agents.
+
+    Provides convenient methods for creating and configuring agents.
+    For L2 workflow orchestration, use IntelligenceLayer from core.layers.
 
     Examples:
         >>> # Create a simple agent
-        >>> agent = IntelligenceLayer.create_agent(
-        ...     task="Analyze Q4 sales data",
-        ...     tools=["semantic_search", "sql_query"]
+        >>> agent = AgentFactory.create(
+        ...     goal="Analyze Q4 sales data",
+        ...     agent_type="research",
+        ...     model="gpt-4o"
         ... )
         >>>
         >>> # Execute agent
-        >>> result = agent.execute(data_layer)
-        >>>
-        >>> # Create multi-agent workflow
-        >>> workflow = IntelligenceLayer.workflow([
-        ...     ResearchAgent(goal="Gather data"),
-        ...     AnalysisAgent(goal="Analyze trends"),
-        ...     ContentAgent(goal="Write summary")
-        ... ])
+        >>> result = agent.execute(context)
     """
 
-    def __init__(self, model: str = "gpt-4", temperature: float = 0.7):
-        """
-        Initialize the Intelligence Layer.
-
-        Args:
-            model: Default LLM model to use
-            temperature: Model temperature (0-1)
-        """
-        self.model = model
-        self.temperature = temperature
-        print(f"🧠 IntelligenceLayer initialized with model={model}")
-
     @classmethod
-    def create_agent(
+    def create(
         cls,
-        task: str,
-        agent_type: str = "research",
-        tools: Optional[List[str]] = None,
-        model: str = "gpt-4",
+        goal: str,
+        agent_type: str = "base",
+        tools: Optional[List[Any]] = None,
+        model: str = "gpt-4o",
         **kwargs
     ) -> Any:
         """
-        Create a single AI agent.
+        Create an AI agent.
 
         Args:
-            task: Task description for the agent
-            agent_type: Type of agent (research, analysis, content, action, meta)
+            goal: Agent's objective
+            agent_type: Type of agent (base, simple, structured, research, analysis, content)
             tools: List of tools available to the agent
             model: LLM model to use
             **kwargs: Additional agent configuration
@@ -61,98 +49,51 @@ class IntelligenceLayer:
         Returns:
             Configured agent instance
         """
-        print(f"\n🤖 Creating {agent_type} agent")
-        print(f"   Task: {task}")
-        print(f"   Model: {model}")
-        print(f"   Tools: {tools or 'default'}")
-
-        from openbench.intelligence.agents import _create_agent
-        agent = _create_agent(task, agent_type, tools, model, **kwargs)
-
-        print("   ✓ Agent created\n")
-        return agent
-
-    @classmethod
-    def workflow(
-        cls,
-        agents: List[Any],
-        parallel: bool = True,
-        checkpoints: bool = True,
-        **kwargs
-    ) -> "Workflow":
-        """
-        Create a multi-agent workflow.
-
-        Args:
-            agents: List of agents to orchestrate
-            parallel: Enable parallel execution where possible
-            checkpoints: Enable workflow checkpoints
-            **kwargs: Additional workflow configuration
-
-        Returns:
-            Configured Workflow instance
-        """
-        from openbench.workflows.workflow import Workflow
-
-        print(f"\n🔄 Creating workflow with {len(agents)} agent(s)")
-        print(f"   Parallel execution: {parallel}")
-        print(f"   Checkpoints: {checkpoints}")
-
-        workflow = Workflow(
-            agents=agents,
-            parallel=parallel,
-            checkpoints=checkpoints,
-            **kwargs
+        from openbench.intelligence.base import BaseAgent, SimpleAgent, StructuredOutputAgent
+        from openbench.intelligence.agents import (
+            ResearchAgent,
+            AnalysisAgent,
+            ContentAgent,
+            ActionAgent,
+            MetaAgent,
         )
 
-        print("   ✓ Workflow created\n")
-        return workflow
-
-
-class Agent:
-    """Base agent class."""
-
-    def __init__(
-        self,
-        goal: str,
-        agent_type: str,
-        tools: Optional[List[str]] = None,
-        model: str = "gpt-4"
-    ):
-        self.goal = goal
-        self.agent_type = agent_type
-        self.tools = tools or []
-        self.model = model
-
-    def execute(self, data_layer: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
-        """
-        Execute the agent's task.
-
-        Args:
-            data_layer: DataLayer instance for data access
-            **kwargs: Additional execution parameters
-
-        Returns:
-            Agent execution results
-        """
-        print(f"\n▶️ Executing {self.agent_type} agent")
-        print(f"   Goal: {self.goal}")
-
-        # Mock execution
-        import time
-        time.sleep(1)
-
-        result = {
-            "agent_type": self.agent_type,
-            "goal": self.goal,
-            "status": "completed",
-            "output": f"Mock output for {self.agent_type} agent",
-            "sources_consulted": 12,
-            "confidence": 0.89
+        agent_classes = {
+            "base": BaseAgent,
+            "simple": SimpleAgent,
+            "structured": StructuredOutputAgent,
+            "research": ResearchAgent,
+            "analysis": AnalysisAgent,
+            "content": ContentAgent,
+            "action": ActionAgent,
+            "meta": MetaAgent,
         }
 
-        print(f"   ✓ Execution complete (confidence: {result['confidence']})\n")
-        return result
+        agent_class = agent_classes.get(agent_type, BaseAgent)
 
-    def __repr__(self):
-        return f"<{self.agent_type.title()}Agent: {self.goal[:50]}>"
+        # Handle structured agent separately (needs output_schema)
+        if agent_type == "structured":
+            output_schema = kwargs.pop("output_schema", {"type": "object"})
+            return agent_class(goal=goal, output_schema=output_schema, tools=tools, model=model, **kwargs)
+
+        return agent_class(goal=goal, tools=tools, model=model, **kwargs)
+
+    @classmethod
+    def research(cls, goal: str, **kwargs) -> Any:
+        """Create a research agent."""
+        return cls.create(goal=goal, agent_type="research", **kwargs)
+
+    @classmethod
+    def analysis(cls, goal: str, **kwargs) -> Any:
+        """Create an analysis agent."""
+        return cls.create(goal=goal, agent_type="analysis", **kwargs)
+
+    @classmethod
+    def content(cls, goal: str, **kwargs) -> Any:
+        """Create a content agent."""
+        return cls.create(goal=goal, agent_type="content", **kwargs)
+
+    @classmethod
+    def simple(cls, goal: str, **kwargs) -> Any:
+        """Create a simple agent (no tools)."""
+        return cls.create(goal=goal, agent_type="simple", **kwargs)

@@ -1,6 +1,12 @@
 """Output Layer - Multi-Format Exports."""
 
-from openbench.output.layer import OutputLayer
+# L2 Orchestrator (use this for workflow composition)
+from openbench.core.layers import OutputLayer
+
+# Output Factory (convenience class for generating outputs)
+from openbench.output.layer import OutputFactory
+
+# Output Generators
 from openbench.output.generators import (
     PDFGenerator,
     PowerPointGenerator,
@@ -9,7 +15,11 @@ from openbench.output.generators import (
 )
 
 __all__ = [
+    # L2 Orchestrator
     "OutputLayer",
+    # Factory
+    "OutputFactory",
+    # Generators
     "PDFGenerator",
     "PowerPointGenerator",
     "DashboardGenerator",

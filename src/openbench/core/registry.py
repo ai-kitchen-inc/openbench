@@ -1,10 +1,543 @@
 """
-Registry pattern implementations for all OpenBench abstractions.
+Enhanced Plugin Registry for OpenBench.
 
-Allows users to register and create implementations dynamically.
+Provides a dynamic, decorator-based plugin system with:
+- Generic type support for type safety
+- Decorator-based registration (@registry.register)
+- Auto-discovery from packages
+- Plugin metadata (version, description, author)
+- Singleton pattern support
 """
 
-from typing import Any, Dict, Type, Optional, List
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generic,
+    List,
+    Optional,
+    Type,
+    TypeVar,
+    Union,
+)
+from dataclasses import dataclass, field
+from datetime import datetime
+import importlib
+import importlib.util
+import logging
+import pkgutil
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# Type variable for plugin base classes
+T = TypeVar("T")
+
+
+@dataclass
+class PluginMetadata:
+    """Metadata for a registered plugin."""
+
+    name: str
+    plugin_type: str
+    provider: str
+    version: str = "1.0.0"
+    description: str = ""
+    author: str = ""
+    tags: List[str] = field(default_factory=list)
+    registered_at: datetime = field(default_factory=datetime.now)
+
+    # Runtime info
+    class_name: str = ""
+    module_name: str = ""
+
+    @property
+    def key(self) -> str:
+        """Unique key for this plugin."""
+        return f"{self.plugin_type}:{self.provider}"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "name": self.name,
+            "plugin_type": self.plugin_type,
+            "provider": self.provider,
+            "version": self.version,
+            "description": self.description,
+            "author": self.author,
+            "tags": self.tags,
+            "registered_at": self.registered_at.isoformat(),
+            "class_name": self.class_name,
+            "module_name": self.module_name,
+        }
+
+
+@dataclass
+class PluginEntry(Generic[T]):
+    """Entry in the plugin registry."""
+
+    implementation: Type[T]
+    metadata: PluginMetadata
+    singleton_instance: Optional[T] = None
+    is_singleton: bool = False
+
+
+class PluginRegistry(Generic[T]):
+    """
+    Generic plugin registry with decorator-based registration.
+
+    This is the core registry class that all specific registries extend.
+    It provides:
+    - Decorator-based registration
+    - Auto-discovery from packages
+    - Plugin metadata support
+    - Singleton pattern support
+    - Type-safe plugin creation
+
+    Example:
+        >>> # Create a registry for LLM adapters
+        >>> LLMRegistry = PluginRegistry[LLMProvider]("llm")
+        >>>
+        >>> # Register with decorator
+        >>> @LLMRegistry.register("chat", "openai", description="OpenAI Chat API")
+        ... class OpenAIChatAdapter(LLMProvider):
+        ...     pass
+        >>>
+        >>> # Create instance
+        >>> adapter = LLMRegistry.create("chat", "openai", api_key="...")
+        >>>
+        >>> # List plugins
+        >>> LLMRegistry.list_plugins()
+        ['chat:openai']
+    """
+
+    # Class-level storage for all registry instances
+    _all_registries: Dict[str, "PluginRegistry"] = {}
+
+    def __init__(self, name: str, base_class: Optional[Type[T]] = None):
+        """
+        Initialize a plugin registry.
+
+        Args:
+            name: Registry name (e.g., 'llm', 'vector', 'output')
+            base_class: Optional base class that all plugins must inherit from
+        """
+        self.name = name
+        self.base_class = base_class
+        self._plugins: Dict[str, PluginEntry[T]] = {}
+        self._discovery_paths: List[str] = []
+
+        # Register this registry globally
+        PluginRegistry._all_registries[name] = self
+
+    def register(
+        self,
+        plugin_type: str,
+        provider: str = "default",
+        *,
+        version: str = "1.0.0",
+        description: str = "",
+        author: str = "",
+        tags: Optional[List[str]] = None,
+        singleton: bool = False,
+        override: bool = False,
+    ) -> Callable[[Type[T]], Type[T]]:
+        """
+        Decorator to register a plugin implementation.
+
+        Args:
+            plugin_type: Type of plugin (e.g., 'pdf', 'research', 'vector')
+            provider: Provider name (e.g., 'openai', 'pinecone', 'default')
+            version: Plugin version
+            description: Plugin description
+            author: Plugin author
+            tags: Tags for categorization
+            singleton: If True, create only one instance
+            override: If True, allow overriding existing registration
+
+        Returns:
+            Decorator function
+
+        Example:
+            >>> @DataSourceRegistry.register("pdf", "pdfplumber",
+            ...                              description="PDF extraction using pdfplumber")
+            ... class PDFPlumberSource(DataSource):
+            ...     pass
+        """
+        def decorator(cls: Type[T]) -> Type[T]:
+            key = f"{plugin_type}:{provider}"
+
+            # Check if already registered
+            if key in self._plugins and not override:
+                existing = self._plugins[key]
+                logger.warning(
+                    f"Plugin '{key}' already registered as {existing.metadata.class_name}. "
+                    f"Use override=True to replace."
+                )
+                return cls
+
+            # Validate base class if specified
+            if self.base_class is not None:
+                if not issubclass(cls, self.base_class):
+                    raise TypeError(
+                        f"Plugin {cls.__name__} must inherit from {self.base_class.__name__}"
+                    )
+
+            # Create metadata
+            metadata = PluginMetadata(
+                name=cls.__name__,
+                plugin_type=plugin_type,
+                provider=provider,
+                version=version,
+                description=description or cls.__doc__ or "",
+                author=author,
+                tags=tags or [],
+                class_name=cls.__name__,
+                module_name=cls.__module__,
+            )
+
+            # Create entry
+            entry = PluginEntry(
+                implementation=cls,
+                metadata=metadata,
+                is_singleton=singleton,
+            )
+
+            self._plugins[key] = entry
+
+            logger.debug(f"Registered plugin: {key} -> {cls.__name__}")
+
+            return cls
+
+        return decorator
+
+    def register_class(
+        self,
+        plugin_type: str,
+        provider: str,
+        implementation: Type[T],
+        **metadata_kwargs,
+    ) -> None:
+        """
+        Programmatically register a plugin class.
+
+        This is the non-decorator version for dynamic registration.
+
+        Args:
+            plugin_type: Type of plugin
+            provider: Provider name
+            implementation: Plugin class
+            **metadata_kwargs: Additional metadata (version, description, etc.)
+
+        Example:
+            >>> DataSourceRegistry.register_class('pdf', 'pdfplumber', PDFPlumberSource)
+        """
+        decorator = self.register(plugin_type, provider, **metadata_kwargs)
+        decorator(implementation)
+
+    def get(
+        self,
+        plugin_type: str,
+        provider: str = "default",
+    ) -> Optional[Type[T]]:
+        """
+        Get a registered plugin class.
+
+        Args:
+            plugin_type: Type of plugin
+            provider: Provider name
+
+        Returns:
+            Plugin class or None if not found
+        """
+        key = f"{plugin_type}:{provider}"
+        entry = self._plugins.get(key)
+        return entry.implementation if entry else None
+
+    def get_metadata(
+        self,
+        plugin_type: str,
+        provider: str = "default",
+    ) -> Optional[PluginMetadata]:
+        """
+        Get metadata for a registered plugin.
+
+        Args:
+            plugin_type: Type of plugin
+            provider: Provider name
+
+        Returns:
+            PluginMetadata or None if not found
+        """
+        key = f"{plugin_type}:{provider}"
+        entry = self._plugins.get(key)
+        return entry.metadata if entry else None
+
+    def create(
+        self,
+        plugin_type: str,
+        provider: str = "default",
+        **kwargs,
+    ) -> T:
+        """
+        Create an instance of a registered plugin.
+
+        Args:
+            plugin_type: Type of plugin
+            provider: Provider name
+            **kwargs: Arguments to pass to plugin constructor
+
+        Returns:
+            Plugin instance
+
+        Raises:
+            ValueError: If plugin not found
+            TypeError: If instantiation fails
+
+        Example:
+            >>> source = DataSourceRegistry.create('pdf', 'pdfplumber', path='./doc.pdf')
+        """
+        key = f"{plugin_type}:{provider}"
+        entry = self._plugins.get(key)
+
+        if not entry:
+            available = self.list_providers(plugin_type)
+            raise ValueError(
+                f"Plugin not found: {key}. "
+                f"Available providers for '{plugin_type}': {available or 'none'}"
+            )
+
+        # Return singleton if configured
+        if entry.is_singleton:
+            if entry.singleton_instance is None:
+                entry.singleton_instance = entry.implementation(**kwargs)
+            return entry.singleton_instance
+
+        # Create new instance
+        try:
+            return entry.implementation(**kwargs)
+        except TypeError as e:
+            raise TypeError(
+                f"Failed to instantiate {entry.implementation.__name__}: {e}. "
+                f"Check constructor arguments."
+            ) from e
+
+    def list_types(self) -> List[str]:
+        """
+        List all registered plugin types.
+
+        Returns:
+            List of plugin type names
+        """
+        return sorted({key.split(":", 1)[0] for key in self._plugins})
+
+    def list_providers(self, plugin_type: str) -> List[str]:
+        """
+        List all providers for a given plugin type.
+
+        Args:
+            plugin_type: Type of plugin
+
+        Returns:
+            List of provider names
+        """
+        prefix = f"{plugin_type}:"
+        return sorted(
+            key.split(":", 1)[1] for key in self._plugins if key.startswith(prefix)
+        )
+
+    def list_plugins(
+        self,
+        plugin_type: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+    ) -> List[str]:
+        """
+        List all registered plugins.
+
+        Args:
+            plugin_type: Filter by plugin type
+            tags: Filter by tags (plugin must have all specified tags)
+
+        Returns:
+            List of plugin keys (format: "type:provider")
+        """
+        result = []
+        for key, entry in self._plugins.items():
+            # Filter by type
+            if plugin_type:
+                entry_type, _ = key.split(":", 1)
+                if entry_type != plugin_type:
+                    continue
+
+            # Filter by tags
+            if tags:
+                if not all(tag in entry.metadata.tags for tag in tags):
+                    continue
+
+            result.append(key)
+
+        return sorted(result)
+
+    def get_all_metadata(
+        self,
+        plugin_type: Optional[str] = None,
+    ) -> List[PluginMetadata]:
+        """
+        Get metadata for all registered plugins.
+
+        Args:
+            plugin_type: Filter by plugin type
+
+        Returns:
+            List of PluginMetadata objects
+        """
+        result = []
+        for key, entry in self._plugins.items():
+            if plugin_type:
+                entry_type, _ = key.split(":", 1)
+                if entry_type != plugin_type:
+                    continue
+            result.append(entry.metadata)
+        return result
+
+    def is_registered(self, plugin_type: str, provider: str) -> bool:
+        """
+        Check if a plugin is registered.
+
+        Args:
+            plugin_type: Type of plugin
+            provider: Provider name
+
+        Returns:
+            True if registered
+        """
+        key = f"{plugin_type}:{provider}"
+        return key in self._plugins
+
+    def unregister(self, plugin_type: str, provider: str) -> bool:
+        """
+        Unregister a plugin.
+
+        Args:
+            plugin_type: Type of plugin
+            provider: Provider name
+
+        Returns:
+            True if unregistered, False if not found
+        """
+        key = f"{plugin_type}:{provider}"
+        if key in self._plugins:
+            del self._plugins[key]
+            return True
+        return False
+
+    def clear(self) -> None:
+        """Clear all registered plugins."""
+        self._plugins.clear()
+
+    def auto_discover(self, package: str) -> int:
+        """
+        Auto-discover and load plugins from a package.
+
+        Imports all modules in the package, triggering any @register decorators.
+
+        Args:
+            package: Package path (e.g., 'openbench.plugins.llm')
+
+        Returns:
+            Number of modules loaded
+
+        Example:
+            >>> LLMRegistry.auto_discover('openbench.plugins.llm')
+            3  # Loaded 3 modules
+        """
+        count = 0
+        try:
+            pkg = importlib.import_module(package)
+        except ImportError as e:
+            logger.warning(f"Failed to import package {package}: {e}")
+            return 0
+
+        if not hasattr(pkg, "__path__"):
+            logger.warning(f"{package} is not a package")
+            return 0
+
+        for _, name, is_pkg in pkgutil.iter_modules(pkg.__path__):
+            try:
+                module_name = f"{package}.{name}"
+                importlib.import_module(module_name)
+                count += 1
+                logger.debug(f"Auto-discovered module: {module_name}")
+
+                # Recursively discover sub-packages
+                if is_pkg:
+                    count += self.auto_discover(module_name)
+            except ImportError as e:
+                logger.warning(f"Failed to import {package}.{name}: {e}")
+
+        return count
+
+    def discover_from_path(self, path: Union[str, Path]) -> int:
+        """
+        Discover plugins from a filesystem path.
+
+        Useful for loading plugins from external directories.
+
+        Args:
+            path: Directory path containing plugin modules
+
+        Returns:
+            Number of plugins loaded
+        """
+        path = Path(path)
+        if not path.is_dir():
+            logger.warning(f"Not a directory: {path}")
+            return 0
+
+        count = 0
+        for file in path.glob("*.py"):
+            if file.name.startswith("_"):
+                continue
+
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    file.stem, file
+                )
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    count += 1
+                    logger.debug(f"Loaded plugin from: {file}")
+            except Exception as e:
+                logger.warning(f"Failed to load {file}: {e}")
+
+        return count
+
+    def __repr__(self) -> str:
+        return f"PluginRegistry(name={self.name!r}, plugins={len(self._plugins)})"
+
+    def __len__(self) -> int:
+        return len(self._plugins)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._plugins
+
+    @classmethod
+    def get_registry(cls, name: str) -> Optional["PluginRegistry"]:
+        """Get a registry by name."""
+        return cls._all_registries.get(name)
+
+    @classmethod
+    def list_registries(cls) -> List[str]:
+        """List all registered registries."""
+        return list(cls._all_registries.keys())
+
+
+# ============================================================================
+# Pre-defined Registries for OpenBench Core Abstractions
+# ============================================================================
+
+# Import base classes for type hints
 from openbench.core.abstractions import (
     DataSource,
     DataStore,
@@ -14,277 +547,120 @@ from openbench.core.abstractions import (
     OutputGenerator,
 )
 
-
-class RegistryBase:
-    """Base class for all registries."""
-
-    _registry: Dict[str, Dict[str, Type[Any]]] = {}
-
-    @classmethod
-    def register(
-        cls,
-        item_type: str,
-        provider: str,
-        implementation: Type[Any]
-    ) -> None:
-        """
-        Register an implementation.
-
-        Args:
-            item_type: Type of item (e.g., 'vector', 'research')
-            provider: Provider name (e.g., 'pinecone', 'openai')
-            implementation: Implementation class
-        """
-        if item_type not in cls._registry:
-            cls._registry[item_type] = {}
-        cls._registry[item_type][provider] = implementation
-
-    @classmethod
-    def create(
-        cls,
-        item_type: str,
-        provider: str,
-        **config
-    ) -> Any:
-        """
-        Create an instance of a registered implementation.
-
-        Args:
-            item_type: Type of item
-            provider: Provider name
-            **config: Configuration parameters for the implementation
-
-        Returns:
-            Instance of the implementation
-
-        Raises:
-            ValueError: If type or provider not found
-        """
-        if item_type not in cls._registry:
-            raise ValueError(
-                f"Unknown {cls.__name__} type: {item_type}. "
-                f"Available: {list(cls._registry.keys())}"
-            )
-
-        if provider not in cls._registry[item_type]:
-            raise ValueError(
-                f"Unknown provider '{provider}' for {item_type}. "
-                f"Available: {list(cls._registry[item_type].keys())}"
-            )
-
-        implementation = cls._registry[item_type][provider]
-        return implementation(**config)
-
-    @classmethod
-    def list_types(cls) -> List[str]:
-        """List all registered types."""
-        return list(cls._registry.keys())
-
-    @classmethod
-    def list_providers(cls, item_type: str) -> List[str]:
-        """List all providers for a given type."""
-        if item_type not in cls._registry:
-            return []
-        return list(cls._registry[item_type].keys())
-
-    @classmethod
-    def is_registered(cls, item_type: str, provider: str) -> bool:
-        """Check if a provider is registered for a type."""
-        return (
-            item_type in cls._registry and
-            provider in cls._registry[item_type]
-        )
+# Create typed registries
+DataSourceRegistry = PluginRegistry[DataSource]("data_source", DataSource)
+DataStoreRegistry = PluginRegistry[DataStore]("data_store", DataStore)
+AgentRegistry = PluginRegistry[Agent]("agent", Agent)
+LLMProviderRegistry = PluginRegistry[LLMProvider]("llm_provider", LLMProvider)
+ToolRegistry = PluginRegistry[Tool]("tool", Tool)
+OutputGeneratorRegistry = PluginRegistry[OutputGenerator]("output_generator", OutputGenerator)
 
 
-class DataSourceRegistry(RegistryBase):
-    """
-    Registry for DataSource implementations.
+# ============================================================================
+# Convenience Functions
+# ============================================================================
 
-    Example:
-        >>> # Register implementation
-        >>> DataSourceRegistry.register('pdf', 'pdfplumber', PDFPlumberSource)
-        >>>
-        >>> # Create instance
-        >>> source = DataSourceRegistry.create('pdf', 'pdfplumber', path='./doc.pdf')
-        >>>
-        >>> # List available
-        >>> DataSourceRegistry.list_types()
-        ['pdf', 'youtube', 'web', 'google_doc']
-        >>> DataSourceRegistry.list_providers('pdf')
-        ['pdfplumber', 'pypdf2']
-    """
-    _registry: Dict[str, Dict[str, Type[DataSource]]] = {}
-
-
-class DataStoreRegistry(RegistryBase):
-    """
-    Registry for DataStore implementations.
-
-    Example:
-        >>> # Register implementations
-        >>> DataStoreRegistry.register('vector', 'pinecone', PineconeStore)
-        >>> DataStoreRegistry.register('vector', 'chroma', ChromaStore)
-        >>>
-        >>> # Create instance - user chooses provider
-        >>> store = DataStoreRegistry.create(
-        ...     'vector',
-        ...     'pinecone',  # User choice!
-        ...     api_key='...',
-        ...     index_name='my-index'
-        ... )
-        >>>
-        >>> # Switch to different provider - just change provider param
-        >>> store = DataStoreRegistry.create(
-        ...     'vector',
-        ...     'chroma',  # Different provider
-        ...     path='./chroma_db'
-        ... )
-    """
-    _registry: Dict[str, Dict[str, Type[DataStore]]] = {}
-
-
-class AgentRegistry(RegistryBase):
-    """
-    Registry for Agent implementations.
-
-    Example:
-        >>> # Register agent types
-        >>> AgentRegistry.register('research', 'default', ResearchAgent)
-        >>> AgentRegistry.register('analysis', 'default', AnalysisAgent)
-        >>>
-        >>> # Create agents
-        >>> researcher = AgentRegistry.create(
-        ...     'research',
-        ...     'default',
-        ...     goal='Analyze sustainability trends'
-        ... )
-        >>>
-        >>> # List available
-        >>> AgentRegistry.list_types()
-        ['research', 'analysis', 'content', 'critic']
-    """
-    _registry: Dict[str, Dict[str, Type[Agent]]] = {}
-
-
-class LLMProviderRegistry(RegistryBase):
-    """
-    Registry for LLM Provider implementations.
-
-    Example:
-        >>> # Register providers
-        >>> LLMProviderRegistry.register('llm', 'openai', OpenAIProvider)
-        >>> LLMProviderRegistry.register('llm', 'anthropic', AnthropicProvider)
-        >>>
-        >>> # Create instance - user chooses provider
-        >>> llm = LLMProviderRegistry.create(
-        ...     'llm',
-        ...     'openai',  # User choice
-        ...     api_key='...'
-        ... )
-        >>>
-        >>> # Easy to switch providers
-        >>> llm = LLMProviderRegistry.create(
-        ...     'llm',
-        ...     'anthropic',  # Just change this
-        ...     api_key='...'
-        ... )
-    """
-    _registry: Dict[str, Dict[str, Type[LLMProvider]]] = {}
-
-
-class ToolRegistry(RegistryBase):
-    """
-    Registry for Tool implementations.
-
-    Example:
-        >>> # Register tools
-        >>> ToolRegistry.register('search', 'tavily', TavilySearchTool)
-        >>> ToolRegistry.register('search', 'serp', SerpAPITool)
-        >>> ToolRegistry.register('mcp', 'filesystem', FilesystemMCP)
-        >>>
-        >>> # Create tools
-        >>> search = ToolRegistry.create('search', 'tavily', api_key='...')
-        >>> mcp = ToolRegistry.create('mcp', 'filesystem', base_path='./data')
-        >>>
-        >>> # List available
-        >>> ToolRegistry.list_types()
-        ['search', 'calculator', 'mcp']
-        >>> ToolRegistry.list_providers('search')
-        ['tavily', 'serp', 'duckduckgo']
-    """
-    _registry: Dict[str, Dict[str, Type[Tool]]] = {}
-
-
-class OutputGeneratorRegistry(RegistryBase):
-    """
-    Registry for OutputGenerator implementations.
-
-    Example:
-        >>> # Register generators
-        >>> OutputGeneratorRegistry.register('pdf', 'reportlab', ReportLabGenerator)
-        >>> OutputGeneratorRegistry.register('pdf', 'weasyprint', WeasyPrintGenerator)
-        >>> OutputGeneratorRegistry.register('pptx', 'python-pptx', PythonPPTXGenerator)
-        >>>
-        >>> # Create generator - user chooses provider
-        >>> pdf_gen = OutputGeneratorRegistry.create(
-        ...     'pdf',
-        ...     'reportlab',  # User choice
-        ...     template='corporate'
-        ... )
-        >>>
-        >>> # Easy to switch
-        >>> pdf_gen = OutputGeneratorRegistry.create(
-        ...     'pdf',
-        ...     'weasyprint',  # Different provider
-        ...     template='corporate'
-        ... )
-        >>>
-        >>> # List available
-        >>> OutputGeneratorRegistry.list_types()
-        ['pdf', 'pptx', 'html', 'audio', 'video']
-        >>> OutputGeneratorRegistry.list_providers('pdf')
-        ['reportlab', 'weasyprint', 'pdfkit']
-    """
-    _registry: Dict[str, Dict[str, Type[OutputGenerator]]] = {}
-
-
-# Convenience function for bulk registration
-def register_all(registrations: Dict[str, Any]) -> None:
+def register_all(registrations: Dict[str, List[tuple]]) -> int:
     """
     Register multiple implementations at once.
 
     Args:
         registrations: Dict mapping registry names to registration configs
+            Format: {
+                'data_source': [
+                    (type, provider, class, metadata_dict),
+                ],
+                ...
+            }
+
+            metadata_dict keys: version, description, author, tags, singleton
+
+    Returns:
+        Number of plugins registered
 
     Example:
         >>> register_all({
-        ...     'data_sources': [
-        ...         ('pdf', 'pdfplumber', PDFPlumberSource),
-        ...         ('youtube', 'default', YouTubeSource),
+        ...     'data_source': [
+        ...         ('pdf', 'pdfplumber', PDFPlumberSource, {
+        ...             'description': 'PDF extraction using pdfplumber',
+        ...             'version': '1.0.0'
+        ...         }),
         ...     ],
-        ...     'data_stores': [
-        ...         ('vector', 'pinecone', PineconeStore),
-        ...         ('vector', 'chroma', ChromaStore),
-        ...     ],
-        ...     'llm_providers': [
-        ...         ('llm', 'openai', OpenAIProvider),
-        ...         ('llm', 'anthropic', AnthropicProvider),
+        ...     'llm_provider': [
+        ...         ('llm', 'openai', OpenAIProvider, {}),
         ...     ]
         ... })
     """
-    registry_map = {
-        'data_sources': DataSourceRegistry,
-        'data_stores': DataStoreRegistry,
-        'agents': AgentRegistry,
-        'llm_providers': LLMProviderRegistry,
-        'tools': ToolRegistry,
-        'output_generators': OutputGeneratorRegistry,
-    }
-
+    count = 0
     for registry_name, items in registrations.items():
-        if registry_name not in registry_map:
-            raise ValueError(f"Unknown registry: {registry_name}")
+        registry = PluginRegistry.get_registry(registry_name)
+        if registry is None:
+            raise ValueError(
+                f"Unknown registry: {registry_name}. "
+                f"Available: {PluginRegistry.list_registries()}"
+            )
 
-        registry = registry_map[registry_name]
-        for item_type, provider, implementation in items:
-            registry.register(item_type, provider, implementation)
+        for item_type, provider, implementation, metadata in items:
+            registry.register_class(item_type, provider, implementation, **metadata)
+            count += 1
+
+    return count
+
+
+def discover_plugins(packages: Optional[List[str]] = None) -> Dict[str, int]:
+    """
+    Auto-discover plugins from specified packages.
+
+    Args:
+        packages: List of package paths to discover from.
+                  If None, discovers from default openbench plugin paths.
+
+    Returns:
+        Dict mapping registry names to number of plugins discovered
+
+    Example:
+        >>> discover_plugins(['openbench.plugins.llm', 'openbench.plugins.output'])
+        {'llm': 3, 'output': 2}
+    """
+    if packages is None:
+        packages = [
+            "openbench.plugins.data_sources",
+            "openbench.plugins.data_stores",
+            "openbench.plugins.agents",
+            "openbench.plugins.llm",
+            "openbench.plugins.tools",
+            "openbench.plugins.output",
+        ]
+
+    results = {}
+    for package in packages:
+        # Try to import and discover
+        registry_name = package.split(".")[-1]
+
+        # Find matching registry
+        for name, registry in PluginRegistry._all_registries.items():
+            try:
+                count = registry.auto_discover(package)
+                results[name] = results.get(name, 0) + count
+            except Exception as e:
+                logger.debug(f"Could not discover from {package}: {e}")
+
+    return results
+
+
+def get_plugin_info() -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Get information about all registered plugins.
+
+    Returns:
+        Dict mapping registry names to lists of plugin metadata
+
+    Example:
+        >>> info = get_plugin_info()
+        >>> for name, plugins in info.items():
+        ...     print(f"{name}: {len(plugins)} plugins")
+    """
+    result = {}
+    for name, registry in PluginRegistry._all_registries.items():
+        result[name] = [m.to_dict() for m in registry.get_all_metadata()]
+    return result
