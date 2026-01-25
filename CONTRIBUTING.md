@@ -453,10 +453,8 @@ Good documentation is just as important as good code.
 ## 🎓 Resources for Contributors
 
 - [Architecture Overview](docs/architecture.md)
-- [API Documentation](docs/api.md)
-- [Development Setup Guide](docs/dev-setup.md)
-- [Debugging Guide](docs/debugging.md)
-- [Release Process](docs/releases.md)
+- [API Documentation](docs/API.md)
+- [Getting Started Guide](docs/GETTING_STARTED.md)
 
 ## 💬 Community
 
@@ -475,7 +473,6 @@ Good documentation is just as important as good code.
 
 We value our contributors!
 
-- All contributors are listed in [CONTRIBUTORS.md](CONTRIBUTORS.md)
 - Significant contributions are highlighted in release notes
 - Top contributors get special roles in Discord
 

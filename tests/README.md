@@ -195,5 +195,6 @@ When contributing:
 
 See:
 - [Main README](../README.md)
-- [Documentation](../docs/README.md)
+- [Getting Started](../docs/GETTING_STARTED.md)
+- [API Reference](../docs/API.md)
 - [Examples](../examples/)

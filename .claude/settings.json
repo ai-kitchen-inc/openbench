@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m unittest*)",
+      "Bash(pytest*)",
+      "Bash(pip install*)",
+      "Bash(pip list*)",
+      "Bash(black*)",
+      "Bash(ruff*)",
+      "Bash(mypy*)",
+      "Bash(python examples/*)",
+      "Bash(python -c*)",
+      "Read(**)",
+      "Write(src/**)",
+      "Write(tests/**)",
+      "Write(examples/**)",
+      "Edit(src/**)",
+      "Edit(tests/**)",
+      "Edit(examples/**)"
+    ],
+    "deny": []
+  }
+}
