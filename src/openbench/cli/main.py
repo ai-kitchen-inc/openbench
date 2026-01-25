@@ -33,6 +33,7 @@ cli.add_command(commands.generate.generate)
 cli.add_command(commands.tools.tools)
 cli.add_command(commands.models.models)
 cli.add_command(commands.config.config)
+cli.add_command(commands.provider.provider)
 
 
 def main():

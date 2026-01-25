@@ -82,219 +82,80 @@ workflow = Workflow(
 
 ---
 
-## 🔧 Implementation Status
+## Implementation Status
 
-**Current Version**: 0.1.0 (Alpha)
-**Status**: 🟡 Active Development
+**Version**: 0.1.0 (Alpha) | Core Complete, Providers In Progress
 
-### ✅ Phase 1: Core Abstractions (COMPLETED)
-- ✅ Abstract interfaces for all components
-- ✅ Registry pattern for provider selection
-- ✅ DAG workflow system (Chainable)
-- ✅ State management & checkpointing
+| Phase | Status |
+|-------|--------|
+| **Phase 1: Core Abstractions** | Complete - Interfaces, plugin registry, DAG workflows, state management |
+| **Phase 2: Infrastructure** | Complete - Provider Service, Config, Agent interface, L2 layers, 194 tests |
+| **Phase 3: Providers** | In Progress - LLM (OpenAI, Anthropic), Vector (ChromaDB, Pinecone), Output (ReportLab, python-pptx) |
 
-### 🔄 Phase 2: Layer Rewrite (IN PROGRESS)
-- ⏳ Data Layer using abstractions
-- ⏳ Intelligence Layer using abstractions
-- ⏳ Output Layer using abstractions
-- ⏳ Workflow system migration
-
-**Want to try it?** See our world-class workflow API in action:
 ```bash
-pip install -e .
-python examples/sustainability_report.py
+pip install -e ".[all]" && python examples/sustainability_report.py
 ```
 
 ---
 
-## 🌟 World-Class Workflow API
-
-**No compromises. No average solutions.**
+## Workflow API
 
 ```python
 from openbench.workflows import Workflow
-from openbench.core import DataLayer, IntelligenceLayer, OutputLayer
 
-# Define your DAG structure visibly in code
 workflow = Workflow(
     name="sustainability-report",
     chain=(
-        (data_source1 & data_source2 & data_source3)  # Parallel data
-        | research                                      # Then research
-        | analysis                                      # Then analysis
-        | (pdf_generator & pptx_generator)             # Parallel outputs
+        (data_source1 & data_source2 & data_source3)  # Parallel
+        | research | analysis                          # Sequential
+        | (pdf_generator & pptx_generator)             # Parallel
     ),
     checkpoints=True
 )
-
-# Execute
 result = workflow.run({"project": "Q1 2026"})
 ```
 
-**Key Features:**
-- ✅ Structure visible in code (no hidden `parallel=True/False`)
-- ✅ Express any DAG via composition (`|` for sequential, `&` for parallel)
-- ✅ Full L1/L2 orchestration support
-- ✅ Automatic checkpointing and resume
-- ✅ World-class abstraction - deleted old design, rebuilt from first principles
+**Features:** DAG composition (`|` sequential, `&` parallel), L1/L2 orchestration, automatic checkpointing.
 
 ---
 
 All open source. All extensible. All yours.
 
-## ⚡ Quick Start
+## Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/ai-kitchen-inc/openbench.git
-cd openbench
-
-# Install the package
-pip install -e .
-
-# Verify installation
-python -c "from openbench.core import Chainable; print('OpenBench installed successfully')"
-
-# Run an example
+git clone https://github.com/ai-kitchen-inc/openbench.git && cd openbench
+pip install -e ".[all]"
 python examples/sustainability_report.py
 ```
-
-**First workflow in 5 minutes:**
 
 ```python
 from openbench import DataLayer, IntelligenceLayer, OutputLayer
 
-# Connect to your data
-data = DataLayer.connect(
-    sources=["./documents", "postgres://mydb", "https://api.example.com"]
-)
-
-# Define your agent workflow
-agent = IntelligenceLayer.create_agent(
-    task="Analyze Q4 sales and create executive summary",
-    tools=["semantic_search", "sql_query", "web_research"]
-)
-
-# Execute and export
+data = DataLayer.connect(sources=["./documents", "postgres://mydb"])
+agent = IntelligenceLayer.create_agent(task="Analyze Q4 sales", tools=["semantic_search", "sql_query"])
 result = agent.execute(data)
-OutputLayer.export(result, format="presentation", style="executive")
+OutputLayer.export(result, format="presentation")
 ```
 
-## 🏗️ Architecture
+## Architecture
 
-OpenBench is built on three revolutionary layers that work in perfect harmony:
+Three layers working in harmony:
 
-### 1️⃣ **Data Layer** — Universal Data Access
+**Data Layer** - Connect to any source: PDFs, databases, APIs, multimedia. Access via REST, MCP, or native SDKs.
 
-The foundation. Connect to any data source, anywhere.
+**Intelligence Layer** - Build AI agents: Research, Analysis, Content, Action. Multi-agent coordination with human-in-the-loop support.
 
-**What it does:**
-- **Document Intelligence**: OCR PDFs, extract tables, semantic indexing for natural language queries
-- **Structured Data**: SQL databases, CSVs, JSON—query with natural language or structured queries
-- **Multimedia**: Automatic video transcription, captioning, and searchable media libraries
-- **Live APIs**: REST, GraphQL, webhooks—treat external APIs as native data sources
-
-**How you access it:**
-- Standard REST APIs for any HTTP client
-- Model Context Protocol (MCP) for AI-native integrations
-- Native SDKs for Python, JavaScript, and Go
-
-```javascript
-// Access via REST
-const data = await fetch('http://openbench/api/v1/data/search', {
-  method: 'POST',
-  body: JSON.stringify({
-    query: "Find all customer feedback mentioning 'performance'",
-    sources: ["zendesk", "app_reviews", "survey_responses"]
-  })
-});
-
-// Or via MCP
-const results = await mcp.query({
-  semantic: "customer performance issues",
-  filters: { date_range: "last_90_days" }
-});
-```
-
-### 2️⃣ **Intelligence Layer** — Agentic Workflows
-
-Where the magic happens. Build sophisticated AI agents that think, plan, and execute.
-
-**Features:**
-- **Visual Workflow Designer**: Drag-and-drop agent orchestration
-- **Pre-built Agents**: Research, analysis, writing, coding, data processing
-- **Custom Agents**: Build your own with Python/TypeScript
-- **Multi-Agent Coordination**: Agents that collaborate to solve complex problems
-- **Human-in-the-Loop**: Approval gates, review steps, interactive refinement
-
-**Agent Types:**
-- 🔍 **Research Agents**: Gather information across data sources
-- 📊 **Analysis Agents**: Statistical analysis, trend detection, forecasting
-- ✍️ **Content Agents**: Writing, summarization, translation
-- 🛠️ **Action Agents**: API calls, data updates, system integration
-- 🧠 **Meta Agents**: Coordinate other agents for complex workflows
+**Output Layer** - Export anywhere: PDF, PowerPoint, Audio, Video, Dashboards, API endpoints.
 
 ```python
-# Define a multi-agent workflow
 workflow = IntelligenceLayer.workflow([
-    ResearchAgent(
-        goal="Gather competitive intelligence on top 5 competitors",
-        sources=["web", "crunchbase_api", "news_feeds"]
-    ),
-    AnalysisAgent(
-        goal="Identify market gaps and opportunities",
-        methods=["swot", "trend_analysis"]
-    ),
-    ContentAgent(
-        goal="Draft strategic recommendation memo",
-        style="executive",
-        length="2_pages"
-    )
+    ResearchAgent(goal="Competitive intelligence", sources=["web", "news"]),
+    AnalysisAgent(goal="Market gaps", methods=["swot"]),
+    ContentAgent(goal="Strategic memo", style="executive")
 ])
-
-result = workflow.execute(async=True, checkpoints=True)
-```
-
-### 3️⃣ **Output Layer** — Beautiful Exports
-
-Transform insights into impact. Export to any format your audience needs.
-
-**Output Formats:**
-- 🎤 **Audio**: Podcasts, voiceovers, audio summaries
-- 🎥 **Video**: Presentations with narration, animated explainers
-- 📊 **Slides**: PowerPoint, Google Slides, Keynote-ready decks
-- 📈 **Infographics**: Data visualizations, charts, diagrams
-- 📄 **Reports**: PDF, Word, Markdown, HTML
-- 📋 **Data Tables**: CSV, Excel, JSON, SQL exports
-- 🌐 **Interactive**: Dashboards, web apps, API endpoints
-
-```python
-# Same data, multiple outputs
-analysis_result = agent.execute()
-
-# Executive presentation
-OutputLayer.export(
-    analysis_result,
-    format="slides",
-    template="corporate",
-    narration=True  # AI-generated voice narration
-)
-
-# Technical report
-OutputLayer.export(
-    analysis_result,
-    format="pdf_report",
-    include_code=True,
-    appendix=["raw_data", "methodology"]
-)
-
-# Interactive dashboard
-OutputLayer.export(
-    analysis_result,
-    format="dashboard",
-    update_frequency="hourly",
-    deploy_to="https://insights.company.com"
-)
+result = workflow.execute(checkpoints=True)
+OutputLayer.export(result, format="slides", narration=True)
 ```
 
 ---
@@ -326,26 +187,18 @@ Confluence + Drive + Slack → Semantic search → Instant answers + Auto-docume
 Research data + Brand guidelines → Multi-agent workflow → Blog + Video + Social media
 ```
 
-## 🛠️ Technical Stack
+## Tech Stack
 
-OpenBench is built with modern, production-ready technologies:
+Python (FastAPI), LangChain, LlamaIndex, OpenAI/Anthropic, DuckDB, Pandas, ChromaDB/Pinecone, Docker/Kubernetes.
 
-- **Backend**: Python (FastAPI), Node.js (Express)
-- **AI/ML**: LangChain, LlamaIndex, Anthropic Claude, OpenAI
-- **Data Processing**: Apache Arrow, DuckDB, Pandas
-- **Search**: Elasticsearch, Pinecone, ChromaDB
-- **Queue/Jobs**: Celery, Redis, BullMQ
-- **Frontend**: React, TypeScript, TailwindCSS
-- **Infrastructure**: Docker, Kubernetes, Terraform
+## Features
 
-## 🌟 Features
-
-- ✅ **Privacy-First**: Self-hosted option, zero data lock-in
-- ✅ **Model Agnostic**: Works with OpenAI, Anthropic, open source models
-- ✅ **Enterprise Ready**: SSO, RBAC, audit logs, compliance tools
-- ✅ **Extensible**: Plugin architecture for custom data sources and outputs
-- ✅ **Scalable**: From laptop to data center
-- ✅ **Observable**: Built-in monitoring, logging, and debugging tools
+- **Privacy-First**: Self-hosted, zero lock-in, credential encryption
+- **Model Agnostic**: OpenAI, Anthropic, open source models
+- **Enterprise Ready**: Centralized config, encryption, audit ready
+- **Extensible**: Plugin registry with decorators and auto-discovery
+- **Composable**: DAG workflows with `|` and `&` operators
+- **Well-Tested**: 194 tests
 
 ## 🗺️ Roadmap
 
@@ -355,18 +208,9 @@ OpenBench is built with modern, production-ready technologies:
 - [ ] **Q3 2026**: Edge deployment for air-gapped environments
 - [ ] **Q4 2026**: Multi-modal agent support (vision, audio, code)
 
-## 🤝 Contributing
+## Contributing
 
-We believe the best AI infrastructure is built in the open, by the community.
-
-**How to contribute:**
-- 🐛 [Report bugs](https://github.com/ai-kitchen-inc/openbench/issues)
-- 💡 [Request features](https://github.com/ai-kitchen-inc/openbench/discussions)
-- 🔧 [Submit PRs](CONTRIBUTING.md)
-- 📖 [Improve docs](docs/README.md)
-- 💬 [Join Discord](https://discord.com/users/openbench.ai)
-
-Read our [Contributing Guide](CONTRIBUTING.md) to get started.
+[Report bugs](https://github.com/ai-kitchen-inc/openbench/issues) | [Request features](https://github.com/ai-kitchen-inc/openbench/discussions) | [Submit PRs](CONTRIBUTING.md) | [Join Discord](https://discord.com/users/openbench.ai)
 
 ## 📄 License
 
@@ -374,19 +218,9 @@ OpenBench is open source software licensed under the [Apache License 2.0](LICENS
 
 Free to use, modify, and distribute. Forever.
 
-## 🌐 Community & Support
+## Community
 
-- **Documentation**: [docs/](docs/README.md)
-- **Discord**: [Join our community](https://discord.com/users/openbench.ai)
-- **GitHub Discussions**: [Ask questions](https://github.com/ai-kitchen-inc/openbench/discussions)
-- **Issues**: [Report bugs & request features](https://github.com/ai-kitchen-inc/openbench/issues)
-- **Email**: [openbench2026@gmail.com](mailto:openbench2026@gmail.com)
-
-## ⭐ Star History
-
-If OpenBench is useful to you, give it a star! It helps us understand what the community values.
-
-[![Star History Chart](https://api.star-history.com/svg?repos=ai-kitchen-inc/openbench&type=Date)](https://star-history.com/#ai-kitchen-inc/openbench&Date)
+[Documentation](docs/README.md) | [Discord](https://discord.com/users/openbench.ai) | [Discussions](https://github.com/ai-kitchen-inc/openbench/discussions) | [Email](mailto:openbench2026@gmail.com)
 
 ---
 
