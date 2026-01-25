@@ -99,15 +99,11 @@ workflow = Workflow(
 - ⏳ Output Layer using abstractions
 - ⏳ Workflow system migration
 
-**See [STATUS.md](STATUS.md) for detailed progress tracking.**
-
 **Want to try it?** See our world-class workflow API in action:
 ```bash
 pip install -e .
-python examples/sustainability_report_new.py
+python examples/sustainability_report.py
 ```
-
-**See**: [World-Class Achievement](docs/WORLD_CLASS_ACHIEVEMENT.md) - How we built it.
 
 ---
 
@@ -142,8 +138,6 @@ result = workflow.run({"project": "Q1 2026"})
 - ✅ Automatic checkpointing and resume
 - ✅ World-class abstraction - deleted old design, rebuilt from first principles
 
-**See**: [Workflow API Redesign](docs/WORKFLOW_API_REDESIGN.md)
-
 ---
 
 All open source. All extensible. All yours.
@@ -155,14 +149,14 @@ All open source. All extensible. All yours.
 git clone https://github.com/ai-kitchen-inc/openbench.git
 cd openbench
 
-# Install dependencies
-npm install  # or pip install -r requirements.txt
+# Install the package
+pip install -e .
 
-# Start OpenBench
-npm start  # or python main.py
+# Verify installation
+python -c "from openbench.core import Chainable; print('OpenBench installed successfully')"
 
-# Access the workbench
-open http://localhost:3000
+# Run an example
+python examples/sustainability_report.py
 ```
 
 **First workflow in 5 minutes:**

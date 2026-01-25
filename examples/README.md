@@ -128,5 +128,5 @@ result = workflow.run({"project": "Analysis"})
 
 - [Getting Started Guide](../docs/GETTING_STARTED.md)
 - [API Reference](../docs/API.md)
-- [Architecture Overview](../docs/ARCHITECTURE.md)
+- [Architecture Overview](../docs/architecture.md)
 - [GitHub Issues](https://github.com/ai-kitchen-inc/openbench/issues)
