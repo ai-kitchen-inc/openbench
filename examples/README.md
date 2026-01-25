@@ -1,27 +1,49 @@
 # OpenBench Examples
 
-This directory contains working examples demonstrating OpenBench capabilities.
+This directory contains production-ready examples demonstrating OpenBench's composable abstractions and workflow patterns.
 
 ## Examples
 
-### 1. Simple Workflow (`simple_workflow.py`)
+### 1. Core Abstractions Demo (`core_abstractions_demo.py`)
 
-A minimal example showing the three-layer architecture:
-- Connect to data
-- Create an agent
-- Generate output
+Demonstrates the foundational Chainable abstractions and composition patterns:
+- Custom DataSource, Agent, and OutputGenerator implementations
+- Registry pattern for provider selection
+- Sequential workflows (`A | B | C`)
+- Parallel workflows (`A & B & C`)
+- Conditional branching
+- Router (multi-way routing)
+- Complex DAG structures
+- Stateful workflows with checkpointing
+- Configuration-driven workflow creation
 
 **Run it:**
 ```bash
-python examples/simple_workflow.py
+python examples/core_abstractions_demo.py
 ```
 
-### 2. Sustainability Report (`sustainability_report.py`)
+### 2. L1/L2 Orchestration Demo (`orchestration_demo.py`)
 
-Generate comprehensive ESG/sustainability reports from multiple data sources:
-- Multi-source data integration (PDFs, SQL, APIs)
-- Multi-agent workflow (Research → Analysis → Content)
-- Multiple output formats (PDF, PowerPoint, Dashboard)
+Shows two-level composition: components (L1) into systems (L2):
+- L1 component composition: `source1 | source2`
+- L2 layer composition: `DataLayer | IntelligenceLayer | OutputLayer`
+- Complex DAG workflows within layers
+- End-to-end workflow execution
+- `create_workflow()` helper for rapid prototyping
+
+**Run it:**
+```bash
+python examples/orchestration_demo.py
+```
+
+### 3. Sustainability Report (`sustainability_report.py`)
+
+Complete real-world example generating ESG/sustainability reports:
+- Parallel data extraction from multiple sources (PDF & API & CSV)
+- Sequential multi-agent processing (Research → Analysis → Content)
+- Parallel output generation (PDF & PowerPoint)
+- Named workflow with state management and checkpointing
+- Complete end-to-end demonstration
 
 **Use case:** Sustainability consultants, ESG analysts
 
@@ -30,75 +52,65 @@ Generate comprehensive ESG/sustainability reports from multiple data sources:
 python examples/sustainability_report.py
 ```
 
-### 3. Next Best Actions Analysis (`nba_analysis.py`)
-
-Analyze customer data and generate actionable recommendations:
-- Customer behavior analysis
-- Statistical modeling
-- Recommendation generation
-
-**Use case:** Business analysts, CRM managers
-
-**Run it:**
-```bash
-python examples/nba_analysis.py
-```
-
 ## Creating Your Own Workflow
 
 Use these examples as templates:
 
 1. Copy an example file
-2. Modify data sources
-3. Adjust agent goals
-4. Customize output formats
+2. Implement custom DataSource, Agent, or OutputGenerator
+3. Compose components using `|` (sequential) or `&` (parallel)
+4. Wrap in Workflow for state management
 5. Run and iterate
 
 ## Common Patterns
 
-### Multi-Agent Workflow
+### Sequential Workflow
 
 ```python
-from openbench import Workflow
-from openbench.intelligence import ResearchAgent, AnalysisAgent, ContentAgent
+from openbench.core import DataLayer, IntelligenceLayer, OutputLayer
 
-workflow = Workflow(agents=[
-    ResearchAgent(goal="Gather information"),
-    AnalysisAgent(goal="Analyze data"),
-    ContentAgent(goal="Create content")
-])
+# Compose layers sequentially: Data → Intelligence → Output
+workflow = data_layer | intelligence_layer | output_layer
 
-result = workflow.execute(data_layer)
+# Execute
+result = workflow.invoke({"query": "analyze sustainability"})
 ```
 
-### Batch Export
+### Parallel Processing
 
 ```python
-from openbench import OutputLayer
+from openbench.core import Parallel
 
-# Export to multiple formats
-OutputLayer.batch_export(
-    result,
-    formats=["pdf", "pptx", "dashboard"],
-    output_dir="outputs"
+# Extract from multiple sources concurrently
+data_layer = DataLayer(
+    sources=Parallel([pdf_source, api_source, csv_source])
+)
+
+# Generate multiple outputs concurrently
+output_layer = OutputLayer(
+    generators=pdf_generator & pptx_generator
 )
 ```
 
-### Custom Agent
+### Named Workflow with Checkpointing
 
 ```python
-from openbench import IntelligenceLayer
+from openbench.workflows import Workflow
+from openbench.core import LocalStateStore
 
-agent = IntelligenceLayer.create_agent(
-    task="Your custom task",
-    agent_type="research",  # or analysis, content, action, meta
-    tools=["tool1", "tool2"],
-    model="gpt-4"
+workflow = Workflow(
+    name="my-workflow",
+    chain=data_layer | intelligence_layer | output_layer,
+    state_store=LocalStateStore(base_path="./workflow_state"),
+    checkpoints=True
 )
+
+result = workflow.run({"project": "Analysis"})
 ```
 
 ## Need Help?
 
-- [Documentation](../docs/README.md)
-- [Discord Community](https://discord.com/users/openbench.ai)
+- [Getting Started Guide](../docs/GETTING_STARTED.md)
+- [API Reference](../docs/API.md)
+- [Architecture Overview](../docs/ARCHITECTURE.md)
 - [GitHub Issues](https://github.com/ai-kitchen-inc/openbench/issues)
