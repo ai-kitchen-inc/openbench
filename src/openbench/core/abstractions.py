@@ -310,6 +310,90 @@ class Agent(ABC):
         return self.execute(context)
 
 
+class FrameworkAdapter(ABC):
+    """
+    Abstract interface for external agentic framework adapters.
+
+    OpenBench is a universal control plane - users can bring their own agents
+    from any framework (LangChain, Mastra, AG2, Google ADK, CrewAI, etc.)
+    without rewriting them.
+
+    FrameworkAdapter is Chainable (L1): Can be composed with other components.
+
+    To integrate your framework:
+    1. Inherit from FrameworkAdapter
+    2. Implement framework_name property
+    3. Implement invoke() method (wrap your framework's execution)
+
+    That's it! Your agents now work in OpenBench workflows.
+
+    Example:
+        ```python
+        from openbench.core import FrameworkAdapter
+        from langchain.agents import AgentExecutor
+
+        class LangChainAdapter(FrameworkAdapter):
+            framework_name = "langchain"
+
+            def __init__(self, runnable):
+                self.runnable = runnable
+
+            def invoke(self, input, config=None):
+                return self.runnable.invoke(input)
+
+        # Use in workflow
+        workflow = (
+            PDFSource("doc.pdf")
+            | LangChainAdapter(my_langchain_agent)
+            | PDFGenerator()
+        )
+        ```
+    """
+
+    @property
+    @abstractmethod
+    def framework_name(self) -> str:
+        """
+        Name of the framework this adapter wraps.
+
+        Examples: 'langchain', 'mastra', 'ag2', 'google_adk', 'crewai', 'e2b'
+        """
+        pass
+
+    @abstractmethod
+    def invoke(self, input: Any, config: Optional[Any] = None) -> Any:
+        """
+        Execute the wrapped agent/workflow from the external framework.
+
+        This is the only method you MUST implement. OpenBench handles
+        everything else (data ingestion, orchestration, state, outputs).
+
+        Args:
+            input: Input data (format depends on your framework)
+            config: Execution configuration (optional)
+
+        Returns:
+            Output from your framework (any format)
+        """
+        pass
+
+    async def ainvoke(self, input: Any, config: Optional[Any] = None) -> Any:
+        """
+        Async execution (optional).
+
+        Override this if your framework supports async execution.
+        Default implementation calls invoke() synchronously.
+
+        Args:
+            input: Input data
+            config: Execution configuration (optional)
+
+        Returns:
+            Output from your framework
+        """
+        return self.invoke(input, config)
+
+
 class LLMResponse:
     """Implementation-independent LLM response."""
 
