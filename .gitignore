@@ -372,6 +372,12 @@ $RECYCLE.BIN/
 # OpenBench Specific
 # ==========================================
 
+# Artifacts (implementation notes - not for commit)
+.artifacts/
+
+# Workflow state files
+workflow_state/
+
 # Data directories
 data/
 datasets/
