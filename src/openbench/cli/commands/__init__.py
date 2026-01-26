@@ -7,6 +7,7 @@ from openbench.cli.commands import (
     generate,
     init,
     models,
+    project,
     provider,
     tools,
     workflow,
@@ -22,4 +23,5 @@ __all__ = [
     "models",
     "config",
     "provider",
+    "project",
 ]

@@ -81,6 +81,14 @@ from openbench.core.config import (
     reset_config,
 )
 
+from openbench.core.context import (
+    ProjectContext,
+    ProjectRegistry,
+    generate_project_id,
+    get_project_registry,
+    reset_project_registry,
+)
+
 __all__ = [
     # Abstractions
     "DataSource",
@@ -146,4 +154,10 @@ __all__ = [
     "ModelInfo",
     "get_config",
     "reset_config",
+    # Context
+    "ProjectContext",
+    "ProjectRegistry",
+    "generate_project_id",
+    "get_project_registry",
+    "reset_project_registry",
 ]
