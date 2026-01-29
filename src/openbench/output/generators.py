@@ -115,54 +115,61 @@ class PDFGenerator(OutputGenerator):
         Returns:
             Extracted text content
         """
-        # Handle dict from IntelligenceLayer
-        if isinstance(content, dict):
-            # Check for content key from GoogleADKAdapter output
-            if "content" in content:
-                return str(content["content"])
+        if isinstance(content, str):
+            return content
 
-            # Check for intelligence_output
-            if "intelligence_output" in content:
-                output = content["intelligence_output"]
-                if isinstance(output, dict) and "content" in output:
-                    return str(output["content"])
-                if hasattr(output, "output"):
-                    return str(output.output)
-                return str(output)
-
-            # Check for raw_data
-            if "raw_data" in content:
-                raw = content["raw_data"]
-                if isinstance(raw, list):
-                    return "\n\n".join(
-                        str(item.content) if hasattr(item, "content") else str(item)
-                        for item in raw
-                    )
-                if hasattr(raw, "content"):
-                    return str(raw.content)
-                return str(raw)
-
-            # Convert dict to formatted text
-            parts = []
-            for key, value in content.items():
-                if key not in ("metadata", "tokens_used", "model"):
-                    parts.append(f"{key}:\n{value}")
-            return "\n\n".join(parts) if parts else str(content)
-
-        # Handle list
         if isinstance(content, list):
             return "\n".join(f"- {item}" for item in content)
 
-        # Handle objects with content attribute
         if hasattr(content, "content"):
             return str(content.content)
 
-        # Handle objects with output attribute
         if hasattr(content, "output"):
             return str(content.output)
 
-        # Fallback to string
-        return str(content)
+        if not isinstance(content, dict):
+            return str(content)
+
+        # Handle dict inputs from various layers
+        if "content" in content:
+            return str(content["content"])
+
+        if "intelligence_output" in content:
+            return self._extract_from_intelligence_output(content["intelligence_output"])
+
+        if "raw_data" in content:
+            return self._extract_from_raw_data(content["raw_data"])
+
+        # Convert remaining dict keys to formatted text
+        parts = [
+            f"{key}:\n{value}"
+            for key, value in content.items()
+            if key not in ("metadata", "tokens_used", "model")
+        ]
+        return "\n\n".join(parts) if parts else str(content)
+
+    def _extract_from_intelligence_output(self, output: Any) -> str:
+        """Extract content from intelligence_output field."""
+        if isinstance(output, dict) and "content" in output:
+            return str(output["content"])
+
+        if hasattr(output, "output"):
+            return str(output.output)
+
+        return str(output)
+
+    def _extract_from_raw_data(self, raw: Any) -> str:
+        """Extract content from raw_data field."""
+        if isinstance(raw, list):
+            return "\n\n".join(
+                str(item.content) if hasattr(item, "content") else str(item)
+                for item in raw
+            )
+
+        if hasattr(raw, "content"):
+            return str(raw.content)
+
+        return str(raw)
 
     def generate(
         self,
@@ -511,21 +518,8 @@ class MarkdownGenerator(OutputGenerator):
 
     def _extract_content(self, content: Any) -> str:
         """Extract text content from various input formats."""
-        # Handle dict from IntelligenceLayer
-        if isinstance(content, dict):
-            if "content" in content:
-                return str(content["content"])
-            if "intelligence_output" in content:
-                output = content["intelligence_output"]
-                if isinstance(output, dict) and "content" in output:
-                    return str(output["content"])
-                return str(output)
-            # Convert dict to markdown sections
-            parts = []
-            for key, value in content.items():
-                if key not in ("metadata", "tokens_used", "model"):
-                    parts.append(f"## {key}\n\n{value}")
-            return "\n\n".join(parts) if parts else str(content)
+        if isinstance(content, str):
+            return content
 
         if isinstance(content, list):
             return "\n".join(f"- {item}" for item in content)
@@ -533,7 +527,26 @@ class MarkdownGenerator(OutputGenerator):
         if hasattr(content, "content"):
             return str(content.content)
 
-        return str(content)
+        if not isinstance(content, dict):
+            return str(content)
+
+        # Handle dict inputs from various layers
+        if "content" in content:
+            return str(content["content"])
+
+        if "intelligence_output" in content:
+            output = content["intelligence_output"]
+            if isinstance(output, dict) and "content" in output:
+                return str(output["content"])
+            return str(output)
+
+        # Convert remaining dict keys to markdown sections
+        parts = [
+            f"## {key}\n\n{value}"
+            for key, value in content.items()
+            if key not in ("metadata", "tokens_used", "model")
+        ]
+        return "\n\n".join(parts) if parts else str(content)
 
     def generate(
         self,

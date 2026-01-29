@@ -594,20 +594,17 @@ class OutputGenerator(ABC):
         template = None
         options = {}
 
-        # Extract template and options from config if provided
+        # Extract template and options from config
         if config and isinstance(config, dict):
             template = config.get('template')
             options = {k: v for k, v in config.items() if k != 'template'}
 
-        # Extract output options from input dict if present
+        # Extract output options from input dict
         if isinstance(input, dict):
-            if 'output_path' in input:
-                options['output_path'] = input['output_path']
-            if 'title' in input:
-                options['title'] = input['title']
-            if 'author' in input:
-                options['author'] = input['author']
-            if 'template' in input and not template:
+            for key in ('output_path', 'title', 'author'):
+                if key in input:
+                    options[key] = input[key]
+            if not template and 'template' in input:
                 template = input['template']
 
         return self.generate(content=input, template=template, **options)

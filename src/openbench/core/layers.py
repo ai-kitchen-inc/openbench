@@ -9,6 +9,17 @@ from typing import Any, Dict, List, Optional, Union
 from openbench.core.chainable import Chainable, RunnableConfig
 from openbench.core.abstractions import DataSource, DataStore, Agent, OutputGenerator, RawData
 
+# Keys to preserve across layer boundaries
+PRESERVED_KEYS = ("goal", "output_path", "title", "author", "template")
+
+
+def _preserve_input_params(output: Dict[str, Any], input: Any) -> None:
+    """Copy workflow-level parameters from input to output."""
+    if isinstance(input, dict):
+        for key in PRESERVED_KEYS:
+            if key in input:
+                output[key] = input[key]
+
 
 class DataLayer(Chainable[Any, Dict[str, Any]]):
     """
@@ -98,12 +109,7 @@ class DataLayer(Chainable[Any, Dict[str, Any]]):
             }
         }
 
-        # Preserve workflow-level parameters from input
-        if isinstance(input, dict):
-            for key in ("goal", "output_path", "title", "author", "template"):
-                if key in input:
-                    output[key] = input[key]
-
+        _preserve_input_params(output, input)
         return output
 
 
@@ -163,12 +169,7 @@ class IntelligenceLayer(Chainable[Any, Dict[str, Any]]):
             }
         }
 
-        # Preserve workflow-level parameters from input
-        if isinstance(input, dict):
-            for key in ("goal", "output_path", "title", "author", "template"):
-                if key in input:
-                    output[key] = input[key]
-
+        _preserve_input_params(output, input)
         return output
 
 

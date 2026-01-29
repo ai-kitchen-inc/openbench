@@ -5,7 +5,7 @@ Provides two modes of operation:
 1. Wrap existing Google ADK agents (bring your own agent)
 2. Direct Gemini API integration (model-based)
 
-Supports Google Generative AI models: gemini-1.5-pro, gemini-1.5-flash, gemini-2.0-flash-exp
+Supports Google Generative AI models: gemini-2.5-flash, gemini-2.5-pro, gemini-3-flash-preview
 """
 
 import logging
@@ -34,7 +34,7 @@ class GoogleADKAdapter(FrameworkAdapter):
 
         # Create adapter with model
         adapter = GoogleADKAdapter(
-            model="gemini-1.5-pro",
+            model="gemini-2.5-flash",
             system_instruction="You are a document analyst."
         )
 
@@ -53,7 +53,7 @@ class GoogleADKAdapter(FrameworkAdapter):
         from google.adk import Agent
 
         # Your existing Google ADK agent
-        my_agent = Agent(name="analyst", model="gemini-pro")
+        my_agent = Agent(name="analyst", model="gemini-2.5-flash")
 
         # Wrap in adapter
         adapter = GoogleADKAdapter(agent=my_agent)
@@ -73,7 +73,7 @@ class GoogleADKAdapter(FrameworkAdapter):
         Initialize the Google ADK adapter.
 
         Args:
-            model: Gemini model name (e.g., "gemini-1.5-pro", "gemini-1.5-flash").
+            model: Gemini model name (e.g., "gemini-2.5-flash", "gemini-2.5-pro").
                    Required if agent is not provided.
             agent: Existing Google ADK Agent instance (optional).
                    If provided, model parameter is ignored.
@@ -156,64 +156,61 @@ class GoogleADKAdapter(FrameworkAdapter):
         Returns:
             Extracted text content
         """
-        # Handle dict from DataLayer
-        if isinstance(input, dict):
-            # Check for raw_data from DataLayer
-            if "raw_data" in input:
-                raw_data = input["raw_data"]
-                if isinstance(raw_data, list):
-                    contents = []
-                    for item in raw_data:
-                        if hasattr(item, "content"):
-                            contents.append(str(item.content))
-                        else:
-                            contents.append(str(item))
-                    return "\n\n".join(contents)
-                elif hasattr(raw_data, "content"):
-                    return str(raw_data.content)
-                else:
-                    return str(raw_data)
-
-            # Check for intelligence_output from previous IntelligenceLayer
-            if "intelligence_output" in input:
-                output = input["intelligence_output"]
-                if isinstance(output, dict) and "content" in output:
-                    return str(output["content"])
-                if hasattr(output, "output"):
-                    return str(output.output)
-                if hasattr(output, "content"):
-                    return str(output.content)
-                return str(output)
-
-            # Check for goal/query
-            if "goal" in input:
-                goal = input["goal"]
-                data = input.get("data", "")
-                if data:
-                    return f"{goal}\n\nData:\n{data}"
-                return goal
-
-            # Check for content key
-            if "content" in input:
-                return str(input["content"])
-
-            # Fallback: convert dict to string
-            return str(input)
-
-        # Handle RawData
-        if hasattr(input, "content"):
-            return str(input.content)
-
-        # Handle ExecutionResult
-        if hasattr(input, "output"):
-            return str(input.output)
-
-        # Handle string
         if isinstance(input, str):
             return input
 
-        # Fallback
+        if hasattr(input, "content"):
+            return str(input.content)
+
+        if hasattr(input, "output"):
+            return str(input.output)
+
+        if not isinstance(input, dict):
+            return str(input)
+
+        # Handle dict inputs from various layers
+        if "raw_data" in input:
+            return self._extract_from_raw_data(input["raw_data"])
+
+        if "intelligence_output" in input:
+            return self._extract_from_output(input["intelligence_output"])
+
+        if "goal" in input:
+            goal = input["goal"]
+            data = input.get("data", "")
+            return f"{goal}\n\nData:\n{data}" if data else goal
+
+        if "content" in input:
+            return str(input["content"])
+
         return str(input)
+
+    def _extract_from_raw_data(self, raw_data: Any) -> str:
+        """Extract content from raw_data field."""
+        if isinstance(raw_data, list):
+            contents = [
+                str(item.content) if hasattr(item, "content") else str(item)
+                for item in raw_data
+            ]
+            return "\n\n".join(contents)
+
+        if hasattr(raw_data, "content"):
+            return str(raw_data.content)
+
+        return str(raw_data)
+
+    def _extract_from_output(self, output: Any) -> str:
+        """Extract content from intelligence_output field."""
+        if isinstance(output, dict) and "content" in output:
+            return str(output["content"])
+
+        if hasattr(output, "output"):
+            return str(output.output)
+
+        if hasattr(output, "content"):
+            return str(output.content)
+
+        return str(output)
 
     def _build_prompt(self, content: str, goal: Optional[str] = None) -> str:
         """
