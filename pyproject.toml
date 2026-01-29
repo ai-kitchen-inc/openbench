@@ -64,6 +64,11 @@ intelligence = [
     "langchain>=0.1.0",
     "openai>=1.0.0",
     "anthropic>=0.18.0",
+    "google-generativeai>=0.8.0",
+]
+
+google = [
+    "google-generativeai>=0.8.0",
 ]
 
 output = [
@@ -78,7 +83,7 @@ security = [
 ]
 
 all = [
-    "openbench[dev,data,intelligence,output,security]"
+    "openbench[dev,data,intelligence,output,security,google]"
 ]
 
 [project.urls]

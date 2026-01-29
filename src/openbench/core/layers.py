@@ -64,6 +64,7 @@ class DataLayer(Chainable[Any, Dict[str, Any]]):
                 - raw_data: List of RawData from sources
                 - indexed_ids: IDs from indexing
                 - metadata: Layer execution metadata
+                - (preserved) goal, output_path, title, etc. from input
         """
         results = []
 
@@ -86,7 +87,7 @@ class DataLayer(Chainable[Any, Dict[str, Any]]):
                     item_id = store.index(result)
                     indexed_ids.append(item_id)
 
-        return {
+        output = {
             "raw_data": results,
             "indexed_ids": indexed_ids,
             "metadata": {
@@ -96,6 +97,14 @@ class DataLayer(Chainable[Any, Dict[str, Any]]):
                 "num_indexed": len(indexed_ids)
             }
         }
+
+        # Preserve workflow-level parameters from input
+        if isinstance(input, dict):
+            for key in ("goal", "output_path", "title", "author", "template"):
+                if key in input:
+                    output[key] = input[key]
+
+        return output
 
 
 class IntelligenceLayer(Chainable[Any, Dict[str, Any]]):
@@ -142,16 +151,25 @@ class IntelligenceLayer(Chainable[Any, Dict[str, Any]]):
             Dict containing:
                 - intelligence_output: Output from agents
                 - metadata: Layer execution metadata
+                - (preserved) goal, output_path, title, etc. from input
         """
         # Execute agent(s)
         result = self.agents.invoke(input, config)
 
-        return {
+        output = {
             "intelligence_output": result,
             "metadata": {
                 "layer": "intelligence"
             }
         }
+
+        # Preserve workflow-level parameters from input
+        if isinstance(input, dict):
+            for key in ("goal", "output_path", "title", "author", "template"):
+                if key in input:
+                    output[key] = input[key]
+
+        return output
 
 
 class OutputLayer(Chainable[Any, Dict[str, Any]]):

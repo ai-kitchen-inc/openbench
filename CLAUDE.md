@@ -20,6 +20,62 @@ Guidance for Claude Code when working with this repository.
 4. Two-Level Orchestration (L1 components, L2 layers)
 5. DAG Workflows
 
+## Positioning & Classification
+
+**OpenBench is a Workflow Orchestrator + Universal Control Plane for Agentic AI.**
+
+It is NOT an agent itself, but a platform for coordinating agents from various frameworks.
+
+### What OpenBench IS
+
+| Role | Description |
+|------|-------------|
+| **Workflow Orchestrator** | Compose steps with `\|` and `&` operators |
+| **Universal Control Plane** | Connect any framework via adapters |
+| **Data Pipeline** | ETL for AI (Extract -> Transform -> Load) |
+| **Multi-Agent Coordinator** | Chain multiple agents from different frameworks |
+
+### What OpenBench is NOT
+
+| Not This | Because |
+|----------|---------|
+| **LLM Agent** | Does not execute reasoning, only orchestrates |
+| **Agent Framework** | Does not compete with LangChain/CrewAI, connects them |
+| **Agentic AI** | Not autonomous, user defines workflow |
+
+### AI Systems Taxonomy
+
+```
+Level 1: LLM (Base Model)
+         └── GPT-4, Claude, Gemini - text in, text out
+
+Level 2: LLM Agent (Single Agent)
+         └── LLM + Tools + Memory + Reasoning Loop
+         └── Frameworks: LangChain Agent, Google ADK Agent
+
+Level 3: Multi-Agent System (Agentic AI)
+         └── Multiple LLM Agents collaborating
+         └── Examples: CrewAI crews, AutoGen teams
+
+Level 4: Workflow Orchestrator  <-- OPENBENCH
+         └── Coordinates agents + data + outputs
+         └── Framework agnostic, DAG-based composition
+
+Level 5: AI Platform
+         └── Full infrastructure (compute, storage, monitoring)
+         └── Examples: AWS Bedrock, Google Vertex AI
+```
+
+### Analogy
+
+OpenBench is like **"Kubernetes for AI Agents"** - it handles coordination, not execution.
+
+| System | Role |
+|--------|------|
+| **Kubernetes** | Orchestrates containers, doesn't run code |
+| **Airflow** | Orchestrates tasks, doesn't process data |
+| **OpenBench** | Orchestrates AI agents, doesn't do reasoning |
+
 ## Project Structure
 
 ```
