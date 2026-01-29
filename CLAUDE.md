@@ -104,7 +104,7 @@ openbench/
 │   │   ├── main.py              # CLI entry point
 │   │   └── commands/            # CLI command groups (init, data, agent, workflow, provider, models)
 │   └── utils/                   # Utilities
-├── tests/                       # Test suite (194 tests)
+├── tests/                       # Test suite (320 tests)
 ├── examples/                    # Example workflows
 ├── docs/                        # Documentation
 ├── pyproject.toml               # Python project configuration
@@ -142,6 +142,9 @@ result = workflow.run({"project": "Q1 2026"})
 ## Build and Development
 
 ```bash
+# Use Python 3.12 environment
+conda activate py312
+
 # Install
 pip install -e .                 # Core
 pip install -e ".[all]"          # All features
@@ -152,14 +155,37 @@ python -m unittest discover tests -v
 pytest tests/ --cov=openbench
 
 # Examples
-python examples/sustainability_report.py
-python examples/core_abstractions_demo.py
+python examples/workflows/sustainability_report.py
+python examples/core/core_abstractions_demo.py
 
 # Code quality
 black src/ tests/ examples/
 ruff check src/ tests/
 mypy src/openbench/
 ```
+
+## Examples Structure
+
+```
+examples/
+├── core/           # Core abstractions and orchestration demos
+├── adapters/       # Framework adapter examples
+└── workflows/      # Complete E2E workflow examples
+```
+
+## Google Model References
+
+Use newer model names (minimum 2.5 series):
+- `gemini-2.5-flash` - Fast, cost-effective
+- `gemini-2.5-pro` - Balanced performance
+- `gemini-3-flash-preview` - Latest preview
+
+Avoid outdated: `gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-2.0-flash-exp`
+
+## Git Conventions
+
+- Commits without Claude watermark (no `Co-Authored-By`)
+- Use conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`
 
 ## Development Guidelines
 
