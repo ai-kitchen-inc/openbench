@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class CredentialEncryption:
             return value
 
     def _transform_dict(
-        self, data: Dict[str, Any], transform_fn: callable
+        self, data: Dict[str, Any], transform_fn: Callable[[str], str]
     ) -> Dict[str, Any]:
         """Apply a transform function to all string values in a dictionary."""
         result = {}

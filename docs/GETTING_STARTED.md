@@ -65,7 +65,7 @@ result = workflow.invoke({"query": "analyze sustainability"})
 
 ```bash
 python examples/core_abstractions_demo.py      # Core abstractions, registry, composition
-python examples/l1_l2_orchestration_demo.py    # L1/L2 two-level composition
+python examples/orchestration_demo.py          # L1/L2 two-level composition
 python examples/sustainability_report.py       # Complete E2E workflow
 ```
 
@@ -231,7 +231,7 @@ rm -rf workflow_state/
 ## Next Steps
 
 - [API Reference](API.md)
-- [Architecture](ARCHITECTURE.md)
+- [Architecture](architecture.md)
 - [Examples](../examples/)
 - [Discord](https://discord.com/users/openbench.ai)
 - [GitHub](https://github.com/ai-kitchen-inc/openbench)

@@ -3,15 +3,15 @@ Framework-Agnostic Agent Interface for OpenBench.
 
 Provides:
 - BaseAgent: Framework-agnostic agent implementation
+- SimpleAgent: Agent without tool use
+- StructuredOutputAgent: Agent that outputs structured JSON
 - ToolExecutor: Unified tool execution interface
 - AgentMemory: Conversation and context memory
-- AgentRunner: Execution engine for agents
 
 This decouples agents from specific frameworks (Mastra, LangChain, etc.)
 while maintaining compatibility with any LLM provider.
 """
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -25,7 +25,7 @@ from openbench.core.abstractions import (
     LLMProvider,
     Tool,
 )
-from openbench.core.config import get_config, ModelInfo
+from openbench.core.config import get_config
 from openbench.core.providers import ProviderType, get_provider_service
 
 logger = logging.getLogger(__name__)
@@ -336,6 +336,8 @@ Provide clear, actionable responses."""
         total_tokens = 0
         total_cost = 0.0
         iterations = 0
+        tool_calls: List[Dict[str, Any]] = []
+        response = None
 
         try:
             llm = self._get_llm()
@@ -375,8 +377,8 @@ Provide clear, actionable responses."""
                     self.memory.add_tool_result(tc["id"], tc["name"], result_str)
 
             return ExecutionResult(
-                output=response.text,
-                status="completed",
+                output=response.text if response else None,
+                status="completed" if response else "no_iterations",
                 metadata={
                     "iterations": iterations,
                     "model": self.model,
