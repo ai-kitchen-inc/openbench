@@ -14,6 +14,7 @@ This skill is auto-invoked when working with workflow composition, DAG patterns,
 - Working with Chain, Parallel, Conditional, Router
 - L1 component composition
 - L2 layer composition
+- Using FrameworkAdapters in workflows
 - State management and checkpointing
 
 ## Core Patterns
@@ -73,6 +74,54 @@ workflow = Router(
         "html": html_generator,
     },
     default=pdf_generator
+)
+```
+
+## Using Framework Adapters
+
+OpenBench is a universal control plane - bring agents from ANY framework:
+
+```python
+from openbench.core import DataLayer, IntelligenceLayer, OutputLayer
+from openbench.adapters import GoogleADKAdapter, LangChainAdapter
+from openbench.data.sources import PDFSource
+from openbench.output.generators import PDFGenerator
+
+# Wrap existing Google Gemini
+google_adapter = GoogleADKAdapter(
+    model="gemini-1.5-pro",
+    system_instruction="You are a document analyst."
+)
+
+# Or wrap your LangChain agent
+langchain_adapter = LangChainAdapter(my_langchain_agent)
+
+# Use in workflow - same pattern regardless of framework
+workflow = (
+    DataLayer(sources=PDFSource("doc.pdf"))
+    | IntelligenceLayer(agents=google_adapter)
+    | OutputLayer(generators=PDFGenerator())
+)
+
+result = workflow.invoke({"goal": "Summarize this document"})
+```
+
+### Mixed Framework Workflows
+
+Combine agents from different frameworks in one workflow:
+
+```python
+from openbench.adapters import GoogleADKAdapter, LangChainAdapter, CrewAIAdapter
+
+# Research with Google Gemini, Analysis with LangChain, Content with CrewAI
+workflow = (
+    DataLayer(sources=sources)
+    | IntelligenceLayer(agents=(
+        GoogleADKAdapter(model="gemini-pro")      # Research
+        | LangChainAdapter(analysis_agent)         # Analysis
+        | CrewAIAdapter(content_crew)              # Content
+    ))
+    | OutputLayer(generators=pdf_gen)
 )
 ```
 

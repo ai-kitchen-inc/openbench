@@ -15,6 +15,9 @@ Run the OpenBench test suite.
 - `chainable` - Run chainable composition tests only
 - `layers` - Run L2 layer tests only
 - `workflow` - Run workflow tests only
+- `google_adk` - Run Google ADK adapter tests only
+- `pdf_generator` - Run PDF generator tests only
+- `e2e` - Run E2E workflow tests only
 - `coverage` - Run with coverage report
 
 ## Instructions
@@ -31,6 +34,9 @@ python -m unittest tests.test_abstractions -v
 python -m unittest tests.test_chainable -v
 python -m unittest tests.test_layers -v
 python -m unittest tests.test_workflow -v
+python -m unittest tests.test_google_adk_adapter -v
+python -m unittest tests.test_pdf_generator -v
+python -m unittest tests.test_pdf_workflow_e2e -v
 
 # With coverage (requires pytest-cov)
 pytest tests/ --cov=openbench --cov-report=term-missing

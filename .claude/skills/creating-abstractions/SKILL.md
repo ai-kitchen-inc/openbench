@@ -13,7 +13,9 @@ This skill is auto-invoked when implementing new components that extend OpenBenc
 - Implementing Agent subclasses
 - Implementing OutputGenerator subclasses
 - Implementing DataStore subclasses
+- Implementing FrameworkAdapter subclasses
 - Implementing LLMProvider subclasses
+- Implementing Tool subclasses
 - Working with the Registry pattern
 
 ## Abstract Base Classes
@@ -197,6 +199,100 @@ class MyDataStore(DataStore):
     def update(self, item_id: str, data: Any) -> bool:
         """Update item by ID."""
         pass
+```
+
+### FrameworkAdapter
+
+Wrap external AI frameworks (LangChain, CrewAI, AG2, Google ADK, etc.):
+
+```python
+from openbench.core import FrameworkAdapter
+
+class MyFrameworkAdapter(FrameworkAdapter):
+    """Adapter for MyFramework agents."""
+
+    def __init__(self, agent: Any):
+        self.agent = agent
+
+    @property
+    def framework_name(self) -> str:
+        """Name of the wrapped framework."""
+        return "my-framework"
+
+    def invoke(self, input: Any, config: Optional[Any] = None) -> Any:
+        """Execute the wrapped agent."""
+        # Call your framework's execution method
+        return self.agent.run(input)
+
+    async def ainvoke(self, input: Any, config: Optional[Any] = None) -> Any:
+        """Async execution (optional)."""
+        return await self.agent.arun(input)
+```
+
+**Key Point:** FrameworkAdapter is the minimal interface for integrating ANY external framework. Users bring their own agents without rewriting them.
+
+### LLMProvider
+
+Integrate LLM providers (OpenAI, Anthropic, local models, etc.):
+
+```python
+from openbench.core import LLMProvider, LLMResponse
+
+class MyLLMProvider(LLMProvider):
+    """Custom LLM provider."""
+
+    @property
+    def provider_name(self) -> str:
+        return "my-provider"
+
+    def generate(self, prompt: str, model: str, **params) -> LLMResponse:
+        """Generate text from prompt."""
+        response = self._call_api(prompt, model, **params)
+        return LLMResponse(
+            text=response.text,
+            model=model,
+            tokens_used=response.tokens,
+            cost=self._calculate_cost(response.tokens),
+            metadata={}
+        )
+
+    def embed(self, text: str, model: Optional[str] = None) -> List[float]:
+        """Generate embedding vector."""
+        return self._call_embed_api(text, model)
+```
+
+### Tool
+
+Create tools for agents:
+
+```python
+from openbench.core import Tool
+
+class MyTool(Tool):
+    """Custom tool for agents."""
+
+    @property
+    def name(self) -> str:
+        return "my-tool"
+
+    @property
+    def description(self) -> str:
+        return "Does something useful"
+
+    def execute(self, **params) -> Any:
+        """Execute the tool."""
+        return self._do_something(**params)
+
+    def get_schema(self) -> Dict[str, Any]:
+        """Return JSON schema for tool parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "param1": {"type": "string", "description": "First parameter"},
+                "param2": {"type": "integer", "description": "Second parameter"}
+            },
+            "required": ["param1"]
+        }
 ```
 
 ## Registry Pattern
