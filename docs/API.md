@@ -289,7 +289,7 @@ class SearchResult:
 Interface for AI agents.
 
 ```python
-class Agent(ABC, Chainable):
+class Agent(ABC):
     """Interface for AI agents (Research, Analysis, Content)."""
 
     @property
@@ -309,12 +309,24 @@ class Agent(ABC, Chainable):
         pass
 
     def invoke(self, input: Any, config=None) -> "ExecutionResult":
-        context = ExecutionContext(
-            goal=input.get("goal", ""),
-            data_layer=input.get("data_layer"),
-            tools=[],
-            memory=None
-        )
+        """Chainable invoke method - handles various input types."""
+        # Handle ExecutionContext directly
+        if isinstance(input, ExecutionContext):
+            return self.execute(input)
+
+        # Handle dict with goal key
+        if isinstance(input, dict) and "goal" in input:
+            context = ExecutionContext(
+                goal=input["goal"],
+                data=input.get("data"),
+                tools=input.get("tools"),
+                memory=input.get("memory"),
+                constraints=input.get("constraints")
+            )
+            return self.execute(context)
+
+        # Fallback: use input as goal
+        context = ExecutionContext(goal=str(input), data=input)
         return self.execute(context)
 ```
 
@@ -326,14 +338,14 @@ class ExecutionContext:
     def __init__(
         self,
         goal: str,
-        data_layer: Any,
-        tools: List["Tool"],
-        memory: Optional["Memory"] = None,
+        data: Optional[Any] = None,
+        tools: Optional[List["Tool"]] = None,
+        memory: Optional[Any] = None,
         constraints: Optional[Dict[str, Any]] = None
     ):
         self.goal = goal
-        self.data_layer = data_layer
-        self.tools = tools
+        self.data = data
+        self.tools = tools or []
         self.memory = memory
         self.constraints = constraints or {}
 ```
@@ -1091,7 +1103,7 @@ print(f"Generated: {result['generated_outputs'][0].file_path}")
 ## Next Steps
 
 - **Get Started**: [docs/GETTING_STARTED.md](GETTING_STARTED.md)
-- **Understand Architecture**: [docs/ARCHITECTURE.md](ARCHITECTURE.md)
+- **Understand Architecture**: [docs/architecture.md](architecture.md)
 - **See Examples**: Run the examples in `examples/`
 - **Join Community**: [Discord](https://discord.com/users/openbench.ai)
 
