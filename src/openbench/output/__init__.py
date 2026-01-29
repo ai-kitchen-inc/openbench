@@ -12,6 +12,7 @@ from openbench.output.generators import (
     PowerPointGenerator,
     DashboardGenerator,
     AudioGenerator,
+    MarkdownGenerator,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "PowerPointGenerator",
     "DashboardGenerator",
     "AudioGenerator",
+    "MarkdownGenerator",
 ]

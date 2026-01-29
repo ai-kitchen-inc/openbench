@@ -2,9 +2,24 @@
 
 This directory contains production-ready examples demonstrating OpenBench's composable abstractions and workflow patterns.
 
-## Examples
+## Directory Structure
 
-### 1. Core Abstractions Demo (`core_abstractions_demo.py`)
+```
+examples/
+├── core/                    # Core concepts and abstractions
+│   ├── core_abstractions_demo.py
+│   └── orchestration_demo.py
+├── adapters/                # Framework adapter examples
+│   └── framework_adapters_demo.py
+├── workflows/               # Complete end-to-end workflows
+│   ├── pdf_google_adk_workflow.py
+│   └── sustainability_report.py
+└── README.md
+```
+
+## Core Examples (`core/`)
+
+### 1. Core Abstractions Demo (`core/core_abstractions_demo.py`)
 
 Demonstrates the foundational Chainable abstractions and composition patterns:
 - Custom DataSource, Agent, and OutputGenerator implementations
@@ -19,10 +34,10 @@ Demonstrates the foundational Chainable abstractions and composition patterns:
 
 **Run it:**
 ```bash
-python examples/core_abstractions_demo.py
+python examples/core/core_abstractions_demo.py
 ```
 
-### 2. L1/L2 Orchestration Demo (`orchestration_demo.py`)
+### 2. L1/L2 Orchestration Demo (`core/orchestration_demo.py`)
 
 Shows two-level composition: components (L1) into systems (L2):
 - L1 component composition: `source1 | source2`
@@ -33,26 +48,12 @@ Shows two-level composition: components (L1) into systems (L2):
 
 **Run it:**
 ```bash
-python examples/orchestration_demo.py
+python examples/core/orchestration_demo.py
 ```
 
-### 3. Sustainability Report (`sustainability_report.py`)
+## Adapter Examples (`adapters/`)
 
-Complete real-world example generating ESG/sustainability reports:
-- Parallel data extraction from multiple sources (PDF & API & CSV)
-- Sequential multi-agent processing (Research → Analysis → Content)
-- Parallel output generation (PDF & PowerPoint)
-- Named workflow with state management and checkpointing
-- Complete end-to-end demonstration
-
-**Use case:** Sustainability consultants, ESG analysts
-
-**Run it:**
-```bash
-python examples/sustainability_report.py
-```
-
-### 4. Framework Adapters Demo (`framework_adapters_demo.py`)
+### 3. Framework Adapters Demo (`adapters/framework_adapters_demo.py`)
 
 Demonstrates OpenBench as a universal control plane for multiple AI frameworks:
 - FrameworkAdapter: Minimal interface for integrating any framework
@@ -65,7 +66,54 @@ Demonstrates OpenBench as a universal control plane for multiple AI frameworks:
 
 **Run it:**
 ```bash
-python examples/framework_adapters_demo.py
+python examples/adapters/framework_adapters_demo.py
+```
+
+## Workflow Examples (`workflows/`)
+
+### 4. PDF → Google ADK → PDF Workflow (`workflows/pdf_google_adk_workflow.py`)
+
+Complete end-to-end workflow demonstrating:
+- PDF text extraction with PDFSource
+- AI processing with Google Gemini via GoogleADKAdapter
+- PDF/Markdown output generation
+- Three-layer architecture in action
+
+**Requirements:**
+```bash
+pip install openbench[google,output]
+export GOOGLE_API_KEY=your-api-key  # Get from https://aistudio.google.com/apikey
+```
+
+**Run it:**
+```bash
+# Basic PDF to PDF workflow
+python examples/workflows/pdf_google_adk_workflow.py input.pdf output.pdf
+
+# With custom goal
+python examples/workflows/pdf_google_adk_workflow.py input.pdf output.pdf --goal "Summarize key points"
+
+# Output to Markdown
+python examples/workflows/pdf_google_adk_workflow.py input.pdf output.md --format markdown
+
+# Named workflow with checkpointing
+python examples/workflows/pdf_google_adk_workflow.py input.pdf output.pdf --workflow named
+```
+
+### 5. Sustainability Report (`workflows/sustainability_report.py`)
+
+Complete real-world example generating ESG/sustainability reports:
+- Parallel data extraction from multiple sources (PDF & API & CSV)
+- Sequential multi-agent processing (Research → Analysis → Content)
+- Parallel output generation (PDF & PowerPoint)
+- Named workflow with state management and checkpointing
+- Complete end-to-end demonstration
+
+**Use case:** Sustainability consultants, ESG analysts
+
+**Run it:**
+```bash
+python examples/workflows/sustainability_report.py
 ```
 
 ## Creating Your Own Workflow
