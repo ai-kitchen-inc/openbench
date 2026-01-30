@@ -380,6 +380,7 @@ workflow_state/
 
 # Data directories
 data/
+!src/openbench/data/
 datasets/
 uploads/
 downloads/
