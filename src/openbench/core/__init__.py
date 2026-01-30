@@ -78,6 +78,7 @@ from openbench.core.config import (
     Config,
     ModelInfo,
     get_config,
+    get_default_model,
     reset_config,
 )
 
@@ -153,6 +154,7 @@ __all__ = [
     "Config",
     "ModelInfo",
     "get_config",
+    "get_default_model",
     "reset_config",
     # Context
     "ProjectContext",

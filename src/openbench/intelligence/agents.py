@@ -15,7 +15,7 @@ class ResearchAgent(BaseAgent):
         sources: Optional[List[str]] = None,
         depth: str = "standard",
         tools: Optional[List[Union[Tool, Callable]]] = None,
-        model: str = "gpt-4o",
+        model: Optional[str] = None,
         **kwargs
     ):
         # Build research-specific system prompt
@@ -54,7 +54,7 @@ class AnalysisAgent(BaseAgent):
         goal: str,
         methods: Optional[List[str]] = None,
         tools: Optional[List[Union[Tool, Callable]]] = None,
-        model: str = "gpt-4o",
+        model: Optional[str] = None,
         **kwargs
     ):
         methods_list = methods or ["statistical", "trend_detection"]
@@ -92,7 +92,7 @@ class ContentAgent(BaseAgent):
         style: str = "professional",
         length: Optional[str] = None,
         tools: Optional[List[Union[Tool, Callable]]] = None,
-        model: str = "gpt-4o",
+        model: Optional[str] = None,
         **kwargs
     ):
         length_instruction = f"Target length: {length}" if length else "Appropriate length for the content type"
@@ -131,7 +131,7 @@ class ActionAgent(BaseAgent):
         goal: str,
         actions: Optional[List[Dict]] = None,
         tools: Optional[List[Union[Tool, Callable]]] = None,
-        model: str = "gpt-4o",
+        model: Optional[str] = None,
         **kwargs
     ):
         actions_desc = "\n".join([f"- {a.get('name', 'action')}: {a.get('description', '')}" for a in (actions or [])])
@@ -168,7 +168,7 @@ class MetaAgent(BaseAgent):
         goal: str,
         available_agents: Optional[List[str]] = None,
         tools: Optional[List[Union[Tool, Callable]]] = None,
-        model: str = "gpt-4o",
+        model: Optional[str] = None,
         **kwargs
     ):
         agents_list = available_agents or []
