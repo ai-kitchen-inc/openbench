@@ -2,7 +2,7 @@
 
 Complete technical reference for all OpenBench abstractions and APIs.
 
-**Last Updated**: 2026-01-24
+**Last Updated**: 2026-01-25
 
 ---
 
@@ -57,15 +57,16 @@ Complete technical reference for all OpenBench abstractions and APIs.
 | `StateStore` | Persist workflow state | ✅ Implemented |
 | `LocalStateStore` | File-based state storage | ✅ Implemented |
 
----
+### Provider Service & Configuration
 
-## Design Principles
-
-1. **Implementation Independence**: Abstractions never expose implementation details
-2. **Composition Over Configuration**: Build workflows by composing components
-3. **Registry Pattern**: All implementations registered and created via factories
-4. **Chainable Everything**: Every component implements Chainable interface
-5. **Type Safety**: Strong typing with clear contracts
+| Component | Purpose | Status |
+|-----------|---------|--------|
+| `ProviderService` | Centralized provider configuration | ✅ Implemented |
+| `ProviderConfig` | Provider configuration dataclass | ✅ Implemented |
+| `ProviderType` | Provider type enum (LLM, VECTOR, etc.) | ✅ Implemented |
+| `CredentialEncryption` | Encrypt credentials at rest | ✅ Implemented |
+| `Config` | Single source of truth for config | ✅ Implemented |
+| `ModelInfo` | LLM model metadata registry | ✅ Implemented |
 
 ---
 
@@ -73,35 +74,18 @@ Complete technical reference for all OpenBench abstractions and APIs.
 
 ### Chainable
 
-The foundation of all OpenBench components.
+Foundation of all OpenBench components.
 
 ```python
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 class Chainable(ABC):
-    """
-    Base interface for all chainable components.
-
-    Compatible with LangChain's Runnable interface.
-    """
+    """Base interface for all chainable components."""
 
     @abstractmethod
-    def invoke(
-        self,
-        input: Any,
-        config: Optional["RunnableConfig"] = None
-    ) -> Any:
-        """
-        Execute this chainable component.
-
-        Args:
-            input: Input data
-            config: Optional runtime configuration
-
-        Returns:
-            Output data
-        """
+    def invoke(self, input: Any, config: Optional["RunnableConfig"] = None) -> Any:
+        """Execute this component."""
         pass
 
     def __or__(self, other: "Chainable") -> "Chain":
@@ -131,7 +115,7 @@ result = workflow.invoke(input_data)
 
 ### DataSource
 
-Abstract interface for extracting data from any source.
+Interface for extracting data from any source.
 
 ```python
 from abc import ABC, abstractmethod
@@ -139,11 +123,7 @@ from typing import Dict, Any
 from datetime import datetime
 
 class DataSource(ABC, Chainable):
-    """
-    Abstract interface for any data source.
-
-    Implementations: PDF, YouTube, Google Docs, APIs, etc.
-    """
+    """Interface for any data source (PDF, YouTube, APIs, etc.)."""
 
     @property
     @abstractmethod
@@ -154,36 +134,25 @@ class DataSource(ABC, Chainable):
     @property
     @abstractmethod
     def source_id(self) -> str:
-        """Unique identifier for this data source"""
+        """Unique identifier for this source"""
         pass
 
     @abstractmethod
     def get_metadata(self) -> Dict[str, Any]:
-        """
-        Get metadata about the data source.
-
-        Returns:
-            Dict with keys: title, author, created_at, size, etc.
-        """
+        """Return metadata dict (title, author, size, etc.)"""
         pass
 
     @abstractmethod
     def extract(self) -> "RawData":
-        """
-        Extract raw data from the source.
-
-        Returns:
-            RawData object containing extracted content
-        """
+        """Extract and return RawData from the source"""
         pass
 
     @abstractmethod
     def validate(self) -> bool:
-        """Validate that the data source is accessible"""
+        """Validate source is accessible"""
         pass
 
     def invoke(self, input: Any, config=None) -> "RawData":
-        """Chainable interface - calls extract()"""
         return self.extract()
 ```
 
@@ -237,65 +206,41 @@ class PDFDataSource(DataSource):
 
 ### DataStore
 
-Abstract interface for storing and searching data.
+Interface for storing and searching data.
 
 ```python
-from abc import ABC, abstractmethod
-from typing import Optional, List, Any
-
 class DataStore(ABC):
-    """
-    Abstract interface for data storage.
-
-    Implementations: Vector DBs, SQL, Search Engines, etc.
-    """
+    """Interface for data storage (Vector DBs, SQL, Search Engines)."""
 
     @property
     @abstractmethod
     def store_type(self) -> str:
-        """Type of store ('vector', 'sql', 'search')"""
+        """Type: 'vector', 'sql', 'search'"""
         pass
 
     @abstractmethod
     def index(self, data: RawData, **options) -> str:
-        """
-        Index/store data.
-
-        Args:
-            data: RawData to index
-            **options: Implementation-specific options
-
-        Returns:
-            Unique ID of indexed data
-        """
+        """Index data, return unique ID"""
         pass
 
     @abstractmethod
     def search(self, query: "Query") -> "SearchResult":
-        """
-        Search the data store.
-
-        Args:
-            query: Query object
-
-        Returns:
-            SearchResult with matched items
-        """
+        """Search and return matched items"""
         pass
 
     @abstractmethod
     def get(self, item_id: str) -> Optional[Any]:
-        """Retrieve specific item by ID"""
+        """Retrieve item by ID"""
         pass
 
     @abstractmethod
     def delete(self, item_id: str) -> bool:
-        """Delete item from store"""
+        """Delete item"""
         pass
 
     @abstractmethod
     def update(self, item_id: str, data: Any) -> bool:
-        """Update existing item"""
+        """Update item"""
         pass
 ```
 
@@ -341,51 +286,47 @@ class SearchResult:
 
 ### Agent
 
-Abstract interface for AI agents.
+Interface for AI agents.
 
 ```python
-from abc import ABC, abstractmethod
-from typing import Any, Dict
-
-class Agent(ABC, Chainable):
-    """
-    Abstract interface for AI agents.
-
-    Implementations: Research, Analysis, Content, etc.
-    """
+class Agent(ABC):
+    """Interface for AI agents (Research, Analysis, Content)."""
 
     @property
     @abstractmethod
     def agent_type(self) -> str:
-        """Type of agent ('research', 'analysis', 'content')"""
+        """Type: 'research', 'analysis', 'content'"""
         pass
 
     @abstractmethod
     def execute(self, context: "ExecutionContext") -> "ExecutionResult":
-        """
-        Execute the agent's task.
-
-        Args:
-            context: Execution context with data and config
-
-        Returns:
-            ExecutionResult with agent output
-        """
+        """Execute task and return result"""
         pass
 
     @abstractmethod
     def estimate_cost(self, context: "ExecutionContext") -> float:
-        """Estimate cost of execution in USD"""
+        """Estimate cost in USD"""
         pass
 
     def invoke(self, input: Any, config=None) -> "ExecutionResult":
-        """Chainable interface - calls execute()"""
-        context = ExecutionContext(
-            goal=input.get("goal", ""),
-            data_layer=input.get("data_layer"),
-            tools=[],
-            memory=None
-        )
+        """Chainable invoke method - handles various input types."""
+        # Handle ExecutionContext directly
+        if isinstance(input, ExecutionContext):
+            return self.execute(input)
+
+        # Handle dict with goal key
+        if isinstance(input, dict) and "goal" in input:
+            context = ExecutionContext(
+                goal=input["goal"],
+                data=input.get("data"),
+                tools=input.get("tools"),
+                memory=input.get("memory"),
+                constraints=input.get("constraints")
+            )
+            return self.execute(context)
+
+        # Fallback: use input as goal
+        context = ExecutionContext(goal=str(input), data=input)
         return self.execute(context)
 ```
 
@@ -397,14 +338,14 @@ class ExecutionContext:
     def __init__(
         self,
         goal: str,
-        data_layer: Any,
-        tools: List["Tool"],
-        memory: Optional["Memory"] = None,
+        data: Optional[Any] = None,
+        tools: Optional[List["Tool"]] = None,
+        memory: Optional[Any] = None,
         constraints: Optional[Dict[str, Any]] = None
     ):
         self.goal = goal
-        self.data_layer = data_layer
-        self.tools = tools
+        self.data = data
+        self.tools = tools or []
         self.memory = memory
         self.constraints = constraints or {}
 ```
@@ -431,51 +372,25 @@ class ExecutionResult:
 
 ### LLMProvider
 
-Abstract interface for LLM providers.
+Interface for LLM providers.
 
 ```python
-from abc import ABC, abstractmethod
-from typing import List, Optional
-
 class LLMProvider(ABC):
-    """
-    Abstract interface for LLM providers.
-
-    Implementations: OpenAI, Anthropic, local models, etc.
-    """
+    """Interface for LLM providers (OpenAI, Anthropic, local)."""
 
     @property
     @abstractmethod
     def provider_name(self) -> str:
-        """Provider name ('openai', 'anthropic', etc.)"""
+        """Provider name: 'openai', 'anthropic', etc."""
         pass
 
     @abstractmethod
-    def generate(
-        self,
-        prompt: str,
-        model: str,
-        **params
-    ) -> "LLMResponse":
-        """
-        Generate text from prompt.
-
-        Args:
-            prompt: Input prompt
-            model: Model identifier
-            **params: Model-specific parameters
-
-        Returns:
-            LLMResponse with generated text
-        """
+    def generate(self, prompt: str, model: str, **params) -> "LLMResponse":
+        """Generate text from prompt"""
         pass
 
     @abstractmethod
-    def embed(
-        self,
-        text: str,
-        model: Optional[str] = None
-    ) -> List[float]:
+    def embed(self, text: str, model: Optional[str] = None) -> List[float]:
         """Generate embedding vector"""
         pass
 ```
@@ -486,44 +401,21 @@ class LLMProvider(ABC):
 
 ### OutputGenerator
 
-Abstract interface for output generation.
+Interface for output generation.
 
 ```python
-from abc import ABC, abstractmethod
-from typing import Any, Optional, Dict
-from datetime import datetime
-
 class OutputGenerator(ABC, Chainable):
-    """
-    Abstract interface for output generation.
-
-    Implementations: PDF, PowerPoint, Audio, Dashboard, etc.
-    """
+    """Interface for output generation (PDF, PowerPoint, Audio)."""
 
     @property
     @abstractmethod
     def output_format(self) -> str:
-        """Output format ('pdf', 'pptx', 'audio', etc.)"""
+        """Format: 'pdf', 'pptx', 'audio', etc."""
         pass
 
     @abstractmethod
-    def generate(
-        self,
-        content: Any,
-        template: Optional[str] = None,
-        **options
-    ) -> "GeneratedOutput":
-        """
-        Generate output.
-
-        Args:
-            content: Content to render
-            template: Template to use
-            **options: Format-specific options
-
-        Returns:
-            GeneratedOutput with file path
-        """
+    def generate(self, content: Any, template: Optional[str] = None, **options) -> "GeneratedOutput":
+        """Generate output and return GeneratedOutput"""
         pass
 
     @abstractmethod
@@ -532,7 +424,6 @@ class OutputGenerator(ABC, Chainable):
         pass
 
     def invoke(self, input: Any, config=None) -> "GeneratedOutput":
-        """Chainable interface - calls generate()"""
         return self.generate(input)
 ```
 
@@ -575,13 +466,12 @@ Execute steps sequentially: A → B → C
 
 ```python
 class Chain(Chainable):
-    """Sequential chain of chainables."""
+    """Sequential execution."""
 
     def __init__(self, steps: List[Chainable]):
         self.steps = steps
 
     def invoke(self, input: Any, config=None) -> Any:
-        """Execute steps sequentially"""
         current = input
         for step in self.steps:
             current = step.invoke(current, config)
@@ -605,23 +495,16 @@ Execute steps concurrently: [A, B, C]
 
 ```python
 class Parallel(Chainable):
-    """Parallel execution of chainables."""
+    """Concurrent execution."""
 
     def __init__(self, branches: List[Chainable]):
         self.branches = branches
 
     def invoke(self, input: Any, config=None) -> List[Any]:
-        """Execute branches in parallel (using threads)"""
         from concurrent.futures import ThreadPoolExecutor
-
         with ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(branch.invoke, input, config)
-                for branch in self.branches
-            ]
-            results = [f.result() for f in futures]
-
-        return results
+            futures = [executor.submit(branch.invoke, input, config) for branch in self.branches]
+            return [f.result() for f in futures]
 ```
 
 **Usage:**
@@ -645,24 +528,17 @@ from typing import Callable
 class Conditional(Chainable):
     """Conditional branching."""
 
-    def __init__(
-        self,
-        condition: Callable[[Any], bool],
-        true_branch: Chainable,
-        false_branch: Optional[Chainable] = None
-    ):
+    def __init__(self, condition: Callable[[Any], bool], true_branch: Chainable, false_branch: Optional[Chainable] = None):
         self.condition = condition
         self.true_branch = true_branch
         self.false_branch = false_branch
 
     def invoke(self, input: Any, config=None) -> Any:
-        """Execute based on condition"""
         if self.condition(input):
             return self.true_branch.invoke(input, config)
-        elif self.false_branch:
+        if self.false_branch:
             return self.false_branch.invoke(input, config)
-        else:
-            return input  # Pass through
+        return input
 ```
 
 **Usage:**
@@ -682,29 +558,18 @@ Multi-way routing based on input.
 
 ```python
 class Router(Chainable):
-    """Route to different branches based on input."""
+    """Multi-way routing."""
 
-    def __init__(
-        self,
-        routes: Dict[str, Chainable],
-        router: Callable[[Any], str],
-        default: Optional[Chainable] = None
-    ):
+    def __init__(self, routes: Dict[str, Chainable], router: Callable[[Any], str], default: Optional[Chainable] = None):
         self.routes = routes
         self.router = router
         self.default = default
 
     def invoke(self, input: Any, config=None) -> Any:
-        """Route to appropriate branch"""
         route_key = self.router(input)
-
-        if route_key in self.routes:
-            branch = self.routes[route_key]
-        elif self.default:
-            branch = self.default
-        else:
+        branch = self.routes.get(route_key) or self.default
+        if not branch:
             raise ValueError(f"No route: {route_key}")
-
         return branch.invoke(input, config)
 ```
 
@@ -734,50 +599,20 @@ Orchestrates data sources and stores.
 from typing import List, Union, Optional
 
 class DataLayer(Chainable):
-    """
-    L2 layer for data orchestration.
+    """L2 layer: orchestrates data sources and stores."""
 
-    Composes L1 data sources and stores.
-    """
-
-    def __init__(
-        self,
-        sources: Union[Chainable, List[Chainable]],
-        stores: Optional[List[DataStore]] = None
-    ):
+    def __init__(self, sources: Union[Chainable, List[Chainable]], stores: Optional[List[DataStore]] = None):
         self.sources = sources if isinstance(sources, Chainable) else Chain(sources)
         self.stores = stores or []
 
     def invoke(self, input: Any, config=None) -> Dict[str, Any]:
-        """
-        Execute data layer workflow.
-
-        1. Extract from sources
-        2. Index in stores
-        3. Return aggregated data
-        """
-        # Extract from sources
         raw_data = self.sources.invoke(input, config)
-
-        # Index in all stores
         indexed_ids = []
         for store in self.stores:
-            if isinstance(raw_data, list):
-                for data in raw_data:
-                    item_id = store.index(data)
-                    indexed_ids.append(item_id)
-            else:
-                item_id = store.index(raw_data)
-                indexed_ids.append(item_id)
-
-        return {
-            "raw_data": raw_data,
-            "indexed_ids": indexed_ids,
-            "metadata": {
-                "layer": "data",
-                "num_indexed": len(indexed_ids)
-            }
-        }
+            items = raw_data if isinstance(raw_data, list) else [raw_data]
+            for data in items:
+                indexed_ids.append(store.index(data))
+        return {"raw_data": raw_data, "indexed_ids": indexed_ids, "metadata": {"layer": "data", "num_indexed": len(indexed_ids)}}
 ```
 
 **Usage:**
@@ -796,30 +631,14 @@ Orchestrates AI agents.
 
 ```python
 class IntelligenceLayer(Chainable):
-    """
-    L2 layer for intelligence orchestration.
-
-    Composes L1 agents.
-    """
+    """L2 layer: orchestrates AI agents."""
 
     def __init__(self, agents: Union[Chainable, List[Chainable]]):
         self.agents = agents if isinstance(agents, Chainable) else Chain(agents)
 
     def invoke(self, input: Any, config=None) -> Dict[str, Any]:
-        """
-        Execute intelligence layer workflow.
-
-        Runs agent workflow and returns results.
-        """
-        # Execute agents
-        intelligence_output = self.agents.invoke(input, config)
-
-        return {
-            "intelligence_output": intelligence_output,
-            "metadata": {
-                "layer": "intelligence"
-            }
-        }
+        output = self.agents.invoke(input, config)
+        return {"intelligence_output": output, "metadata": {"layer": "intelligence"}}
 ```
 
 **Usage:**
@@ -838,35 +657,16 @@ Orchestrates output generation.
 
 ```python
 class OutputLayer(Chainable):
-    """
-    L2 layer for output orchestration.
-
-    Composes L1 output generators.
-    """
+    """L2 layer: orchestrates output generators."""
 
     def __init__(self, generators: Union[Chainable, List[Chainable]]):
         self.generators = generators if isinstance(generators, Chainable) else Chain(generators)
 
     def invoke(self, input: Any, config=None) -> Dict[str, Any]:
-        """
-        Execute output layer workflow.
-
-        Generates outputs and returns metadata.
-        """
-        # Generate outputs
-        generated_outputs = self.generators.invoke(input, config)
-
-        # Normalize to list
-        if not isinstance(generated_outputs, list):
-            generated_outputs = [generated_outputs]
-
-        return {
-            "generated_outputs": generated_outputs,
-            "metadata": {
-                "layer": "output",
-                "num_outputs": len(generated_outputs)
-            }
-        }
+        outputs = self.generators.invoke(input, config)
+        if not isinstance(outputs, list):
+            outputs = [outputs]
+        return {"generated_outputs": outputs, "metadata": {"layer": "output", "num_outputs": len(outputs)}}
 ```
 
 **Usage:**
@@ -903,38 +703,24 @@ result = workflow.invoke({"query": "analyze sustainability"})
 
 ## Registry Pattern
 
-All abstractions use the Registry pattern for implementation selection.
+All abstractions use registries for implementation selection.
 
 ### DataSourceRegistry
 
 ```python
 class DataSourceRegistry:
     """Factory for DataSource implementations."""
-
     _registry: Dict[str, Dict[str, Type[DataSource]]] = {}
 
     @classmethod
-    def register(
-        cls,
-        source_type: str,
-        provider: str,
-        implementation: Type[DataSource]
-    ):
-        """Register a DataSource implementation."""
+    def register(cls, source_type: str, provider: str, implementation: Type[DataSource]):
         if source_type not in cls._registry:
             cls._registry[source_type] = {}
         cls._registry[source_type][provider] = implementation
 
     @classmethod
-    def create(
-        cls,
-        source_type: str,
-        provider: str,
-        **config
-    ) -> DataSource:
-        """Create a DataSource instance."""
-        implementation = cls._registry[source_type][provider]
-        return implementation(**config)
+    def create(cls, source_type: str, provider: str, **config) -> DataSource:
+        return cls._registry[source_type][provider](**config)
 ```
 
 **Usage:**
@@ -967,23 +753,9 @@ Named, stateful workflows with checkpointing.
 from typing import Optional, Dict, Any
 
 class Workflow(StatefulChainable):
-    """
-    Named workflow with automatic state management.
+    """Named workflow with automatic state management and checkpointing."""
 
-    Thin wrapper around StatefulChainable with:
-    - Named workflows
-    - Automatic checkpointing
-    - State persistence
-    """
-
-    def __init__(
-        self,
-        name: str,
-        chain: Chainable,
-        state_store: Optional[StateStore] = None,
-        checkpoints: bool = True,
-        metadata: Optional[Dict[str, Any]] = None
-    ):
+    def __init__(self, name: str, chain: Chainable, state_store: Optional[StateStore] = None, checkpoints: bool = True, metadata: Optional[Dict[str, Any]] = None):
         self.name = name
         self.chain = chain
         self.state_store = state_store or LocalStateStore()
@@ -991,15 +763,6 @@ class Workflow(StatefulChainable):
         self.metadata = metadata or {}
 
     def run(self, input: Dict[str, Any]) -> Any:
-        """
-        Execute workflow with state management.
-
-        Args:
-            input: Input data
-
-        Returns:
-            Workflow output
-        """
         return self.invoke(input, workflow_id=self.name)
 ```
 
@@ -1020,12 +783,7 @@ result = workflow.run({"query": "analyze data"})
 
 ### WorkflowState
 
-Persistent state for workflows.
-
 ```python
-from enum import Enum
-from datetime import datetime
-
 class WorkflowStatus(Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -1034,18 +792,10 @@ class WorkflowStatus(Enum):
 
 class WorkflowState:
     """Workflow execution state."""
-
-    def __init__(
-        self,
-        workflow_id: str,
-        initial_input: Any,
-        metadata: Optional[Dict[str, Any]] = None
-    ):
+    def __init__(self, workflow_id: str, initial_input: Any, metadata: Optional[Dict[str, Any]] = None):
         self.workflow_id = workflow_id
         self.initial_input = initial_input
         self.metadata = metadata or {}
-
-        # State
         self.status = WorkflowStatus.PENDING
         self.step_outputs: Dict[str, Any] = {}
         self.started_at: Optional[datetime] = None
@@ -1054,57 +804,172 @@ class WorkflowState:
 
 ### StateStore
 
-Abstract interface for storing workflow state.
-
 ```python
 class StateStore(ABC):
-    """Abstract interface for state storage."""
+    """Interface for state storage."""
 
     @abstractmethod
-    def save(self, state: WorkflowState) -> bool:
-        """Save workflow state"""
-        pass
+    def save(self, state: WorkflowState) -> bool: pass
 
     @abstractmethod
-    def load(self, workflow_id: str) -> Optional[WorkflowState]:
-        """Load workflow state by ID"""
-        pass
+    def load(self, workflow_id: str) -> Optional[WorkflowState]: pass
 
     @abstractmethod
-    def delete(self, workflow_id: str) -> bool:
-        """Delete workflow state"""
-        pass
+    def delete(self, workflow_id: str) -> bool: pass
 ```
 
 ### LocalStateStore
 
-File-based state storage (default implementation).
+File-based state storage (default).
 
 ```python
 class LocalStateStore(StateStore):
-    """File-based state storage."""
-
     def __init__(self, base_path: str = "./workflow_state"):
         self.base_path = Path(base_path)
         self.base_path.mkdir(exist_ok=True)
 
     def save(self, state: WorkflowState) -> bool:
-        """Save state to JSON file"""
-        file_path = self.base_path / f"{state.workflow_id}.json"
-        with open(file_path, 'w') as f:
+        with open(self.base_path / f"{state.workflow_id}.json", 'w') as f:
             json.dump(state.to_dict(), f, indent=2)
         return True
 
     def load(self, workflow_id: str) -> Optional[WorkflowState]:
-        """Load state from JSON file"""
-        file_path = self.base_path / f"{workflow_id}.json"
-        if not file_path.exists():
+        path = self.base_path / f"{workflow_id}.json"
+        if not path.exists():
             return None
+        with open(path, 'r') as f:
+            return WorkflowState.from_dict(json.load(f))
+```
 
-        with open(file_path, 'r') as f:
-            data = json.load(f)
+---
 
-        return WorkflowState.from_dict(data)
+## Provider Service
+
+Centralized provider configuration with credential encryption.
+
+```python
+from openbench.core import (
+    ProviderService,
+    ProviderConfig,
+    ProviderType,
+    get_provider_service,
+    configure_provider,
+    resolve_provider,
+)
+
+# Get global service (singleton)
+service = get_provider_service()
+
+# Configure a provider
+service.configure(ProviderConfig(
+    name="my-openai",
+    provider_type=ProviderType.LLM,
+    provider="openai",
+    plugin_type="chat",
+    credentials={"api_key": "sk-..."},
+    settings={"temperature": 0.7},
+    is_default=True
+))
+
+# Get default provider for a type
+config = service.get_default(ProviderType.LLM)
+
+# Resolve to actual instance via PluginRegistry
+llm = service.resolve(ProviderType.LLM)
+
+# Or use convenience functions
+configure_provider(
+    name="my-anthropic",
+    provider_type=ProviderType.LLM,
+    provider="anthropic",
+    plugin_type="chat",
+    credentials={"api_key": "sk-ant-..."}
+)
+
+llm = resolve_provider(ProviderType.LLM, "my-anthropic")
+```
+
+### ProviderConfig
+
+```python
+@dataclass
+class ProviderConfig:
+    name: str                    # Unique identifier
+    provider_type: ProviderType  # LLM, VECTOR, STORAGE, etc.
+    provider: str                # e.g., "openai", "pinecone"
+    plugin_type: str             # e.g., "chat", "vector"
+    credentials: Dict[str, Any]  # API keys (encrypted at rest)
+    settings: Dict[str, Any]     # Provider-specific settings
+    is_default: bool = False
+    enabled: bool = True
+```
+
+### ProviderType
+
+```python
+class ProviderType(Enum):
+    LLM = "llm"
+    EMBEDDING = "embedding"
+    VECTOR = "vector"
+    STORAGE = "storage"
+    VOICE = "voice"
+```
+
+### Credential Encryption
+
+Credentials are encrypted at rest using Fernet symmetric encryption.
+
+```python
+from openbench.core import get_credential_encryption
+
+encryption = get_credential_encryption()
+encrypted = encryption.encrypt("my-secret-key")
+decrypted = encryption.decrypt(encrypted)
+```
+
+**Security:**
+- Fernet encryption from `cryptography` library
+- Key at `~/.openbench/.credentials_key` (0o600 permissions)
+- Encrypted values prefixed with `enc:v1:`
+- Graceful fallback if `cryptography` not installed
+
+```bash
+pip install openbench[security]  # Enable encryption
+```
+
+---
+
+## Configuration
+
+Single source of truth for application configuration.
+
+```python
+from openbench.core import get_config, ModelInfo
+
+config = get_config()
+config.get("llm.default_model", "gpt-4o")
+config.set("llm.temperature", 0.7)
+
+# Register and query models
+config.register_model(ModelInfo(name="gpt-4o", provider="openai", context_window=128000, ...))
+config.get_model("gpt-4o")
+config.list_models(provider="openai")
+```
+
+### ModelInfo
+
+```python
+@dataclass
+class ModelInfo:
+    name: str
+    provider: str
+    context_window: int
+    max_output_tokens: int
+    supports_vision: bool
+    supports_tools: bool
+    cost_per_1k_input: float
+    cost_per_1k_output: float
+    aliases: List[str]
 ```
 
 ---
@@ -1113,8 +978,6 @@ class LocalStateStore(StateStore):
 
 ### create_workflow
 
-Convenience function for creating L2 workflows.
-
 ```python
 def create_workflow(
     data_sources: Optional[Union[Chainable, List[Chainable]]] = None,
@@ -1122,39 +985,25 @@ def create_workflow(
     agents: Optional[Union[Chainable, List[Chainable]]] = None,
     generators: Optional[Union[Chainable, List[Chainable]]] = None
 ) -> Chainable:
-    """
-    Create a complete workflow from components.
-
-    Automatically composes layers and chains them.
-    """
+    """Create a complete workflow from components."""
     layers = []
-
     if data_sources:
         layers.append(DataLayer(sources=data_sources, stores=data_stores or []))
-
     if agents:
         layers.append(IntelligenceLayer(agents=agents))
-
     if generators:
         layers.append(OutputLayer(generators=generators))
-
     if not layers:
         raise ValueError("Must provide at least one layer")
-
     return Chain(layers)
 ```
 
-**Usage:**
 ```python
-from openbench.core import create_workflow
-
 workflow = create_workflow(
     data_sources=[source1, source2],
-    data_stores=[vector_store],
     agents=[agent1, agent2],
     generators=[pdf_gen, pptx_gen]
 )
-
 result = workflow.invoke({})
 ```
 
@@ -1254,7 +1103,7 @@ print(f"Generated: {result['generated_outputs'][0].file_path}")
 ## Next Steps
 
 - **Get Started**: [docs/GETTING_STARTED.md](GETTING_STARTED.md)
-- **Understand Architecture**: [docs/ARCHITECTURE.md](ARCHITECTURE.md)
+- **Understand Architecture**: [docs/architecture.md](architecture.md)
 - **See Examples**: Run the examples in `examples/`
 - **Join Community**: [Discord](https://discord.com/users/openbench.ai)
 

@@ -1,72 +1,75 @@
 """
-World-Class Example: Sustainability Report Generation
+Sustainability Report Generation Example
 
-Demonstrates the power of OpenBench's L1/L2 orchestration with Workflow.
-
-This example shows:
+Demonstrates OpenBench's L1/L2 orchestration with real implementations:
+- Real PDFSource for PDF extraction
+- ProjectContext for multi-tenant isolation
 - L1 component composition (data sources, agents, outputs)
 - L2 layer composition (DataLayer | IntelligenceLayer | OutputLayer)
 - Named Workflow with automatic checkpointing
-- Complex DAG: parallel data ingestion, sequential analysis, parallel outputs
 """
 
-from typing import Any, Dict, Optional
+import tempfile
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+
 from openbench.core import (
-    # L1 Abstractions (Chainable components)
+    # L1 Abstractions
     DataSource, RawData, Agent, ExecutionContext, ExecutionResult,
     OutputGenerator, GeneratedOutput,
     # L1 Composition
     Chain, Parallel,
     # L2 Layers
     DataLayer, IntelligenceLayer, OutputLayer,
-    # Registries
-    DataSourceRegistry, AgentRegistry, OutputGeneratorRegistry,
-    # Store
+    # Data Store
     DataStore, Query, SearchResult,
+    # Project Context
+    ProjectContext,
 )
 from openbench.workflows import Workflow
-from datetime import datetime
+
+# Import real PDFSource
+from openbench.data import PDFSource
 
 
 # ============================================================================
-# Component Implementations
+# Helper: Create Sample PDF for Demo
 # ============================================================================
 
-class PDFSource(DataSource):
-    """Extract data from PDF documents."""
+def create_sample_pdf(path: Path) -> bool:
+    """Create a sample PDF file for demonstration."""
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
 
-    def __init__(self, path: str):
-        self.path = path
-
-    @property
-    def source_type(self) -> str:
-        return "pdf"
-
-    @property
-    def source_id(self) -> str:
-        return f"pdf:{self.path}"
-
-    def get_metadata(self) -> Dict[str, Any]:
-        return {"path": self.path, "type": "pdf"}
-
-    def extract(self) -> RawData:
-        print(f"  📄 Extracting: {self.path}")
-        return RawData(
-            content=f"Sustainability data from {self.path}",
-            content_type="text",
-            metadata=self.get_metadata(),
-            source=self
-        )
-
-    def validate(self) -> bool:
+        c = canvas.Canvas(str(path), pagesize=letter)
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(100, 750, "Sustainability Report 2025")
+        c.setFont("Helvetica", 12)
+        c.drawString(100, 720, "Executive Summary")
+        c.drawString(100, 700, "This report outlines our environmental initiatives.")
+        c.drawString(100, 680, "Key Metrics:")
+        c.drawString(120, 660, "- Carbon emissions reduced by 15%")
+        c.drawString(120, 640, "- Renewable energy usage increased to 45%")
+        c.drawString(120, 620, "- Water consumption reduced by 10%")
+        c.drawString(100, 580, "ESG Score: 78/100")
+        c.save()
         return True
+    except ImportError:
+        return False
 
+
+# ============================================================================
+# Mock Components (for sources not yet implemented)
+# ============================================================================
 
 class APISource(DataSource):
-    """Fetch data from REST API."""
+    """Fetch data from REST API (mock implementation)."""
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, project: Optional[ProjectContext] = None):
         self.url = url
+        self.project = project
 
     @property
     def source_type(self) -> str:
@@ -77,12 +80,15 @@ class APISource(DataSource):
         return f"api:{self.url}"
 
     def get_metadata(self) -> Dict[str, Any]:
-        return {"url": self.url, "type": "api"}
+        metadata = {"url": self.url, "type": "api"}
+        if self.project:
+            metadata["project_id"] = self.project.project_id
+        return metadata
 
     def extract(self) -> RawData:
         print(f"  🌐 Fetching: {self.url}")
         return RawData(
-            content={"esg_score": 78, "carbon_emissions": 1250},
+            content={"esg_score": 78, "carbon_emissions": 1250, "renewable_pct": 45},
             content_type="structured",
             metadata=self.get_metadata(),
             source=self
@@ -93,10 +99,11 @@ class APISource(DataSource):
 
 
 class CSVSource(DataSource):
-    """Load data from CSV file."""
+    """Load data from CSV file (mock implementation)."""
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, project: Optional[ProjectContext] = None):
         self.path = path
+        self.project = project
 
     @property
     def source_type(self) -> str:
@@ -107,12 +114,20 @@ class CSVSource(DataSource):
         return f"csv:{self.path}"
 
     def get_metadata(self) -> Dict[str, Any]:
-        return {"path": self.path, "rows": 500}
+        metadata = {"path": self.path, "rows": 500}
+        if self.project:
+            metadata["project_id"] = self.project.project_id
+        return metadata
 
     def extract(self) -> RawData:
         print(f"  📊 Loading: {self.path}")
         return RawData(
-            content=[["Month", "Emissions"], ["Jan", "1200"], ["Feb", "1100"]],
+            content=[
+                ["Month", "Emissions", "Target"],
+                ["Jan", "1200", "1300"],
+                ["Feb", "1100", "1250"],
+                ["Mar", "1050", "1200"],
+            ],
             content_type="structured",
             metadata=self.get_metadata(),
             source=self
@@ -123,18 +138,21 @@ class CSVSource(DataSource):
 
 
 class MockVectorStore(DataStore):
-    """Simple in-memory vector store."""
+    """In-memory vector store (mock implementation)."""
 
-    def __init__(self, collection: str):
+    def __init__(self, collection: str, project: Optional[ProjectContext] = None):
         self.collection = collection
-        self._data = []
+        self.project = project
+        self._data: List[Dict] = []
+        # Use project namespace if available
+        self.namespace = project.namespace if project else "default"
 
     @property
     def store_type(self) -> str:
         return "vector"
 
     def index(self, data: RawData, **options) -> str:
-        item_id = f"{self.collection}_{len(self._data)}"
+        item_id = f"{self.namespace}_{self.collection}_{len(self._data)}"
         self._data.append({"id": item_id, "data": data})
         print(f"    💾 Indexed: {item_id}")
         return item_id
@@ -199,7 +217,7 @@ class AnalysisAgent(Agent):
         return "analysis"
 
     def execute(self, context: ExecutionContext) -> ExecutionResult:
-        print(f"  📊 Analysis: {context.goal}")
+        print(f"  📈 Analysis: {context.goal}")
         print(f"     Methods: {', '.join(self.methods)}")
         return ExecutionResult(
             output={
@@ -262,7 +280,7 @@ class PDFGenerator(OutputGenerator):
         template = template or self.template
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         file_path = f"outputs/sustainability_report_{timestamp}.pdf"
-        print(f"  📄 PDF: {file_path}")
+        print(f"  📄 Generated: {file_path}")
         return GeneratedOutput(
             file_path=file_path,
             format="pdf",
@@ -288,7 +306,7 @@ class PPTXGenerator(OutputGenerator):
         template = template or self.template
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         file_path = f"outputs/sustainability_presentation_{timestamp}.pptx"
-        print(f"  📊 PPTX: {file_path}")
+        print(f"  📊 Generated: {file_path}")
         return GeneratedOutput(
             file_path=file_path,
             format="pptx",
@@ -301,31 +319,68 @@ class PPTXGenerator(OutputGenerator):
 
 
 # ============================================================================
-# Main Example: World-Class Workflow
+# Main Example
 # ============================================================================
 
 def main():
-    """Generate sustainability report using world-class abstractions."""
+    """Generate sustainability report with real PDFSource and ProjectContext."""
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("OpenBench: Sustainability Report Generation")
-    print("World-Class L1/L2 Orchestration + Workflow")
-    print("="*70)
+    print("Real PDFSource + ProjectContext + L1/L2 Orchestration")
+    print("=" * 70)
 
     # ========================================================================
-    # L1: Component-Level Composition
+    # Create Project Context
+    # ========================================================================
+
+    print("\n📁 Creating Project Context...")
+    print("-" * 70)
+
+    project = ProjectContext(
+        name="Q1 2026 Sustainability Report",
+        description="Annual sustainability metrics and ESG analysis",
+        user_id="analyst@acme.com",
+        organization_id="acme-corp",
+    )
+
+    print(f"  ✓ Project ID: {project.project_id}")
+    print(f"  ✓ Name: {project.name}")
+    print(f"  ✓ Namespace: {project.namespace}")
+
+    # ========================================================================
+    # Setup Data Sources with Real PDFSource
     # ========================================================================
 
     print("\n🔧 Building L1 Component Workflows...")
     print("-" * 70)
 
-    # Data sources: Parallel ingestion from multiple sources
-    data_sources = Parallel([
-        PDFSource("./data/sustainability_report_2025.pdf"),
-        APISource("https://api.company.com/esg-metrics"),
-        CSVSource("./data/carbon_emissions.csv"),
+    # Create temporary directory for sample files
+    temp_dir = Path(tempfile.mkdtemp())
+    sample_pdf = temp_dir / "sustainability_report_2025.pdf"
+
+    # Try to create sample PDF
+    pdf_source = None
+    if create_sample_pdf(sample_pdf):
+        print(f"  ✓ Created sample PDF: {sample_pdf.name}")
+        # Use REAL PDFSource from openbench.data
+        pdf_source = PDFSource(path=sample_pdf, project=project)
+        print("  ✓ Using real PDFSource (openbench.data.PDFSource)")
+    else:
+        print("  ⚠ reportlab not installed, skipping real PDF demo")
+        print("    Install with: pip install reportlab")
+
+    # Build data sources (parallel ingestion)
+    sources_list = []
+    if pdf_source:
+        sources_list.append(pdf_source)
+    sources_list.extend([
+        APISource("https://api.company.com/esg-metrics", project=project),
+        CSVSource("./data/carbon_emissions.csv", project=project),
     ])
-    print("  ✓ Data sources: PDF & API & CSV (parallel)")
+
+    data_sources = Parallel(sources_list)
+    print(f"  ✓ Data sources: {len(sources_list)} sources (parallel)")
 
     # Agents: Sequential analysis pipeline
     agents = Chain([
@@ -334,8 +389,8 @@ def main():
             depth="comprehensive"
         ),
         AnalysisAgent(
-            goal="Analyze carbon emissions trends and identify improvements",
-            methods=["trend_analysis", "statistical"]
+            goal="Analyze carbon emissions trends",
+            methods=["trend_analysis", "statistical", "yoy_comparison"]
         ),
         ContentAgent(
             goal="Draft comprehensive sustainability report",
@@ -345,7 +400,7 @@ def main():
     ])
     print("  ✓ Agents: Research → Analysis → Content (sequential)")
 
-    # Outputs: Parallel generation of multiple formats
+    # Outputs: Parallel generation
     outputs = Parallel([
         PDFGenerator(template="corporate"),
         PPTXGenerator(template="executive"),
@@ -359,11 +414,14 @@ def main():
     print("\n🏗️  Building L2 Layer Workflow...")
     print("-" * 70)
 
-    # Create layers with L1 workflows inside
-    data_layer = DataLayer(
-        sources=data_sources,
-        stores=[MockVectorStore(collection="sustainability")]
+    # Vector store with project namespace for isolation
+    vector_store = MockVectorStore(
+        collection="sustainability",
+        project=project
     )
+    print(f"  ✓ VectorStore namespace: {vector_store.namespace}")
+
+    data_layer = DataLayer(sources=data_sources, stores=[vector_store])
     print("  ✓ DataLayer created")
 
     intelligence_layer = IntelligenceLayer(agents=agents)
@@ -372,7 +430,7 @@ def main():
     output_layer = OutputLayer(generators=outputs)
     print("  ✓ OutputLayer created")
 
-    # Compose layers into complete pipeline
+    # Compose layers
     pipeline = data_layer | intelligence_layer | output_layer
     print("  ✓ Pipeline: DataLayer | IntelligenceLayer | OutputLayer")
 
@@ -380,7 +438,7 @@ def main():
     # Workflow: Named, Stateful Execution
     # ========================================================================
 
-    print("\n🚀 Creating Named Workflow with Checkpointing...")
+    print("\n🚀 Creating Named Workflow...")
     print("-" * 70)
 
     workflow = Workflow(
@@ -388,24 +446,27 @@ def main():
         chain=pipeline,
         checkpoints=True,
         metadata={
-            "project": "Q1 2026 Sustainability Report",
+            "project_id": project.project_id,
+            "project_name": project.name,
             "company": "Acme Corp",
-            "version": "1.0"
+            "version": "2.0"
         }
     )
-    print(f"  ✓ Workflow created: {workflow.name}")
-    print(f"  ✓ Checkpoints: enabled")
+    print(f"  ✓ Workflow: {workflow.name}")
+    print(f"  ✓ Project: {project.project_id}")
+    print("  ✓ Checkpoints: enabled")
 
     # ========================================================================
-    # Execute End-to-End
+    # Execute
     # ========================================================================
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("▶️  EXECUTING WORKFLOW")
-    print("="*70)
+    print("=" * 70)
 
     result = workflow.run({
-        "project": "Q1 2026 Sustainability Report",
+        "project_id": project.project_id,
+        "project_name": project.name,
         "company": "Acme Corp"
     })
 
@@ -413,13 +474,27 @@ def main():
     # Results
     # ========================================================================
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("✅ WORKFLOW COMPLETED")
-    print("="*70)
+    print("=" * 70)
+
+    # Show PDF extraction result if available
+    if pdf_source:
+        print("\n📄 PDF Extraction Result:")
+        try:
+            raw_data = pdf_source.extract()
+            content_preview = raw_data.content[:200] + "..." if len(raw_data.content) > 200 else raw_data.content
+            print(f"  Content preview: {content_preview}")
+            print(f"  Pages: {raw_data.metadata.get('total_pages', 'N/A')}")
+            print(f"  Project ID: {raw_data.metadata.get('project_context', {}).get('project_id', 'N/A')}")
+        except Exception as e:
+            print(f"  Error: {e}")
 
     outputs_generated = result.get('generated_outputs', [])
-    print(f"\n📊 Results:")
-    print(f"  - Data sources processed: 3")
+    print(f"\n📊 Summary:")
+    print(f"  - Project: {project.name}")
+    print(f"  - Project ID: {project.project_id}")
+    print(f"  - Data sources: {len(sources_list)}")
     print(f"  - Analysis stages: 3 (Research → Analysis → Content)")
     print(f"  - Outputs generated: {len(outputs_generated)}")
 
@@ -430,14 +505,19 @@ def main():
             print(f"  - {output.file_path} ({size_mb:.1f} MB)")
 
     print("\n💡 Key Features Demonstrated:")
-    print("  ✓ L1 composition: Parallel data sources, sequential agents, parallel outputs")
+    print("  ✓ Real PDFSource from openbench.data")
+    print("  ✓ ProjectContext for multi-tenant isolation")
+    print("  ✓ Vector store namespace = project_id")
+    print("  ✓ L1 composition: Parallel sources, sequential agents")
     print("  ✓ L2 composition: DataLayer | IntelligenceLayer | OutputLayer")
-    print("  ✓ Named workflow with automatic checkpointing")
-    print("  ✓ Clean, expressive API - no 'parallel=True/False' needed!")
-    print("  ✓ DAG structure visible in code")
+    print("  ✓ Named workflow with checkpointing")
 
-    print("\n🎯 This is world-class abstraction.")
-    print("")
+    # Cleanup
+    if sample_pdf.exists():
+        sample_pdf.unlink()
+    temp_dir.rmdir()
+
+    print("\n")
 
 
 if __name__ == "__main__":

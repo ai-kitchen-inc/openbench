@@ -1,50 +1,36 @@
 """
-Output Layer - Multi-Format Export Engine
+Output Layer - Factory and Helpers.
+
+NOTE: For L2 workflow orchestration, use OutputLayer from openbench.core.layers.
+This module provides factory functions for creating output generators.
 """
 
-from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+from openbench.core.abstractions import GeneratedOutput
 
 
-class OutputLayer:
+class OutputFactory:
     """
-    The Output Layer transforms results into various output formats.
+    Factory for creating output generators and exporting data.
+
+    Provides convenient methods for generating outputs in various formats.
+    For L2 workflow orchestration, use OutputLayer from core.layers.
 
     Examples:
         >>> # Export to PDF
-        >>> OutputLayer.export(
-        ...     result,
+        >>> result = OutputFactory.export(
+        ...     data,
         ...     format="pdf",
         ...     template="corporate",
         ...     output="report.pdf"
         ... )
+        >>> print(result.file_path)
         >>>
         >>> # Generate slides
-        >>> OutputLayer.export(
-        ...     result,
-        ...     format="slides",
-        ...     output="presentation.pptx"
-        ... )
-        >>>
-        >>> # Create dashboard
-        >>> OutputLayer.export(
-        ...     result,
-        ...     format="dashboard",
-        ...     framework="streamlit"
-        ... )
+        >>> result = OutputFactory.slides(data, output="presentation.pptx")
     """
-
-    def __init__(self, default_format: str = "pdf", templates_dir: Optional[str] = None):
-        """
-        Initialize the Output Layer.
-
-        Args:
-            default_format: Default output format
-            templates_dir: Directory containing output templates
-        """
-        self.default_format = default_format
-        self.templates_dir = templates_dir
-        print(f"📤 OutputLayer initialized (default format: {default_format})")
 
     @classmethod
     def export(
@@ -53,8 +39,8 @@ class OutputLayer:
         format: str = "pdf",
         output: Optional[str] = None,
         template: Optional[str] = None,
-        **kwargs
-    ) -> str:
+        **kwargs,
+    ) -> GeneratedOutput:
         """
         Export data to specified format.
 
@@ -66,100 +52,186 @@ class OutputLayer:
             **kwargs: Format-specific parameters
 
         Returns:
-            Path to generated output file
+            GeneratedOutput with file path and metadata
         """
-        print(f"\n📤 Exporting to {format.upper()}")
-        print(f"   Template: {template or 'default'}")
-        print(f"   Output: {output or 'auto-generated'}")
+        from openbench.output.generators import (
+            PDFGenerator,
+            PowerPointGenerator,
+            DashboardGenerator,
+            AudioGenerator,
+        )
 
-        # Mock export logic
-        import time
-        time.sleep(1)
+        # Map format to generator class and constructor kwargs
+        generator_config = {
+            "pdf": {
+                "class": PDFGenerator,
+                "constructor_kwargs": ["page_size"],
+                "default_output": "report.pdf",
+            },
+            "pptx": {
+                "class": PowerPointGenerator,
+                "constructor_kwargs": [],
+                "default_output": "presentation.pptx",
+            },
+            "slides": {
+                "class": PowerPointGenerator,
+                "constructor_kwargs": [],
+                "default_output": "presentation.pptx",
+            },
+            "dashboard": {
+                "class": DashboardGenerator,
+                "constructor_kwargs": ["framework"],
+                "default_output": None,
+            },
+            "audio": {
+                "class": AudioGenerator,
+                "constructor_kwargs": ["provider", "voice"],
+                "default_output": "audio.mp3",
+            },
+        }
 
+        config = generator_config.get(format)
+        if config:
+            generator_class = config["class"]
+
+            # Split kwargs between constructor and generate()
+            constructor_kwargs = {}
+            generate_kwargs = {}
+
+            for key, value in kwargs.items():
+                if key in config["constructor_kwargs"]:
+                    constructor_kwargs[key] = value
+                else:
+                    generate_kwargs[key] = value
+
+            # Add template to constructor kwargs if it's a constructor param
+            if template and "template" not in generate_kwargs:
+                constructor_kwargs["template"] = template
+
+            # Create generator instance
+            generator = generator_class(**constructor_kwargs)
+
+            # Determine output path
+            output_path = output or config["default_output"]
+            if output_path:
+                generate_kwargs["output_path"] = output_path
+
+            # Generate output
+            return generator.generate(content=data, template=template, **generate_kwargs)
+
+        # Fallback for unknown formats - return a placeholder GeneratedOutput
         output_path = output or f"outputs/export.{_get_extension(format)}"
-
-        print(f"   ✓ Export complete: {output_path}\n")
-        return output_path
+        return GeneratedOutput(
+            file_path=output_path,
+            format=format,
+            size_bytes=0,
+            metadata={"warning": f"Unknown format '{format}', no generator available"},
+        )
 
     @classmethod
-    def generate_report(
+    def pdf(
         cls,
         data: Any,
-        format: str = "pdf",
         template: str = "default",
         output: Optional[str] = None,
-        **kwargs
-    ) -> str:
-        """Generate a report in specified format."""
-        return cls.export(data, format=format, template=template, output=output, **kwargs)
+        page_size: str = "letter",
+        **kwargs,
+    ) -> GeneratedOutput:
+        """
+        Generate a PDF report.
+
+        Args:
+            data: Content to render into PDF
+            template: Template name for layout
+            output: Output file path
+            page_size: Page size ('letter', 'a4', etc.)
+            **kwargs: Additional PDF options
+
+        Returns:
+            GeneratedOutput with file path and metadata
+        """
+        return cls.export(
+            data, format="pdf", template=template, output=output, page_size=page_size, **kwargs
+        )
 
     @classmethod
-    def generate_slides(
+    def slides(
         cls,
         data: Any,
         template: str = "corporate",
         output: Optional[str] = None,
-        **kwargs
-    ) -> str:
-        """Generate a slide presentation."""
+        **kwargs,
+    ) -> GeneratedOutput:
+        """
+        Generate a slide presentation.
+
+        Args:
+            data: Slide content (list of dicts or dict with slides key)
+            template: Template name for slide design
+            output: Output file path
+            **kwargs: Additional PPTX options
+
+        Returns:
+            GeneratedOutput with file path and metadata
+        """
         return cls.export(data, format="pptx", template=template, output=output, **kwargs)
 
     @classmethod
-    def generate_dashboard(
+    def dashboard(
         cls,
         data: Any,
         framework: str = "streamlit",
         port: int = 8501,
-        **kwargs
-    ) -> str:
-        """Generate an interactive dashboard."""
-        print(f"\n📊 Creating {framework} dashboard")
-        print(f"   Port: {port}")
-        print("   ✓ Dashboard created\n")
-        return f"http://localhost:{port}"
+        **kwargs,
+    ) -> GeneratedOutput:
+        """
+        Generate an interactive dashboard.
+
+        Args:
+            data: Data to visualize in dashboard
+            framework: Dashboard framework ('streamlit', 'dash', 'gradio')
+            port: Port to serve dashboard on
+            **kwargs: Additional dashboard options
+
+        Returns:
+            GeneratedOutput with dashboard URL and metadata
+        """
+        return cls.export(data, format="dashboard", framework=framework, port=port, **kwargs)
 
     @classmethod
-    def generate_audio(
+    def audio(
         cls,
         text: str,
+        provider: str = "elevenlabs",
         voice: str = "professional_male",
         output: Optional[str] = None,
-        **kwargs
-    ) -> str:
-        """Generate audio from text (TTS)."""
+        **kwargs,
+    ) -> GeneratedOutput:
+        """
+        Generate audio from text (TTS).
+
+        Args:
+            text: Text to convert to speech
+            provider: TTS provider ('elevenlabs', 'openai', 'google')
+            voice: Voice ID or name
+            output: Output file path
+            **kwargs: Additional audio options
+
+        Returns:
+            GeneratedOutput with audio file path and metadata
+        """
         return cls.export(
-            text,
-            format="audio",
-            voice=voice,
-            output=output or "outputs/audio.mp3",
-            **kwargs
+            text, format="audio", provider=provider, voice=voice, output=output, **kwargs
         )
 
     @classmethod
-    def generate_infographic(
-        cls,
-        data: Any,
-        style: str = "modern",
-        output: Optional[str] = None,
-        **kwargs
-    ) -> str:
-        """Generate an infographic."""
-        return cls.export(
-            data,
-            format="infographic",
-            style=style,
-            output=output or "outputs/infographic.pdf",
-            **kwargs
-        )
-
-    @classmethod
-    def batch_export(
+    def batch(
         cls,
         data: Any,
         formats: List[str],
         output_dir: str = "outputs",
-        **kwargs
-    ) -> Dict[str, str]:
+        **kwargs,
+    ) -> Dict[str, GeneratedOutput]:
         """
         Export to multiple formats simultaneously.
 
@@ -170,16 +242,15 @@ class OutputLayer:
             **kwargs: Additional export parameters
 
         Returns:
-            Dictionary mapping format to output path
+            Dictionary mapping format to GeneratedOutput
         """
-        print(f"\n📦 Batch export to {len(formats)} format(s)")
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
 
         results = {}
         for fmt in formats:
             output_path = f"{output_dir}/export.{_get_extension(fmt)}"
             results[fmt] = cls.export(data, format=fmt, output=output_path, **kwargs)
 
-        print(f"   ✓ Batch export complete\n")
         return results
 
 
