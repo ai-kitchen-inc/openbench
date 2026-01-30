@@ -25,7 +25,7 @@ from openbench.core.abstractions import (
     LLMProvider,
     Tool,
 )
-from openbench.core.config import get_config
+from openbench.core.config import get_config, get_default_model
 from openbench.core.providers import ProviderType, get_provider_service
 
 logger = logging.getLogger(__name__)
@@ -202,7 +202,7 @@ class ToolExecutor:
 class AgentConfig:
     """Configuration for an agent."""
 
-    model: str = "gpt-4o"
+    model: str = field(default_factory=get_default_model)
     temperature: float = 0.7
     max_tokens: Optional[int] = None
     max_iterations: int = 10
@@ -221,7 +221,7 @@ class BaseAgent(Agent):
         >>> agent = BaseAgent(
         ...     goal="Analyze sales data",
         ...     tools=[search_tool, calculate_tool],
-        ...     model="gpt-4o"
+        ...     model="gpt-4o"  # or None to use config default
         ... )
         >>> result = agent.execute(context)
     """
@@ -230,7 +230,7 @@ class BaseAgent(Agent):
         self,
         goal: str,
         tools: Optional[List[Union[Tool, Callable]]] = None,
-        model: str = "gpt-4o",
+        model: Optional[str] = None,
         temperature: float = 0.7,
         max_iterations: int = 10,
         system_prompt: Optional[str] = None,
@@ -242,14 +242,14 @@ class BaseAgent(Agent):
         Args:
             goal: Agent's objective
             tools: Available tools
-            model: LLM model to use
+            model: LLM model to use (defaults to config llm.default_model)
             temperature: Model temperature
             max_iterations: Max tool call iterations
             system_prompt: Custom system prompt (optional)
             provider_name: Specific provider name (uses default if None)
         """
         self.goal = goal
-        self.model = model
+        self.model = model or get_default_model()
         self.temperature = temperature
         self.max_iterations = max_iterations
         self.provider_name = provider_name

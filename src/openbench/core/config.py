@@ -399,6 +399,15 @@ DEFAULT_MODELS = [
 ]
 
 
+# Default configuration values
+DEFAULT_CONFIG = {
+    "llm": {
+        "default_model": "gpt-4o",
+        "default_temperature": 0.7,
+        "default_max_tokens": 4096,
+    },
+}
+
 # Global config instance
 _config: Optional[Config] = None
 
@@ -408,17 +417,18 @@ def get_config() -> Config:
     Get the global Config instance.
 
     Automatically loads:
-    1. Default models
-    2. ~/.openbench/config.yaml (if exists)
-    3. ./openbench.yaml (if exists)
-    4. Environment variables with OPENBENCH_ prefix
+    1. Default configuration values
+    2. Default models
+    3. ~/.openbench/config.yaml (if exists)
+    4. ./openbench.yaml (if exists)
+    5. Environment variables with OPENBENCH_ prefix
 
     Returns:
         Global Config instance
     """
     global _config
     if _config is None:
-        _config = Config()
+        _config = Config(data=dict(DEFAULT_CONFIG))
 
         # Register default models
         for model in DEFAULT_MODELS:
@@ -437,6 +447,11 @@ def get_config() -> Config:
         _config.load_env()
 
     return _config
+
+
+def get_default_model() -> str:
+    """Get the default LLM model from config."""
+    return get_config().get("llm.default_model", "gpt-4o")
 
 
 def reset_config() -> None:
