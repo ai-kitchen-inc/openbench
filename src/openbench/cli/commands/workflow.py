@@ -1,5 +1,8 @@
 """Workflow orchestration CLI commands."""
 
+import time
+from typing import Optional, Tuple
+
 import click
 from rich.console import Console
 from rich.table import Table
@@ -10,7 +13,7 @@ console = Console()
 
 
 @click.group()
-def workflow():
+def workflow() -> None:
     """Create and manage agentic workflows."""
     pass
 
@@ -18,68 +21,43 @@ def workflow():
 @workflow.command()
 @click.argument("name")
 @click.option("--agents", multiple=True, help="Agents to include in workflow")
-@click.option("--template",
-              type=click.Choice(["research-report", "data-analysis", "content-generation", "custom"]),
-              default="custom",
-              help="Workflow template")
-def create(name, agents, template):
+@click.option(
+    "--template",
+    type=click.Choice(["research-report", "data-analysis", "content-generation", "custom"]),
+    default="custom",
+    help="Workflow template",
+)
+def create(name: str, agents: Tuple[str, ...], template: str) -> None:
     """Create a new workflow."""
 
-    console.print(f"\n[bold cyan]🔄 Creating Workflow: {name}[/bold cyan]\n")
+    console.print(f"\n[bold cyan]Creating Workflow: {name}[/bold cyan]\n")
 
     console.print(f"[dim]Template: {template}[/dim]")
     console.print(f"[dim]Agents: {', '.join(agents) if agents else 'none specified'}[/dim]\n")
 
-    # Generate workflow config
-    workflow_config = f"""# Workflow: {name}
-version: "1.0"
-template: {template}
-
-steps:
-  - name: data_collection
-    agent: research-agent
-    inputs:
-      sources: all
-
-  - name: analysis
-    agent: analysis-agent
-    depends_on: [data_collection]
-
-  - name: content_generation
-    agent: content-agent
-    depends_on: [analysis]
-
-  - name: export
-    output: report
-    format: pdf
-    depends_on: [content_generation]
-
-parallel_execution: true
-checkpoints: true
-"""
-
     with console.status("[bold green]Creating workflow..."):
-        import time
         time.sleep(1)
 
-    console.print(Panel.fit(
-        f"[green]✓[/green] Workflow '{name}' created successfully!\n\n"
-        f"Template: {template}\n"
-        f"Steps: 4 configured\n\n"
-        f"[bold]Run workflow:[/bold]\n"
-        f"  openbench workflow run {name}\n\n"
-        f"[bold]View workflow:[/bold]\n"
-        f"  openbench workflow show {name}",
-        title="[bold green]Workflow Created![/bold green]",
-        border_style="green"
-    ))
+    console.print(
+        Panel.fit(
+            f"[green]Done[/green] Workflow '{name}' created successfully!\n\n"
+            f"Template: {template}\n"
+            f"Steps: 4 configured\n\n"
+            f"[bold]Run workflow:[/bold]\n"
+            f"  openbench workflow run {name}\n\n"
+            f"[bold]View workflow:[/bold]\n"
+            f"  openbench workflow show {name}",
+            title="[bold green]Workflow Created![/bold green]",
+            border_style="green",
+        )
+    )
 
 
-@workflow.command()
-def list():
+@workflow.command("list")
+def list_workflows() -> None:
     """List all workflows."""
 
-    console.print("\n[bold cyan]🔄 Available Workflows[/bold cyan]\n")
+    console.print("\n[bold cyan]Available Workflows[/bold cyan]\n")
 
     table = Table(title="Workflows")
     table.add_column("Name", style="cyan")
@@ -88,9 +66,9 @@ def list():
     table.add_column("Status", style="green")
 
     # Mock data
-    table.add_row("sustainability-report", "research-report", "5", "✓ Ready")
-    table.add_row("nba-analysis", "data-analysis", "4", "✓ Ready")
-    table.add_row("market-research", "research-report", "6", "⚠ Draft")
+    table.add_row("sustainability-report", "research-report", "5", "Ready")
+    table.add_row("nba-analysis", "data-analysis", "4", "Ready")
+    table.add_row("market-research", "research-report", "6", "Draft")
 
     console.print(table)
     console.print()
@@ -100,13 +78,13 @@ def list():
 @click.argument("name", required=False)
 @click.option("--async", "async_mode", is_flag=True, help="Run asynchronously")
 @click.option("--checkpoint/--no-checkpoint", default=True, help="Enable checkpoints")
-def run(name, async_mode, checkpoint):
+def run(name: Optional[str], async_mode: bool, checkpoint: bool) -> None:
     """Run a workflow."""
 
     if not name:
         name = "sustainability-report"
 
-    console.print(f"\n[bold cyan]▶️ Running Workflow: {name}[/bold cyan]\n")
+    console.print(f"\n[bold cyan]Running Workflow: {name}[/bold cyan]\n")
 
     # Simulate workflow execution
     steps = [
@@ -121,63 +99,66 @@ def run(name, async_mode, checkpoint):
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
-        console=console
+        console=console,
     ) as progress:
 
         for step_name, duration in steps:
             task = progress.add_task(f"[cyan]{step_name}", total=duration)
 
             for i in range(duration):
-                import time
                 time.sleep(0.5)
                 progress.update(task, advance=1)
 
-            progress.update(task, description=f"[green]✓ {step_name}")
+            progress.update(task, description=f"[green]Done: {step_name}")
 
-    console.print(Panel.fit(
-        "[green]✓[/green] Workflow completed successfully!\n\n"
-        "[bold]Results:[/bold]\n"
-        "  • Data sources: 12 documents processed\n"
-        "  • Analysis: 5 insights generated\n"
-        "  • Content: 8-page report created\n"
-        "  • Output: outputs/sustainability-report.pdf\n\n"
-        "[bold]Next steps:[/bold]\n"
-        "  openbench generate slides --from sustainability-report",
-        title="[bold green]Workflow Complete![/bold green]",
-        border_style="green"
-    ))
+    console.print(
+        Panel.fit(
+            "[green]Done[/green] Workflow completed successfully!\n\n"
+            "[bold]Results:[/bold]\n"
+            "  - Data sources: 12 documents processed\n"
+            "  - Analysis: 5 insights generated\n"
+            "  - Content: 8-page report created\n"
+            "  - Output: outputs/sustainability-report.pdf\n\n"
+            "[bold]Next steps:[/bold]\n"
+            "  openbench generate slides --from sustainability-report",
+            title="[bold green]Workflow Complete![/bold green]",
+            border_style="green",
+        )
+    )
 
 
 @workflow.command()
 @click.argument("name")
-def show(name):
+def show(name: str) -> None:
     """Show workflow details and DAG."""
 
-    console.print(f"\n[bold cyan]🔄 Workflow: {name}[/bold cyan]\n")
+    console.print(f"\n[bold cyan]Workflow: {name}[/bold cyan]\n")
 
     # Show workflow DAG
     console.print("[bold]Workflow DAG:[/bold]\n")
-    console.print("""
-    ┌──────────────────┐
-    │  Data Collection │
-    │  (research)      │
-    └────────┬─────────┘
-             │
-    ┌────────▼─────────┐
-    │  Data Analysis   │
-    │  (analysis)      │
-    └────────┬─────────┘
-             │
-    ┌────────▼─────────┐
-    │ Content Generate │
-    │  (content)       │
-    └────────┬─────────┘
-             │
-    ┌────────▼─────────┐
-    │  Export Output   │
-    │  (pdf)           │
-    └──────────────────┘
-    """)
+    console.print(
+        """
+    +------------------+
+    |  Data Collection |
+    |  (research)      |
+    +--------+---------+
+             |
+    +--------v---------+
+    |  Data Analysis   |
+    |  (analysis)      |
+    +--------+---------+
+             |
+    +--------v---------+
+    | Content Generate |
+    |  (content)       |
+    +--------+---------+
+             |
+    +--------v---------+
+    |  Export Output   |
+    |  (pdf)           |
+    +------------------+
+    """
+    )
 
     # Show configuration
     table = Table(title="Workflow Configuration")
@@ -196,10 +177,10 @@ def show(name):
 @workflow.command()
 @click.argument("name")
 @click.option("--step", help="Restart from specific step")
-def restart(name, step):
+def restart(name: str, step: Optional[str]) -> None:
     """Restart a failed workflow."""
 
-    console.print(f"\n[bold yellow]🔄 Restarting Workflow: {name}[/bold yellow]\n")
+    console.print(f"\n[bold yellow]Restarting Workflow: {name}[/bold yellow]\n")
 
     if step:
         console.print(f"[dim]Restarting from step: {step}[/dim]\n")
@@ -207,7 +188,6 @@ def restart(name, step):
         console.print(f"[dim]Restarting from last checkpoint[/dim]\n")
 
     with console.status("[bold green]Resuming workflow..."):
-        import time
         time.sleep(1)
 
-    console.print("[green]✓[/green] Workflow restarted.\n")
+    console.print("[green]Done[/green] Workflow restarted.\n")

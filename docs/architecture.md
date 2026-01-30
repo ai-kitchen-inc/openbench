@@ -1,21 +1,18 @@
 # OpenBench Architecture
 
-**Vision and Design Philosophy**
-
 ---
 
 ## Overview
 
-OpenBench is built on a **three-layer architecture** with **composable abstractions** that enable building complex AI workflows from simple, reusable components.
+Three-layer architecture with composable abstractions for building AI workflows.
 
-### Core Philosophy
-
-1. **Everything is Chainable** - All components implement a unified interface
-2. **Composition Over Configuration** - Build workflows by composing components
-3. **Implementation Independence** - Swap providers without changing code
-4. **Two-Level Orchestration** - Compose components (L1) into systems (L2)
-5. **DAG Workflows** - Support complex directed acyclic graphs, not just sequences
-6. **Universal Control Plane** - Bring your own agents from any framework (LangChain, AG2, CrewAI, etc.)
+**Core Principles:**
+1. Everything is Chainable
+2. Composition Over Configuration
+3. Implementation Independence
+4. Two-Level Orchestration (L1 components, L2 systems)
+5. DAG Workflows
+6. Universal Control Plane (bring your own agents from LangChain, AG2, CrewAI, etc.)
 
 ---
 
@@ -52,8 +49,29 @@ OpenBench is built on a **three-layer architecture** with **composable abstracti
 └─────────────────────────────────────────────────────────┘
 ```
 
-**See [docs/API.md](API.md) for complete reference and [docs/GETTING_STARTED.md](GETTING_STARTED.md) for quick start.**
+---
+
+## Infrastructure
+
+### Provider Service
+Centralized provider management with credential encryption (Fernet), default provider per type, and persistence to `~/.openbench/providers.json`.
+
+### Plugin Registry
+Dynamic registration with decorators, auto-discovery, metadata support, and singleton patterns.
+
+### Config
+Single source of truth with dot-notation access, environment overrides, and LLM model registry. Persisted to `~/.openbench/config.json`.
 
 ---
 
-**OpenBench: World-class abstractions for building AI workflows**
+## Security
+
+Credentials encrypted at rest using Fernet. Key stored at `~/.openbench/.credentials_key` (0o600). Format: `enc:v1:<base64>`. Graceful fallback if `cryptography` not installed.
+
+```bash
+pip install openbench[security]
+```
+
+---
+
+**See [API.md](API.md) for reference and [GETTING_STARTED.md](GETTING_STARTED.md) for quick start.**

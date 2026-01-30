@@ -57,12 +57,18 @@ data = [
     "numpy>=1.24.0",
     "sqlalchemy>=2.0.0",
     "chromadb>=0.4.0",
+    "pypdf>=4.0.0",
 ]
 
 intelligence = [
     "langchain>=0.1.0",
     "openai>=1.0.0",
     "anthropic>=0.18.0",
+    "google-generativeai>=0.8.0",
+]
+
+google = [
+    "google-generativeai>=0.8.0",
 ]
 
 output = [
@@ -72,8 +78,12 @@ output = [
     "reportlab>=4.0.0",
 ]
 
+security = [
+    "cryptography>=41.0.0",
+]
+
 all = [
-    "openbench[dev,data,intelligence,output]"
+    "openbench[dev,data,intelligence,output,security,google]"
 ]
 
 [project.urls]

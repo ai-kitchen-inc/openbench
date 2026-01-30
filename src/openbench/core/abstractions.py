@@ -585,7 +585,7 @@ class OutputGenerator(ABC):
         Default implementation calls generate() with input as content.
 
         Args:
-            input: Content to generate output from
+            input: Content to generate output from (can be dict with output_path, title, etc.)
             config: Execution configuration (optional)
 
         Returns:
@@ -594,9 +594,17 @@ class OutputGenerator(ABC):
         template = None
         options = {}
 
-        # Extract template and options from config if provided
+        # Extract template and options from config
         if config and isinstance(config, dict):
             template = config.get('template')
             options = {k: v for k, v in config.items() if k != 'template'}
+
+        # Extract output options from input dict
+        if isinstance(input, dict):
+            for key in ('output_path', 'title', 'author'):
+                if key in input:
+                    options[key] = input[key]
+            if not template and 'template' in input:
+                template = input['template']
 
         return self.generate(content=input, template=template, **options)

@@ -5,6 +5,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
+from openbench.core.config import get_config, ModelInfo
+
 console = Console()
 
 
@@ -16,56 +18,79 @@ def models():
 
 @models.command()
 @click.argument("name")
-@click.option("--provider",
-              type=click.Choice(["openai", "anthropic", "local", "custom"]),
-              help="Model provider")
-@click.option("--model-id", help="Model identifier (e.g., gpt-4, claude-opus)")
-@click.option("--api-key", help="API key for the provider")
-@click.option("--endpoint", help="Custom API endpoint")
-def register(name, provider, model_id, api_key, endpoint):
-    """Register a new LLM model."""
+@click.option("--provider", required=True, type=click.Choice(["openai", "anthropic", "google", "local"]), help="Model provider")
+@click.option("--context", type=int, default=128000, help="Context window size")
+@click.option("--max-output", type=int, default=4096, help="Maximum output tokens")
+@click.option("--vision/--no-vision", default=False, help="Supports vision input")
+@click.option("--tools/--no-tools", default=True, help="Supports tool use")
+@click.option("--alias", multiple=True, help="Model aliases")
+def register(name, provider, context, max_output, vision, tools, alias):
+    """Register a new LLM model.
 
-    console.print(f"\n[bold cyan]🤖 Registering Model: {name}[/bold cyan]\n")
+    Example:
+        openbench models register gpt-4-turbo --provider openai --context 128000 --vision
+    """
+    console.print(f"\n[bold cyan]Registering Model: {name}[/bold cyan]\n")
 
-    console.print(f"[dim]Provider: {provider}[/dim]")
-    console.print(f"[dim]Model ID: {model_id}[/dim]")
-    if endpoint:
-        console.print(f"[dim]Endpoint: {endpoint}[/dim]\n")
+    config = get_config()
 
-    with console.status("[bold green]Registering model..."):
-        import time
-        time.sleep(1)
+    model = ModelInfo(
+        name=name,
+        provider=provider,
+        context_window=context,
+        max_output_tokens=max_output,
+        supports_vision=vision,
+        supports_tools=tools,
+        aliases=list(alias),
+    )
 
-    console.print(Panel.fit(
-        f"[green]✓[/green] Model '{name}' registered successfully!\n\n"
-        f"Provider: {provider}\n"
-        f"Model: {model_id}\n"
-        f"Status: Ready\n\n"
-        f"[bold]Use in agent:[/bold]\n"
-        f"  openbench agent create my-agent --model {name}",
-        title="[bold green]Model Registered![/bold green]",
-        border_style="green"
-    ))
+    config.register_model(model)
+
+    console.print(
+        Panel.fit(
+            f"[green]✓[/green] Model '{name}' registered successfully!\n\n"
+            f"Provider: {provider}\n"
+            f"Context: {context:,} tokens\n"
+            f"Vision: {'Yes' if vision else 'No'}\n"
+            f"Tools: {'Yes' if tools else 'No'}",
+            title="[bold green]Model Registered[/bold green]",
+            border_style="green",
+        )
+    )
 
 
-@models.command()
-def list():
+@models.command("list")
+@click.option("--provider", type=click.Choice(["openai", "anthropic", "google", "local"]), help="Filter by provider")
+def list_models(provider):
     """List all registered models."""
+    console.print("\n[bold cyan]Registered Models[/bold cyan]\n")
 
-    console.print("\n[bold cyan]🤖 Registered Models[/bold cyan]\n")
+    config = get_config()
+    model_list = config.list_models(provider=provider)
 
-    table = Table(title="Available LLM Models")
+    if not model_list:
+        console.print("[dim]No models registered.[/dim]")
+        console.print("\nRegister a model with:")
+        console.print("  openbench models register my-model --provider openai\n")
+        return
+
+    table = Table()
     table.add_column("Name", style="cyan")
     table.add_column("Provider", style="magenta")
-    table.add_column("Model ID", style="yellow")
-    table.add_column("Status", style="green")
+    table.add_column("Context", justify="right")
+    table.add_column("Vision", justify="center")
+    table.add_column("Tools", justify="center")
+    table.add_column("Aliases", style="dim")
 
-    # Mock data
-    table.add_row("gpt-4", "openai", "gpt-4-0125-preview", "✓ Ready")
-    table.add_row("gpt-3.5", "openai", "gpt-3.5-turbo", "✓ Ready")
-    table.add_row("claude-opus", "anthropic", "claude-opus-4", "✓ Ready")
-    table.add_row("claude-sonnet", "anthropic", "claude-sonnet-3.5", "✓ Ready")
-    table.add_row("llama-local", "local", "llama-3-70b", "⚠ Offline")
+    for model in model_list:
+        table.add_row(
+            model.name,
+            model.provider,
+            f"{model.context_window:,}",
+            "✓" if model.supports_vision else "",
+            "✓" if model.supports_tools else "",
+            ", ".join(model.aliases) if model.aliases else "",
+        )
 
     console.print(table)
     console.print()
@@ -73,93 +98,158 @@ def list():
 
 @models.command()
 @click.argument("name")
-@click.option("--prompt", default="Hello! Please respond with a greeting.",
-              help="Test prompt")
-def test(name, prompt):
-    """Test a registered model."""
+def show(name):
+    """Show details of a specific model."""
+    config = get_config()
+    model = config.get_model(name)
 
-    console.print(f"\n[bold cyan]🧪 Testing Model: {name}[/bold cyan]\n")
+    if not model:
+        console.print(f"\n[red]Model '{name}' not found.[/red]\n")
+        return
 
-    console.print(f"[dim]Prompt: {prompt}[/dim]\n")
+    console.print(f"\n[bold cyan]Model: {model.name}[/bold cyan]\n")
 
-    with console.status(f"[bold green]{name} is generating response..."):
-        import time
-        time.sleep(2)
+    table = Table(show_header=False)
+    table.add_column("Key", style="cyan")
+    table.add_column("Value", style="yellow")
 
-    console.print(Panel(
-        f"[bold]Model Response:[/bold]\n\n"
-        f"Hello! I'm ready to assist you. How can I help you today?\n\n"
-        f"[dim]Model: {name}[/dim]\n"
-        f"[dim]Tokens: 15 (prompt) + 12 (response)[/dim]\n"
-        f"[dim]Latency: 1.2s[/dim]",
-        title=f"[bold cyan]{name}[/bold cyan]",
-        border_style="cyan"
-    ))
+    table.add_row("Provider", model.provider)
+    table.add_row("Context Window", f"{model.context_window:,} tokens")
+    table.add_row("Max Output Tokens", f"{model.max_output_tokens:,}")
+    table.add_row("Supports Vision", "Yes" if model.supports_vision else "No")
+    table.add_row("Supports Tools", "Yes" if model.supports_tools else "No")
 
+    if model.cost_per_1k_input > 0:
+        table.add_row("Cost (Input)", f"${model.cost_per_1k_input:.4f} / 1K tokens")
+        table.add_row("Cost (Output)", f"${model.cost_per_1k_output:.4f} / 1K tokens")
 
-@models.command()
-@click.argument("name")
-def remove(name):
-    """Remove a registered model."""
-
-    console.print(f"\n[yellow]⚠ Removing model: {name}[/yellow]\n")
-
-    if click.confirm("Are you sure?"):
-        with console.status("[bold yellow]Removing model..."):
-            import time
-            time.sleep(0.5)
-
-        console.print(f"[green]✓[/green] Model '{name}' removed.\n")
-    else:
-        console.print("[dim]Cancelled.[/dim]\n")
-
-
-@models.command()
-@click.argument("name")
-@click.option("--temperature", type=float, help="Model temperature (0-1)")
-@click.option("--max-tokens", type=int, help="Maximum tokens to generate")
-@click.option("--top-p", type=float, help="Top-p sampling parameter")
-def configure(name, temperature, max_tokens, top_p):
-    """Configure model parameters."""
-
-    console.print(f"\n[bold cyan]⚙️ Configuring Model: {name}[/bold cyan]\n")
-
-    updates = []
-    if temperature is not None:
-        updates.append(f"temperature = {temperature}")
-    if max_tokens is not None:
-        updates.append(f"max_tokens = {max_tokens}")
-    if top_p is not None:
-        updates.append(f"top_p = {top_p}")
-
-    if updates:
-        for update in updates:
-            console.print(f"[green]✓[/green] Updated {update}")
-        console.print()
-    else:
-        console.print("Current configuration:")
-        console.print("  temperature: 0.7")
-        console.print("  max_tokens: 2000")
-        console.print("  top_p: 1.0\n")
-
-
-@models.command()
-def usage():
-    """Show model usage statistics."""
-
-    console.print("\n[bold cyan]📊 Model Usage Statistics[/bold cyan]\n")
-
-    table = Table(title="Last 30 Days")
-    table.add_column("Model", style="cyan")
-    table.add_column("Requests", justify="right")
-    table.add_column("Tokens", justify="right")
-    table.add_column("Cost", justify="right", style="yellow")
-
-    # Mock data
-    table.add_row("gpt-4", "1,245", "2.3M", "$45.60")
-    table.add_row("gpt-3.5", "3,890", "8.1M", "$12.20")
-    table.add_row("claude-opus", "567", "1.2M", "$18.00")
-    table.add_row("claude-sonnet", "2,103", "4.5M", "$13.50")
+    if model.aliases:
+        table.add_row("Aliases", ", ".join(model.aliases))
 
     console.print(table)
-    console.print(f"\n[bold]Total Cost:[/bold] [yellow]$89.30[/yellow]\n")
+    console.print()
+
+
+@models.command()
+@click.argument("name")
+@click.option("--prompt", default="Hello! Please respond with a greeting.", help="Test prompt")
+def test(name, prompt):
+    """Test a registered model via configured provider.
+
+    This tests the model through ProviderService integration.
+    """
+    from openbench.core.providers import get_provider_service, ProviderType
+
+    config = get_config()
+    model = config.get_model(name)
+
+    if not model:
+        console.print(f"\n[red]Model '{name}' not found.[/red]\n")
+        console.print("Register it first with: openbench models register ...\n")
+        return
+
+    console.print(f"\n[bold cyan]Testing Model: {name}[/bold cyan]\n")
+    console.print(f"[dim]Provider: {model.provider}[/dim]")
+    console.print(f"[dim]Prompt: {prompt}[/dim]\n")
+
+    # Check if provider is configured
+    service = get_provider_service()
+    provider_config = service.get_default(ProviderType.LLM)
+
+    if not provider_config:
+        console.print(
+            Panel.fit(
+                "[yellow]No LLM provider configured.[/yellow]\n\n"
+                "Configure a provider first:\n"
+                f"  openbench provider add my-{model.provider} \\\n"
+                f"    --type llm \\\n"
+                f"    --provider {model.provider} \\\n"
+                "    --plugin chat \\\n"
+                "    --api-key YOUR_API_KEY \\\n"
+                "    --default",
+                title="[bold yellow]Provider Not Configured[/bold yellow]",
+                border_style="yellow",
+            )
+        )
+        return
+
+    with console.status(f"[bold green]{name} is generating response..."):
+        try:
+            llm = service.resolve(ProviderType.LLM, model=name)
+            response = llm.generate(prompt=prompt, model=name)
+
+            console.print(
+                Panel(
+                    f"[bold]Model Response:[/bold]\n\n{response.text}\n\n"
+                    f"[dim]Model: {name}[/dim]\n"
+                    f"[dim]Tokens: {response.tokens_used}[/dim]\n"
+                    f"[dim]Cost: ${response.cost:.4f}[/dim]",
+                    title=f"[bold cyan]{name}[/bold cyan]",
+                    border_style="cyan",
+                )
+            )
+        except Exception as e:
+            console.print(
+                Panel.fit(
+                    f"[red]✗[/red] Test failed\n\n{str(e)}",
+                    title="[bold red]Error[/bold red]",
+                    border_style="red",
+                )
+            )
+
+
+@models.command()
+def defaults():
+    """Show default models for common tasks."""
+    console.print("\n[bold cyan]Default Models[/bold cyan]\n")
+
+    config = get_config()
+
+    table = Table()
+    table.add_column("Use Case", style="cyan")
+    table.add_column("Model", style="yellow")
+    table.add_column("Provider", style="magenta")
+
+    # Check common model names
+    common_models = [
+        ("General", "gpt-4o"),
+        ("Fast/Cheap", "gpt-4o-mini"),
+        ("Long Context", "claude-3-5-sonnet-20241022"),
+        ("Coding", "claude-3-5-sonnet-20241022"),
+    ]
+
+    for use_case, model_name in common_models:
+        model = config.get_model(model_name)
+        if model:
+            table.add_row(use_case, model.name, model.provider)
+        else:
+            table.add_row(use_case, f"[dim]{model_name}[/dim]", "[dim]not found[/dim]")
+
+    console.print(table)
+    console.print("\nDefault model from config:", config.get("llm.default_model", "not set"))
+    console.print()
+
+
+@models.command()
+def providers():
+    """List available model providers."""
+    console.print("\n[bold cyan]Model Providers[/bold cyan]\n")
+
+    providers_info = [
+        ("openai", "OpenAI", "GPT-4, GPT-4o, GPT-3.5", "https://platform.openai.com"),
+        ("anthropic", "Anthropic", "Claude 3.5, Claude 3", "https://console.anthropic.com"),
+        ("google", "Google", "Gemini Pro, Gemini Ultra", "https://ai.google.dev"),
+        ("local", "Local", "Ollama, LM Studio", "localhost"),
+    ]
+
+    table = Table()
+    table.add_column("ID", style="cyan")
+    table.add_column("Name", style="yellow")
+    table.add_column("Models", style="magenta")
+    table.add_column("API", style="dim")
+
+    for pid, name, models, api in providers_info:
+        table.add_row(pid, name, models, api)
+
+    console.print(table)
+    console.print()

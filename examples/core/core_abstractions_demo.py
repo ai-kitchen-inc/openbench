@@ -8,7 +8,7 @@ Shows how to:
 4. Use state management for checkpointing
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from openbench.core import (
     # Abstractions
     DataSource, RawData, Query, SearchResult, DataStore,
@@ -28,6 +28,7 @@ from datetime import datetime
 # Step 1: Create Custom Implementations
 # ============================================================================
 
+@DataSourceRegistry.register('pdf', 'mock', description='Mock PDF data source for testing')
 class MockPDFSource(DataSource):
     """Mock PDF data source implementation."""
 
@@ -61,6 +62,7 @@ class MockPDFSource(DataSource):
         return True
 
 
+@DataStoreRegistry.register('vector', 'mock', description='Mock vector database for testing')
 class MockVectorStore(DataStore):
     """Mock vector database implementation."""
 
@@ -108,6 +110,7 @@ class MockVectorStore(DataStore):
         return False
 
 
+@AgentRegistry.register('research', 'mock', description='Mock research agent for testing')
 class MockResearchAgent(Agent):
     """Mock research agent implementation."""
 
@@ -132,6 +135,7 @@ class MockResearchAgent(Agent):
         return 0.01
 
 
+@AgentRegistry.register('analysis', 'mock', description='Mock analysis agent for testing')
 class MockAnalysisAgent(Agent):
     """Mock analysis agent implementation."""
 
@@ -156,6 +160,7 @@ class MockAnalysisAgent(Agent):
         return 0.02
 
 
+@OutputGeneratorRegistry.register('pdf', 'mock', description='Mock PDF generator for testing')
 class MockPDFGenerator(OutputGenerator):
     """Mock PDF generator implementation."""
 
@@ -186,26 +191,9 @@ class MockPDFGenerator(OutputGenerator):
 
 
 # ============================================================================
-# Step 2: Register Implementations
+# Note: All implementations are auto-registered via @Registry.register decorator
+# No manual registration needed!
 # ============================================================================
-
-def register_implementations():
-    """Register all mock implementations."""
-
-    # Register data sources
-    DataSourceRegistry.register('pdf', 'mock', MockPDFSource)
-
-    # Register data stores
-    DataStoreRegistry.register('vector', 'mock', MockVectorStore)
-
-    # Register agents
-    AgentRegistry.register('research', 'mock', MockResearchAgent)
-    AgentRegistry.register('analysis', 'mock', MockAnalysisAgent)
-
-    # Register output generators
-    OutputGeneratorRegistry.register('pdf', 'mock', MockPDFGenerator)
-
-    print("✅ All implementations registered!")
 
 
 # ============================================================================
@@ -492,8 +480,8 @@ def main():
     print("OpenBench Core Abstractions Demo")
     print("🚀"*30)
 
-    # Register implementations
-    register_implementations()
+    # Note: All implementations are auto-registered via decorators!
+    print("✅ All implementations registered via @Registry.register decorators!")
 
     # Run demos
     demo_sequential_workflow()
