@@ -3,7 +3,7 @@
 import hashlib
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
 from openbench.core.abstractions import DataSource, RawData
 from openbench.core.context import ProjectContext
@@ -13,6 +13,9 @@ from openbench.data.exceptions import (
     UnsupportedFormatError,
     ValidationError,
 )
+
+if TYPE_CHECKING:
+    from openbench.core.abstractions import DataStore
 
 
 class PDFSource(DataSource):
@@ -39,21 +42,27 @@ class PDFSource(DataSource):
         self,
         path: Union[str, Path],
         project: Optional[ProjectContext] = None,
+        store: Optional["DataStore"] = None,
         recursive: bool = True,
         encoding: str = "utf-8",
+        auto_index: bool = True,
     ):
         """Initialize PDF source.
 
         Args:
             path: Path to PDF file or directory containing PDFs
             project: Optional project context for multi-tenancy
+            store: Optional DataStore for auto-indexing extracted content
             recursive: If path is directory, search recursively (default: True)
             encoding: Text encoding for extracted content (default: utf-8)
+            auto_index: Automatically index to store on extract (default: True)
         """
         self.path = Path(path)
         self.project = project
+        self.store = store
         self.recursive = recursive
         self.encoding = encoding
+        self.auto_index = auto_index
         self._files: Optional[List[Path]] = None
         self._metadata: Optional[Dict[str, Any]] = None
 
@@ -225,12 +234,23 @@ class PDFSource(DataSource):
         if self.project:
             metadata["project_context"] = self.project.to_dict()
 
-        return RawData(
+        raw_data = RawData(
             content=content,
             content_type="text",
             metadata=metadata,
             source=self,
         )
+
+        # Auto-index to store if configured
+        if self.store and self.auto_index:
+            try:
+                self.store.index(raw_data)
+            except Exception as e:
+                # Log but don't fail extraction
+                import warnings
+                warnings.warn(f"Failed to index to store: {e}")
+
+        return raw_data
 
     async def aextract(self) -> RawData:
         """Async version of extract (runs sync extraction in executor)."""

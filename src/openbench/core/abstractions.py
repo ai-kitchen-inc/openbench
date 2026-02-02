@@ -455,6 +455,86 @@ class LLMProvider(ABC):
         pass
 
 
+class EmbeddingProvider(ABC):
+    """
+    Abstract interface for embedding providers.
+
+    Separate from LLMProvider because:
+    1. Embedding != Text Generation (different concerns)
+    2. More explicit about capabilities and dimensions
+
+    Supported providers: OpenAI, Google.
+    """
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        """Provider name ('openai', 'google')."""
+        pass
+
+    @property
+    @abstractmethod
+    def default_model(self) -> str:
+        """Default embedding model for this provider."""
+        pass
+
+    @abstractmethod
+    def get_dimension(self, model: Optional[str] = None) -> int:
+        """
+        Get embedding dimension for a model.
+
+        Args:
+            model: Model name. Uses default_model if not specified.
+
+        Returns:
+            Vector dimension (e.g., 1536, 768, 3072)
+        """
+        pass
+
+    @abstractmethod
+    def embed(self, text: str, model: Optional[str] = None) -> List[float]:
+        """
+        Generate embedding for single text.
+
+        Args:
+            text: Text to embed.
+            model: Model to use. Uses default_model if not specified.
+
+        Returns:
+            Embedding vector as list of floats.
+        """
+        pass
+
+    @abstractmethod
+    def embed_batch(
+        self,
+        texts: List[str],
+        model: Optional[str] = None,
+        batch_size: int = 100
+    ) -> List[List[float]]:
+        """
+        Generate embeddings for multiple texts.
+
+        Args:
+            texts: List of texts to embed.
+            model: Model to use. Uses default_model if not specified.
+            batch_size: Number of texts per API call.
+
+        Returns:
+            List of embedding vectors.
+        """
+        pass
+
+    def list_models(self) -> Dict[str, int]:
+        """
+        List available embedding models with their dimensions.
+
+        Returns:
+            Dict mapping model name to dimension.
+        """
+        return {self.default_model: self.get_dimension()}
+
+
 class Tool(ABC):
     """
     Abstract interface for agent tools.

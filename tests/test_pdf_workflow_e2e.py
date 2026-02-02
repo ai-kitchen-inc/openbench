@@ -169,7 +169,7 @@ class TestPDFWorkflowE2E(unittest.TestCase):
         )
 
         output_path = os.path.join(self.temp_dir, "output.md")
-        md_gen = MarkdownGenerator()
+        md_gen = MarkdownGenerator(output_path=output_path)
 
         workflow = (
             DataLayer(sources=pdf_source)
@@ -177,7 +177,7 @@ class TestPDFWorkflowE2E(unittest.TestCase):
             | OutputLayer(generators=md_gen)
         )
 
-        result = workflow.invoke({})
+        result = workflow.invoke({"output_path": output_path})
 
         self.assertIn("generated_outputs", result)
 

@@ -487,23 +487,24 @@ class MarkdownGenerator(OutputGenerator):
 
     Example:
         ```python
-        generator = MarkdownGenerator()
+        generator = MarkdownGenerator(output_path="reports/analysis.md")
         result = generator.generate(
             content="# My Report\\n\\nThis is content...",
-            output_path="report.md"
         )
         ```
     """
 
-    def __init__(self, add_toc: bool = False):
+    def __init__(self, output_path: str = "output.md", add_toc: bool = False):
         """
         Initialize Markdown generator.
 
         Args:
+            output_path: Default output file path
             add_toc: Whether to add table of contents
         """
+        self.default_output_path = output_path
         self.add_toc = add_toc
-        logger.debug(f"MarkdownGenerator initialized (add_toc: {add_toc})")
+        logger.debug(f"MarkdownGenerator initialized (output_path: {output_path}, add_toc: {add_toc})")
 
     @property
     def output_format(self) -> str:
@@ -552,7 +553,7 @@ class MarkdownGenerator(OutputGenerator):
         self,
         content: Any,
         template: Optional[str] = None,
-        output_path: str = "output.md",
+        output_path: Optional[str] = None,
         title: Optional[str] = None,
         **options,
     ) -> GeneratedOutput:
@@ -562,13 +563,14 @@ class MarkdownGenerator(OutputGenerator):
         Args:
             content: Content to render
             template: Template (unused for markdown)
-            output_path: Output file path
+            output_path: Output file path (uses default from constructor if None)
             title: Document title
             **options: Additional options
 
         Returns:
             GeneratedOutput with file path and metadata
         """
+        output_path = output_path or self.default_output_path
         logger.info(f"Generating Markdown: {output_path}")
 
         text_content = self._extract_content(content)

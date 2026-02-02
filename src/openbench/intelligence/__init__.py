@@ -27,6 +27,15 @@ from openbench.intelligence.base import (
     MessageRole,
 )
 
+# Embedding providers
+from openbench.intelligence.embeddings import (
+    OpenAIEmbeddingProvider,
+    GoogleEmbeddingProvider,
+    get_embedding_provider,
+    resolve_embedding_provider,
+    EMBEDDING_PROVIDERS,
+)
+
 __all__ = [
     # L2 Orchestrator
     "IntelligenceLayer",
@@ -48,4 +57,10 @@ __all__ = [
     "ToolExecutor",
     "Message",
     "MessageRole",
+    # Embedding providers
+    "OpenAIEmbeddingProvider",
+    "GoogleEmbeddingProvider",
+    "get_embedding_provider",
+    "resolve_embedding_provider",
+    "EMBEDDING_PROVIDERS",
 ]
