@@ -82,8 +82,12 @@ security = [
     "cryptography>=41.0.0",
 ]
 
+vector = [
+    "pinecone-client>=3.0.0",
+]
+
 all = [
-    "openbench[dev,data,intelligence,output,security,google]"
+    "openbench[dev,data,intelligence,output,security,google,vector]"
 ]
 
 [project.urls]

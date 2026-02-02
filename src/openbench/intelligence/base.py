@@ -20,9 +20,11 @@ import logging
 
 from openbench.core.abstractions import (
     Agent,
+    DataStore,
     ExecutionContext,
     ExecutionResult,
     LLMProvider,
+    Query,
     Tool,
 )
 from openbench.core.config import get_config, get_default_model
@@ -235,6 +237,9 @@ class BaseAgent(Agent):
         max_iterations: int = 10,
         system_prompt: Optional[str] = None,
         provider_name: Optional[str] = None,
+        store: Optional[DataStore] = None,
+        retrieval_top_k: int = 5,
+        retrieval_threshold: float = 0.0,
     ):
         """
         Initialize agent.
@@ -247,12 +252,20 @@ class BaseAgent(Agent):
             max_iterations: Max tool call iterations
             system_prompt: Custom system prompt (optional)
             provider_name: Specific provider name (uses default if None)
+            store: Optional DataStore for RAG (retrieval-augmented generation)
+            retrieval_top_k: Number of results to retrieve from store
+            retrieval_threshold: Minimum score threshold for retrieved results
         """
         self.goal = goal
         self.model = model or get_default_model()
         self.temperature = temperature
         self.max_iterations = max_iterations
         self.provider_name = provider_name
+
+        # RAG configuration
+        self.store = store
+        self.retrieval_top_k = retrieval_top_k
+        self.retrieval_threshold = retrieval_threshold
 
         # Initialize tool executor
         self.tools = ToolExecutor()
@@ -294,6 +307,89 @@ Provide clear, actionable responses."""
             )
         return self._llm
 
+    def _retrieve_context(self, query_text: str) -> List[Dict[str, Any]]:
+        """Retrieve relevant context from store for RAG.
+
+        Args:
+            query_text: Text to search for relevant context.
+
+        Returns:
+            List of retrieved items with content and metadata.
+        """
+        if not self.store:
+            return []
+
+        try:
+            results = self.store.search(Query(
+                text=query_text,
+                limit=self.retrieval_top_k,
+            ))
+
+            # Filter by threshold and extract content
+            retrieved = []
+            for item, score in zip(results.items, results.scores):
+                if score >= self.retrieval_threshold:
+                    retrieved.append({
+                        "content": item.get("content", ""),
+                        "score": score,
+                        "metadata": item.get("metadata", {}),
+                    })
+
+            return retrieved
+
+        except Exception as e:
+            logger.warning(f"Failed to retrieve context from store: {e}")
+            return []
+
+    def _augment_context_with_rag(
+        self,
+        context: ExecutionContext,
+        retrieved: List[Dict[str, Any]]
+    ) -> ExecutionContext:
+        """Augment execution context with retrieved RAG context.
+
+        Args:
+            context: Original execution context.
+            retrieved: Retrieved items from store.
+
+        Returns:
+            Augmented execution context.
+        """
+        if not retrieved:
+            return context
+
+        # Build RAG context string
+        rag_context_parts = []
+        for i, item in enumerate(retrieved, 1):
+            rag_context_parts.append(
+                f"[Source {i}] (relevance: {item['score']:.2f})\n{item['content']}"
+            )
+
+        rag_context = "\n\n---\n\n".join(rag_context_parts)
+
+        # Augment context data
+        augmented_data = context.data or {}
+        if isinstance(augmented_data, dict):
+            augmented_data = {
+                **augmented_data,
+                "_rag_context": rag_context,
+                "_rag_sources": len(retrieved),
+            }
+        else:
+            augmented_data = {
+                "original_data": augmented_data,
+                "_rag_context": rag_context,
+                "_rag_sources": len(retrieved),
+            }
+
+        return ExecutionContext(
+            goal=context.goal,
+            data=augmented_data,
+            tools=context.tools,
+            memory=context.memory,
+            constraints=context.constraints,
+        )
+
     def _parse_tool_calls(self, response: Any) -> List[Dict[str, Any]]:
         """Parse tool calls from LLM response."""
         # Handle different response formats
@@ -317,9 +413,10 @@ Provide clear, actionable responses."""
         Execute the agent's task.
 
         Implements iterative tool use loop:
-        1. Send messages to LLM
-        2. If tool calls, execute tools and add results
-        3. Repeat until no tool calls or max iterations
+        1. Retrieve relevant context from store (if configured)
+        2. Send messages to LLM
+        3. If tool calls, execute tools and add results
+        4. Repeat until no tool calls or max iterations
 
         Args:
             context: Execution context with data and configuration
@@ -327,10 +424,24 @@ Provide clear, actionable responses."""
         Returns:
             ExecutionResult with agent's output
         """
+        # Retrieve and augment context with RAG if store is configured
+        if self.store:
+            retrieved = self._retrieve_context(context.goal)
+            context = self._augment_context_with_rag(context, retrieved)
+
         # Add user message with context
         user_message = f"Goal: {context.goal}"
         if context.data:
-            user_message += f"\n\nContext data:\n{json.dumps(context.data, indent=2, default=str)}"
+            # Format RAG context specially if present
+            data_to_show = context.data
+            if isinstance(data_to_show, dict) and "_rag_context" in data_to_show:
+                rag_context = data_to_show.pop("_rag_context", "")
+                rag_sources = data_to_show.pop("_rag_sources", 0)
+                user_message += f"\n\n## Retrieved Context ({rag_sources} sources):\n{rag_context}"
+                if data_to_show:
+                    user_message += f"\n\n## Additional Data:\n{json.dumps(data_to_show, indent=2, default=str)}"
+            else:
+                user_message += f"\n\nContext data:\n{json.dumps(data_to_show, indent=2, default=str)}"
         self.memory.add_user(user_message)
 
         total_tokens = 0
