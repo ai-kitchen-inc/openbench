@@ -1,3 +1,10 @@
+---
+name: lint
+description: Run code formatting and linting
+argument-hint: "[options]"
+disable-model-invocation: true
+---
+
 # /lint
 
 Run code formatting and linting.
