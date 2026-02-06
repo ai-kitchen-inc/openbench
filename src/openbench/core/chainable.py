@@ -278,9 +278,9 @@ class Parallel(Chainable[Input, List[Any]]):
         config: Optional[RunnableConfig] = None
     ) -> List[Any]:
         """
-        Execute all branches in parallel (synchronously).
+        Execute all branches sequentially and collect results.
 
-        Note: This is sequential execution. Use ainvoke() for true parallelism.
+        Note: Use ainvoke() for true concurrent execution.
 
         Args:
             input: Input data (sent to all branches)
