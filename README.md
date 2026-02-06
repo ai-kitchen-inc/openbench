@@ -89,7 +89,7 @@ workflow = Workflow(
 | Phase | Status |
 |-------|--------|
 | **Phase 1: Core Abstractions** | Complete - Interfaces, plugin registry, DAG workflows, state management |
-| **Phase 2: Infrastructure** | Complete - Provider Service, Config, Agent interface, L2 layers, 194 tests |
+| **Phase 2: Infrastructure** | Complete - Provider Service, Config, Agent interface, L2 layers, 510 tests |
 | **Phase 3: Providers** | In Progress - LLM (OpenAI, Anthropic), Vector (ChromaDB, Pinecone), Output (ReportLab, python-pptx) |
 
 ```bash
@@ -198,7 +198,7 @@ Python (FastAPI), LangChain, LlamaIndex, OpenAI/Anthropic, DuckDB, Pandas, Chrom
 - **Enterprise Ready**: Centralized config, encryption, audit ready
 - **Extensible**: Plugin registry with decorators and auto-discovery
 - **Composable**: DAG workflows with `|` and `&` operators
-- **Well-Tested**: 194 tests
+- **Well-Tested**: 510 tests
 
 ## 🗺️ Roadmap
 
