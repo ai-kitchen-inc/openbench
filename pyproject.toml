@@ -69,6 +69,13 @@ intelligence = [
 
 google = [
     "google-generativeai>=0.8.0",
+    "google-genai>=1.0.0",
+]
+
+search = [
+    "tavily-python>=0.3.0",
+    "google-search-results>=2.4.0",
+    "ddgs>=6.0.0",
 ]
 
 output = [
@@ -82,8 +89,12 @@ security = [
     "cryptography>=41.0.0",
 ]
 
+vector = [
+    "pinecone-client>=3.0.0",
+]
+
 all = [
-    "openbench[dev,data,intelligence,output,security,google]"
+    "openbench[dev,data,intelligence,output,security,google,vector,search]"
 ]
 
 [project.urls]

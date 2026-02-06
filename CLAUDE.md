@@ -2,6 +2,23 @@
 
 Guidance for Claude Code when working with this repository.
 
+## Critical Rules (Read First!)
+
+**Before writing ANY code:**
+- [ ] READ the file you're about to modify
+- [ ] SEARCH for existing patterns (`Grep` for similar code)
+- [ ] VERIFY imports exist (don't guess!)
+- [ ] CHECK method signatures before calling them
+- [ ] FOLLOW conventions from existing codebase
+- [ ] ASK when uncertain - don't guess implementation details
+
+**Never:**
+- Invent imports/classes/methods that don't exist
+- Add unused imports or dead code
+- Assume file contents without reading
+- Skip running tests after changes
+- Guess when you can ask the user
+
 ## Project Overview
 
 **OpenBench** - Open-source Python SDK for composable AI workflows.
@@ -187,6 +204,78 @@ Avoid outdated: `gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-2.0-flash-exp`
 - Commits without Claude watermark (no `Co-Authored-By`)
 - Use conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`
 
+## Code Quality Rules (Anti-Hallucination)
+
+### MUST DO Before Writing Code
+
+1. **Read before write** - ALWAYS read existing files before modifying. Never assume file contents.
+2. **Verify imports exist** - Check that modules/classes/functions exist before importing:
+   ```python
+   # WRONG: Assuming import exists
+   from openbench.core import SomeClass  # Does SomeClass exist?
+
+   # RIGHT: First verify with Grep or Read
+   # grep "class SomeClass" src/openbench/
+   ```
+3. **Check method signatures** - Read the actual class before calling methods:
+   ```python
+   # WRONG: Guessing method parameters
+   source.extract(format="json")  # Does extract() take format param?
+
+   # RIGHT: Read the class definition first
+   ```
+4. **Verify base classes** - Check abstract methods before implementing subclasses
+
+### NEVER DO
+
+1. **Never invent APIs** - Don't create function calls that don't exist in the codebase
+2. **Never guess imports** - If unsure, search the codebase first
+3. **Never assume patterns** - Read existing similar code before writing new code
+4. **Never add unused imports** - Only import what you actually use
+5. **Never add unused code** - No dead functions, classes, or variables
+6. **Never guess when uncertain** - Ask the user instead of making assumptions
+
+### When to Ask the User
+
+Use `AskUserQuestion` when:
+- Multiple valid implementation approaches exist
+- Requirements are ambiguous
+- You're unsure about naming conventions
+- External dependencies or API choices are needed
+- The implementation could go multiple ways
+
+```
+Example: "Should I use async/await or threading for this operation?"
+Example: "Which embedding model should I use: OpenAI or Google?"
+```
+
+### Verification Workflow
+
+```
+1. User requests feature/fix
+2. READ existing relevant files first
+3. SEARCH for similar patterns in codebase
+4. ASK user if implementation approach is unclear
+5. VERIFY imports and dependencies exist
+6. WRITE code following existing patterns
+7. TEST the code runs without import/attribute errors
+8. VERIFY no unused imports or dead code
+```
+
+### Code Reusability Rules
+
+1. **Follow existing patterns** - Look at similar files before creating new ones
+2. **Use existing utilities** - Search for helper functions before writing new ones
+3. **Consistent naming** - Match existing naming conventions in the codebase
+4. **Single responsibility** - One class/function does one thing well
+
+### Testing Requirements
+
+1. **Test all new code** - Every new function/class needs tests
+2. **Run tests before committing** - `python -m unittest discover tests -v`
+3. **Test edge cases** - Empty inputs, None values, invalid parameters
+4. **Mock external dependencies** - Don't call real APIs in unit tests
+
 ## Development Guidelines
 
 ### Creating Components
@@ -236,7 +325,8 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | Skill | Triggers On |
 |-------|-------------|
 | **composing-workflows** | Creating workflows, L1/L2 composition, DAG patterns |
-| **creating-abstractions** | Implementing DataSource, Agent, OutputGenerator |
+| **creating-abstractions** | Implementing DataSource, Agent, OutputGenerator, DataStore |
+| **data-layer** | PineconeStore, chunking, embeddings, RAG, vector search |
 | **testing-openbench** | Writing tests, test patterns, coverage |
 
 ## Additional Documentation
