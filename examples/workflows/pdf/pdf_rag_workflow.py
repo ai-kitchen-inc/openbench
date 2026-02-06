@@ -14,9 +14,9 @@ Requires:
     - GOOGLE_API_KEY environment variable
 
 Usage:
-    python examples/workflows/pdf_rag_workflow.py <pdf-path>
-    python examples/workflows/pdf_rag_workflow.py document.pdf -o report.md
-    python examples/workflows/pdf_rag_workflow.py document.pdf -q "What is this about?"
+    python examples/workflows/pdf/pdf_rag_workflow.py <pdf-path>
+    python examples/workflows/pdf/pdf_rag_workflow.py document.pdf -o report.md
+    python examples/workflows/pdf/pdf_rag_workflow.py document.pdf -q "What is this about?"
 """
 
 import argparse

@@ -17,9 +17,9 @@ Requirements:
 - Input PDF file
 
 Usage:
-    python examples/workflows/pdf_google_adk_workflow.py input.pdf output.pdf
-    python examples/workflows/pdf_google_adk_workflow.py input.pdf output.pdf --goal "Summarize in bullet points"
-    python examples/workflows/pdf_google_adk_workflow.py input.pdf output.md --format markdown
+    python examples/workflows/pdf/pdf_google_adk_workflow.py input.pdf output.pdf
+    python examples/workflows/pdf/pdf_google_adk_workflow.py input.pdf output.pdf --goal "Summarize in bullet points"
+    python examples/workflows/pdf/pdf_google_adk_workflow.py input.pdf output.md --format markdown
 """
 
 import argparse

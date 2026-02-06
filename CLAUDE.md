@@ -39,9 +39,10 @@ Guidance for Claude Code when working with this repository.
 
 ## Positioning & Classification
 
-**OpenBench is a Workflow Orchestrator + Universal Control Plane for Agentic AI.**
+**OpenBench is a Workflow Orchestrator + Agent Runtime + Universal Control Plane for AI.**
 
-It is NOT an agent itself, but a platform for coordinating agents from various frameworks.
+It orchestrates workflows across frameworks AND provides built-in agent capabilities
+(BaseAgent with reasoning loop, tools, memory, RAG).
 
 ### What OpenBench IS
 
@@ -51,14 +52,14 @@ It is NOT an agent itself, but a platform for coordinating agents from various f
 | **Universal Control Plane** | Connect any framework via adapters |
 | **Data Pipeline** | ETL for AI (Extract -> Transform -> Load) |
 | **Multi-Agent Coordinator** | Chain multiple agents from different frameworks |
+| **Agent Runtime** | Built-in BaseAgent with reasoning loop, tools, memory, RAG |
 
 ### What OpenBench is NOT
 
 | Not This | Because |
 |----------|---------|
-| **LLM Agent** | Does not execute reasoning, only orchestrates |
-| **Agent Framework** | Does not compete with LangChain/CrewAI, connects them |
-| **Agentic AI** | Not autonomous, user defines workflow |
+| **Autonomous AI** | Not self-directed — user defines workflow or agent goals |
+| **Single-Framework** | Does not compete with LangChain/CrewAI, connects them |
 
 ### AI Systems Taxonomy
 
@@ -66,15 +67,16 @@ It is NOT an agent itself, but a platform for coordinating agents from various f
 Level 1: LLM (Base Model)
          └── GPT-4, Claude, Gemini - text in, text out
 
-Level 2: LLM Agent (Single Agent)
+Level 2: LLM Agent (Single Agent)  <-- OPENBENCH (BaseAgent)
          └── LLM + Tools + Memory + Reasoning Loop
-         └── Frameworks: LangChain Agent, Google ADK Agent
+         └── Built-in: BaseAgent, SimpleAgent, StructuredOutputAgent
+         └── External: LangChain Agent, Google ADK Agent (via adapters)
 
 Level 3: Multi-Agent System (Agentic AI)
          └── Multiple LLM Agents collaborating
          └── Examples: CrewAI crews, AutoGen teams
 
-Level 4: Workflow Orchestrator  <-- OPENBENCH
+Level 4: Workflow Orchestrator  <-- OPENBENCH (Core)
          └── Coordinates agents + data + outputs
          └── Framework agnostic, DAG-based composition
 
@@ -83,15 +85,19 @@ Level 5: AI Platform
          └── Examples: AWS Bedrock, Google Vertex AI
 ```
 
+OpenBench spans **Level 2 + Level 4**: provides both built-in agent capabilities
+(BaseAgent with reasoning loop, tool calling, memory, RAG) and workflow orchestration
+(`|` `&` operators, L1/L2 layers, framework adapters).
+
 ### Analogy
 
-OpenBench is like **"Kubernetes for AI Agents"** - it handles coordination, not execution.
+OpenBench is like **"Kubernetes + built-in containers"** — it handles coordination AND provides ready-to-use agents.
 
 | System | Role |
 |--------|------|
 | **Kubernetes** | Orchestrates containers, doesn't run code |
 | **Airflow** | Orchestrates tasks, doesn't process data |
-| **OpenBench** | Orchestrates AI agents, doesn't do reasoning |
+| **OpenBench** | Orchestrates AI workflows + provides built-in agents (BaseAgent) |
 
 ## Project Structure
 
@@ -108,9 +114,24 @@ openbench/
 │   │   ├── config.py            # Single source of truth Config + model registry
 │   │   ├── layers.py            # L2 system-level orchestrators
 │   │   └── state.py             # State management & checkpointing
+│   ├── data/                    # Data layer
+│   │   ├── sources/             # Data source implementations
+│   │   │   ├── pdf.py           # PDF data source with chunking
+│   │   │   ├── grounded_search.py # Grounded search source (Tavily, Google, DDG)
+│   │   │   └── langextract.py   # Structured entity extraction (Google LangExtract)
+│   │   └── stores/              # Vector store implementations
+│   │       ├── base.py          # Base DataStore abstraction
+│   │       └── pinecone.py      # Pinecone vector store
+│   ├── adapters/                # Framework adapters
+│   │   ├── google_adk.py        # Google ADK adapter
+│   │   ├── langchain.py         # LangChain adapter
+│   │   ├── crewai.py            # CrewAI adapter
+│   │   ├── ag2.py               # AG2 adapter
+│   │   └── e2b.py               # E2B adapter
 │   ├── intelligence/            # AI agent layer
 │   │   ├── base.py              # Framework-agnostic BaseAgent, ToolExecutor, AgentMemory
 │   │   ├── agents.py            # Agent implementations (Research, Analysis, Content)
+│   │   ├── llm_providers.py     # Concrete LLM providers (GeminiLLMProvider)
 │   │   └── layer.py             # AgentFactory for creating agents
 │   ├── output/                  # Output generation layer
 │   │   ├── generators.py        # Output generator implementations
@@ -121,7 +142,7 @@ openbench/
 │   │   ├── main.py              # CLI entry point
 │   │   └── commands/            # CLI command groups (init, data, agent, workflow, provider, models)
 │   └── utils/                   # Utilities
-├── tests/                       # Test suite (320 tests)
+├── tests/                       # Test suite (510 tests)
 ├── examples/                    # Example workflows
 ├── docs/                        # Documentation
 ├── pyproject.toml               # Python project configuration
@@ -166,13 +187,16 @@ conda activate py312
 pip install -e .                 # Core
 pip install -e ".[all]"          # All features
 pip install -e ".[security]"     # With encryption
+pip install -e ".[vector]"       # Pinecone vector store
+pip install -e ".[search]"       # Tavily, Google Search, DuckDuckGo
+pip install -e ".[google]"       # Google GenAI SDK
 
 # Test
 python -m unittest discover tests -v
 pytest tests/ --cov=openbench
 
 # Examples
-python examples/workflows/sustainability_report.py
+python examples/workflows/reports/sustainability_report.py
 python examples/core/core_abstractions_demo.py
 
 # Code quality
@@ -187,7 +211,27 @@ mypy src/openbench/
 examples/
 ├── core/           # Core abstractions and orchestration demos
 ├── adapters/       # Framework adapter examples
+├── data/           # Data source examples
+├── embeddings/     # Embedding provider demos
+├── stores/         # Vector store examples (Pinecone)
+├── intelligence/   # Agent and LLM provider demos
+│   ├── gemini_agent_demo.py
+│   ├── agentic_research_demo.py
+│   └── agentic_analysis_demo.py
 └── workflows/      # Complete E2E workflow examples
+    ├── pdf/        # PDF processing workflows
+    │   ├── pdf_google_adk_workflow.py
+    │   ├── pdf_indexer.py
+    │   └── pdf_rag_workflow.py
+    ├── entity/     # Entity extraction workflows
+    │   ├── entity_extraction_workflow.py
+    │   └── entity_analysis_adk_workflow.py
+    ├── research/   # Research agent workflows
+    │   ├── research_agent.py
+    │   └── hybrid_research_agent.py
+    └── reports/    # End-to-end report generation
+        ├── sustainability_report.py
+        └── knowledge_base_workflow.py
 ```
 
 ## Google Model References
@@ -309,7 +353,15 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/core/config.py` | Single source of truth Config + model registry |
 | `src/openbench/core/layers.py` | L2 orchestrators (DataLayer, IntelligenceLayer, OutputLayer) |
 | `src/openbench/core/state.py` | State management and checkpointing |
+| `src/openbench/core/context.py` | Context management for workflows |
 | `src/openbench/intelligence/base.py` | Framework-agnostic BaseAgent, ToolExecutor, AgentMemory |
+| `src/openbench/intelligence/llm_providers.py` | Concrete LLM providers (GeminiLLMProvider) |
+| `src/openbench/data/sources/pdf.py` | PDF data source with chunking support |
+| `src/openbench/data/sources/grounded_search.py` | Grounded search (Tavily, Google, DuckDuckGo) |
+| `src/openbench/data/sources/langextract.py` | Structured entity extraction (Google LangExtract) |
+| `src/openbench/data/stores/base.py` | Base DataStore abstraction |
+| `src/openbench/data/stores/pinecone.py` | Pinecone vector store implementation |
+| `src/openbench/adapters/google_adk.py` | Google ADK framework adapter |
 | `src/openbench/workflows/workflow.py` | Named workflows with state |
 
 ## Slash Commands

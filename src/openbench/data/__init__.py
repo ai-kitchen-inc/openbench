@@ -1,6 +1,6 @@
 """Data layer for OpenBench - sources, transforms, and stores."""
 
-from openbench.data.sources import PDFSource, GroundedSearchSource
+from openbench.data.sources import PDFSource, GroundedSearchSource, LangExtractSource
 from openbench.data.exceptions import (
     DataLayerError,
     SourceError,
@@ -28,6 +28,7 @@ __all__ = [
     # Sources
     "PDFSource",
     "GroundedSearchSource",
+    "LangExtractSource",
     # Store utilities
     "Chunk",
     "ChunkingConfig",
