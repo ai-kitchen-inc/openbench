@@ -26,7 +26,9 @@ Example:
 """
 
 import hashlib
+import logging
 import os
+import urllib.request
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
@@ -34,7 +36,34 @@ from openbench.core.abstractions import DataSource, RawData
 from openbench.data.exceptions import ExtractionError, ValidationError
 
 
+logger = logging.getLogger(__name__)
+
 GroundedProvider = Literal["gemini", "perplexity"]
+
+GROUNDING_REDIRECT_HOST = "vertexaisearch.cloud.google.com"
+
+
+def _resolve_redirect_url(url: str, timeout: float = 5.0) -> str:
+    """Resolve a Vertex AI grounding redirect URL to its actual destination.
+
+    Args:
+        url: URL that may be a grounding redirect.
+        timeout: HTTP request timeout in seconds.
+
+    Returns:
+        Resolved URL, or original URL if resolution fails.
+    """
+    if GROUNDING_REDIRECT_HOST not in url:
+        return url
+
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        req.add_header("User-Agent", "Mozilla/5.0")
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return resp.url
+    except Exception as e:
+        logger.debug(f"Failed to resolve grounding redirect: {e}")
+        return url
 
 
 class GroundedSearchSource(DataSource):
@@ -201,9 +230,10 @@ When answering questions:
                 if grounding and hasattr(grounding, "grounding_chunks") and grounding.grounding_chunks:
                     for chunk in grounding.grounding_chunks:
                         if hasattr(chunk, "web"):
+                            raw_url = getattr(chunk.web, "uri", "")
                             sources.append({
                                 "title": getattr(chunk.web, "title", ""),
-                                "url": getattr(chunk.web, "uri", ""),
+                                "url": _resolve_redirect_url(raw_url),
                             })
                 if grounding and hasattr(grounding, "search_entry_point"):
                     if hasattr(grounding.search_entry_point, "rendered_content"):
