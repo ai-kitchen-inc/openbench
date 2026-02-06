@@ -147,4 +147,4 @@ class MyStore(EmbeddingMixin):
 4. **Handle errors** - Wrap store operations in try/except
 5. **Batch operations** - Use batch methods for large datasets
 
-For examples, see `examples/workflows/hybrid_research_agent.py`
+For examples, see `examples/workflows/research/hybrid_research_agent.py`

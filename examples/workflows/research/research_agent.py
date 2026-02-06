@@ -11,9 +11,9 @@ The agent can:
     4. Handle follow-up questions
 
 Usage:
-    python examples/workflows/research_agent.py "What is sustainability?"
-    python examples/workflows/research_agent.py "Explain the key findings" --namespace my-project
-    python examples/workflows/research_agent.py --interactive
+    python examples/workflows/research/research_agent.py "What is sustainability?"
+    python examples/workflows/research/research_agent.py "Explain the key findings" --namespace my-project
+    python examples/workflows/research/research_agent.py --interactive
 
 Requires:
     - PINECONE_API_KEY environment variable

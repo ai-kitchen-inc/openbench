@@ -3,24 +3,23 @@ Hybrid Research Agent - RAG + Web Search
 
 Demonstrates hybrid architecture combining:
     1. PineconeStore (RAG) - Known/indexed knowledge
-    2. WebSearchDataSource - Raw web search results
-    3. GroundedSearchSource - LLM-grounded search (Gemini/Perplexity)
+    2. GroundedSearchSource - LLM-grounded search (Gemini/Perplexity)
 
 Usage:
     # Grounded search (Gemini with built-in web)
     python hybrid_research_agent.py "What are AI trends in 2026?" --mode grounded
 
-    # RAG with auto-detected namespace (detects "japfa" in query)
-    python hybrid_research_agent.py "check japfa company profile" --mode rag
+    # RAG with auto-detected namespace (detects "acme" in query)
+    python hybrid_research_agent.py "check acme company profile" --mode rag
 
     # RAG with explicit namespace
-    python hybrid_research_agent.py "company overview" --mode rag --namespace japfa
+    python hybrid_research_agent.py "company overview" --mode rag --namespace acme
 
     # List available namespaces
     python hybrid_research_agent.py --list-namespaces
 
-    # Full hybrid (RAG + Grounded)
-    python hybrid_research_agent.py "sustainability trends" --mode hybrid --namespace japfa
+    # Full hybrid (RAG + Web Enrichment — combines both sources)
+    python hybrid_research_agent.py "sustainability trends" --mode hybrid --namespace acme
 
 Requires:
     - GOOGLE_API_KEY
@@ -34,13 +33,13 @@ import sys
 from typing import Dict, List, Optional
 
 from openbench.core.abstractions import Query
-from openbench.data.sources import WebSearchDataSource, GroundedSearchSource
+from openbench.data.sources import GroundedSearchSource
 from openbench.adapters import GoogleADKAdapter
 
 
 # Known namespaces with keywords for auto-detection
 KNOWN_NAMESPACES: Dict[str, List[str]] = {
-    "japfa": ["japfa", "pt japfa", "japfa tbk", "japfa comfeed"],
+    "acme": ["acme", "acme corp", "acme inc", "acme company"],
     "knowledge-base": ["default", "general"],
 }
 
@@ -102,9 +101,8 @@ class HybridResearchAgent:
 
     Modes:
         - grounded: Use GroundedSearchSource (Gemini/Perplexity with built-in web)
-        - raw: Use WebSearchDataSource + Agent for synthesis
         - rag: Use PineconeStore only
-        - hybrid: Combine RAG + Grounded search
+        - hybrid: Enrich RAG with web search (always combines both)
 
     Example:
         agent = HybridResearchAgent(mode="grounded")
@@ -121,7 +119,6 @@ class HybridResearchAgent:
         auto_detect_namespace: bool = True,
         # Search settings
         grounded_provider: str = "gemini",
-        raw_provider: str = "duckduckgo",
         # LLM settings
         model: str = "gemini-2.5-flash",
         top_k: int = 5,
@@ -131,12 +128,11 @@ class HybridResearchAgent:
         """Initialize agent.
 
         Args:
-            mode: Search mode (grounded, raw, rag, hybrid).
+            mode: Search mode (grounded, rag, hybrid).
             index_name: Pinecone index for RAG.
             namespace: Pinecone namespace. If None, auto-detect from query.
             auto_detect_namespace: Enable namespace auto-detection from query.
             grounded_provider: Provider for grounded search (gemini, perplexity).
-            raw_provider: Provider for raw search (tavily, serpapi, duckduckgo).
             model: LLM model.
             top_k: RAG results count.
             max_results: Web results count.
@@ -147,7 +143,6 @@ class HybridResearchAgent:
         self.namespace = namespace or "knowledge-base"
         self.auto_detect_namespace = auto_detect_namespace
         self.grounded_provider = grounded_provider
-        self.raw_provider = raw_provider
         self.model = model
         self.top_k = top_k
         self.max_results = max_results
@@ -197,15 +192,6 @@ class HybridResearchAgent:
                 if not self.quiet:
                     import traceback
                     traceback.print_exc()
-
-        # LLM for raw search synthesis
-        if self.mode == "raw":
-            self.llm = GoogleADKAdapter(
-                model=self.model,
-                system_instruction="""You are a research assistant.
-Synthesize the web search results into a comprehensive answer.
-Cite sources using [1], [2], etc.""",
-            )
 
     def search_rag(self, query: str) -> List[dict]:
         """Search vector store."""
@@ -266,31 +252,6 @@ Cite sources using [1], [2], etc.""",
             "type": "grounded",
         }
 
-    def search_raw(self, query: str) -> dict:
-        """Use WebSearchDataSource + Agent synthesis."""
-        # Get raw results
-        source = WebSearchDataSource(
-            query=query,
-            provider=self.raw_provider,
-            max_results=self.max_results,
-        )
-        raw_result = source.extract()
-
-        # Synthesize with LLM
-        prompt = f"""Based on these web search results, answer: {query}
-
-{raw_result.content}
-
-Provide a comprehensive answer with citations."""
-
-        llm_result = self.llm.invoke({"goal": prompt})
-
-        return {
-            "answer": llm_result.get("content", ""),
-            "sources": raw_result.metadata.get("results", []),
-            "type": "raw",
-        }
-
     def research(self, query: str) -> dict:
         """Perform research based on mode."""
         # Auto-detect namespace from query if enabled
@@ -314,12 +275,6 @@ Provide a comprehensive answer with citations."""
             results["answer"] = res["answer"]
             results["sources"] = res["sources"]
 
-        elif self.mode == "raw":
-            self._log(f"   Using WebSearchDataSource ({self.raw_provider}) + Agent...")
-            res = self.search_raw(query)
-            results["answer"] = res["answer"]
-            results["sources"] = res["sources"]
-
         elif self.mode == "rag":
             self._log("   Using RAG only...")
             rag_docs = self.search_rag(query)
@@ -336,54 +291,76 @@ Provide a comprehensive answer with citations."""
         elif self.mode == "hybrid":
             self._log("   Using Hybrid (RAG + Web Enrichment)...")
 
-            # Get RAG results first
+            # Step 1: Get RAG results
             rag_docs = self.search_rag(query)
 
+            # Step 2: Get grounded web results
+            self._log("   Fetching web context via grounded search...")
+            web_result = None
+            try:
+                web_result = self.search_grounded(query)
+            except Exception as e:
+                self._log(f"   ⚠ Grounded search failed: {e}")
+
+            # Step 3: Build combined context
+            context_parts = []
+
             if rag_docs:
-                # Build context from RAG
                 rag_context = "\n\n".join(
-                    [f"[{i+1}] Source: {d['source']}\n{d['content']}" for i, d in enumerate(rag_docs)]
+                    [f"[RAG-{i+1}] Source: {d['source']}\n{d['content']}" for i, d in enumerate(rag_docs)]
+                )
+                context_parts.append(f"INTERNAL DOCUMENTS (from knowledge base):\n{rag_context}")
+
+            if web_result and web_result.get("answer"):
+                web_sources_str = ""
+                if web_result.get("sources"):
+                    web_sources_str = "\nWeb sources: " + ", ".join(
+                        s.get("title", s.get("url", ""))
+                        for s in web_result["sources"]
+                        if isinstance(s, dict)
+                    )
+                context_parts.append(
+                    f"WEB SEARCH RESULTS:\n{web_result['answer']}{web_sources_str}"
                 )
 
-                # Use LLM to synthesize RAG results
-                enrichment_prompt = f"""You are a research assistant analyzing internal company documents.
+            if not context_parts:
+                # Both empty — plain LLM fallback
+                self._log("   No RAG or web results, using plain LLM...")
+                llm = GoogleADKAdapter(model=self.model)
+                res = llm.invoke({"goal": f"Answer this question: {query}"})
+                results["answer"] = res.get("content", "")
+                results["sources"] = {}
+            else:
+                # Combine and synthesize from both sources
+                combined_context = "\n\n---\n\n".join(context_parts)
+                enrichment_prompt = f"""You are a research assistant with access to internal documents AND web search results.
 
-INTERNAL DOCUMENTS (from knowledge base):
-{rag_context}
+{combined_context}
 
 USER QUESTION: {query}
 
 Instructions:
-1. Extract and present ALL relevant financial data, numbers, and facts from the documents above
-2. If the documents contain tables or numerical data, present them clearly
-3. Cite sources as [1], [2], etc. matching the document numbers above
-4. If specific data is not found, state what related information IS available
-5. Be comprehensive - include all relevant numbers and details from the documents
+1. Synthesize information from BOTH internal documents and web search results
+2. Prioritize internal documents for company-specific data
+3. Use web results to provide broader context, recent trends, or supplementary information
+4. Cite internal sources as [RAG-1], [RAG-2], etc.
+5. Cite web sources as [WEB]
+6. If internal and web sources conflict, note the discrepancy
+7. Be comprehensive — include all relevant data from both sources"""
 
-IMPORTANT: Focus on extracting actual data from the documents, not summarizing what's missing."""
-
-                self._log("   Enriching RAG results with LLM...")
+                self._log("   Enriching with combined RAG + Web context...")
                 llm = GoogleADKAdapter(model=self.model)
                 res = llm.invoke({"goal": enrichment_prompt})
 
                 results["answer"] = res.get("content", "")
-                results["sources"] = {
-                    "rag": [{"id": d["id"], "source": d["source"], "score": d["score"]} for d in rag_docs],
-                }
-            else:
-                # No RAG results, fall back to grounded search only
-                self._log("   No RAG results, using grounded search...")
-                try:
-                    grounded = self.search_grounded(query)
-                    results["answer"] = grounded["answer"]
-                    results["sources"] = {"web": grounded["sources"]}
-                except Exception as e:
-                    self._log(f"   ⚠ Grounded search failed: {e}")
-                    # Final fallback to plain LLM
-                    llm = GoogleADKAdapter(model=self.model)
-                    res = llm.invoke({"goal": f"Answer this question: {query}"})
-                    results["answer"] = res.get("content", "")
-                    results["sources"] = {}
+                results["sources"] = {}
+                if rag_docs:
+                    results["sources"]["rag"] = [
+                        {"id": d["id"], "source": d["source"], "score": d["score"]}
+                        for d in rag_docs
+                    ]
+                if web_result and web_result.get("sources"):
+                    results["sources"]["web"] = web_result["sources"]
 
         self.history.append(results)
         return results
@@ -395,15 +372,15 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Known Namespaces (auto-detected from query):
-  japfa          - PT Japfa Tbk documents (keywords: japfa, pt japfa)
+  acme           - ACME Corp documents (keywords: acme, acme corp)
   knowledge-base - Default namespace
 
 Examples:
   # Auto-detect namespace from query
-  python hybrid_research_agent.py "check japfa company profile" --mode rag
+  python hybrid_research_agent.py "check acme company profile" --mode rag
 
   # Explicit namespace
-  python hybrid_research_agent.py "revenue 2024" --mode rag --namespace japfa
+  python hybrid_research_agent.py "revenue 2024" --mode rag --namespace acme
 
   # List available namespaces
   python hybrid_research_agent.py --list-namespaces
@@ -411,12 +388,10 @@ Examples:
     )
     parser.add_argument("query", nargs="?", help="Research query")
     parser.add_argument("--mode", default="grounded",
-                        choices=["grounded", "raw", "rag", "hybrid"],
+                        choices=["grounded", "rag", "hybrid"],
                         help="Search mode (default: grounded)")
     parser.add_argument("--grounded-provider", default="gemini",
                         choices=["gemini", "perplexity"])
-    parser.add_argument("--raw-provider", default="duckduckgo",
-                        choices=["tavily", "serpapi", "duckduckgo"])
     parser.add_argument("--model", default="gemini-2.5-flash")
     parser.add_argument("--index", default="openbench", help="Pinecone index name")
     parser.add_argument("--namespace", default=None,
@@ -462,7 +437,6 @@ Examples:
         namespace=args.namespace,
         auto_detect_namespace=not args.no_auto_detect,
         grounded_provider=args.grounded_provider,
-        raw_provider=args.raw_provider,
         model=args.model,
         quiet=args.quiet,
     )
@@ -473,8 +447,8 @@ Examples:
         print("=" * 60)
         print(f"Mode: {args.mode} | Namespace: {agent.namespace}")
         print("Commands:")
-        print("  /grounded, /raw, /rag, /hybrid - Switch mode")
-        print("  /ns <name> - Switch namespace (e.g., /ns japfa)")
+        print("  /grounded, /rag, /hybrid - Switch mode")
+        print("  /ns <name> - Switch namespace (e.g., /ns acme)")
         print("  /list - List namespaces")
         print("  /quit - Exit")
         print("-" * 60)
@@ -501,7 +475,7 @@ Examples:
                     continue
                 if query.startswith("/"):
                     mode = query[1:]
-                    if mode in ("grounded", "raw", "rag", "hybrid"):
+                    if mode in ("grounded", "rag", "hybrid"):
                         agent.mode = mode
                         agent._init_components()
                         print(f"Mode: {mode}")
@@ -513,10 +487,18 @@ Examples:
                 # Show sources in interactive mode
                 if result.get("sources"):
                     sources = result["sources"]
-                    if isinstance(sources, dict) and sources.get("rag"):
-                        print("\n📚 Sources:")
-                        for src in sources["rag"]:
-                            print(f"   [{src['id']}] {src['source']} ({src.get('score', 0):.2f})")
+                    if isinstance(sources, dict):
+                        if sources.get("rag"):
+                            print("\n📚 Internal Sources:")
+                            for src in sources["rag"]:
+                                print(f"   [{src['id']}] {src['source']} ({src.get('score', 0):.2f})")
+                        if sources.get("web"):
+                            print("\n🌐 Web Sources:")
+                            for src in sources["web"]:
+                                if isinstance(src, dict):
+                                    title = src.get("title", "")
+                                    url = src.get("url", "")
+                                    print(f"   - {title}: {url}" if url else f"   - {title}")
 
             except KeyboardInterrupt:
                 break
@@ -540,6 +522,13 @@ Examples:
                 for src in sources["rag"]:
                     score = src.get("score", 0)
                     source_lines.append(f"- [{src['id']}] {src['source']} (relevance: {score:.0%})")
+            if isinstance(sources, dict) and sources.get("web"):
+                source_lines.append("\n**Web Sources:**")
+                for src in sources["web"]:
+                    if isinstance(src, dict):
+                        title = src.get("title", "")
+                        url = src.get("url", "")
+                        source_lines.append(f"- {title}: {url}" if url else f"- {title}")
             elif isinstance(sources, list):
                 for src in sources:
                     if isinstance(src, dict):
@@ -558,7 +547,7 @@ Examples:
         parser.print_help()
         print("\nExamples:")
         print('  python hybrid_research_agent.py "AI trends 2026" --mode grounded')
-        print('  python hybrid_research_agent.py "latest news" --mode raw --raw-provider duckduckgo')
+        print('  python hybrid_research_agent.py "revenue 2024" --mode rag --namespace acme')
         print('  python hybrid_research_agent.py --interactive')
 
 

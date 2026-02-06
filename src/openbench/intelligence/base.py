@@ -447,6 +447,7 @@ Provide clear, actionable responses."""
         total_tokens = 0
         total_cost = 0.0
         iterations = 0
+        all_tools_used: List[str] = []
         tool_calls: List[Dict[str, Any]] = []
         response = None
 
@@ -476,6 +477,7 @@ Provide clear, actionable responses."""
                     break
 
                 # Execute tool calls
+                all_tools_used.extend(tc["name"] for tc in tool_calls)
                 self.memory.add_assistant(response.text, tool_calls=tool_calls)
 
                 for tc in tool_calls:
@@ -493,7 +495,7 @@ Provide clear, actionable responses."""
                 metadata={
                     "iterations": iterations,
                     "model": self.model,
-                    "tools_used": [tc["name"] for tc in tool_calls] if tool_calls else [],
+                    "tools_used": all_tools_used,
                 },
                 cost=total_cost,
                 tokens_used=total_tokens,
