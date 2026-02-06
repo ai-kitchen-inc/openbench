@@ -399,12 +399,150 @@ DEFAULT_MODELS = [
 ]
 
 
+# Lazy-loaded registry (built from provider classes)
+_EMBEDDING_MODELS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def _build_embedding_models_registry() -> Dict[str, Dict[str, Any]]:
+    """Build embedding models registry from provider classes.
+
+    Returns:
+        Dict mapping model name to {dimension, provider}.
+    """
+    registry: Dict[str, Dict[str, Any]] = {}
+
+    try:
+        from openbench.intelligence.embeddings import EMBEDDING_PROVIDERS
+
+        for provider_name, provider_class in EMBEDDING_PROVIDERS.items():
+            if hasattr(provider_class, "MODELS"):
+                for model, dimension in provider_class.MODELS.items():
+                    registry[model] = {"dimension": dimension, "provider": provider_name}
+    except ImportError:
+        pass
+
+    return registry
+
+
+def get_embedding_models_registry() -> Dict[str, Dict[str, Any]]:
+    """Get the embedding models registry (lazy-loaded).
+
+    Returns:
+        Dict mapping model name to {dimension, provider}.
+    """
+    global _EMBEDDING_MODELS_CACHE
+    if _EMBEDDING_MODELS_CACHE is None:
+        _EMBEDDING_MODELS_CACHE = _build_embedding_models_registry()
+    return _EMBEDDING_MODELS_CACHE
+
+
+# For backwards compatibility - property-like access
+class _EmbeddingModelsProxy:
+    """Proxy class for lazy-loading EMBEDDING_MODELS."""
+
+    def __getitem__(self, key: str) -> Dict[str, Any]:
+        return get_embedding_models_registry()[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in get_embedding_models_registry()
+
+    def __iter__(self):
+        return iter(get_embedding_models_registry())
+
+    def items(self):
+        return get_embedding_models_registry().items()
+
+    def keys(self):
+        return get_embedding_models_registry().keys()
+
+    def values(self):
+        return get_embedding_models_registry().values()
+
+    def get(self, key: str, default=None):
+        return get_embedding_models_registry().get(key, default)
+
+    def __len__(self) -> int:
+        return len(get_embedding_models_registry())
+
+    def __repr__(self) -> str:
+        return repr(get_embedding_models_registry())
+
+
+# Backwards-compatible module-level access
+EMBEDDING_MODELS = _EmbeddingModelsProxy()
+
+
+def get_embedding_dimension(model: str) -> int:
+    """
+    Get embedding dimension for a model.
+
+    Args:
+        model: Embedding model name.
+
+    Returns:
+        Vector dimension.
+
+    Raises:
+        ValueError: If model is not in registry.
+    """
+    registry = get_embedding_models_registry()
+    if model in registry:
+        return registry[model]["dimension"]
+    raise ValueError(
+        f"Unknown embedding model: {model}. "
+        f"Known models: {list(registry.keys())}"
+    )
+
+
+def get_embedding_provider(model: str) -> str:
+    """
+    Get provider name for an embedding model.
+
+    Args:
+        model: Embedding model name.
+
+    Returns:
+        Provider name (e.g., 'openai', 'google').
+
+    Raises:
+        ValueError: If model is not in registry.
+    """
+    registry = get_embedding_models_registry()
+    if model in registry:
+        return registry[model]["provider"]
+    raise ValueError(f"Unknown embedding model: {model}")
+
+
+def list_embedding_models(provider: Optional[str] = None) -> Dict[str, int]:
+    """
+    List embedding models with their dimensions.
+
+    Args:
+        provider: Filter by provider (optional).
+
+    Returns:
+        Dict mapping model name to dimension.
+    """
+    registry = get_embedding_models_registry()
+    if provider:
+        return {
+            name: info["dimension"]
+            for name, info in registry.items()
+            if info["provider"] == provider
+        }
+    return {name: info["dimension"] for name, info in registry.items()}
+
+
 # Default configuration values
 DEFAULT_CONFIG = {
     "llm": {
         "default_model": "gpt-4o",
         "default_temperature": 0.7,
         "default_max_tokens": 4096,
+    },
+    "embedding": {
+        "default_model": "text-embedding-3-small",
+        "default_provider": "openai",
     },
 }
 
@@ -456,5 +594,6 @@ def get_default_model() -> str:
 
 def reset_config() -> None:
     """Reset global config (useful for testing)."""
-    global _config
+    global _config, _EMBEDDING_MODELS_CACHE
     _config = None
+    _EMBEDDING_MODELS_CACHE = None

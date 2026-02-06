@@ -1,3 +1,10 @@
+---
+name: test
+description: Run the OpenBench test suite
+argument-hint: "[options]"
+disable-model-invocation: true
+---
+
 # /test
 
 Run the OpenBench test suite.

@@ -1,0 +1,567 @@
+"""Pinecone vector store implementation."""
+
+import json
+import os
+import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+from openbench.core.abstractions import DataStore, Query, SearchResult, RawData
+from openbench.data.stores.base import (
+    Chunk,
+    ChunkingConfig,
+    EmbeddingMixin,
+    chunk_raw_data,
+)
+from openbench.data.stores.exceptions import (
+    StoreError,
+    IndexNotFoundError,
+    StoreConnectionError,
+    DimensionMismatchError,
+    QuotaExceededError,
+    EmbeddingError,
+    ItemNotFoundError,
+)
+
+
+def _sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Sanitize metadata for Pinecone (only primitives allowed)."""
+    result = {}
+    for key, value in metadata.items():
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            result[key] = value
+        elif isinstance(value, list) and all(isinstance(i, str) for i in value):
+            result[key] = value
+        else:
+            result[key] = json.dumps(value)
+    return result
+
+if TYPE_CHECKING:
+    from pinecone import Pinecone, Index
+    from openbench.core.abstractions import EmbeddingProvider
+    from openbench.core.context import ProjectContext
+
+
+class PineconeStore(DataStore, EmbeddingMixin):
+    """Pinecone vector store for semantic search and retrieval.
+
+    Implements the DataStore interface with Pinecone as the backend.
+    Supports multi-tenant isolation via namespaces tied to ProjectContext.
+    Auto-detects embedding dimension from provider if not specified.
+
+    Example:
+        ```python
+        from openbench.data.stores import PineconeStore
+        from openbench.intelligence import OpenAIEmbeddingProvider
+
+        # Initialize with auto-detected dimension
+        store = PineconeStore(
+            index_name="openbench",
+            embedding_model="text-embedding-3-small",  # Auto-detects 1536 dim
+        )
+
+        # Or with explicit provider
+        provider = OpenAIEmbeddingProvider(model="text-embedding-3-large")
+        store = PineconeStore(
+            index_name="openbench",
+            embedding_provider=provider,  # Auto-detects 3072 dim
+        )
+
+        # Index data
+        store.index(raw_data)
+
+        # Search
+        results = store.search(Query(text="sustainability"))
+        ```
+    """
+
+    def __init__(
+        self,
+        index_name: str,
+        *,
+        api_key: Optional[str] = None,
+        project: Optional["ProjectContext"] = None,
+        namespace: Optional[str] = None,
+        dimension: Optional[int] = None,
+        metric: str = "cosine",
+        embedding_provider: Optional["EmbeddingProvider"] = None,
+        embedding_model: Optional[str] = None,
+        chunking_config: Optional[ChunkingConfig] = None,
+        create_if_missing: bool = True,
+    ):
+        """Initialize PineconeStore.
+
+        Args:
+            index_name: Name of the Pinecone index.
+            api_key: Pinecone API key. Falls back to PINECONE_API_KEY env var.
+            project: ProjectContext for namespace isolation.
+            namespace: Explicit namespace override. If not provided, uses project.namespace.
+            dimension: Vector dimension. If None, auto-detects from embedding provider/model.
+            metric: Distance metric ('cosine', 'euclidean', 'dotproduct').
+            embedding_provider: EmbeddingProvider for generating embeddings.
+            embedding_model: Embedding model name for auto-detection.
+            chunking_config: Configuration for text chunking.
+            create_if_missing: Create index if it doesn't exist.
+        """
+        self._index_name = index_name
+        self._api_key = api_key or os.getenv("PINECONE_API_KEY")
+        self._project = project
+        self._namespace_override = namespace
+        self._dimension = dimension  # Can be None for auto-detection
+        self._metric = metric
+        self._embedding_provider = embedding_provider
+        self._embedding_model = embedding_model
+        self._chunking_config = chunking_config or ChunkingConfig()
+        self._create_if_missing = create_if_missing
+
+        # For EmbeddingMixin auto-detection
+        self._resolved_dimension: Optional[int] = None
+
+        # Lazy initialization
+        self._client: Optional["Pinecone"] = None
+        self._index: Optional["Index"] = None
+
+    @property
+    def store_type(self) -> str:
+        """Return store type identifier."""
+        return "vector"
+
+    @property
+    def namespace(self) -> str:
+        """Resolve namespace for vector isolation.
+
+        Priority:
+        1. Explicit namespace parameter
+        2. project.namespace (if project provided)
+        3. Active project namespace (from registry)
+        4. Empty string (default/global)
+        """
+        if self._namespace_override:
+            return self._namespace_override
+
+        if self._project:
+            return self._project.namespace
+
+        # Try active project from registry
+        try:
+            from openbench.core.context import get_project_registry
+            registry = get_project_registry()
+            active = registry.get_active()
+            if active:
+                return active.namespace
+        except Exception:
+            pass
+
+        return ""
+
+    @property
+    def pinecone_index(self) -> "Index":
+        """Get Pinecone index, initializing if needed."""
+        if self._index is None:
+            self._init_client()
+            self._index = self._get_or_create_index()
+        return self._index
+
+    def _init_client(self) -> None:
+        """Initialize Pinecone client."""
+        if self._client is not None:
+            return
+
+        if not self._api_key:
+            raise StoreConnectionError(
+                "pinecone",
+                "API key not provided. Set PINECONE_API_KEY environment variable "
+                "or pass api_key to constructor."
+            )
+
+        try:
+            from pinecone import Pinecone
+            self._client = Pinecone(api_key=self._api_key)
+        except ImportError:
+            raise StoreError(
+                "pinecone-client not installed. "
+                "Install with: pip install openbench[vector]"
+            )
+        except Exception as e:
+            raise StoreConnectionError("pinecone", str(e))
+
+    def _get_or_create_index(self) -> "Index":
+        """Get existing index or create if missing."""
+        from pinecone import ServerlessSpec
+
+        # Check if index exists
+        existing_indexes = [idx.name for idx in self._client.list_indexes()]
+
+        if self._index_name not in existing_indexes:
+            if not self._create_if_missing:
+                raise IndexNotFoundError(self._index_name)
+
+            # Get dimension (auto-detect if not set)
+            dimension = self._get_dimension()
+
+            # Create new index
+            self._client.create_index(
+                name=self._index_name,
+                dimension=dimension,
+                metric=self._metric,
+                spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+            )
+
+            # Wait for index to be ready
+            self._wait_for_index_ready()
+
+        return self._client.Index(self._index_name)
+
+    def _wait_for_index_ready(self, timeout: int = 60) -> None:
+        """Wait for index to be ready for operations."""
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                desc = self._client.describe_index(self._index_name)
+                if desc.status.ready:
+                    return
+            except Exception:
+                pass
+            time.sleep(1)
+
+        raise StoreError(f"Index {self._index_name} not ready after {timeout}s")
+
+    def _build_filter(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert OpenBench query filters to Pinecone filter format.
+
+        Args:
+            filters: OpenBench filter dict.
+
+        Returns:
+            Pinecone-compatible filter dict.
+        """
+        if not filters:
+            return {}
+
+        pinecone_filter = {}
+
+        for key, value in filters.items():
+            # Handle operators
+            if key.startswith("$"):
+                # Already in operator format
+                pinecone_filter[key] = value
+            elif isinstance(value, dict):
+                # Value is already operator dict
+                pinecone_filter[key] = value
+            else:
+                # Simple equality
+                pinecone_filter[key] = {"$eq": value}
+
+        return pinecone_filter
+
+    def _to_search_result(self, response: Any) -> SearchResult:
+        """Convert Pinecone query response to SearchResult.
+
+        Args:
+            response: Pinecone QueryResponse.
+
+        Returns:
+            OpenBench SearchResult.
+        """
+        items = []
+        scores = []
+
+        for match in response.matches:
+            item = {
+                "id": match.id,
+                "score": match.score,
+                "metadata": match.metadata or {},
+            }
+            # Include content if available
+            if match.metadata and "content" in match.metadata:
+                item["content"] = match.metadata["content"]
+
+            items.append(item)
+            scores.append(match.score)
+
+        return SearchResult(
+            items=items,
+            total=len(items),
+            scores=scores,
+            metadata={"namespace": self.namespace},
+        )
+
+    def index(self, data: RawData, **options) -> str:
+        """Index RawData into Pinecone.
+
+        Chunks the data, generates embeddings, and upserts to Pinecone.
+
+        Args:
+            data: RawData to index.
+            **options:
+                batch_size: Vectors per upsert batch (default: 100).
+                skip_embedding: Use pre-computed vectors (default: False).
+
+        Returns:
+            Source ID of the indexed data.
+        """
+        batch_size = options.get("batch_size", 100)
+
+        # Chunk the data
+        chunks = chunk_raw_data(data, self._chunking_config)
+
+        if not chunks:
+            return data.source.source_id if data.source else "unknown"
+
+        # Generate embeddings
+        try:
+            texts = [chunk.content for chunk in chunks]
+            embeddings = self._embed_batch(texts, batch_size=batch_size)
+        except Exception as e:
+            raise EmbeddingError(message=str(e))
+
+        # Validate dimension
+        expected_dim = self._get_dimension()
+        if embeddings and len(embeddings[0]) != expected_dim:
+            raise DimensionMismatchError(
+                expected=expected_dim,
+                got=len(embeddings[0])
+            )
+
+        # Build vectors for upsert
+        vectors = []
+        for chunk, embedding in zip(chunks, embeddings):
+            # Build metadata and sanitize for Pinecone
+            raw_metadata = {
+                "content": chunk.content[:8000],  # Limit content size
+                "content_hash": chunk.content_hash,
+                "project_id": self.namespace,
+                "indexed_at": datetime.now().isoformat(),
+                **chunk.metadata,
+            }
+            vector = {
+                "id": f"{self.namespace}-{chunk.id}" if self.namespace else chunk.id,
+                "values": embedding,
+                "metadata": _sanitize_metadata(raw_metadata),
+            }
+            vectors.append(vector)
+
+        # Upsert in batches
+        self._upsert_batch(vectors, batch_size)
+
+        source_id = data.source.source_id if data.source else "unknown"
+        return source_id
+
+    def _upsert_batch(self, vectors: List[Dict], batch_size: int) -> int:
+        """Upsert vectors in batches with retry logic.
+
+        Args:
+            vectors: List of vector dicts to upsert.
+            batch_size: Number of vectors per batch.
+
+        Returns:
+            Total number of vectors upserted.
+        """
+        total = 0
+        for i in range(0, len(vectors), batch_size):
+            batch = vectors[i:i + batch_size]
+            self._upsert_with_retry(batch)
+            total += len(batch)
+        return total
+
+    def _upsert_with_retry(
+        self,
+        vectors: List[Dict],
+        max_retries: int = 3,
+        base_delay: float = 1.0
+    ) -> None:
+        """Upsert with exponential backoff retry.
+
+        Args:
+            vectors: Vectors to upsert.
+            max_retries: Maximum retry attempts.
+            base_delay: Base delay in seconds.
+        """
+        for attempt in range(max_retries + 1):
+            try:
+                self.pinecone_index.upsert(vectors=vectors, namespace=self.namespace)
+                return
+            except Exception as e:
+                if attempt == max_retries:
+                    raise StoreError(f"Failed to upsert after {max_retries} retries: {e}")
+
+                # Check if rate limited
+                if "429" in str(e) or "rate" in str(e).lower():
+                    delay = base_delay * (2 ** attempt)
+                    time.sleep(delay)
+                else:
+                    raise
+
+    def search(self, query: Query) -> SearchResult:
+        """Search the store for relevant items.
+
+        Args:
+            query: Query with text and/or filters.
+
+        Returns:
+            SearchResult with matched items and scores.
+        """
+        # Generate query embedding
+        if query.vector:
+            query_vector = query.vector
+        elif query.text:
+            try:
+                query_vector = self._embed(query.text)
+            except Exception as e:
+                raise EmbeddingError(
+                    text_length=len(query.text) if query.text else 0,
+                    message=str(e)
+                )
+        else:
+            raise StoreError("Query must have either text or vector")
+
+        # Build filter
+        pinecone_filter = self._build_filter(query.filters) if query.filters else None
+
+        # Execute query
+        response = self.pinecone_index.query(
+            vector=query_vector,
+            top_k=query.limit,
+            namespace=self.namespace,
+            filter=pinecone_filter,
+            include_metadata=True,
+        )
+
+        return self._to_search_result(response)
+
+    def get(self, item_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific item by ID.
+
+        Args:
+            item_id: ID of the item to retrieve.
+
+        Returns:
+            Item dict with id, values, and metadata, or None if not found.
+        """
+        # Prefix with namespace if not already
+        full_id = item_id
+        if self.namespace and not item_id.startswith(self.namespace):
+            full_id = f"{self.namespace}-{item_id}"
+
+        response = self.pinecone_index.fetch(ids=[full_id], namespace=self.namespace)
+
+        if full_id in response.vectors:
+            vector = response.vectors[full_id]
+            return {
+                "id": vector.id,
+                "values": vector.values,
+                "metadata": vector.metadata or {},
+            }
+
+        return None
+
+    def delete(self, item_id: str) -> bool:
+        """Delete an item from the store.
+
+        Args:
+            item_id: ID of the item to delete.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        # Prefix with namespace if not already
+        full_id = item_id
+        if self.namespace and not item_id.startswith(self.namespace):
+            full_id = f"{self.namespace}-{item_id}"
+
+        try:
+            self.pinecone_index.delete(ids=[full_id], namespace=self.namespace)
+            return True
+        except Exception:
+            return False
+
+    def update(self, item_id: str, data: Any) -> bool:
+        """Update an existing item's metadata.
+
+        Args:
+            item_id: ID of the item to update.
+            data: New metadata to merge.
+
+        Returns:
+            True if updated, False if not found.
+        """
+        existing = self.get(item_id)
+        if not existing:
+            return False
+
+        # Merge metadata
+        new_metadata = {**existing.get("metadata", {})}
+        if isinstance(data, dict):
+            new_metadata.update(data)
+        new_metadata["updated_at"] = datetime.now().isoformat()
+
+        # Re-upsert with same vector and new metadata
+        full_id = existing["id"]
+        self.pinecone_index.upsert(
+            vectors=[{
+                "id": full_id,
+                "values": existing["values"],
+                "metadata": new_metadata,
+            }],
+            namespace=self.namespace,
+        )
+
+        return True
+
+    def delete_by_source(self, source_id: str) -> int:
+        """Delete all chunks from a specific source.
+
+        Args:
+            source_id: Source ID to delete chunks for.
+
+        Returns:
+            Number of items deleted (approximate).
+        """
+        # Use metadata filter to find matching vectors
+        # Then delete by IDs
+        prefix = f"{self.namespace}-{source_id}" if self.namespace else source_id
+
+        try:
+            # Delete by prefix
+            self.pinecone_index.delete(
+                filter={"source_id": {"$eq": source_id}},
+                namespace=self.namespace,
+            )
+            return -1  # Pinecone doesn't return count
+        except Exception:
+            return 0
+
+    def delete_namespace(self) -> bool:
+        """Delete all vectors in the current namespace.
+
+        Returns:
+            True if successful.
+        """
+        if not self.namespace:
+            raise StoreError("Cannot delete default namespace. Specify a namespace.")
+
+        try:
+            self.pinecone_index.delete(delete_all=True, namespace=self.namespace)
+            return True
+        except Exception:
+            return False
+
+    def describe_index(self) -> Dict[str, Any]:
+        """Get index statistics.
+
+        Returns:
+            Dict with index stats including vector count, dimension, etc.
+        """
+        stats = self.pinecone_index.describe_index_stats()
+
+        return {
+            "index_name": self._index_name,
+            "dimension": stats.dimension,
+            "total_vector_count": stats.total_vector_count,
+            "namespaces": {
+                ns: {"vector_count": data.vector_count}
+                for ns, data in stats.namespaces.items()
+            },
+        }

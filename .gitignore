@@ -393,7 +393,6 @@ presentations/
 
 # Vector databases
 vector_db/
-embeddings/
 *.faiss
 *.index
 

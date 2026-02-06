@@ -1,3 +1,10 @@
+---
+name: example
+description: Run an OpenBench example workflow
+argument-hint: "[name]"
+disable-model-invocation: true
+---
+
 # /example
 
 Run an OpenBench example workflow.
@@ -15,6 +22,7 @@ Run an OpenBench example workflow.
 - `orchestration` - L1/L2 orchestration demo
 - `adapters` - Framework adapters demo
 - `pdf-workflow` - PDF → Google ADK → PDF workflow (requires GOOGLE_API_KEY)
+- `hybrid` - Hybrid research agent (RAG + LLM enrichment)
 
 ## Instructions
 
@@ -36,6 +44,9 @@ python examples/adapters/framework_adapters_demo.py
 
 # PDF workflow (requires GOOGLE_API_KEY and input PDF)
 python examples/workflows/pdf_google_adk_workflow.py input.pdf output.pdf
+
+# Hybrid research agent (requires GOOGLE_API_KEY and PINECONE_API_KEY)
+python examples/workflows/hybrid_research_agent.py "your query" --mode hybrid --namespace knowledge-base
 ```
 
 3. Show the output to the user
