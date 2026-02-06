@@ -337,7 +337,7 @@ Provide clear, actionable responses."""
 
             return retrieved
 
-        except Exception as e:
+        except (ConnectionError, TimeoutError, ValueError, RuntimeError, OSError) as e:
             logger.warning(f"Failed to retrieve context from store: {e}")
             return []
 
