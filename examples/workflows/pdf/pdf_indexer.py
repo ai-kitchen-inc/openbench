@@ -8,9 +8,9 @@ This workflow ONLY indexes data, no LLM processing.
 Use this to build a knowledge base from PDF documents.
 
 Usage:
-    python examples/workflows/pdf_indexer.py <pdf-path>
-    python examples/workflows/pdf_indexer.py document.pdf --namespace my-project
-    python examples/workflows/pdf_indexer.py ./docs/*.pdf --batch
+    python examples/workflows/pdf/pdf_indexer.py <pdf-path>
+    python examples/workflows/pdf/pdf_indexer.py document.pdf --namespace my-project
+    python examples/workflows/pdf/pdf_indexer.py ./docs/*.pdf --batch
 
 Requires:
     - PINECONE_API_KEY environment variable

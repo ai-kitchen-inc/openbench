@@ -27,6 +27,9 @@ from openbench.intelligence.base import (
     MessageRole,
 )
 
+# LLM providers
+from openbench.intelligence.llm_providers import GeminiLLMProvider
+
 # Embedding providers
 from openbench.intelligence.embeddings import (
     OpenAIEmbeddingProvider,
@@ -57,6 +60,8 @@ __all__ = [
     "ToolExecutor",
     "Message",
     "MessageRole",
+    # LLM providers
+    "GeminiLLMProvider",
     # Embedding providers
     "OpenAIEmbeddingProvider",
     "GoogleEmbeddingProvider",

@@ -93,8 +93,12 @@ vector = [
     "pinecone-client>=3.0.0",
 ]
 
+extraction = [
+    "langextract>=1.0.0",
+]
+
 all = [
-    "openbench[dev,data,intelligence,output,security,google,vector,search]"
+    "openbench[dev,data,intelligence,output,security,google,vector,search,extraction]"
 ]
 
 [project.urls]

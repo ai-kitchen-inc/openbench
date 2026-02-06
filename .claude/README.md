@@ -60,7 +60,12 @@ context: fork                   # Run in subagent
 
 - `examples/core/` - Core abstractions and orchestration demos
 - `examples/adapters/` - Framework adapter examples
+- `examples/intelligence/` - Agent and LLM provider demos
 - `examples/workflows/` - Complete E2E workflow examples
+  - `workflows/pdf/` - PDF processing workflows
+  - `workflows/entity/` - Entity extraction workflows
+  - `workflows/research/` - Research agent workflows
+  - `workflows/reports/` - End-to-end report generation
 
 ## More Information
 
