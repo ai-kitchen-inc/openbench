@@ -7,56 +7,60 @@ This module provides factory functions for creating agents.
 Agents are registered with AgentRegistry for dynamic discovery and extensibility.
 """
 
-from typing import Any, List, Optional
+from typing import Any
 
 from openbench.core.registry import AgentRegistry
 
 
 def _register_builtin_agents() -> None:
     """Register all built-in agent types with AgentRegistry."""
-    from openbench.intelligence.base import BaseAgent, SimpleAgent, StructuredOutputAgent
     from openbench.intelligence.agents import (
-        ResearchAgent,
+        ActionAgent,
         AnalysisAgent,
         ContentAgent,
-        ActionAgent,
         MetaAgent,
+        ResearchAgent,
     )
+    from openbench.intelligence.base import BaseAgent, SimpleAgent, StructuredOutputAgent
 
     # Register base agents
     AgentRegistry.register_class(
-        "base", "default", BaseAgent,
-        description="Framework-agnostic base agent with tool support"
+        "base", "default", BaseAgent, description="Framework-agnostic base agent with tool support"
     )
     AgentRegistry.register_class(
-        "simple", "default", SimpleAgent,
-        description="Simple agent without tool use"
+        "simple", "default", SimpleAgent, description="Simple agent without tool use"
     )
     AgentRegistry.register_class(
-        "structured", "default", StructuredOutputAgent,
-        description="Agent that outputs structured JSON data"
+        "structured",
+        "default",
+        StructuredOutputAgent,
+        description="Agent that outputs structured JSON data",
     )
 
     # Register specialized agents
     AgentRegistry.register_class(
-        "research", "default", ResearchAgent,
-        description="Agent specialized in gathering and synthesizing information"
+        "research",
+        "default",
+        ResearchAgent,
+        description="Agent specialized in gathering and synthesizing information",
     )
     AgentRegistry.register_class(
-        "analysis", "default", AnalysisAgent,
-        description="Agent specialized in data analysis and insights"
+        "analysis",
+        "default",
+        AnalysisAgent,
+        description="Agent specialized in data analysis and insights",
     )
     AgentRegistry.register_class(
-        "content", "default", ContentAgent,
-        description="Agent specialized in content generation"
+        "content", "default", ContentAgent, description="Agent specialized in content generation"
     )
     AgentRegistry.register_class(
-        "action", "default", ActionAgent,
-        description="Agent specialized in executing actions and integrations"
+        "action",
+        "default",
+        ActionAgent,
+        description="Agent specialized in executing actions and integrations",
     )
     AgentRegistry.register_class(
-        "meta", "default", MetaAgent,
-        description="Agent that coordinates other agents"
+        "meta", "default", MetaAgent, description="Agent that coordinates other agents"
     )
 
 
@@ -93,9 +97,9 @@ class AgentFactory:
         goal: str,
         agent_type: str = "base",
         provider: str = "default",
-        tools: Optional[List[Any]] = None,
-        model: Optional[str] = None,
-        **kwargs
+        tools: list[Any] | None = None,
+        model: str | None = None,
+        **kwargs,
     ) -> Any:
         """
         Create an AI agent.
@@ -118,13 +122,17 @@ class AgentFactory:
         if agent_type == "structured":
             output_schema = kwargs.pop("output_schema", {"type": "object"})
             return AgentRegistry.create(
-                agent_type, provider,
-                goal=goal, output_schema=output_schema, tools=tools, model=model, **kwargs
+                agent_type,
+                provider,
+                goal=goal,
+                output_schema=output_schema,
+                tools=tools,
+                model=model,
+                **kwargs,
             )
 
         return AgentRegistry.create(
-            agent_type, provider,
-            goal=goal, tools=tools, model=model, **kwargs
+            agent_type, provider, goal=goal, tools=tools, model=model, **kwargs
         )
 
     @classmethod
@@ -158,23 +166,18 @@ class AgentFactory:
         return cls.create(goal=goal, agent_type="meta", **kwargs)
 
     @classmethod
-    def list_types(cls) -> List[str]:
+    def list_types(cls) -> list[str]:
         """List all registered agent types."""
         return AgentRegistry.list_types()
 
     @classmethod
-    def list_providers(cls, agent_type: str) -> List[str]:
+    def list_providers(cls, agent_type: str) -> list[str]:
         """List all providers for a given agent type."""
         return AgentRegistry.list_providers(agent_type)
 
     @classmethod
     def register(
-        cls,
-        agent_type: str,
-        provider: str,
-        agent_class: type,
-        description: str = "",
-        **metadata
+        cls, agent_type: str, provider: str, agent_class: type, description: str = "", **metadata
     ) -> None:
         """
         Register a custom agent type.
@@ -192,4 +195,6 @@ class AgentFactory:
             >>> AgentFactory.register("custom", "myteam", MyAgent, "Custom agent for my team")
             >>> agent = AgentFactory.create(goal="...", agent_type="custom", provider="myteam")
         """
-        AgentRegistry.register_class(agent_type, provider, agent_class, description=description, **metadata)
+        AgentRegistry.register_class(
+            agent_type, provider, agent_class, description=description, **metadata
+        )

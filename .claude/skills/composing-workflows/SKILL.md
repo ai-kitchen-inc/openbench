@@ -94,6 +94,23 @@ workflow = Workflow(
 result = workflow.run(input_data)
 ```
 
+## Anti-Patterns
+
+**DO NOT:**
+- Use `Parallel.invoke()` expecting true concurrency - it runs sequentially. Use `ainvoke()` for true parallelism
+- Create deeply nested chains without checkpoints - use `Workflow` with `checkpoints=True` for long pipelines
+- Put business logic in Lambda - use proper Agent or DataSource instead
+- Mix L1 and L2 in the same chain level - keep layers separate
+- Assume Parallel output order matches input order when using `ainvoke()` - use `invoke()` if order matters
+
+## Cross-References
+
+- **Intelligence Layer**: Agents used in `IntelligenceLayer` → see `intelligence-layer` skill
+- **Data Layer**: DataSources and stores used in `DataLayer` → see `data-layer` skill
+- **Output Layer**: Generators used in `OutputLayer` → see `output-layer` skill
+- **Adapters**: External framework agents used via adapters → see `adapters` skill
+- **Creating Abstractions**: Custom Chainable implementations → see `creating-abstractions` skill
+
 ## Best Practices
 
 1. Use L1 for component composition within a layer

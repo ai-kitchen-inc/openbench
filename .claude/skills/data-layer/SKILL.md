@@ -139,12 +139,29 @@ class MyStore(EmbeddingMixin):
         # Store vectors...
 ```
 
+## Anti-Patterns
+
+**DO NOT:**
+- Set `chunk_overlap >= chunk_size` - raises `ValueError` in `ChunkingConfig.__post_init__`
+- Skip `_sanitize_metadata()` for Pinecone - only primitives and string lists allowed
+- Catch all exceptions from store operations - use specific exceptions from `openbench.data.stores.exceptions`
+- Forget namespace isolation - always use `ProjectContext` or explicit namespaces for multi-tenant
+- Call `_embed()` directly on large datasets - use `_embed_batch()` with batch_size for efficiency
+- Assume embedding dimension - use `EmbeddingMixin._get_dimension()` which auto-detects from provider
+
+## Cross-References
+
+- **Intelligence Layer**: `BaseAgent` uses `DataStore` for RAG retrieval → see `intelligence-layer` skill
+- **Composing Workflows**: DataSources and stores used in `DataLayer` → see `composing-workflows` skill
+- **Creating Abstractions**: `DataSource` and `DataStore` base classes → see `creating-abstractions` skill
+- **Testing**: Mock store and embedding calls → see `testing-openbench` skill
+
 ## Best Practices
 
 1. **Choose chunk size wisely** - 500-1000 chars for Q&A, larger for summarization
 2. **Use namespaces** - Separate different document collections
 3. **Include metadata** - Source, timestamp, page number for filtering
-4. **Handle errors** - Wrap store operations in try/except
+4. **Handle errors** - Wrap store operations in try/except with specific exception types
 5. **Batch operations** - Use batch methods for large datasets
 
 For examples, see `examples/workflows/research/hybrid_research_agent.py`

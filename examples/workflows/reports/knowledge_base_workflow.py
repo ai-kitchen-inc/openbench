@@ -28,17 +28,16 @@ import glob
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
 
-from openbench.workflows import Workflow
+from openbench.adapters import GoogleADKAdapter
+from openbench.core.abstractions import Query
 from openbench.core.layers import DataLayer, IntelligenceLayer, OutputLayer
-from openbench.core.abstractions import Query, RawData
 from openbench.data.sources import PDFSource
 from openbench.data.stores import PineconeStore
-from openbench.intelligence import GoogleEmbeddingProvider
-from openbench.adapters import GoogleADKAdapter
-from openbench.output.generators import MarkdownGenerator
 from openbench.data.stores.base import ChunkingConfig
+from openbench.intelligence import GoogleEmbeddingProvider
+from openbench.output.generators import MarkdownGenerator
+from openbench.workflows import Workflow
 
 
 def check_api_keys():
@@ -102,8 +101,9 @@ Instructions:
 # WORKFLOW 1: Index Documents
 # =============================================================================
 
+
 def index_workflow(
-    pdf_paths: List[str],
+    pdf_paths: list[str],
     index_name: str = "openbench",
     namespace: str = "knowledge-base",
 ) -> dict:
@@ -140,12 +140,14 @@ def index_workflow(
             source_id = store.index(raw_data)
 
             print(f"    ✓ Indexed: {len(raw_data.content):,} chars")
-            results.append({
-                "file": pdf_file.name,
-                "status": "success",
-                "source_id": source_id,
-                "chars": len(raw_data.content),
-            })
+            results.append(
+                {
+                    "file": pdf_file.name,
+                    "status": "success",
+                    "source_id": source_id,
+                    "chars": len(raw_data.content),
+                }
+            )
 
         except Exception as e:
             print(f"    ✗ Error: {e}")
@@ -162,12 +164,13 @@ def index_workflow(
 # WORKFLOW 2: Query Knowledge Base (RAG)
 # =============================================================================
 
+
 def query_workflow(
     query: str,
     index_name: str = "openbench",
     namespace: str = "knowledge-base",
     top_k: int = 5,
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
 ) -> dict:
     """Query knowledge base with RAG.
 
@@ -203,15 +206,17 @@ def query_workflow(
 
     for i, item in enumerate(search_result.items):
         content = item.get("content", "")[:2000]
-        filename = item.get("metadata", {}).get("filename", f"Source-{i+1}")
+        filename = item.get("metadata", {}).get("filename", f"Source-{i + 1}")
         score = search_result.scores[i] if search_result.scores else 0
 
-        context_parts.append(f"[{i+1}] {filename}:\n{content}")
-        sources.append({
-            "id": f"[{i+1}]",
-            "filename": filename,
-            "score": round(score, 3),
-        })
+        context_parts.append(f"[{i + 1}] {filename}:\n{content}")
+        sources.append(
+            {
+                "id": f"[{i + 1}]",
+                "filename": filename,
+                "score": round(score, 3),
+            }
+        )
 
     context = "\n\n---\n\n".join(context_parts)
     print(f"  Context: {len(context):,} chars from {len(sources)} sources")
@@ -230,7 +235,7 @@ QUESTION: {query}
 Provide a comprehensive answer with citations [1], [2], etc."""
 
     # Create mock raw_data for the adapter
-    mock_raw = type('MockRaw', (), {'content': prompt})()
+    mock_raw = type("MockRaw", (), {"content": prompt})()
     response = llm.invoke({"raw_data": [mock_raw], "goal": query})
 
     answer = response.get("content", "Unable to generate response.")
@@ -275,6 +280,7 @@ Provide a comprehensive answer with citations [1], [2], etc."""
 # WORKFLOW 3: Full Pipeline (Index + Query)
 # =============================================================================
 
+
 def pipeline_workflow(
     pdf_path: str,
     query: str,
@@ -318,11 +324,13 @@ def pipeline_workflow(
     print("-" * 60)
 
     # Run workflow
-    result = workflow.run({
-        "goal": query,
-        "output_path": output_path,
-        "title": f"Research: {query}",
-    })
+    result = workflow.run(
+        {
+            "goal": query,
+            "output_path": output_path,
+            "title": f"Research: {query}",
+        }
+    )
 
     print("\n" + "=" * 60)
     print("RESULT")
@@ -340,6 +348,7 @@ def pipeline_workflow(
 # MAIN
 # =============================================================================
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Knowledge Base Workflow - Index and Query documents",
@@ -356,7 +365,7 @@ Examples:
 
   # Full pipeline
   python knowledge_base_workflow.py pipeline doc.pdf "Summarize this document"
-        """
+        """,
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command")

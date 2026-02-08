@@ -9,13 +9,15 @@ Provides unified provider configuration and resolution:
 """
 
 import base64
+import contextlib
 import json
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ class CredentialEncryption:
     The encryption key is stored in ~/.openbench/.credentials_key
     """
 
-    def __init__(self, key_path: Optional[Path] = None):
+    def __init__(self, key_path: Path | None = None):
         """Initialize credential encryption."""
         self._key_path = key_path or Path.home() / ".openbench" / ".credentials_key"
         self._fernet = None
@@ -51,10 +53,8 @@ class CredentialEncryption:
                 key = Fernet.generate_key()
                 self._key_path.parent.mkdir(parents=True, exist_ok=True)
                 self._key_path.write_bytes(key)
-                try:
+                with contextlib.suppress(OSError):
                     os.chmod(self._key_path, 0o600)
-                except OSError:
-                    pass  # May fail on Windows
 
             self._fernet = Fernet(key)
             logger.debug("Credential encryption initialized")
@@ -94,8 +94,8 @@ class CredentialEncryption:
             return value
 
     def _transform_dict(
-        self, data: Dict[str, Any], transform_fn: Callable[[str], str]
-    ) -> Dict[str, Any]:
+        self, data: dict[str, Any], transform_fn: Callable[[str], str]
+    ) -> dict[str, Any]:
         """Apply a transform function to all string values in a dictionary."""
         result = {}
         for key, value in data.items():
@@ -107,17 +107,17 @@ class CredentialEncryption:
                 result[key] = value
         return result
 
-    def encrypt_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def encrypt_dict(self, data: dict[str, Any]) -> dict[str, Any]:
         """Encrypt all string values in a dictionary."""
         return self._transform_dict(data, self.encrypt)
 
-    def decrypt_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def decrypt_dict(self, data: dict[str, Any]) -> dict[str, Any]:
         """Decrypt all encrypted values in a dictionary."""
         return self._transform_dict(data, self.decrypt)
 
 
 # Global encryption instance
-_credential_encryption: Optional[CredentialEncryption] = None
+_credential_encryption: CredentialEncryption | None = None
 
 
 def get_credential_encryption() -> CredentialEncryption:
@@ -146,12 +146,12 @@ class ProviderConfig:
     provider_type: ProviderType
     provider: str  # e.g., "openai", "pinecone", "s3"
     plugin_type: str  # e.g., "chat", "vector", "blob"
-    credentials: Dict[str, Any] = field(default_factory=dict)
-    settings: Dict[str, Any] = field(default_factory=dict)
+    credentials: dict[str, Any] = field(default_factory=dict)
+    settings: dict[str, Any] = field(default_factory=dict)
     is_default: bool = False
     enabled: bool = True
 
-    def to_dict(self, encrypt: bool = False) -> Dict[str, Any]:
+    def to_dict(self, encrypt: bool = False) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         credentials = self.credentials
         if encrypt:
@@ -169,7 +169,7 @@ class ProviderConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], decrypt: bool = False) -> "ProviderConfig":
+    def from_dict(cls, data: dict[str, Any], decrypt: bool = False) -> "ProviderConfig":
         """Create from dictionary."""
         credentials = data.get("credentials", {})
         if decrypt:
@@ -219,8 +219,9 @@ class ProviderService:
 
     def __init__(
         self,
-        config_path: Optional[str] = None,
+        config_path: str | None = None,
         encrypt_credentials: bool = True,
+        require_encryption: bool = False,
     ):
         """
         Initialize the provider service.
@@ -228,12 +229,21 @@ class ProviderService:
         Args:
             config_path: Path to config file. Defaults to ~/.openbench/providers.json
             encrypt_credentials: Whether to encrypt credentials when saving
+            require_encryption: If True, raise ImportError when cryptography is not installed.
+                Use this in production to ensure credentials are never stored in plaintext.
         """
-        self._configs: Dict[str, ProviderConfig] = {}
-        self._config_path = Path(
-            config_path or os.path.expanduser("~/.openbench/providers.json")
-        )
+        self._configs: dict[str, ProviderConfig] = {}
+        self._config_path = Path(config_path or os.path.expanduser("~/.openbench/providers.json"))
         self._encrypt_credentials = encrypt_credentials
+
+        if require_encryption:
+            encryption = get_credential_encryption()
+            if not encryption.is_available:
+                raise ImportError(
+                    "Credential encryption is required but cryptography is not installed. "
+                    "Install with: pip install openbench[security]"
+                )
+
         self._load_configs()
 
     def _load_configs(self) -> None:
@@ -269,10 +279,8 @@ class ProviderService:
             json.dump(data, f, indent=2)
 
         # Set restrictive permissions on config file
-        try:
+        with contextlib.suppress(OSError):
             os.chmod(self._config_path, 0o600)
-        except OSError:
-            pass  # May fail on Windows
 
         logger.debug(f"Saved {len(self._configs)} provider configs")
 
@@ -306,11 +314,11 @@ class ProviderService:
 
         return True
 
-    def get(self, name: str) -> Optional[ProviderConfig]:
+    def get(self, name: str) -> ProviderConfig | None:
         """Get provider configuration by name."""
         return self._configs.get(name)
 
-    def get_default(self, provider_type: ProviderType) -> Optional[ProviderConfig]:
+    def get_default(self, provider_type: ProviderType) -> ProviderConfig | None:
         """Get default provider for a type, falling back to first enabled."""
         for config in self._configs.values():
             if config.provider_type == provider_type and config.is_default:
@@ -324,9 +332,9 @@ class ProviderService:
 
     def list(
         self,
-        provider_type: Optional[ProviderType] = None,
+        provider_type: ProviderType | None = None,
         enabled_only: bool = False,
-    ) -> List[ProviderConfig]:
+    ) -> list[ProviderConfig]:
         """List provider configurations with optional filtering."""
         return [
             config
@@ -338,13 +346,13 @@ class ProviderService:
     def resolve(
         self,
         provider_type: ProviderType,
-        name: Optional[str] = None,
+        name: str | None = None,
         **override_kwargs,
     ) -> Any:
         """Resolve and create a provider instance via PluginRegistry."""
         from openbench.core.registry import (
-            LLMProviderRegistry,
             DataStoreRegistry,
+            LLMProviderRegistry,
             PluginRegistry,
         )
 
@@ -356,9 +364,14 @@ class ProviderService:
         if not config.enabled:
             raise ValueError(f"Provider '{config.name}' is disabled")
 
-        registry_map: Dict[ProviderType, PluginRegistry] = {
+        # Currently supported provider type → registry mappings.
+        # EMBEDDING, STORAGE, and VOICE are reserved for future registries.
+        registry_map: dict[ProviderType, PluginRegistry] = {
             ProviderType.LLM: LLMProviderRegistry,
             ProviderType.VECTOR: DataStoreRegistry,
+            # ProviderType.EMBEDDING: reserved — use EmbeddingProvider directly
+            # ProviderType.STORAGE: reserved — no StorageRegistry yet
+            # ProviderType.VOICE: reserved — no VoiceRegistry yet
         }
 
         registry = registry_map.get(provider_type)
@@ -383,7 +396,7 @@ class ProviderService:
 
         return True
 
-    def test_connection(self, name: str) -> Dict[str, Any]:
+    def test_connection(self, name: str) -> dict[str, Any]:
         """Test connection to a provider. Returns dict with success status."""
         config = self.get(name)
         if not config:
@@ -417,7 +430,7 @@ class ProviderService:
 
 
 # Global provider service instance
-_provider_service: Optional[ProviderService] = None
+_provider_service: ProviderService | None = None
 
 
 def get_provider_service() -> ProviderService:
@@ -439,8 +452,8 @@ def configure_provider(
     provider_type: ProviderType,
     provider: str,
     plugin_type: str,
-    credentials: Optional[Dict[str, Any]] = None,
-    settings: Optional[Dict[str, Any]] = None,
+    credentials: dict[str, Any] | None = None,
+    settings: dict[str, Any] | None = None,
     is_default: bool = False,
 ) -> None:
     """Convenience function to configure a provider."""
@@ -458,7 +471,7 @@ def configure_provider(
 
 def resolve_provider(
     provider_type: ProviderType,
-    name: Optional[str] = None,
+    name: str | None = None,
     **kwargs,
 ) -> Any:
     """Convenience function to resolve a provider."""

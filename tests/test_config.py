@@ -7,12 +7,12 @@ import unittest
 from pathlib import Path
 
 from openbench.core.config import (
+    DEFAULT_MODELS,
     Config,
     ModelInfo,
+    _expand_env_vars,
     get_config,
     reset_config,
-    _expand_env_vars,
-    DEFAULT_MODELS,
 )
 
 
@@ -136,14 +136,16 @@ class TestConfig(unittest.TestCase):
 
     def test_get_bool(self):
         """Test getting boolean value."""
-        config = Config({
-            "enabled": "true",
-            "disabled": "false",
-            "yes": "yes",
-            "no": "no",
-            "one": "1",
-            "zero": "0",
-        })
+        config = Config(
+            {
+                "enabled": "true",
+                "disabled": "false",
+                "yes": "yes",
+                "no": "no",
+                "one": "1",
+                "zero": "0",
+            }
+        )
 
         self.assertTrue(config.get_bool("enabled"))
         self.assertFalse(config.get_bool("disabled"))
@@ -183,9 +185,7 @@ class TestConfig(unittest.TestCase):
 
     def test_load_json(self):
         """Test loading JSON config file."""
-        with tempfile.NamedTemporaryFile(
-            suffix=".json", delete=False, mode="w"
-        ) as f:
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
             json.dump({"key": "value", "nested": {"inner": 42}}, f)
             path = f.name
 
@@ -202,9 +202,7 @@ class TestConfig(unittest.TestCase):
         """Test loading config with environment variable expansion."""
         os.environ["CONFIG_TEST_VALUE"] = "expanded"
 
-        with tempfile.NamedTemporaryFile(
-            suffix=".json", delete=False, mode="w"
-        ) as f:
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
             json.dump({"key": "${CONFIG_TEST_VALUE}"}, f)
             path = f.name
 
@@ -240,9 +238,7 @@ class TestConfig(unittest.TestCase):
         config = Config({"a": 1, "nested": {"x": 10}})
 
         # Load additional config
-        with tempfile.NamedTemporaryFile(
-            suffix=".json", delete=False, mode="w"
-        ) as f:
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
             json.dump({"b": 2, "nested": {"y": 20}}, f)
             path = f.name
 

@@ -12,33 +12,42 @@ Key Concepts:
 - Universal orchestration: Same workflow syntax regardless of framework
 """
 
-from openbench.core import (
-    DataSource, RawData, Agent, ExecutionContext, ExecutionResult,
-    OutputGenerator, GeneratedOutput, FrameworkAdapter,
-    DataLayer, IntelligenceLayer, OutputLayer
-)
-from openbench.workflows import Workflow
 from datetime import datetime
 
+from openbench.core import (
+    DataLayer,
+    DataSource,
+    FrameworkAdapter,
+    GeneratedOutput,
+    IntelligenceLayer,
+    OutputGenerator,
+    OutputLayer,
+    RawData,
+)
+from openbench.workflows import Workflow
 
 # ============================================================================
 # Mock Framework Adapters (for demo without installing external frameworks)
 # ============================================================================
 
+
 class MockLangChainRunnable:
     """Mock LangChain Runnable for demo."""
+
     def invoke(self, input):
         return f"[LangChain Agent] Analyzed: {input}"
 
 
 class MockAG2Agent:
     """Mock AG2 Agent for demo."""
+
     def __init__(self, name):
         self.name = name
 
 
 class MockUserProxy:
     """Mock AG2 UserProxyAgent for demo."""
+
     def __init__(self):
         self._last_message = None
 
@@ -51,6 +60,7 @@ class MockUserProxy:
 
 class MockCrewAICrew:
     """Mock CrewAI Crew for demo."""
+
     def kickoff(self, inputs):
         return f"[CrewAI Crew] Completed: {inputs}"
 
@@ -58,6 +68,7 @@ class MockCrewAICrew:
 # ============================================================================
 # Demo Adapter Implementations
 # ============================================================================
+
 
 class DemoLangChainAdapter(FrameworkAdapter):
     """Demo LangChain adapter."""
@@ -116,6 +127,7 @@ class DemoE2BAdapter(FrameworkAdapter):
 # Demo Components
 # ============================================================================
 
+
 class DemoDataSource(DataSource):
     """Demo data source."""
 
@@ -127,10 +139,7 @@ class DemoDataSource(DataSource):
 
     def extract(self):
         return RawData(
-            content="Sample data from demo source",
-            content_type="text",
-            metadata={},
-            source=self
+            content="Sample data from demo source", content_type="text", metadata={}, source=self
         )
 
     def validate(self):
@@ -148,7 +157,7 @@ class DemoOutputGenerator(OutputGenerator):
             file_path=f"outputs/demo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
             format="txt",
             size_bytes=len(content_str),
-            metadata={"content": content_str}
+            metadata={"content": content_str},
         )
 
     def validate(self, content):
@@ -158,6 +167,7 @@ class DemoOutputGenerator(OutputGenerator):
 # ============================================================================
 # Demo Scenarios
 # ============================================================================
+
 
 def demo_1_single_framework_adapter():
     """Demo 1: Using a single framework adapter (LangChain)."""
@@ -173,10 +183,7 @@ def demo_1_single_framework_adapter():
     intelligence_layer = IntelligenceLayer(agents=DemoLangChainAdapter(mock_langchain_agent))
     output_layer = OutputLayer(generators=DemoOutputGenerator())
 
-    workflow = Workflow(
-        name="langchain-demo",
-        chain=data_layer | intelligence_layer | output_layer
-    )
+    workflow = Workflow(name="langchain-demo", chain=data_layer | intelligence_layer | output_layer)
 
     print("\nWorkflow: Data → LangChain Agent → Output")
     result = workflow.run({})
@@ -198,19 +205,20 @@ def demo_2_mixed_frameworks():
     from openbench.core import Chain
 
     # Chain multiple framework adapters together
-    multi_agent = Chain([
-        DemoLangChainAdapter(langchain_agent),
-        DemoAG2Adapter(ag2_agent),
-        DemoCrewAIAdapter(crewai_crew)
-    ])
+    multi_agent = Chain(
+        [
+            DemoLangChainAdapter(langchain_agent),
+            DemoAG2Adapter(ag2_agent),
+            DemoCrewAIAdapter(crewai_crew),
+        ]
+    )
 
     data_layer = DataLayer(sources=DemoDataSource())
     intelligence_layer = IntelligenceLayer(agents=multi_agent)
     output_layer = OutputLayer(generators=DemoOutputGenerator())
 
     workflow = Workflow(
-        name="mixed-framework-demo",
-        chain=data_layer | intelligence_layer | output_layer
+        name="mixed-framework-demo", chain=data_layer | intelligence_layer | output_layer
     )
 
     print("\nWorkflow: Data → LangChain → AG2 → CrewAI → Output")
@@ -238,8 +246,7 @@ result = df.describe().to_dict()
     output_layer = OutputLayer(generators=DemoOutputGenerator())
 
     workflow = Workflow(
-        name="custom-code-demo",
-        chain=data_layer | intelligence_layer | output_layer
+        name="custom-code-demo", chain=data_layer | intelligence_layer | output_layer
     )
 
     print("\nWorkflow: Data → E2B Sandbox (custom code) → Output")

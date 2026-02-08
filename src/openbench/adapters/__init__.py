@@ -35,11 +35,11 @@ Example:
     ```
 """
 
-from openbench.adapters.langchain import LangChainAdapter
 from openbench.adapters.ag2 import AG2Adapter
 from openbench.adapters.crewai import CrewAIAdapter
 from openbench.adapters.e2b import E2BAdapter
 from openbench.adapters.google_adk import GoogleADKAdapter
+from openbench.adapters.langchain import LangChainAdapter
 
 __all__ = [
     "LangChainAdapter",

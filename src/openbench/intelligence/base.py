@@ -12,11 +12,14 @@ This decouples agents from specific frameworks (Mastra, LangChain, etc.)
 while maintaining compatibility with any LLM provider.
 """
 
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Union
+import inspect
 import json
 import logging
+import threading
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
 
 from openbench.core.abstractions import (
     Agent,
@@ -48,11 +51,11 @@ class Message:
 
     role: MessageRole
     content: str
-    name: Optional[str] = None
-    tool_call_id: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = None
+    name: str | None = None
+    tool_call_id: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to LLM-compatible format."""
         result = {"role": self.role.value, "content": self.content}
         if self.name:
@@ -68,21 +71,40 @@ class Message:
 class AgentMemory:
     """Agent conversation memory."""
 
-    messages: List[Message] = field(default_factory=list)
+    messages: list[Message] = field(default_factory=list)
     max_messages: int = 100
-    max_tokens: Optional[int] = None
+    max_tokens: int | None = None
+
+    def _estimate_tokens(self) -> int:
+        """Rough token estimate: ~4 chars per token."""
+        return sum(len(m.content) // 4 for m in self.messages)
+
+    def _trim_oldest(self, keep_count: int) -> None:
+        """Trim oldest messages, preserving system message."""
+        if self.messages and self.messages[0].role == MessageRole.SYSTEM:
+            self.messages = [self.messages[0], *self.messages[-(keep_count - 1) :]]
+        else:
+            self.messages = self.messages[-keep_count:]
 
     def add(self, role: MessageRole, content: str, **kwargs) -> None:
         """Add message to memory."""
         self.messages.append(Message(role=role, content=content, **kwargs))
 
-        # Trim if exceeds max
+        # Trim by message count
         if len(self.messages) > self.max_messages:
-            # Keep system message if present
-            if self.messages and self.messages[0].role == MessageRole.SYSTEM:
-                self.messages = [self.messages[0]] + self.messages[-(self.max_messages - 1) :]
-            else:
-                self.messages = self.messages[-self.max_messages :]
+            self._trim_oldest(self.max_messages)
+
+        # Trim by token budget
+        if self.max_tokens and self._estimate_tokens() > self.max_tokens:
+            # Remove oldest non-system messages until under budget
+            while len(self.messages) > 1 and self._estimate_tokens() > self.max_tokens:
+                # Find first non-system message to remove
+                for i, m in enumerate(self.messages):
+                    if m.role != MessageRole.SYSTEM:
+                        self.messages.pop(i)
+                        break
+                else:
+                    break
 
     def add_system(self, content: str) -> None:
         """Add system message."""
@@ -92,7 +114,7 @@ class AgentMemory:
         """Add user message."""
         self.add(MessageRole.USER, content)
 
-    def add_assistant(self, content: str, tool_calls: Optional[List[Dict]] = None) -> None:
+    def add_assistant(self, content: str, tool_calls: list[dict] | None = None) -> None:
         """Add assistant message."""
         self.add(MessageRole.ASSISTANT, content, tool_calls=tool_calls)
 
@@ -100,7 +122,7 @@ class AgentMemory:
         """Add tool result message."""
         self.add(MessageRole.TOOL, result, name=name, tool_call_id=tool_call_id)
 
-    def get_messages(self) -> List[Dict[str, Any]]:
+    def get_messages(self) -> list[dict[str, Any]]:
         """Get messages in LLM-compatible format."""
         return [m.to_dict() for m in self.messages]
 
@@ -123,15 +145,15 @@ class ToolExecutor:
     """
 
     def __init__(self):
-        self._tools: Dict[str, Union[Tool, Callable]] = {}
-        self._schemas: Dict[str, Dict[str, Any]] = {}
+        self._tools: dict[str, Tool | Callable] = {}
+        self._schemas: dict[str, dict[str, Any]] = {}
 
     def register(
         self,
         name: str,
-        tool: Union[Tool, Callable],
-        schema: Optional[Dict[str, Any]] = None,
-        description: Optional[str] = None,
+        tool: Tool | Callable,
+        schema: dict[str, Any] | None = None,
+        description: str | None = None,
     ) -> None:
         """
         Register a tool.
@@ -149,17 +171,39 @@ class ToolExecutor:
         elif schema:
             self._schemas[name] = schema
         else:
-            # Generate basic schema from callable
+            # Generate schema from callable using inspect.signature()
+            properties = {}
+            required = []
+            if callable(tool):
+                type_map = {str: "string", int: "integer", float: "number", bool: "boolean"}
+                try:
+                    sig = inspect.signature(tool)
+                    for param_name, param in sig.parameters.items():
+                        prop = {"type": "string"}
+                        if param.annotation != inspect.Parameter.empty:
+                            prop["type"] = type_map.get(param.annotation, "string")
+                        if param.default != inspect.Parameter.empty:
+                            prop["default"] = param.default
+                        properties[param_name] = prop
+                        if param.default == inspect.Parameter.empty:
+                            required.append(param_name)
+                except (ValueError, TypeError):
+                    pass
+
             self._schemas[name] = {
                 "type": "function",
                 "function": {
                     "name": name,
                     "description": description or tool.__doc__ or f"Execute {name}",
-                    "parameters": {"type": "object", "properties": {}, "required": []},
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    },
                 },
             }
 
-    def register_from_list(self, tools: List[Union[Tool, Callable]]) -> None:
+    def register_from_list(self, tools: list[Tool | Callable]) -> None:
         """Register multiple tools."""
         for tool in tools:
             if isinstance(tool, Tool):
@@ -167,31 +211,55 @@ class ToolExecutor:
             elif callable(tool):
                 self.register(tool.__name__, tool)
 
-    def get_schemas(self) -> List[Dict[str, Any]]:
+    def get_schemas(self) -> list[dict[str, Any]]:
         """Get all tool schemas for LLM."""
         return list(self._schemas.values())
 
-    def execute(self, name: str, **params) -> Any:
+    def execute(self, name: str, timeout: int = 30, **params) -> Any:
         """
         Execute a tool by name.
 
         Args:
             name: Tool name
+            timeout: Maximum execution time in seconds (default: 30)
             **params: Tool parameters
 
         Returns:
             Tool execution result
+
+        Raises:
+            ValueError: If tool not found or invalid type
+            TimeoutError: If tool execution exceeds timeout
         """
         tool = self._tools.get(name)
         if not tool:
             raise ValueError(f"Tool not found: {name}")
 
-        if isinstance(tool, Tool):
-            return tool.execute(**params)
-        elif callable(tool):
-            return tool(**params)
+        result = [None]
+        exception = [None]
 
-        raise ValueError(f"Invalid tool type: {type(tool)}")
+        def _run():
+            try:
+                if isinstance(tool, Tool):
+                    result[0] = tool.execute(**params)
+                elif callable(tool):
+                    result[0] = tool(**params)
+                else:
+                    exception[0] = ValueError(f"Invalid tool type: {type(tool)}")
+            except Exception as e:
+                exception[0] = e
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout)
+
+        if thread.is_alive():
+            raise TimeoutError(f"Tool '{name}' exceeded {timeout}s timeout")
+
+        if exception[0] is not None:
+            raise exception[0]
+
+        return result[0]
 
     def __contains__(self, name: str) -> bool:
         return name in self._tools
@@ -206,10 +274,10 @@ class AgentConfig:
 
     model: str = field(default_factory=get_default_model)
     temperature: float = 0.7
-    max_tokens: Optional[int] = None
+    max_tokens: int | None = None
     max_iterations: int = 10
-    system_prompt: Optional[str] = None
-    stop_sequences: List[str] = field(default_factory=list)
+    system_prompt: str | None = None
+    stop_sequences: list[str] = field(default_factory=list)
 
 
 class BaseAgent(Agent):
@@ -231,13 +299,13 @@ class BaseAgent(Agent):
     def __init__(
         self,
         goal: str,
-        tools: Optional[List[Union[Tool, Callable]]] = None,
-        model: Optional[str] = None,
+        tools: list[Tool | Callable] | None = None,
+        model: str | None = None,
         temperature: float = 0.7,
         max_iterations: int = 10,
-        system_prompt: Optional[str] = None,
-        provider_name: Optional[str] = None,
-        store: Optional[DataStore] = None,
+        system_prompt: str | None = None,
+        provider_name: str | None = None,
+        store: DataStore | None = None,
         retrieval_top_k: int = 5,
         retrieval_threshold: float = 0.0,
     ):
@@ -280,7 +348,7 @@ class BaseAgent(Agent):
         self.memory.add_system(self._system_prompt)
 
         # LLM provider (lazy loaded)
-        self._llm: Optional[LLMProvider] = None
+        self._llm: LLMProvider | None = None
 
     @property
     def agent_type(self) -> str:
@@ -307,7 +375,7 @@ Provide clear, actionable responses."""
             )
         return self._llm
 
-    def _retrieve_context(self, query_text: str) -> List[Dict[str, Any]]:
+    def _retrieve_context(self, query_text: str) -> list[dict[str, Any]]:
         """Retrieve relevant context from store for RAG.
 
         Args:
@@ -320,20 +388,24 @@ Provide clear, actionable responses."""
             return []
 
         try:
-            results = self.store.search(Query(
-                text=query_text,
-                limit=self.retrieval_top_k,
-            ))
+            results = self.store.search(
+                Query(
+                    text=query_text,
+                    limit=self.retrieval_top_k,
+                )
+            )
 
             # Filter by threshold and extract content
             retrieved = []
-            for item, score in zip(results.items, results.scores):
+            for item, score in zip(results.items, results.scores, strict=False):
                 if score >= self.retrieval_threshold:
-                    retrieved.append({
-                        "content": item.get("content", ""),
-                        "score": score,
-                        "metadata": item.get("metadata", {}),
-                    })
+                    retrieved.append(
+                        {
+                            "content": item.get("content", ""),
+                            "score": score,
+                            "metadata": item.get("metadata", {}),
+                        }
+                    )
 
             return retrieved
 
@@ -342,9 +414,7 @@ Provide clear, actionable responses."""
             return []
 
     def _augment_context_with_rag(
-        self,
-        context: ExecutionContext,
-        retrieved: List[Dict[str, Any]]
+        self, context: ExecutionContext, retrieved: list[dict[str, Any]]
     ) -> ExecutionContext:
         """Augment execution context with retrieved RAG context.
 
@@ -390,23 +460,35 @@ Provide clear, actionable responses."""
             constraints=context.constraints,
         )
 
-    def _parse_tool_calls(self, response: Any) -> List[Dict[str, Any]]:
+    def _parse_tool_calls(self, response: Any) -> list[dict[str, Any]]:
         """Parse tool calls from LLM response."""
-        # Handle different response formats
-        if hasattr(response, "tool_calls") and response.tool_calls:
-            return [
-                {
-                    "id": tc.id if hasattr(tc, "id") else f"call_{i}",
-                    "name": tc.function.name if hasattr(tc, "function") else tc.get("name"),
-                    "arguments": (
-                        json.loads(tc.function.arguments)
-                        if hasattr(tc, "function")
-                        else tc.get("arguments", {})
-                    ),
-                }
-                for i, tc in enumerate(response.tool_calls)
-            ]
-        return []
+        if not (hasattr(response, "tool_calls") and response.tool_calls):
+            return []
+
+        parsed = []
+        for i, tc in enumerate(response.tool_calls):
+            call_id = tc.id if hasattr(tc, "id") else f"call_{i}"
+
+            if hasattr(tc, "function"):
+                name = tc.function.name
+                raw_args = tc.function.arguments
+                if isinstance(raw_args, str):
+                    try:
+                        args = json.loads(raw_args)
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(
+                            f"Failed to parse tool arguments for '{name}', using empty dict"
+                        )
+                        args = {}
+                else:
+                    args = raw_args if raw_args else {}
+            else:
+                name = tc.get("name")
+                args = tc.get("arguments", {})
+
+            parsed.append({"id": call_id, "name": name, "arguments": args})
+
+        return parsed
 
     def execute(self, context: ExecutionContext) -> ExecutionResult:
         """
@@ -441,21 +523,30 @@ Provide clear, actionable responses."""
                 if data_to_show:
                     user_message += f"\n\n## Additional Data:\n{json.dumps(data_to_show, indent=2, default=str)}"
             else:
-                user_message += f"\n\nContext data:\n{json.dumps(data_to_show, indent=2, default=str)}"
+                user_message += (
+                    f"\n\nContext data:\n{json.dumps(data_to_show, indent=2, default=str)}"
+                )
         self.memory.add_user(user_message)
 
+        import time
+
         total_tokens = 0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
         total_cost = 0.0
         iterations = 0
-        all_tools_used: List[str] = []
-        tool_calls: List[Dict[str, Any]] = []
+        all_tools_used: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        iteration_stats: list[dict[str, Any]] = []
         response = None
+        start_time = time.monotonic()
 
         try:
             llm = self._get_llm()
 
             while iterations < self.max_iterations:
                 iterations += 1
+                iter_start = time.monotonic()
 
                 # Generate response
                 response = llm.generate(
@@ -468,8 +559,24 @@ Provide clear, actionable responses."""
                 total_tokens += response.tokens_used
                 total_cost += response.cost
 
+                # Track per-iteration token breakdown
+                iter_prompt = response.metadata.get("prompt_tokens", 0)
+                iter_completion = response.metadata.get("completion_tokens", 0)
+                total_prompt_tokens += iter_prompt
+                total_completion_tokens += iter_completion
+
                 # Check for tool calls
                 tool_calls = self._parse_tool_calls(response)
+
+                iter_stat = {
+                    "iteration": iterations,
+                    "prompt_tokens": iter_prompt,
+                    "completion_tokens": iter_completion,
+                    "cost": response.cost,
+                    "tool_calls": [tc["name"] for tc in tool_calls],
+                    "duration_seconds": round(time.monotonic() - iter_start, 3),
+                }
+                iteration_stats.append(iter_stat)
 
                 if not tool_calls:
                     # No tool calls - we're done
@@ -485,28 +592,53 @@ Provide clear, actionable responses."""
                         result = self.tools.execute(tc["name"], **tc["arguments"])
                         result_str = json.dumps(result, default=str)
                     except Exception as e:
-                        result_str = f"Error: {str(e)}"
+                        result_str = f"Error: {e!s}"
 
                     self.memory.add_tool_result(tc["id"], tc["name"], result_str)
 
+            total_duration = round(time.monotonic() - start_time, 3)
+
+            # Determine completion status
+            if response is None:
+                status = "no_iterations"
+            elif iterations >= self.max_iterations and tool_calls:
+                status = "max_iterations"
+                logger.warning(
+                    f"Agent reached max_iterations ({self.max_iterations}) with pending tool calls"
+                )
+            else:
+                status = "completed"
+
             return ExecutionResult(
                 output=response.text if response else None,
-                status="completed" if response else "no_iterations",
+                status=status,
                 metadata={
                     "iterations": iterations,
                     "model": self.model,
                     "tools_used": all_tools_used,
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                    "duration_seconds": total_duration,
+                    "iteration_stats": iteration_stats,
                 },
                 cost=total_cost,
                 tokens_used=total_tokens,
             )
 
         except Exception as e:
+            total_duration = round(time.monotonic() - start_time, 3)
             logger.error(f"Agent execution failed: {e}")
             return ExecutionResult(
                 output=None,
                 status="failed",
-                metadata={"error": str(e), "iterations": iterations},
+                metadata={
+                    "error": str(e),
+                    "iterations": iterations,
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                    "duration_seconds": total_duration,
+                    "iteration_stats": iteration_stats,
+                },
                 cost=total_cost,
                 tokens_used=total_tokens,
             )
@@ -589,7 +721,7 @@ class StructuredOutputAgent(BaseAgent):
     def __init__(
         self,
         goal: str,
-        output_schema: Dict[str, Any],
+        output_schema: dict[str, Any],
         **kwargs,
     ):
         """

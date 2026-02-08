@@ -3,16 +3,16 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from openbench.core.context import ProjectContext
-from openbench.data.sources.pdf import PDFSource
 from openbench.data.exceptions import (
     ExtractionError,
     FileNotFoundError,
     UnsupportedFormatError,
     ValidationError,
 )
+from openbench.data.sources.pdf import PDFSource
 
 
 class TestPDFSourceInit(unittest.TestCase):
@@ -152,16 +152,16 @@ class TestPDFSourceExtraction(unittest.TestCase):
             source = PDFSource(path=temp_path)
             source._files = [Path(temp_path)]
 
-            with patch.dict("sys.modules", {"pypdf": None}):
-                with patch(
+            with (
+                patch.dict("sys.modules", {"pypdf": None}),
+                patch(
                     "openbench.data.sources.pdf.PDFSource._extract_text_from_pdf"
-                ) as mock_extract:
-                    mock_extract.side_effect = ExtractionError(
-                        "pypdf is required for PDF extraction"
-                    )
-                    with self.assertRaises(ExtractionError) as ctx:
-                        source.extract()
-                    self.assertIn("pypdf", str(ctx.exception))
+                ) as mock_extract,
+            ):
+                mock_extract.side_effect = ExtractionError("pypdf is required for PDF extraction")
+                with self.assertRaises(ExtractionError) as ctx:
+                    source.extract()
+                self.assertIn("pypdf", str(ctx.exception))
         finally:
             Path(temp_path).unlink()
 

@@ -4,7 +4,8 @@ CrewAI framework adapter for OpenBench.
 Allows using CrewAI crews in OpenBench workflows.
 """
 
-from typing import Any, Optional
+from typing import Any
+
 from openbench.core import FrameworkAdapter
 
 
@@ -75,7 +76,7 @@ class CrewAIAdapter(FrameworkAdapter):
         """
         self.crew = crew
 
-    def invoke(self, input: Any, config: Optional[Any] = None) -> Any:
+    def invoke(self, input: Any, config: Any | None = None) -> Any:
         """
         Execute the CrewAI crew.
 

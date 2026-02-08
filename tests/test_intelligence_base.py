@@ -1,12 +1,11 @@
 """Tests for framework-agnostic agent interface."""
 
 import unittest
+from typing import Any
 from unittest.mock import MagicMock, patch
-from typing import Any, Dict, List, Optional
 
 from openbench.core.abstractions import (
     ExecutionContext,
-    ExecutionResult,
     LLMProvider,
     LLMResponse,
     Tool,
@@ -166,19 +165,14 @@ class MockTool(Tool):
     def execute(self, **params) -> Any:
         return {"result": "mock", "params": params}
 
-    def get_schema(self) -> Dict[str, Any]:
+    def get_schema(self) -> dict[str, Any]:
         return {
             "type": "function",
             "function": {
                 "name": self._name,
                 "description": self.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"}
-                    }
-                }
-            }
+                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+            },
         }
 
 
@@ -263,7 +257,7 @@ class TestToolExecutor(unittest.TestCase):
 class MockLLMProvider(LLMProvider):
     """Mock LLM provider for testing."""
 
-    def __init__(self, responses: Optional[List[str]] = None):
+    def __init__(self, responses: list[str] | None = None):
         self.responses = responses or ["Mock response"]
         self.call_count = 0
 
@@ -281,7 +275,7 @@ class MockLLMProvider(LLMProvider):
             cost=0.001,
         )
 
-    def embed(self, text: str, model: Optional[str] = None) -> List[float]:
+    def embed(self, text: str, model: str | None = None) -> list[float]:
         return [0.1] * 1536
 
 

@@ -5,59 +5,60 @@ Allows running custom Python code in isolated sandboxed environments.
 """
 
 import json
-from typing import Any, Optional, List
+from typing import Any
+
 from openbench.core import FrameworkAdapter
 
 
 class E2BAdapter(FrameworkAdapter):
     """
-    Adapter for running custom code in E2B sandboxes.
+        Adapter for running custom code in E2B sandboxes.
 
-    Perfect for:
-    - User-provided custom transforms
-    - Untrusted code execution
-    - Isolated environments with specific dependencies
+        Perfect for:
+        - User-provided custom transforms
+        - Untrusted code execution
+        - Isolated environments with specific dependencies
 
-    Example:
-        ```python
-        from openbench.adapters.e2b import E2BAdapter
-        from openbench import Workflow
-        from openbench.data import CSVSource
-        from openbench.output import PDFGenerator
+        Example:
+            ```python
+            from openbench.adapters.e2b import E2BAdapter
+            from openbench import Workflow
+            from openbench.data import CSVSource
+            from openbench.output import PDFGenerator
 
-        # Custom data transformation in sandbox
-        custom_transform = E2BAdapter(
-            code='''
-import pandas as pd
+            # Custom data transformation in sandbox
+            custom_transform = E2BAdapter(
+                code='''
+    import pandas as pd
 
-# input_data is automatically available
-df = pd.DataFrame(input_data)
+    # input_data is automatically available
+    df = pd.DataFrame(input_data)
 
-# Perform analysis
-summary = df.describe().to_dict()
-top_items = df.nlargest(10, 'value').to_dict('records')
+    # Perform analysis
+    summary = df.describe().to_dict()
+    top_items = df.nlargest(10, 'value').to_dict('records')
 
-# Must assign to 'result'
-result = {
-    "summary": summary,
-    "top_items": top_items
-}
-''',
-            packages=["pandas"]
-        )
-
-        # Use in workflow
-        workflow = Workflow(
-            name="custom-analysis",
-            chain=(
-                CSVSource("data.csv")
-                | custom_transform  # Runs in isolated sandbox
-                | PDFGenerator()
+    # Must assign to 'result'
+    result = {
+        "summary": summary,
+        "top_items": top_items
+    }
+    ''',
+                packages=["pandas"]
             )
-        )
 
-        result = workflow.run({})
-        ```
+            # Use in workflow
+            workflow = Workflow(
+                name="custom-analysis",
+                chain=(
+                    CSVSource("data.csv")
+                    | custom_transform  # Runs in isolated sandbox
+                    | PDFGenerator()
+                )
+            )
+
+            result = workflow.run({})
+            ```
     """
 
     @property
@@ -65,10 +66,7 @@ result = {
         return "e2b"
 
     def __init__(
-        self,
-        code: str,
-        template: str = "python-data-science",
-        packages: Optional[List[str]] = None
+        self, code: str, template: str = "python-data-science", packages: list[str] | None = None
     ):
         """
         Initialize the E2B adapter.
@@ -82,7 +80,7 @@ result = {
         self.template = template
         self.packages = packages or []
 
-    def invoke(self, input: Any, config: Optional[Any] = None) -> Any:
+    def invoke(self, input: Any, config: Any | None = None) -> Any:
         """
         Execute code in E2B sandbox.
 
@@ -96,9 +94,7 @@ result = {
         try:
             from e2b import Sandbox
         except ImportError:
-            raise ImportError(
-                "E2B is not installed. Install it with: pip install e2b"
-            )
+            raise ImportError("E2B is not installed. Install it with: pip install e2b") from None
 
         with Sandbox(template=self.template) as sandbox:
             # Install additional packages if needed
@@ -110,7 +106,9 @@ result = {
 
             result = sandbox.process.start(
                 cmd="python",
-                args=["-c", f"""
+                args=[
+                    "-c",
+                    f"""
 import json
 with open('/tmp/input.json') as f:
     input_data = json.load(f)
@@ -120,7 +118,8 @@ with open('/tmp/input.json') as f:
 
 # Output must be assigned to 'result'
 print(json.dumps(result))
-"""]
+""",
+                ],
             )
 
             return json.loads(result.stdout)

@@ -3,41 +3,41 @@
 # L2 Orchestrator (use this for workflow composition)
 from openbench.core.layers import IntelligenceLayer
 
-# Agent Factory (convenience class for creating agents)
-from openbench.intelligence.layer import AgentFactory
-
 # Pre-built agent types (extend BaseAgent)
 from openbench.intelligence.agents import (
-    ResearchAgent,
+    ActionAgent,
     AnalysisAgent,
     ContentAgent,
-    ActionAgent,
     MetaAgent,
+    ResearchAgent,
 )
 
 # Base agent classes and utilities
 from openbench.intelligence.base import (
-    BaseAgent,
-    SimpleAgent,
-    StructuredOutputAgent,
-    AgentMemory,
     AgentConfig,
-    ToolExecutor,
+    AgentMemory,
+    BaseAgent,
     Message,
     MessageRole,
+    SimpleAgent,
+    StructuredOutputAgent,
+    ToolExecutor,
 )
-
-# LLM providers
-from openbench.intelligence.llm_providers import GeminiLLMProvider
 
 # Embedding providers
 from openbench.intelligence.embeddings import (
-    OpenAIEmbeddingProvider,
+    EMBEDDING_PROVIDERS,
     GoogleEmbeddingProvider,
+    OpenAIEmbeddingProvider,
     get_embedding_provider,
     resolve_embedding_provider,
-    EMBEDDING_PROVIDERS,
 )
+
+# Agent Factory (convenience class for creating agents)
+from openbench.intelligence.layer import AgentFactory
+
+# LLM providers
+from openbench.intelligence.llm_providers import GeminiLLMProvider
 
 __all__ = [
     # L2 Orchestrator

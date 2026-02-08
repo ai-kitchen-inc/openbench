@@ -22,12 +22,11 @@ import glob
 import os
 import sys
 from pathlib import Path
-from typing import List
 
 from openbench.data.sources import PDFSource
 from openbench.data.stores import PineconeStore
-from openbench.intelligence import GoogleEmbeddingProvider
 from openbench.data.stores.base import ChunkingConfig
+from openbench.intelligence import GoogleEmbeddingProvider
 
 
 def check_api_keys():
@@ -74,7 +73,7 @@ def create_store(
 def index_pdf(
     pdf_path: str,
     store: PineconeStore,
-    metadata: dict = None,
+    metadata: dict | None = None,
 ) -> dict:
     """Index a single PDF to Pinecone.
 
@@ -127,10 +126,10 @@ def index_pdf(
 
 
 def index_batch(
-    pdf_paths: List[str],
+    pdf_paths: list[str],
     store: PineconeStore,
-    metadata: dict = None,
-) -> List[dict]:
+    metadata: dict | None = None,
+) -> list[dict]:
     """Index multiple PDFs to Pinecone.
 
     Args:
@@ -151,9 +150,7 @@ def index_batch(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Index PDF documents to Pinecone vector store"
-    )
+    parser = argparse.ArgumentParser(description="Index PDF documents to Pinecone vector store")
     parser.add_argument("pdf", nargs="+", help="PDF file(s) or glob pattern")
     parser.add_argument("--index", default="openbench", help="Pinecone index name")
     parser.add_argument("--namespace", default="knowledge-base", help="Pinecone namespace")
@@ -237,8 +234,8 @@ def main():
         print(f"  Index: {stats['index_name']}")
         print(f"  Dimension: {stats['dimension']}")
         print(f"  Total vectors: {stats['total_vector_count']}")
-        if stats.get('namespaces'):
-            for ns, data in stats['namespaces'].items():
+        if stats.get("namespaces"):
+            for ns, data in stats["namespaces"].items():
                 print(f"  Namespace '{ns}': {data['vector_count']} vectors")
     except Exception as e:
         print(f"  Could not get stats: {e}")

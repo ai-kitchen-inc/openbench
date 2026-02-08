@@ -33,7 +33,7 @@ Example:
 import hashlib
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from openbench.core.abstractions import DataSource, RawData
 from openbench.data.exceptions import ExtractionError, ValidationError
@@ -79,13 +79,13 @@ class LangExtractSource(DataSource):
         )
     """
 
-    ENV_KEYS: Dict[str, List[str]] = {
+    ENV_KEYS: dict[str, list[str]] = {
         "gemini": ["GOOGLE_API_KEY", "LANGEXTRACT_API_KEY"],
         "openai": ["OPENAI_API_KEY"],
         "ollama": [],
     }
 
-    DEFAULT_MODELS: Dict[str, str] = {
+    DEFAULT_MODELS: dict[str, str] = {
         "gemini": "gemini-2.5-flash",
         "openai": "gpt-4o",
         "ollama": "gemma2:2b",
@@ -94,19 +94,19 @@ class LangExtractSource(DataSource):
     def __init__(
         self,
         prompt: str,
-        text: Optional[str] = None,
-        url: Optional[str] = None,
-        examples: Optional[List[Dict[str, Any]]] = None,
+        text: str | None = None,
+        url: str | None = None,
+        examples: list[dict[str, Any]] | None = None,
         provider: LangExtractProvider = "gemini",
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
+        model: str | None = None,
+        api_key: str | None = None,
         model_url: str = "http://localhost:11434",
         extraction_passes: int = 1,
         max_workers: int = 10,
         max_char_buffer: int = 2000,
         temperature: float = 0.3,
         include_positions: bool = True,
-        filter_classes: Optional[List[str]] = None,
+        filter_classes: list[str] | None = None,
         store: Optional["DataStore"] = None,
         auto_index: bool = False,
     ):
@@ -151,7 +151,7 @@ class LangExtractSource(DataSource):
         self.api_key = api_key or self._get_api_key()
         self._last_lx_result = None
 
-    def _get_api_key(self) -> Optional[str]:
+    def _get_api_key(self) -> str | None:
         """Get API key from environment variables."""
         for key_name in self.ENV_KEYS.get(self.provider, []):
             if key := os.getenv(key_name):
@@ -184,8 +184,7 @@ class LangExtractSource(DataSource):
 
         if self.provider not in self.ENV_KEYS:
             raise ValidationError(
-                f"Unsupported provider: {self.provider}. "
-                f"Available: {list(self.ENV_KEYS.keys())}"
+                f"Unsupported provider: {self.provider}. Available: {list(self.ENV_KEYS.keys())}"
             )
 
         if self.provider != "ollama" and not self.api_key:
@@ -197,7 +196,7 @@ class LangExtractSource(DataSource):
 
         return True
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         """Get metadata about the extraction source.
 
         Returns:
@@ -214,7 +213,7 @@ class LangExtractSource(DataSource):
             "example_count": len(self.examples),
         }
 
-    def _convert_examples(self, examples: List[Dict[str, Any]]) -> list:
+    def _convert_examples(self, examples: list[dict[str, Any]]) -> list:
         """Convert OpenBench examples to LangExtract ExampleData format.
 
         Args:
@@ -237,27 +236,25 @@ class LangExtractSource(DataSource):
                 )
                 for e in ex.get("extractions", [])
             ]
-            converted.append(
-                lx.data.ExampleData(text=ex["text"], extractions=extractions)
-            )
+            converted.append(lx.data.ExampleData(text=ex["text"], extractions=extractions))
         return converted
 
     @staticmethod
     def _coerce_attributes(
-        attrs: Optional[Dict[str, Any]],
-    ) -> Optional[Dict[str, str]]:
+        attrs: dict[str, Any] | None,
+    ) -> dict[str, str] | None:
         """Coerce attribute values to str as required by LangExtract API."""
         if not attrs:
             return None
         return {k: str(v) if not isinstance(v, (str, list)) else v for k, v in attrs.items()}
 
-    def _build_extract_params(self) -> Dict[str, Any]:
+    def _build_extract_params(self) -> dict[str, Any]:
         """Build parameters dict for lx.extract().
 
         Returns:
             Dict of keyword arguments for langextract.extract().
         """
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "text_or_documents": self.url or self.text,
             "prompt_description": self.prompt,
             "model_id": self.model,
@@ -295,7 +292,7 @@ class LangExtractSource(DataSource):
         """
         extractions = []
         for e in result.extractions:
-            extraction_dict: Dict[str, Any] = {
+            extraction_dict: dict[str, Any] = {
                 "class": e.extraction_class,
                 "text": e.extraction_text,
                 "attributes": e.attributes or {},
@@ -319,11 +316,9 @@ class LangExtractSource(DataSource):
             extractions.append(extraction_dict)
 
         if self.filter_classes:
-            extractions = [
-                e for e in extractions if e["class"] in self.filter_classes
-            ]
+            extractions = [e for e in extractions if e["class"] in self.filter_classes]
 
-        by_class: Dict[str, List[Dict[str, Any]]] = {}
+        by_class: dict[str, list[dict[str, Any]]] = {}
         for e in extractions:
             cls = e["class"]
             if cls not in by_class:
@@ -360,7 +355,7 @@ class LangExtractSource(DataSource):
             except Exception as e:
                 import warnings
 
-                warnings.warn(f"Failed to index to store: {e}")
+                warnings.warn(f"Failed to index to store: {e}", stacklevel=2)
 
         return raw_data
 
@@ -389,19 +384,19 @@ class LangExtractSource(DataSource):
             raise ExtractionError(
                 "langextract is required for entity extraction. "
                 "Install with: pip install langextract"
-            )
+            ) from None
 
         params = self._build_extract_params()
 
         try:
             result = lx.extract(**params)
         except Exception as e:
-            raise ExtractionError(f"LangExtract extraction failed: {e}")
+            raise ExtractionError(f"LangExtract extraction failed: {e}") from e
 
         self._last_lx_result = result
         return self._result_to_raw_data(result)
 
-    def invoke(self, input: Any = None, config: Optional[Any] = None) -> RawData:
+    def invoke(self, input: Any = None, config: Any | None = None) -> RawData:
         """Chainable invoke for workflow composition.
 
         Accepts input from previous step in chain (e.g., PDFSource).
@@ -439,7 +434,7 @@ class LangExtractSource(DataSource):
 
     def visualize(
         self,
-        output_path: Optional[str] = None,
+        output_path: str | None = None,
         max_text_display: int = 400,
     ) -> str:
         """Generate HTML visualization of extraction results.
@@ -460,20 +455,15 @@ class LangExtractSource(DataSource):
             import langextract as lx
         except ImportError:
             raise ExtractionError(
-                "langextract is required for visualization. "
-                "Install with: pip install langextract"
-            )
+                "langextract is required for visualization. Install with: pip install langextract"
+            ) from None
 
         if self._last_lx_result is None:
-            raise ExtractionError(
-                "No extraction result available. Call extract() first."
-            )
+            raise ExtractionError("No extraction result available. Call extract() first.")
 
         import tempfile
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".jsonl", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             temp_path = f.name
 
         try:
@@ -488,9 +478,7 @@ class LangExtractSource(DataSource):
                 skip_empty=True,
             )
 
-            html_str = (
-                html_content.data if hasattr(html_content, "data") else str(html_content)
-            )
+            html_str = html_content.data if hasattr(html_content, "data") else str(html_content)
         finally:
             os.unlink(temp_path)
 

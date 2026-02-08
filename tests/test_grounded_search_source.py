@@ -3,8 +3,8 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from openbench.data.sources.grounded_search import GroundedSearchSource
 from openbench.data.exceptions import ExtractionError, ValidationError
+from openbench.data.sources.grounded_search import GroundedSearchSource
 
 
 class TestGroundedSearchSourceInit(unittest.TestCase):

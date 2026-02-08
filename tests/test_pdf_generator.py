@@ -3,9 +3,9 @@
 import os
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from openbench.output.generators import PDFGenerator, MarkdownGenerator
+from openbench.output.generators import MarkdownGenerator, PDFGenerator
 
 
 class TestPDFGeneratorInit(unittest.TestCase):
@@ -27,7 +27,7 @@ class TestPDFGeneratorInit(unittest.TestCase):
             font_name="Times",
             font_size=12,
             title_font_size=20,
-            heading_font_size=16
+            heading_font_size=16,
         )
         self.assertEqual(generator.template, "report")
         self.assertEqual(generator.page_size, "a4")
@@ -99,10 +99,7 @@ class TestPDFGeneratorExtractContent(unittest.TestCase):
 
     def test_extract_dict_with_intelligence_output(self):
         """Test extracting from IntelligenceLayer output."""
-        input_data = {
-            "intelligence_output": {"content": "AI output"},
-            "metadata": {}
-        }
+        input_data = {"intelligence_output": {"content": "AI output"}, "metadata": {}}
         result = self.generator._extract_content(input_data)
         self.assertEqual(result, "AI output")
 
@@ -133,15 +130,13 @@ class TestPDFGeneratorGenerate(unittest.TestCase):
     def tearDown(self):
         """Clean up temp files."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_generate_creates_file(self):
         """Test that generate creates a file."""
         output_path = os.path.join(self.temp_dir, "test.pdf")
-        result = self.generator.generate(
-            content="Test content",
-            output_path=output_path
-        )
+        result = self.generator.generate(content="Test content", output_path=output_path)
 
         self.assertTrue(os.path.exists(output_path))
         self.assertEqual(result.file_path, output_path)
@@ -152,9 +147,7 @@ class TestPDFGeneratorGenerate(unittest.TestCase):
         """Test generating PDF with title."""
         output_path = os.path.join(self.temp_dir, "titled.pdf")
         result = self.generator.generate(
-            content="Content here",
-            output_path=output_path,
-            title="My Report"
+            content="Content here", output_path=output_path, title="My Report"
         )
 
         self.assertEqual(result.metadata["title"], "My Report")
@@ -163,9 +156,7 @@ class TestPDFGeneratorGenerate(unittest.TestCase):
         """Test generating PDF with author."""
         output_path = os.path.join(self.temp_dir, "authored.pdf")
         result = self.generator.generate(
-            content="Content",
-            output_path=output_path,
-            author="Test Author"
+            content="Content", output_path=output_path, author="Test Author"
         )
 
         self.assertEqual(result.metadata["author"], "Test Author")
@@ -174,9 +165,7 @@ class TestPDFGeneratorGenerate(unittest.TestCase):
         """Test generating PDF with template override."""
         output_path = os.path.join(self.temp_dir, "report.pdf")
         result = self.generator.generate(
-            content="Content",
-            output_path=output_path,
-            template="report"
+            content="Content", output_path=output_path, template="report"
         )
 
         self.assertEqual(result.metadata["template"], "report")
@@ -184,20 +173,14 @@ class TestPDFGeneratorGenerate(unittest.TestCase):
     def test_generate_creates_parent_directories(self):
         """Test that generate creates parent directories."""
         output_path = os.path.join(self.temp_dir, "subdir", "nested", "test.pdf")
-        result = self.generator.generate(
-            content="Content",
-            output_path=output_path
-        )
+        self.generator.generate(content="Content", output_path=output_path)
 
         self.assertTrue(os.path.exists(output_path))
 
     def test_generate_from_dict_content(self):
         """Test generating from dict content."""
         output_path = os.path.join(self.temp_dir, "dict.pdf")
-        result = self.generator.generate(
-            content={"content": "From dict"},
-            output_path=output_path
-        )
+        self.generator.generate(content={"content": "From dict"}, output_path=output_path)
 
         self.assertTrue(os.path.exists(output_path))
 
@@ -206,13 +189,9 @@ class TestPDFGeneratorGenerate(unittest.TestCase):
         output_path = os.path.join(self.temp_dir, "intel.pdf")
         input_data = {
             "intelligence_output": {"content": "AI generated text"},
-            "metadata": {"layer": "intelligence"}
+            "metadata": {"layer": "intelligence"},
         }
-        result = self.generator.generate(
-            content=input_data,
-            output_path=output_path,
-            title="AI Report"
-        )
+        self.generator.generate(content=input_data, output_path=output_path, title="AI Report")
 
         self.assertTrue(os.path.exists(output_path))
 
@@ -228,6 +207,7 @@ class TestPDFGeneratorReportLab(unittest.TestCase):
     def tearDown(self):
         """Clean up temp files."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_generate_with_headings(self):
@@ -243,10 +223,7 @@ This is section 1 content.
 
 This is section 2 content."""
 
-        result = self.generator.generate(
-            content=content,
-            output_path=output_path
-        )
+        self.generator.generate(content=content, output_path=output_path)
 
         self.assertTrue(os.path.exists(output_path))
 
@@ -261,10 +238,7 @@ This is section 2 content."""
 
 Conclusion paragraph."""
 
-        result = self.generator.generate(
-            content=content,
-            output_path=output_path
-        )
+        self.generator.generate(content=content, output_path=output_path)
 
         self.assertTrue(os.path.exists(output_path))
 
@@ -273,10 +247,7 @@ Conclusion paragraph."""
         output_path = os.path.join(self.temp_dir, "special.pdf")
         content = "Test with <special> & characters > here"
 
-        result = self.generator.generate(
-            content=content,
-            output_path=output_path
-        )
+        self.generator.generate(content=content, output_path=output_path)
 
         self.assertTrue(os.path.exists(output_path))
 
@@ -315,15 +286,13 @@ class TestMarkdownGeneratorGenerate(unittest.TestCase):
     def tearDown(self):
         """Clean up temp files."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_generate_creates_file(self):
         """Test that generate creates a file."""
         output_path = os.path.join(self.temp_dir, "test.md")
-        result = self.generator.generate(
-            content="# Hello World",
-            output_path=output_path
-        )
+        result = self.generator.generate(content="# Hello World", output_path=output_path)
 
         self.assertTrue(os.path.exists(output_path))
         self.assertEqual(result.file_path, output_path)
@@ -332,10 +301,8 @@ class TestMarkdownGeneratorGenerate(unittest.TestCase):
     def test_generate_with_title(self):
         """Test generating markdown with title."""
         output_path = os.path.join(self.temp_dir, "titled.md")
-        result = self.generator.generate(
-            content="Content here",
-            output_path=output_path,
-            title="My Document"
+        self.generator.generate(
+            content="Content here", output_path=output_path, title="My Document"
         )
 
         with open(output_path) as f:
@@ -347,10 +314,7 @@ class TestMarkdownGeneratorGenerate(unittest.TestCase):
     def test_generate_from_dict(self):
         """Test generating from dict content."""
         output_path = os.path.join(self.temp_dir, "dict.md")
-        result = self.generator.generate(
-            content={"content": "Dict content"},
-            output_path=output_path
-        )
+        self.generator.generate(content={"content": "Dict content"}, output_path=output_path)
 
         with open(output_path) as f:
             content = f.read()
@@ -360,10 +324,7 @@ class TestMarkdownGeneratorGenerate(unittest.TestCase):
     def test_generate_from_list(self):
         """Test generating from list content."""
         output_path = os.path.join(self.temp_dir, "list.md")
-        result = self.generator.generate(
-            content=["item1", "item2"],
-            output_path=output_path
-        )
+        self.generator.generate(content=["item1", "item2"], output_path=output_path)
 
         with open(output_path) as f:
             content = f.read()
@@ -382,6 +343,7 @@ class TestGeneratorIntegration(unittest.TestCase):
     def tearDown(self):
         """Clean up temp files."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_pdf_from_google_adk_output(self):
@@ -394,13 +356,11 @@ class TestGeneratorIntegration(unittest.TestCase):
             "content": "This is the AI-generated analysis of the document.",
             "model": "gemini-1.5-pro",
             "tokens_used": {"total_tokens": 500},
-            "metadata": {"mode": "model"}
+            "metadata": {"mode": "model"},
         }
 
         result = generator.generate(
-            content=adk_output,
-            output_path=output_path,
-            title="AI Analysis Report"
+            content=adk_output, output_path=output_path, title="AI Analysis Report"
         )
 
         self.assertTrue(os.path.exists(output_path))
@@ -415,16 +375,12 @@ class TestGeneratorIntegration(unittest.TestCase):
         intel_output = {
             "intelligence_output": {
                 "content": "Summary of the document:\n\n1. Point one\n2. Point two",
-                "model": "gemini-1.5-pro"
+                "model": "gemini-1.5-pro",
             },
-            "metadata": {"layer": "intelligence"}
+            "metadata": {"layer": "intelligence"},
         }
 
-        result = generator.generate(
-            content=intel_output,
-            output_path=output_path,
-            title="Document Summary"
-        )
+        generator.generate(content=intel_output, output_path=output_path, title="Document Summary")
 
         self.assertTrue(os.path.exists(output_path))
         with open(output_path) as f:

@@ -24,13 +24,13 @@ import os
 import sys
 from pathlib import Path
 
-from openbench.workflows import Workflow
+from openbench.adapters import GoogleADKAdapter
 from openbench.core.layers import DataLayer, IntelligenceLayer, OutputLayer
 from openbench.data.sources import PDFSource
 from openbench.data.stores import PineconeStore
 from openbench.intelligence import GoogleEmbeddingProvider
-from openbench.adapters import GoogleADKAdapter
 from openbench.output.generators import MarkdownGenerator
+from openbench.workflows import Workflow
 
 
 def check_api_keys():
@@ -100,9 +100,7 @@ def create_workflow(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="PDF RAG Workflow using OpenBench pattern"
-    )
+    parser = argparse.ArgumentParser(description="PDF RAG Workflow using OpenBench pattern")
     parser.add_argument("pdf", help="Path to PDF file")
     parser.add_argument("-o", "--output", default="output/rag_report.md")
     parser.add_argument("-q", "--question", default="Analyze and summarize this document")
@@ -114,10 +112,10 @@ def main():
     print("OpenBench PDF RAG Workflow")
     print("=" * 60)
     print("\nPattern: Workflow(chain=DataLayer | IntelligenceLayer | OutputLayer)")
-    print(f"\nPipeline:")
+    print("\nPipeline:")
     print(f"  PDFSource({Path(args.pdf).name})")
     print(f"  -> PineconeStore({args.index}/{args.namespace})")
-    print(f"  -> GoogleADK(gemini-2.5-flash)")
+    print("  -> GoogleADK(gemini-2.5-flash)")
     print(f"  -> MarkdownGenerator({args.output})")
 
     check_api_keys()
@@ -140,11 +138,13 @@ def main():
 
         # Run workflow
         print("\n[2/2] Running workflow...")
-        result = workflow.run({
-            "goal": args.question,
-            "output_path": args.output,
-            "title": f"Analysis: {Path(args.pdf).stem}",
-        })
+        result = workflow.run(
+            {
+                "goal": args.question,
+                "output_path": args.output,
+                "title": f"Analysis: {Path(args.pdf).stem}",
+            }
+        )
 
         print("\n" + "=" * 60)
         print("Done!")
@@ -159,6 +159,7 @@ def main():
     except Exception as e:
         print(f"\nError: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

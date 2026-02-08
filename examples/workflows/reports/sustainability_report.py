@@ -10,32 +10,42 @@ Demonstrates OpenBench's L1/L2 orchestration with real implementations:
 """
 
 import tempfile
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 from openbench.core import (
-    # L1 Abstractions
-    DataSource, RawData, Agent, ExecutionContext, ExecutionResult,
-    OutputGenerator, GeneratedOutput,
+    Agent,
     # L1 Composition
-    Chain, Parallel,
+    Chain,
     # L2 Layers
-    DataLayer, IntelligenceLayer, OutputLayer,
+    DataLayer,
+    # L1 Abstractions
+    DataSource,
     # Data Store
-    DataStore, Query, SearchResult,
+    DataStore,
+    ExecutionContext,
+    ExecutionResult,
+    GeneratedOutput,
+    IntelligenceLayer,
+    OutputGenerator,
+    OutputLayer,
+    Parallel,
     # Project Context
     ProjectContext,
+    Query,
+    RawData,
+    SearchResult,
 )
-from openbench.workflows import Workflow
 
 # Import real PDFSource
 from openbench.data import PDFSource
-
+from openbench.workflows import Workflow
 
 # ============================================================================
 # Helper: Create Sample PDF for Demo
 # ============================================================================
+
 
 def create_sample_pdf(path: Path) -> bool:
     """Create a sample PDF file for demonstration."""
@@ -64,10 +74,11 @@ def create_sample_pdf(path: Path) -> bool:
 # Mock Components (for sources not yet implemented)
 # ============================================================================
 
+
 class APISource(DataSource):
     """Fetch data from REST API (mock implementation)."""
 
-    def __init__(self, url: str, project: Optional[ProjectContext] = None):
+    def __init__(self, url: str, project: ProjectContext | None = None):
         self.url = url
         self.project = project
 
@@ -79,7 +90,7 @@ class APISource(DataSource):
     def source_id(self) -> str:
         return f"api:{self.url}"
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         metadata = {"url": self.url, "type": "api"}
         if self.project:
             metadata["project_id"] = self.project.project_id
@@ -91,7 +102,7 @@ class APISource(DataSource):
             content={"esg_score": 78, "carbon_emissions": 1250, "renewable_pct": 45},
             content_type="structured",
             metadata=self.get_metadata(),
-            source=self
+            source=self,
         )
 
     def validate(self) -> bool:
@@ -101,7 +112,7 @@ class APISource(DataSource):
 class CSVSource(DataSource):
     """Load data from CSV file (mock implementation)."""
 
-    def __init__(self, path: str, project: Optional[ProjectContext] = None):
+    def __init__(self, path: str, project: ProjectContext | None = None):
         self.path = path
         self.project = project
 
@@ -113,7 +124,7 @@ class CSVSource(DataSource):
     def source_id(self) -> str:
         return f"csv:{self.path}"
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         metadata = {"path": self.path, "rows": 500}
         if self.project:
             metadata["project_id"] = self.project.project_id
@@ -130,7 +141,7 @@ class CSVSource(DataSource):
             ],
             content_type="structured",
             metadata=self.get_metadata(),
-            source=self
+            source=self,
         )
 
     def validate(self) -> bool:
@@ -140,10 +151,10 @@ class CSVSource(DataSource):
 class MockVectorStore(DataStore):
     """In-memory vector store (mock implementation)."""
 
-    def __init__(self, collection: str, project: Optional[ProjectContext] = None):
+    def __init__(self, collection: str, project: ProjectContext | None = None):
         self.collection = collection
         self.project = project
-        self._data: List[Dict] = []
+        self._data: list[dict] = []
         # Use project namespace if available
         self.namespace = project.namespace if project else "default"
 
@@ -158,9 +169,9 @@ class MockVectorStore(DataStore):
         return item_id
 
     def search(self, query: Query) -> SearchResult:
-        return SearchResult(items=self._data[:query.limit], total=len(self._data))
+        return SearchResult(items=self._data[: query.limit], total=len(self._data))
 
-    def get(self, item_id: str) -> Optional[Any]:
+    def get(self, item_id: str) -> Any | None:
         return next((item for item in self._data if item["id"] == item_id), None)
 
     def delete(self, item_id: str) -> bool:
@@ -193,12 +204,12 @@ class ResearchAgent(Agent):
             output={
                 "findings": f"Research findings for {context.goal}",
                 "sources": ["sustainability_report.pdf", "esg_data.json"],
-                "confidence": 0.92
+                "confidence": 0.92,
             },
             status="completed",
             metadata={"depth": self.depth},
             cost=0.05,
-            tokens_used=500
+            tokens_used=500,
         )
 
     def estimate_cost(self, context: ExecutionContext) -> float:
@@ -208,7 +219,7 @@ class ResearchAgent(Agent):
 class AnalysisAgent(Agent):
     """Analysis agent for trend analysis."""
 
-    def __init__(self, goal: str, methods: list = None):
+    def __init__(self, goal: str, methods: list | None = None):
         self.goal = goal
         self.methods = methods or ["trend_analysis"]
 
@@ -223,12 +234,12 @@ class AnalysisAgent(Agent):
             output={
                 "trends": "Carbon emissions decreased 15% YoY",
                 "recommendations": ["Increase renewable energy", "Improve efficiency"],
-                "confidence": 0.88
+                "confidence": 0.88,
             },
             status="completed",
             metadata={"methods": self.methods},
             cost=0.08,
-            tokens_used=800
+            tokens_used=800,
         )
 
     def estimate_cost(self, context: ExecutionContext) -> float:
@@ -254,12 +265,12 @@ class ContentAgent(Agent):
             output={
                 "content": f"Executive sustainability report ({self.length})",
                 "sections": ["Executive Summary", "ESG Metrics", "Recommendations"],
-                "word_count": 4500
+                "word_count": 4500,
             },
             status="completed",
             metadata={"style": self.style, "length": self.length},
             cost=0.12,
-            tokens_used=1200
+            tokens_used=1200,
         )
 
     def estimate_cost(self, context: ExecutionContext) -> float:
@@ -276,16 +287,13 @@ class PDFGenerator(OutputGenerator):
     def output_format(self) -> str:
         return "pdf"
 
-    def generate(self, content: Any, template: Optional[str] = None, **options) -> GeneratedOutput:
+    def generate(self, content: Any, template: str | None = None, **options) -> GeneratedOutput:
         template = template or self.template
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         file_path = f"outputs/sustainability_report_{timestamp}.pdf"
         print(f"  📄 Generated: {file_path}")
         return GeneratedOutput(
-            file_path=file_path,
-            format="pdf",
-            size_bytes=2048000,
-            metadata={"template": template}
+            file_path=file_path, format="pdf", size_bytes=2048000, metadata={"template": template}
         )
 
     def validate(self, content: Any) -> bool:
@@ -302,16 +310,13 @@ class PPTXGenerator(OutputGenerator):
     def output_format(self) -> str:
         return "pptx"
 
-    def generate(self, content: Any, template: Optional[str] = None, **options) -> GeneratedOutput:
+    def generate(self, content: Any, template: str | None = None, **options) -> GeneratedOutput:
         template = template or self.template
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         file_path = f"outputs/sustainability_presentation_{timestamp}.pptx"
         print(f"  📊 Generated: {file_path}")
         return GeneratedOutput(
-            file_path=file_path,
-            format="pptx",
-            size_bytes=5120000,
-            metadata={"template": template}
+            file_path=file_path, format="pptx", size_bytes=5120000, metadata={"template": template}
         )
 
     def validate(self, content: Any) -> bool:
@@ -321,6 +326,7 @@ class PPTXGenerator(OutputGenerator):
 # ============================================================================
 # Main Example
 # ============================================================================
+
 
 def main():
     """Generate sustainability report with real PDFSource and ProjectContext."""
@@ -374,37 +380,40 @@ def main():
     sources_list = []
     if pdf_source:
         sources_list.append(pdf_source)
-    sources_list.extend([
-        APISource("https://api.company.com/esg-metrics", project=project),
-        CSVSource("./data/carbon_emissions.csv", project=project),
-    ])
+    sources_list.extend(
+        [
+            APISource("https://api.company.com/esg-metrics", project=project),
+            CSVSource("./data/carbon_emissions.csv", project=project),
+        ]
+    )
 
     data_sources = Parallel(sources_list)
     print(f"  ✓ Data sources: {len(sources_list)} sources (parallel)")
 
     # Agents: Sequential analysis pipeline
-    agents = Chain([
-        ResearchAgent(
-            goal="Gather sustainability data and ESG metrics",
-            depth="comprehensive"
-        ),
-        AnalysisAgent(
-            goal="Analyze carbon emissions trends",
-            methods=["trend_analysis", "statistical", "yoy_comparison"]
-        ),
-        ContentAgent(
-            goal="Draft comprehensive sustainability report",
-            style="executive",
-            length="8_pages"
-        ),
-    ])
+    agents = Chain(
+        [
+            ResearchAgent(goal="Gather sustainability data and ESG metrics", depth="comprehensive"),
+            AnalysisAgent(
+                goal="Analyze carbon emissions trends",
+                methods=["trend_analysis", "statistical", "yoy_comparison"],
+            ),
+            ContentAgent(
+                goal="Draft comprehensive sustainability report",
+                style="executive",
+                length="8_pages",
+            ),
+        ]
+    )
     print("  ✓ Agents: Research → Analysis → Content (sequential)")
 
     # Outputs: Parallel generation
-    outputs = Parallel([
-        PDFGenerator(template="corporate"),
-        PPTXGenerator(template="executive"),
-    ])
+    outputs = Parallel(
+        [
+            PDFGenerator(template="corporate"),
+            PPTXGenerator(template="executive"),
+        ]
+    )
     print("  ✓ Outputs: PDF & PPTX (parallel)")
 
     # ========================================================================
@@ -415,10 +424,7 @@ def main():
     print("-" * 70)
 
     # Vector store with project namespace for isolation
-    vector_store = MockVectorStore(
-        collection="sustainability",
-        project=project
-    )
+    vector_store = MockVectorStore(collection="sustainability", project=project)
     print(f"  ✓ VectorStore namespace: {vector_store.namespace}")
 
     data_layer = DataLayer(sources=data_sources, stores=[vector_store])
@@ -449,8 +455,8 @@ def main():
             "project_id": project.project_id,
             "project_name": project.name,
             "company": "Acme Corp",
-            "version": "2.0"
-        }
+            "version": "2.0",
+        },
     )
     print(f"  ✓ Workflow: {workflow.name}")
     print(f"  ✓ Project: {project.project_id}")
@@ -464,11 +470,9 @@ def main():
     print("▶️  EXECUTING WORKFLOW")
     print("=" * 70)
 
-    result = workflow.run({
-        "project_id": project.project_id,
-        "project_name": project.name,
-        "company": "Acme Corp"
-    })
+    result = workflow.run(
+        {"project_id": project.project_id, "project_name": project.name, "company": "Acme Corp"}
+    )
 
     # ========================================================================
     # Results
@@ -483,23 +487,27 @@ def main():
         print("\n📄 PDF Extraction Result:")
         try:
             raw_data = pdf_source.extract()
-            content_preview = raw_data.content[:200] + "..." if len(raw_data.content) > 200 else raw_data.content
+            content_preview = (
+                raw_data.content[:200] + "..." if len(raw_data.content) > 200 else raw_data.content
+            )
             print(f"  Content preview: {content_preview}")
             print(f"  Pages: {raw_data.metadata.get('total_pages', 'N/A')}")
-            print(f"  Project ID: {raw_data.metadata.get('project_context', {}).get('project_id', 'N/A')}")
+            print(
+                f"  Project ID: {raw_data.metadata.get('project_context', {}).get('project_id', 'N/A')}"
+            )
         except Exception as e:
             print(f"  Error: {e}")
 
-    outputs_generated = result.get('generated_outputs', [])
-    print(f"\n📊 Summary:")
+    outputs_generated = result.get("generated_outputs", [])
+    print("\n📊 Summary:")
     print(f"  - Project: {project.name}")
     print(f"  - Project ID: {project.project_id}")
     print(f"  - Data sources: {len(sources_list)}")
-    print(f"  - Analysis stages: 3 (Research → Analysis → Content)")
+    print("  - Analysis stages: 3 (Research → Analysis → Content)")
     print(f"  - Outputs generated: {len(outputs_generated)}")
 
     if outputs_generated:
-        print(f"\n📁 Generated Files:")
+        print("\n📁 Generated Files:")
         for output in outputs_generated:
             size_mb = output.size_bytes / (1024 * 1024)
             print(f"  - {output.file_path} ({size_mb:.1f} MB)")

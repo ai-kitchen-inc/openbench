@@ -1,12 +1,13 @@
 """Configuration management CLI commands."""
 
 import json
+from pathlib import Path
+
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 from rich.syntax import Syntax
-from pathlib import Path
+from rich.table import Table
 
 from openbench.core.config import Config, get_config, reset_config
 
@@ -16,7 +17,6 @@ console = Console()
 @click.group()
 def config():
     """Manage OpenBench configuration."""
-    pass
 
 
 @config.command()
@@ -39,7 +39,7 @@ def set(key, value):
         console.print(f"\n[green]✓[/green] Set {key} = {value} (saved to openbench.yaml)\n")
     else:
         console.print(f"\n[green]✓[/green] Set {key} = {value} (in memory only)")
-        console.print(f"[dim]Run 'openbench config init' to create a config file.[/dim]\n")
+        console.print("[dim]Run 'openbench config init' to create a config file.[/dim]\n")
 
 
 @config.command()
@@ -82,7 +82,9 @@ def get(key):
 
 
 @config.command()
-@click.option("--format", "fmt", type=click.Choice(["yaml", "json"]), default="yaml", help="Output format")
+@click.option(
+    "--format", "fmt", type=click.Choice(["yaml", "json"]), default="yaml", help="Output format"
+)
 def show(fmt):
     """Show full configuration."""
     cfg = get_config()
@@ -96,6 +98,7 @@ def show(fmt):
     else:
         try:
             import yaml
+
             content = yaml.dump(data, default_flow_style=False)
         except ImportError:
             content = json.dumps(data, indent=2)
@@ -107,17 +110,18 @@ def show(fmt):
 
 
 @config.command()
-@click.option("--path", type=click.Path(), default="openbench.yaml", help="Path to create config file")
+@click.option(
+    "--path", type=click.Path(), default="openbench.yaml", help="Path to create config file"
+)
 def init(path):
     """Initialize configuration with defaults."""
     path = Path(path)
 
-    if path.exists():
-        if not click.confirm(f"Config file '{path}' already exists. Overwrite?"):
-            console.print("[dim]Cancelled.[/dim]")
-            return
+    if path.exists() and not click.confirm(f"Config file '{path}' already exists. Overwrite?"):
+        console.print("[dim]Cancelled.[/dim]")
+        return
 
-    console.print(f"\n[bold cyan]Initializing Configuration[/bold cyan]\n")
+    console.print("\n[bold cyan]Initializing Configuration[/bold cyan]\n")
 
     # Create default config
     default_config = {
@@ -151,6 +155,7 @@ def init(path):
     # Show the config
     try:
         import yaml
+
         content = yaml.dump(default_config, default_flow_style=False)
         syntax = Syntax(content, "yaml", theme="monokai", line_numbers=True)
     except ImportError:
