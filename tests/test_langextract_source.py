@@ -3,9 +3,9 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from openbench.data.sources.langextract import LangExtractSource
 from openbench.core.abstractions import RawData
 from openbench.data.exceptions import ExtractionError, ValidationError
+from openbench.data.sources.langextract import LangExtractSource
 
 
 class TestLangExtractSourceInit(unittest.TestCase):
@@ -419,9 +419,7 @@ class TestLangExtractSourceExtract(unittest.TestCase):
         mock_lx.extract.return_value = mock_result
 
         with patch.dict("sys.modules", {"langextract": mock_lx}):
-            source = LangExtractSource(
-                prompt="Extract", text="Hello world", api_key="test"
-            )
+            source = LangExtractSource(prompt="Extract", text="Hello world", api_key="test")
             result = source.extract()
 
             self.assertIn("extraction_count", result.metadata)
@@ -531,7 +529,7 @@ class TestLangExtractSourceProviders(unittest.TestCase):
         source = LangExtractSource(prompt="Extract", provider="gemini")
         self.assertEqual(source.api_key, "test-key")
 
-    @patch.dict("os.environ", {"LANGEXTRACT_API_KEY": "lx-key"})
+    @patch.dict("os.environ", {"LANGEXTRACT_API_KEY": "lx-key", "GOOGLE_API_KEY": ""})
     def test_get_api_key_langextract_fallback(self):
         source = LangExtractSource(prompt="Extract", provider="gemini")
         self.assertEqual(source.api_key, "lx-key")

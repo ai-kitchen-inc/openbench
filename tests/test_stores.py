@@ -1,27 +1,26 @@
 """Tests for data stores - chunking, base utilities, and PineconeStore."""
 
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
-from datetime import datetime
+from unittest.mock import MagicMock, patch
 
+from openbench.core.abstractions import Query, RawData, SearchResult
 from openbench.data.stores.base import (
     Chunk,
     ChunkingConfig,
     EmbeddingMixin,
-    chunk_text,
     chunk_raw_data,
+    chunk_text,
 )
 from openbench.data.stores.exceptions import (
-    StoreError,
-    IndexNotFoundError,
-    StoreConnectionError,
     DimensionMismatchError,
-    QuotaExceededError,
     EmbeddingError,
-    ItemNotFoundError,
+    IndexNotFoundError,
     InvalidQueryError,
+    ItemNotFoundError,
+    QuotaExceededError,
+    StoreConnectionError,
+    StoreError,
 )
-from openbench.core.abstractions import RawData, Query, SearchResult
 
 
 class TestChunkingConfig(unittest.TestCase):
@@ -256,6 +255,7 @@ class TestEmbeddingMixin(unittest.TestCase):
 
     def test_embed_with_provider(self):
         """Test embedding with explicit provider."""
+
         class TestClass(EmbeddingMixin):
             pass
 
@@ -271,6 +271,7 @@ class TestEmbeddingMixin(unittest.TestCase):
 
     def test_embed_batch_with_embed_batch_method(self):
         """Test batch embedding with provider that has embed_batch."""
+
         class TestClass(EmbeddingMixin):
             pass
 
@@ -285,6 +286,7 @@ class TestEmbeddingMixin(unittest.TestCase):
 
     def test_embed_batch_fallback(self):
         """Test batch embedding fallback to individual embed calls."""
+
         class TestClass(EmbeddingMixin):
             pass
 
@@ -300,6 +302,7 @@ class TestEmbeddingMixin(unittest.TestCase):
 
     def test_no_provider_raises_error(self):
         """Test that missing provider raises ValueError when resolution fails."""
+
         class TestClass(EmbeddingMixin):
             pass
 
@@ -423,8 +426,8 @@ class TestPineconeStore(unittest.TestCase):
 
     def test_namespace_with_project(self):
         """Test namespace resolution with project context."""
-        from openbench.data.stores.pinecone import PineconeStore
         from openbench.core.context import ProjectContext
+        from openbench.data.stores.pinecone import PineconeStore
 
         project = ProjectContext(name="test-project")
         store = PineconeStore(
@@ -455,10 +458,12 @@ class TestPineconeStore(unittest.TestCase):
             api_key="test-key",
         )
 
-        result = store._build_filter({
-            "count": {"$gt": 10},
-            "$or": [{"a": 1}, {"b": 2}],
-        })
+        result = store._build_filter(
+            {
+                "count": {"$gt": 10},
+                "$or": [{"a": 1}, {"b": 2}],
+            }
+        )
         self.assertEqual(result["count"], {"$gt": 10})
         self.assertIn("$or", result)
 

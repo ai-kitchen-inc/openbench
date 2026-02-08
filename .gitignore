@@ -490,3 +490,4 @@ override.tf.json
 *.orig
 *~
 .temp
+uv.lock

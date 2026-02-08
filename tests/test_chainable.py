@@ -1,16 +1,16 @@
 """Tests for Chainable composition."""
 
 import unittest
-from typing import Any, Optional
+from typing import Any
 
 from openbench.core.chainable import (
-    Chainable,
     Chain,
-    Parallel,
+    Chainable,
     Conditional,
-    Router,
     Lambda,
+    Parallel,
     Passthrough,
+    Router,
     RunnableConfig,
 )
 
@@ -21,7 +21,7 @@ class SimpleChainable(Chainable):
     def __init__(self, value: str):
         self.value = value
 
-    def invoke(self, input: Any, config: Optional[RunnableConfig] = None) -> str:
+    def invoke(self, input: Any, config: RunnableConfig | None = None) -> str:
         if input == "":
             return self.value
         elif input:
@@ -111,9 +111,7 @@ class TestChainable(unittest.TestCase):
         false_branch = SimpleChainable("false")
 
         conditional = Conditional(
-            condition=lambda x: x == "yes",
-            true_branch=true_branch,
-            false_branch=false_branch
+            condition=lambda x: x == "yes", true_branch=true_branch, false_branch=false_branch
         )
 
         result = conditional.invoke("yes")
@@ -125,9 +123,7 @@ class TestChainable(unittest.TestCase):
         false_branch = SimpleChainable("false")
 
         conditional = Conditional(
-            condition=lambda x: x == "yes",
-            true_branch=true_branch,
-            false_branch=false_branch
+            condition=lambda x: x == "yes", true_branch=true_branch, false_branch=false_branch
         )
 
         result = conditional.invoke("no")
@@ -138,9 +134,7 @@ class TestChainable(unittest.TestCase):
         true_branch = SimpleChainable("true")
 
         conditional = Conditional(
-            condition=lambda x: x == "yes",
-            true_branch=true_branch,
-            false_branch=None
+            condition=lambda x: x == "yes", true_branch=true_branch, false_branch=None
         )
 
         # False condition with no false branch → passthrough
@@ -154,12 +148,7 @@ class TestChainable(unittest.TestCase):
         route_c = SimpleChainable("c")
 
         router = Router(
-            routes={
-                "a": route_a,
-                "b": route_b,
-                "c": route_c
-            },
-            router=lambda x: x["route"]
+            routes={"a": route_a, "b": route_b, "c": route_c}, router=lambda x: x["route"]
         )
 
         result_a = router.invoke({"route": "a"})
@@ -173,21 +162,14 @@ class TestChainable(unittest.TestCase):
         route_a = SimpleChainable("a")
         default_route = SimpleChainable("default")
 
-        router = Router(
-            routes={"a": route_a},
-            router=lambda x: x["route"],
-            default=default_route
-        )
+        router = Router(routes={"a": route_a}, router=lambda x: x["route"], default=default_route)
 
         result = router.invoke({"route": "unknown"})
         self.assertIn("default", result)
 
     def test_router_unknown_route_raises(self):
         """Test Router raises on unknown route without default."""
-        router = Router(
-            routes={"a": SimpleChainable("a")},
-            router=lambda x: x["route"]
-        )
+        router = Router(routes={"a": SimpleChainable("a")}, router=lambda x: x["route"])
 
         with self.assertRaises(ValueError):
             router.invoke({"route": "unknown"})
@@ -241,7 +223,7 @@ class TestChainable(unittest.TestCase):
         a = SimpleChainable("a")
         b = SimpleChainable("b")
         c = SimpleChainable("c")
-        d = SimpleChainable("d")
+        SimpleChainable("d")
 
         # First process with a, then b & c in parallel, then d
         workflow = a | (b & c) | Lambda(lambda x: f"merged:{x}")
@@ -258,11 +240,12 @@ class TestChainable(unittest.TestCase):
 
     def test_config_passthrough(self):
         """Test config is passed through chain."""
+
         class ConfigCapture(Chainable):
             def __init__(self):
                 self.captured_config = None
 
-            def invoke(self, input: Any, config: Optional[RunnableConfig] = None) -> Any:
+            def invoke(self, input: Any, config: RunnableConfig | None = None) -> Any:
                 self.captured_config = config
                 return input
 

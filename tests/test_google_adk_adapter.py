@@ -2,7 +2,7 @@
 
 import os
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 from openbench.adapters.google_adk import GoogleADKAdapter
 
@@ -43,8 +43,7 @@ class TestGoogleADKAdapterInit(unittest.TestCase):
     def test_init_with_system_instruction(self):
         """Test initialization with system instruction."""
         adapter = GoogleADKAdapter(
-            model="gemini-1.5-pro",
-            system_instruction="You are a helpful assistant."
+            model="gemini-1.5-pro", system_instruction="You are a helpful assistant."
         )
         self.assertEqual(adapter.system_instruction, "You are a helpful assistant.")
 
@@ -99,10 +98,7 @@ class TestGoogleADKAdapterExtractContent(unittest.TestCase):
 
     def test_extract_dict_with_intelligence_output(self):
         """Test extracting content from IntelligenceLayer output."""
-        input_data = {
-            "intelligence_output": {"content": "AI generated content"},
-            "metadata": {}
-        }
+        input_data = {"intelligence_output": {"content": "AI generated content"}, "metadata": {}}
         result = self.adapter._extract_content(input_data)
         self.assertEqual(result, "AI generated content")
 
@@ -208,8 +204,7 @@ class TestGoogleADKAdapterModelMode(unittest.TestCase):
         adapter = GoogleADKAdapter(model="gemini-1.5-pro", api_key="test-key")
         adapter._model = MagicMock()
         adapter._model.generate_content.return_value = MagicMock(
-            text="Generated text",
-            usage_metadata=None
+            text="Generated text", usage_metadata=None
         )
 
         adapter.invoke("Test input")
@@ -221,8 +216,7 @@ class TestGoogleADKAdapterModelMode(unittest.TestCase):
         adapter = GoogleADKAdapter(model="gemini-1.5-pro", api_key="test-key")
         adapter._model = MagicMock()
         adapter._model.generate_content.return_value = MagicMock(
-            text="Generated response",
-            usage_metadata=None
+            text="Generated response", usage_metadata=None
         )
 
         result = adapter.invoke("Test input")
@@ -247,8 +241,7 @@ class TestGoogleADKAdapterModelMode(unittest.TestCase):
         mock_usage.total_token_count = 150
 
         adapter._model.generate_content.return_value = MagicMock(
-            text="Response",
-            usage_metadata=mock_usage
+            text="Response", usage_metadata=mock_usage
         )
 
         result = adapter.invoke("Test")
@@ -307,7 +300,7 @@ class TestGoogleADKAdapterIntegration(unittest.TestCase):
         input_data = {
             "raw_data": [mock_raw_data],
             "indexed_ids": ["id1"],
-            "metadata": {"layer": "data"}
+            "metadata": {"layer": "data"},
         }
 
         content = adapter._extract_content(input_data)
@@ -322,9 +315,9 @@ class TestGoogleADKAdapterIntegration(unittest.TestCase):
             "intelligence_output": {
                 "content": "Previous agent output",
                 "model": "other-model",
-                "metadata": {}
+                "metadata": {},
             },
-            "metadata": {"layer": "intelligence"}
+            "metadata": {"layer": "intelligence"},
         }
 
         content = adapter._extract_content(input_data)

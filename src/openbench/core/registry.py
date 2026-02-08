@@ -9,24 +9,20 @@ Provides a dynamic, decorator-based plugin system with:
 - Singleton pattern support
 """
 
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generic,
-    List,
-    Optional,
-    Type,
-    TypeVar,
-    Union,
-)
-from dataclasses import dataclass, field
-from datetime import datetime
 import importlib
 import importlib.util
 import logging
 import pkgutil
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+from typing import (
+    Any,
+    Generic,
+    Optional,
+    TypeVar,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +40,7 @@ class PluginMetadata:
     version: str = "1.0.0"
     description: str = ""
     author: str = ""
-    tags: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     registered_at: datetime = field(default_factory=datetime.now)
 
     # Runtime info
@@ -56,7 +52,7 @@ class PluginMetadata:
         """Unique key for this plugin."""
         return f"{self.plugin_type}:{self.provider}"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "name": self.name,
@@ -76,9 +72,9 @@ class PluginMetadata:
 class PluginEntry(Generic[T]):
     """Entry in the plugin registry."""
 
-    implementation: Type[T]
+    implementation: type[T]
     metadata: PluginMetadata
-    singleton_instance: Optional[T] = None
+    singleton_instance: T | None = None
     is_singleton: bool = False
 
 
@@ -112,9 +108,9 @@ class PluginRegistry(Generic[T]):
     """
 
     # Class-level storage for all registry instances
-    _all_registries: Dict[str, "PluginRegistry"] = {}
+    _all_registries: dict[str, "PluginRegistry"] = {}
 
-    def __init__(self, name: str, base_class: Optional[Type[T]] = None):
+    def __init__(self, name: str, base_class: type[T] | None = None):
         """
         Initialize a plugin registry.
 
@@ -124,8 +120,8 @@ class PluginRegistry(Generic[T]):
         """
         self.name = name
         self.base_class = base_class
-        self._plugins: Dict[str, PluginEntry[T]] = {}
-        self._discovery_paths: List[str] = []
+        self._plugins: dict[str, PluginEntry[T]] = {}
+        self._discovery_paths: list[str] = []
 
         # Register this registry globally
         PluginRegistry._all_registries[name] = self
@@ -138,10 +134,10 @@ class PluginRegistry(Generic[T]):
         version: str = "1.0.0",
         description: str = "",
         author: str = "",
-        tags: Optional[List[str]] = None,
+        tags: list[str] | None = None,
         singleton: bool = False,
         override: bool = False,
-    ) -> Callable[[Type[T]], Type[T]]:
+    ) -> Callable[[type[T]], type[T]]:
         """
         Decorator to register a plugin implementation.
 
@@ -164,7 +160,8 @@ class PluginRegistry(Generic[T]):
             ... class PDFPlumberSource(DataSource):
             ...     pass
         """
-        def decorator(cls: Type[T]) -> Type[T]:
+
+        def decorator(cls: type[T]) -> type[T]:
             key = f"{plugin_type}:{provider}"
 
             # Check if already registered
@@ -177,11 +174,10 @@ class PluginRegistry(Generic[T]):
                 return cls
 
             # Validate base class if specified
-            if self.base_class is not None:
-                if not issubclass(cls, self.base_class):
-                    raise TypeError(
-                        f"Plugin {cls.__name__} must inherit from {self.base_class.__name__}"
-                    )
+            if self.base_class is not None and not issubclass(cls, self.base_class):
+                raise TypeError(
+                    f"Plugin {cls.__name__} must inherit from {self.base_class.__name__}"
+                )
 
             # Create metadata
             metadata = PluginMetadata(
@@ -215,7 +211,7 @@ class PluginRegistry(Generic[T]):
         self,
         plugin_type: str,
         provider: str,
-        implementation: Type[T],
+        implementation: type[T],
         **metadata_kwargs,
     ) -> None:
         """
@@ -239,7 +235,7 @@ class PluginRegistry(Generic[T]):
         self,
         plugin_type: str,
         provider: str = "default",
-    ) -> Optional[Type[T]]:
+    ) -> type[T] | None:
         """
         Get a registered plugin class.
 
@@ -258,7 +254,7 @@ class PluginRegistry(Generic[T]):
         self,
         plugin_type: str,
         provider: str = "default",
-    ) -> Optional[PluginMetadata]:
+    ) -> PluginMetadata | None:
         """
         Get metadata for a registered plugin.
 
@@ -322,7 +318,7 @@ class PluginRegistry(Generic[T]):
                 f"Check constructor arguments."
             ) from e
 
-    def list_types(self) -> List[str]:
+    def list_types(self) -> list[str]:
         """
         List all registered plugin types.
 
@@ -331,7 +327,7 @@ class PluginRegistry(Generic[T]):
         """
         return sorted({key.split(":", 1)[0] for key in self._plugins})
 
-    def list_providers(self, plugin_type: str) -> List[str]:
+    def list_providers(self, plugin_type: str) -> list[str]:
         """
         List all providers for a given plugin type.
 
@@ -342,15 +338,13 @@ class PluginRegistry(Generic[T]):
             List of provider names
         """
         prefix = f"{plugin_type}:"
-        return sorted(
-            key.split(":", 1)[1] for key in self._plugins if key.startswith(prefix)
-        )
+        return sorted(key.split(":", 1)[1] for key in self._plugins if key.startswith(prefix))
 
     def list_plugins(
         self,
-        plugin_type: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-    ) -> List[str]:
+        plugin_type: str | None = None,
+        tags: list[str] | None = None,
+    ) -> list[str]:
         """
         List all registered plugins.
 
@@ -370,9 +364,8 @@ class PluginRegistry(Generic[T]):
                     continue
 
             # Filter by tags
-            if tags:
-                if not all(tag in entry.metadata.tags for tag in tags):
-                    continue
+            if tags and not all(tag in entry.metadata.tags for tag in tags):
+                continue
 
             result.append(key)
 
@@ -380,8 +373,8 @@ class PluginRegistry(Generic[T]):
 
     def get_all_metadata(
         self,
-        plugin_type: Optional[str] = None,
-    ) -> List[PluginMetadata]:
+        plugin_type: str | None = None,
+    ) -> list[PluginMetadata]:
         """
         Get metadata for all registered plugins.
 
@@ -477,7 +470,7 @@ class PluginRegistry(Generic[T]):
 
         return count
 
-    def discover_from_path(self, path: Union[str, Path]) -> int:
+    def discover_from_path(self, path: str | Path) -> int:
         """
         Discover plugins from a filesystem path.
 
@@ -500,9 +493,7 @@ class PluginRegistry(Generic[T]):
                 continue
 
             try:
-                spec = importlib.util.spec_from_file_location(
-                    file.stem, file
-                )
+                spec = importlib.util.spec_from_file_location(file.stem, file)
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)
@@ -528,7 +519,7 @@ class PluginRegistry(Generic[T]):
         return cls._all_registries.get(name)
 
     @classmethod
-    def list_registries(cls) -> List[str]:
+    def list_registries(cls) -> list[str]:
         """List all registered registries."""
         return list(cls._all_registries.keys())
 
@@ -538,13 +529,13 @@ class PluginRegistry(Generic[T]):
 # ============================================================================
 
 # Import base classes for type hints
-from openbench.core.abstractions import (
+from openbench.core.abstractions import (  # noqa: E402
+    Agent,
     DataSource,
     DataStore,
-    Agent,
     LLMProvider,
-    Tool,
     OutputGenerator,
+    Tool,
 )
 
 # Create typed registries
@@ -560,7 +551,8 @@ OutputGeneratorRegistry = PluginRegistry[OutputGenerator]("output_generator", Ou
 # Convenience Functions
 # ============================================================================
 
-def register_all(registrations: Dict[str, List[tuple]]) -> int:
+
+def register_all(registrations: dict[str, list[tuple]]) -> int:
     """
     Register multiple implementations at once.
 
@@ -596,8 +588,7 @@ def register_all(registrations: Dict[str, List[tuple]]) -> int:
         registry = PluginRegistry.get_registry(registry_name)
         if registry is None:
             raise ValueError(
-                f"Unknown registry: {registry_name}. "
-                f"Available: {PluginRegistry.list_registries()}"
+                f"Unknown registry: {registry_name}. Available: {PluginRegistry.list_registries()}"
             )
 
         for item_type, provider, implementation, metadata in items:
@@ -607,7 +598,7 @@ def register_all(registrations: Dict[str, List[tuple]]) -> int:
     return count
 
 
-def discover_plugins(packages: Optional[List[str]] = None) -> Dict[str, int]:
+def discover_plugins(packages: list[str] | None = None) -> dict[str, int]:
     """
     Auto-discover plugins from specified packages.
 
@@ -635,7 +626,7 @@ def discover_plugins(packages: Optional[List[str]] = None) -> Dict[str, int]:
     results = {}
     for package in packages:
         # Try to import and discover
-        registry_name = package.split(".")[-1]
+        package.split(".")[-1]
 
         # Find matching registry
         for name, registry in PluginRegistry._all_registries.items():
@@ -648,7 +639,7 @@ def discover_plugins(packages: Optional[List[str]] = None) -> Dict[str, int]:
     return results
 
 
-def get_plugin_info() -> Dict[str, List[Dict[str, Any]]]:
+def get_plugin_info() -> dict[str, list[dict[str, Any]]]:
     """
     Get information about all registered plugins.
 

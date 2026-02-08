@@ -27,13 +27,12 @@ import os
 import sys
 from typing import Any
 
-from openbench.intelligence.llm_providers import GeminiLLMProvider  # noqa: F401
+from openbench.core.abstractions import ExecutionContext
+from openbench.core.providers import ProviderType, configure_provider
+from openbench.data.sources import GroundedSearchSource
 from openbench.intelligence.agents import AnalysisAgent
 from openbench.intelligence.base import StructuredOutputAgent
-from openbench.core.abstractions import ExecutionContext, Query
-from openbench.core.providers import configure_provider, ProviderType
-from openbench.data.sources import GroundedSearchSource
-
+from openbench.intelligence.llm_providers import GeminiLLMProvider  # noqa: F401
 
 # --- Constants ---
 
@@ -213,7 +212,7 @@ def calculate(expression: str) -> str:
 def _safe_eval(expression: str, allowed_names: dict) -> Any:
     """Sandboxed expression evaluator with no builtins access."""
     code = compile(expression, "<calc>", "eval")
-    return eval(code, {"__builtins__": {}}, allowed_names)  # noqa: S307
+    return eval(code, {"__builtins__": {}}, allowed_names)
 
 
 def search_web(query: str) -> str:
@@ -378,19 +377,25 @@ def main():
         description="Agentic Analysis Demo - AnalysisAgent + StructuredOutputAgent",
     )
     parser.add_argument(
-        "--demo", choices=["1", "2", "3", "all"], default="all",
+        "--demo",
+        choices=["1", "2", "3", "all"],
+        default="all",
         help="Which demo to run (default: all)",
     )
     parser.add_argument(
-        "--model", default=DEFAULT_MODEL,
+        "--model",
+        default=DEFAULT_MODEL,
         help=f"Gemini model to use (default: {DEFAULT_MODEL})",
     )
     parser.add_argument(
-        "--query", "-q", default=None,
+        "--query",
+        "-q",
+        default=None,
         help="Custom query (default: demo-specific query)",
     )
     parser.add_argument(
-        "--namespace", default=DEFAULT_NAMESPACE,
+        "--namespace",
+        default=DEFAULT_NAMESPACE,
         help=f"Pinecone namespace (default: {DEFAULT_NAMESPACE})",
     )
     args = parser.parse_args()
@@ -398,7 +403,7 @@ def main():
     print("=" * 60)
     print("  OpenBench: Agentic Analysis Demo")
     print("=" * 60)
-    print(f"\n  AnalysisAgent + StructuredOutputAgent")
+    print("\n  AnalysisAgent + StructuredOutputAgent")
     print(f"  Model: {args.model}")
     print(f"  GOOGLE_API_KEY: {'set' if os.getenv('GOOGLE_API_KEY') else 'NOT SET'}")
     print(f"  PINECONE_API_KEY: {'set' if os.getenv('PINECONE_API_KEY') else 'not set (optional)'}")
@@ -411,9 +416,7 @@ def main():
             demo_analysis_tools(args.model, args.query or DEFAULT_QUERIES["1"])
 
         if args.demo in ("2", "all"):
-            demo_document_analysis(
-                args.model, args.query or DEFAULT_QUERIES["2"], args.namespace
-            )
+            demo_document_analysis(args.model, args.query or DEFAULT_QUERIES["2"], args.namespace)
 
         if args.demo in ("3", "all"):
             demo_structured_output(args.model, args.query or DEFAULT_QUERIES["3"])
@@ -425,6 +428,7 @@ def main():
     except Exception as e:
         print(f"\nError: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

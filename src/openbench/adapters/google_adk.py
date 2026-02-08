@@ -10,7 +10,8 @@ Supports Google Generative AI models: gemini-2.5-flash, gemini-2.5-pro, gemini-3
 
 import logging
 import os
-from typing import Any, Dict, Iterator, List, Optional, Union
+from collections.abc import Iterator
+from typing import Any
 
 from openbench.core import FrameworkAdapter
 
@@ -62,12 +63,12 @@ class GoogleADKAdapter(FrameworkAdapter):
 
     def __init__(
         self,
-        model: Optional[str] = None,
-        agent: Optional[Any] = None,
-        api_key: Optional[str] = None,
-        system_instruction: Optional[str] = None,
-        generation_config: Optional[Dict[str, Any]] = None,
-        safety_settings: Optional[List[Dict[str, Any]]] = None,
+        model: str | None = None,
+        agent: Any | None = None,
+        api_key: str | None = None,
+        system_instruction: str | None = None,
+        generation_config: dict[str, Any] | None = None,
+        safety_settings: list[dict[str, Any]] | None = None,
     ):
         """
         Initialize the Google ADK adapter.
@@ -124,7 +125,7 @@ class GoogleADKAdapter(FrameworkAdapter):
             raise ImportError(
                 "google-generativeai is required for GoogleADKAdapter. "
                 "Install with: pip install google-generativeai"
-            )
+            ) from None
 
         if not self.api_key:
             raise ValueError(
@@ -189,8 +190,7 @@ class GoogleADKAdapter(FrameworkAdapter):
         """Extract content from raw_data field."""
         if isinstance(raw_data, list):
             contents = [
-                str(item.content) if hasattr(item, "content") else str(item)
-                for item in raw_data
+                str(item.content) if hasattr(item, "content") else str(item) for item in raw_data
             ]
             return "\n\n".join(contents)
 
@@ -212,7 +212,7 @@ class GoogleADKAdapter(FrameworkAdapter):
 
         return str(output)
 
-    def _build_prompt(self, content: str, goal: Optional[str] = None) -> str:
+    def _build_prompt(self, content: str, goal: str | None = None) -> str:
         """
         Build prompt from content and optional goal.
 
@@ -232,7 +232,7 @@ Content:
 Please complete the task based on the content provided."""
         return content
 
-    def invoke(self, input: Any, config: Optional[Any] = None) -> Dict[str, Any]:
+    def invoke(self, input: Any, config: Any | None = None) -> dict[str, Any]:
         """
         Execute the Google ADK adapter.
 
@@ -254,7 +254,7 @@ Please complete the task based on the content provided."""
         # Model mode: direct Gemini API call
         return self._invoke_model(input, config)
 
-    def _invoke_agent(self, input: Any, config: Optional[Any] = None) -> Dict[str, Any]:
+    def _invoke_agent(self, input: Any, config: Any | None = None) -> dict[str, Any]:
         """
         Invoke existing Google ADK agent.
 
@@ -279,8 +279,7 @@ Please complete the task based on the content provided."""
             output = self.agent(input)
         else:
             raise NotImplementedError(
-                "Google ADK agent must have 'run()', 'invoke()', 'generate()' method "
-                "or be callable"
+                "Google ADK agent must have 'run()', 'invoke()', 'generate()' method or be callable"
             )
 
         return {
@@ -290,7 +289,7 @@ Please complete the task based on the content provided."""
             "metadata": {"mode": "agent"},
         }
 
-    def _invoke_model(self, input: Any, config: Optional[Any] = None) -> Dict[str, Any]:
+    def _invoke_model(self, input: Any, config: Any | None = None) -> dict[str, Any]:
         """
         Invoke Gemini model directly.
 
@@ -357,9 +356,9 @@ Please complete the task based on the content provided."""
 
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
-            raise RuntimeError(f"Failed to generate content with Gemini: {e}")
+            raise RuntimeError(f"Failed to generate content with Gemini: {e}") from e
 
-    def stream(self, input: Any, config: Optional[Any] = None) -> Iterator[str]:
+    def stream(self, input: Any, config: Any | None = None) -> Iterator[str]:
         """
         Stream response from Gemini model.
 
@@ -390,7 +389,7 @@ Please complete the task based on the content provided."""
             if chunk.text:
                 yield chunk.text
 
-    async def ainvoke(self, input: Any, config: Optional[Any] = None) -> Dict[str, Any]:
+    async def ainvoke(self, input: Any, config: Any | None = None) -> dict[str, Any]:
         """
         Async version of invoke.
 
@@ -459,4 +458,4 @@ Please complete the task based on the content provided."""
 
         except Exception as e:
             logger.error(f"Gemini async API error: {e}")
-            raise RuntimeError(f"Failed to generate content with Gemini: {e}")
+            raise RuntimeError(f"Failed to generate content with Gemini: {e}") from e

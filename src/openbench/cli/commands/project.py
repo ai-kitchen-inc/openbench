@@ -2,13 +2,11 @@
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 from rich.prompt import Confirm
+from rich.table import Table
 
 from openbench.core.context import (
-    ProjectContext,
-    ProjectRegistry,
     get_project_registry,
 )
 
@@ -18,7 +16,6 @@ console = Console()
 @click.group()
 def project():
     """Manage projects for multi-tenant data isolation."""
-    pass
 
 
 @project.command("create")
@@ -125,10 +122,12 @@ def show(project_id):
         if project_id:
             console.print(f"\n[red]Project '{project_id}' not found.[/red]\n")
         else:
-            console.print("\n[red]No active project. Use 'openbench project use <id>' to set one.[/red]\n")
+            console.print(
+                "\n[red]No active project. Use 'openbench project use <id>' to set one.[/red]\n"
+            )
         return
 
-    console.print(f"\n[bold cyan]Project Details[/bold cyan]\n")
+    console.print("\n[bold cyan]Project Details[/bold cyan]\n")
 
     table = Table(show_header=False)
     table.add_column("Key", style="cyan", width=16)
@@ -169,9 +168,11 @@ def use(project_id):
         return
 
     if registry.set_active(proj.project_id):
-        console.print(f"\n[green]✓[/green] Active project set to: {proj.name} ({proj.project_id})\n")
+        console.print(
+            f"\n[green]✓[/green] Active project set to: {proj.name} ({proj.project_id})\n"
+        )
     else:
-        console.print(f"\n[red]Failed to set active project.[/red]\n")
+        console.print("\n[red]Failed to set active project.[/red]\n")
 
 
 @project.command("update")
@@ -246,7 +247,7 @@ def active():
         console.print("  openbench project use <project_id>\n")
         return
 
-    console.print(f"\n[bold cyan]Active Project[/bold cyan]\n")
+    console.print("\n[bold cyan]Active Project[/bold cyan]\n")
     console.print(f"  [bold]ID:[/bold]   {proj.project_id}")
     console.print(f"  [bold]Name:[/bold] {proj.name}")
     console.print()

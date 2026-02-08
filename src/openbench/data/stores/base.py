@@ -3,10 +3,10 @@
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from openbench.core.abstractions import RawData, LLMProvider
+    from openbench.core.abstractions import RawData
 
 
 @dataclass
@@ -21,9 +21,7 @@ class ChunkingConfig:
 
     chunk_size: int = 1000
     chunk_overlap: int = 200
-    separators: List[str] = field(
-        default_factory=lambda: ["\n\n", "\n", ". ", ", ", " "]
-    )
+    separators: list[str] = field(default_factory=lambda: ["\n\n", "\n", ". ", ", ", " "])
 
     def __post_init__(self):
         if self.chunk_size <= 0:
@@ -48,7 +46,7 @@ class Chunk:
     content: str
     index: int
     total_chunks: int
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def content_hash(self) -> str:
@@ -56,7 +54,7 @@ class Chunk:
         return f"sha256:{hashlib.sha256(self.content.encode()).hexdigest()[:16]}"
 
 
-def chunk_text(text: str, config: Optional[ChunkingConfig] = None) -> List[str]:
+def chunk_text(text: str, config: ChunkingConfig | None = None) -> list[str]:
     """Split text into chunks based on configuration.
 
     Uses a recursive splitting strategy:
@@ -120,10 +118,7 @@ def chunk_text(text: str, config: Optional[ChunkingConfig] = None) -> List[str]:
     return chunks
 
 
-def chunk_raw_data(
-    data: "RawData",
-    config: Optional[ChunkingConfig] = None
-) -> List[Chunk]:
+def chunk_raw_data(data: "RawData", config: ChunkingConfig | None = None) -> list[Chunk]:
     """Split RawData into chunks with metadata.
 
     Args:
@@ -198,10 +193,10 @@ class EmbeddingMixin:
         _dimension: Vector dimension (auto-detected if None).
     """
 
-    _embedding_provider: Optional[Any] = None  # EmbeddingProvider or LLMProvider
-    _embedding_model: Optional[str] = None
-    _dimension: Optional[int] = None
-    _resolved_dimension: Optional[int] = None
+    _embedding_provider: Any | None = None  # EmbeddingProvider or LLMProvider
+    _embedding_model: str | None = None
+    _dimension: int | None = None
+    _resolved_dimension: int | None = None
 
     def _get_embedding_provider(self) -> Any:
         """Get the embedding provider, resolving from config if not set.
@@ -218,6 +213,7 @@ class EmbeddingMixin:
         # Try to resolve from config
         try:
             from openbench.intelligence.embeddings import resolve_embedding_provider
+
             provider = resolve_embedding_provider(model=self._embedding_model)
             self._embedding_provider = provider
             return provider
@@ -257,6 +253,7 @@ class EmbeddingMixin:
         if self._embedding_model:
             try:
                 from openbench.core.config import get_embedding_dimension
+
                 self._resolved_dimension = get_embedding_dimension(self._embedding_model)
                 return self._resolved_dimension
             except Exception:
@@ -266,7 +263,7 @@ class EmbeddingMixin:
         self._resolved_dimension = 1536
         return self._resolved_dimension
 
-    def _embed(self, text: str) -> List[float]:
+    def _embed(self, text: str) -> list[float]:
         """Generate embedding vector for text.
 
         Args:
@@ -278,7 +275,7 @@ class EmbeddingMixin:
         provider = self._get_embedding_provider()
         return provider.embed(text, model=self._embedding_model)
 
-    def _embed_batch(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:
+    def _embed_batch(self, texts: list[str], batch_size: int = 100) -> list[list[float]]:
         """Generate embeddings for multiple texts.
 
         Args:
@@ -292,20 +289,13 @@ class EmbeddingMixin:
 
         # Use batch method if available (EmbeddingProvider)
         if hasattr(provider, "embed_batch"):
-            return provider.embed_batch(
-                texts,
-                model=self._embedding_model,
-                batch_size=batch_size
-            )
+            return provider.embed_batch(texts, model=self._embedding_model, batch_size=batch_size)
 
         # Fallback to individual calls
         embeddings = []
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
-            batch_embeddings = [
-                provider.embed(text, model=self._embedding_model)
-                for text in batch
-            ]
+            batch = texts[i : i + batch_size]
+            batch_embeddings = [provider.embed(text, model=self._embedding_model) for text in batch]
             embeddings.extend(batch_embeddings)
 
         return embeddings

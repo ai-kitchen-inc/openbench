@@ -4,42 +4,41 @@ import json
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
-from openbench.core.abstractions import DataStore, Query, SearchResult, RawData
+from openbench.core.abstractions import DataStore, Query, RawData, SearchResult
 from openbench.data.stores.base import (
-    Chunk,
     ChunkingConfig,
     EmbeddingMixin,
     chunk_raw_data,
 )
 from openbench.data.stores.exceptions import (
-    StoreError,
+    DimensionMismatchError,
+    EmbeddingError,
     IndexNotFoundError,
     StoreConnectionError,
-    DimensionMismatchError,
-    QuotaExceededError,
-    EmbeddingError,
-    ItemNotFoundError,
+    StoreError,
 )
 
 
-def _sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+def _sanitize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """Sanitize metadata for Pinecone (only primitives allowed)."""
     result = {}
     for key, value in metadata.items():
         if value is None:
             continue
-        if isinstance(value, (str, int, float, bool)):
-            result[key] = value
-        elif isinstance(value, list) and all(isinstance(i, str) for i in value):
+        if isinstance(value, (str, int, float, bool)) or (
+            isinstance(value, list) and all(isinstance(i, str) for i in value)
+        ):
             result[key] = value
         else:
             result[key] = json.dumps(value)
     return result
 
+
 if TYPE_CHECKING:
-    from pinecone import Pinecone, Index
+    from pinecone import Index, Pinecone
+
     from openbench.core.abstractions import EmbeddingProvider
     from openbench.core.context import ProjectContext
 
@@ -81,14 +80,14 @@ class PineconeStore(DataStore, EmbeddingMixin):
         self,
         index_name: str,
         *,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         project: Optional["ProjectContext"] = None,
-        namespace: Optional[str] = None,
-        dimension: Optional[int] = None,
+        namespace: str | None = None,
+        dimension: int | None = None,
         metric: str = "cosine",
         embedding_provider: Optional["EmbeddingProvider"] = None,
-        embedding_model: Optional[str] = None,
-        chunking_config: Optional[ChunkingConfig] = None,
+        embedding_model: str | None = None,
+        chunking_config: ChunkingConfig | None = None,
         create_if_missing: bool = True,
     ):
         """Initialize PineconeStore.
@@ -117,11 +116,11 @@ class PineconeStore(DataStore, EmbeddingMixin):
         self._create_if_missing = create_if_missing
 
         # For EmbeddingMixin auto-detection
-        self._resolved_dimension: Optional[int] = None
+        self._resolved_dimension: int | None = None
 
         # Lazy initialization
-        self._client: Optional["Pinecone"] = None
-        self._index: Optional["Index"] = None
+        self._client: Pinecone | None = None
+        self._index: Index | None = None
 
     @property
     def store_type(self) -> str:
@@ -147,6 +146,7 @@ class PineconeStore(DataStore, EmbeddingMixin):
         # Try active project from registry
         try:
             from openbench.core.context import get_project_registry
+
             registry = get_project_registry()
             active = registry.get_active()
             if active:
@@ -173,19 +173,19 @@ class PineconeStore(DataStore, EmbeddingMixin):
             raise StoreConnectionError(
                 "pinecone",
                 "API key not provided. Set PINECONE_API_KEY environment variable "
-                "or pass api_key to constructor."
+                "or pass api_key to constructor.",
             )
 
         try:
             from pinecone import Pinecone
+
             self._client = Pinecone(api_key=self._api_key)
         except ImportError:
             raise StoreError(
-                "pinecone-client not installed. "
-                "Install with: pip install openbench[vector]"
-            )
+                "pinecone-client not installed. Install with: pip install openbench[vector]"
+            ) from None
         except Exception as e:
-            raise StoreConnectionError("pinecone", str(e))
+            raise StoreConnectionError("pinecone", str(e)) from e
 
     def _get_or_create_index(self) -> "Index":
         """Get existing index or create if missing."""
@@ -228,7 +228,7 @@ class PineconeStore(DataStore, EmbeddingMixin):
 
         raise StoreError(f"Index {self._index_name} not ready after {timeout}s")
 
-    def _build_filter(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_filter(self, filters: dict[str, Any]) -> dict[str, Any]:
         """Convert OpenBench query filters to Pinecone filter format.
 
         Args:
@@ -315,19 +315,16 @@ class PineconeStore(DataStore, EmbeddingMixin):
             texts = [chunk.content for chunk in chunks]
             embeddings = self._embed_batch(texts, batch_size=batch_size)
         except Exception as e:
-            raise EmbeddingError(message=str(e))
+            raise EmbeddingError(message=str(e)) from e
 
         # Validate dimension
         expected_dim = self._get_dimension()
         if embeddings and len(embeddings[0]) != expected_dim:
-            raise DimensionMismatchError(
-                expected=expected_dim,
-                got=len(embeddings[0])
-            )
+            raise DimensionMismatchError(expected=expected_dim, got=len(embeddings[0]))
 
         # Build vectors for upsert
         vectors = []
-        for chunk, embedding in zip(chunks, embeddings):
+        for chunk, embedding in zip(chunks, embeddings, strict=False):
             # Build metadata and sanitize for Pinecone
             raw_metadata = {
                 "content": chunk.content[:8000],  # Limit content size
@@ -349,7 +346,7 @@ class PineconeStore(DataStore, EmbeddingMixin):
         source_id = data.source.source_id if data.source else "unknown"
         return source_id
 
-    def _upsert_batch(self, vectors: List[Dict], batch_size: int) -> int:
+    def _upsert_batch(self, vectors: list[dict], batch_size: int) -> int:
         """Upsert vectors in batches with retry logic.
 
         Args:
@@ -361,16 +358,13 @@ class PineconeStore(DataStore, EmbeddingMixin):
         """
         total = 0
         for i in range(0, len(vectors), batch_size):
-            batch = vectors[i:i + batch_size]
+            batch = vectors[i : i + batch_size]
             self._upsert_with_retry(batch)
             total += len(batch)
         return total
 
     def _upsert_with_retry(
-        self,
-        vectors: List[Dict],
-        max_retries: int = 3,
-        base_delay: float = 1.0
+        self, vectors: list[dict], max_retries: int = 3, base_delay: float = 1.0
     ) -> None:
         """Upsert with exponential backoff retry.
 
@@ -385,11 +379,11 @@ class PineconeStore(DataStore, EmbeddingMixin):
                 return
             except Exception as e:
                 if attempt == max_retries:
-                    raise StoreError(f"Failed to upsert after {max_retries} retries: {e}")
+                    raise StoreError(f"Failed to upsert after {max_retries} retries: {e}") from e
 
                 # Check if rate limited
                 if "429" in str(e) or "rate" in str(e).lower():
-                    delay = base_delay * (2 ** attempt)
+                    delay = base_delay * (2**attempt)
                     time.sleep(delay)
                 else:
                     raise
@@ -411,9 +405,8 @@ class PineconeStore(DataStore, EmbeddingMixin):
                 query_vector = self._embed(query.text)
             except Exception as e:
                 raise EmbeddingError(
-                    text_length=len(query.text) if query.text else 0,
-                    message=str(e)
-                )
+                    text_length=len(query.text) if query.text else 0, message=str(e)
+                ) from e
         else:
             raise StoreError("Query must have either text or vector")
 
@@ -431,7 +424,7 @@ class PineconeStore(DataStore, EmbeddingMixin):
 
         return self._to_search_result(response)
 
-    def get(self, item_id: str) -> Optional[Dict[str, Any]]:
+    def get(self, item_id: str) -> dict[str, Any] | None:
         """Retrieve a specific item by ID.
 
         Args:
@@ -500,11 +493,13 @@ class PineconeStore(DataStore, EmbeddingMixin):
         # Re-upsert with same vector and new metadata
         full_id = existing["id"]
         self.pinecone_index.upsert(
-            vectors=[{
-                "id": full_id,
-                "values": existing["values"],
-                "metadata": new_metadata,
-            }],
+            vectors=[
+                {
+                    "id": full_id,
+                    "values": existing["values"],
+                    "metadata": new_metadata,
+                }
+            ],
             namespace=self.namespace,
         )
 
@@ -521,7 +516,6 @@ class PineconeStore(DataStore, EmbeddingMixin):
         """
         # Use metadata filter to find matching vectors
         # Then delete by IDs
-        prefix = f"{self.namespace}-{source_id}" if self.namespace else source_id
 
         try:
             # Delete by prefix
@@ -548,7 +542,7 @@ class PineconeStore(DataStore, EmbeddingMixin):
         except Exception:
             return False
 
-    def describe_index(self) -> Dict[str, Any]:
+    def describe_index(self) -> dict[str, Any]:
         """Get index statistics.
 
         Returns:
@@ -561,7 +555,6 @@ class PineconeStore(DataStore, EmbeddingMixin):
             "dimension": stats.dimension,
             "total_vector_count": stats.total_vector_count,
             "namespaces": {
-                ns: {"vector_count": data.vector_count}
-                for ns, data in stats.namespaces.items()
+                ns: {"vector_count": data.vector_count} for ns, data in stats.namespaces.items()
             },
         }

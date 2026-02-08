@@ -24,13 +24,14 @@ Example:
     >>> result = workflow.resume(workflow_id)
 """
 
-from typing import Any, Optional, Dict
+from typing import Any
+
 from openbench.core import (
     Chainable,
-    StatefulChainable,
-    StateStore,
     LocalStateStore,
     RunnableConfig,
+    StatefulChainable,
+    StateStore,
     WorkflowState,
 )
 
@@ -85,9 +86,9 @@ class Workflow(StatefulChainable):
         self,
         name: str,
         chain: Chainable,
-        state_store: Optional[StateStore] = None,
+        state_store: StateStore | None = None,
         checkpoints: bool = True,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: dict[str, Any] | None = None,
     ):
         """
         Create a new workflow.
@@ -115,7 +116,7 @@ class Workflow(StatefulChainable):
             chainable=chain,
             state_store=state_store,
             workflow_name=name,
-            auto_checkpoint=checkpoints
+            auto_checkpoint=checkpoints,
         )
 
         self.name = name
@@ -141,7 +142,7 @@ class Workflow(StatefulChainable):
         config = RunnableConfig(metadata=self.metadata)
         return self.invoke(input, config=config, **kwargs)
 
-    def status(self, workflow_id: str) -> Optional[WorkflowState]:
+    def status(self, workflow_id: str) -> WorkflowState | None:
         """
         Get the current status of a workflow execution.
 
@@ -158,7 +159,7 @@ class Workflow(StatefulChainable):
         """
         return self.get_state(workflow_id)
 
-    def history(self, workflow_id: str) -> Optional[WorkflowState]:
+    def history(self, workflow_id: str) -> WorkflowState | None:
         """
         Get the execution history of a workflow.
 
@@ -187,11 +188,7 @@ class Workflow(StatefulChainable):
 
 
 # Convenience function for quick workflow creation
-def workflow(
-    name: str,
-    chain: Chainable,
-    **kwargs
-) -> Workflow:
+def workflow(name: str, chain: Chainable, **kwargs) -> Workflow:
     """
     Create a workflow (function-style convenience wrapper).
 

@@ -5,10 +5,10 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from openbench.data.sources.pdf import PDFSource
 from openbench.adapters.google_adk import GoogleADKAdapter
-from openbench.output.generators import PDFGenerator, MarkdownGenerator
 from openbench.core.layers import DataLayer, IntelligenceLayer, OutputLayer
+from openbench.data.sources.pdf import PDFSource
+from openbench.output.generators import MarkdownGenerator, PDFGenerator
 
 
 class TestPDFWorkflowE2E(unittest.TestCase):
@@ -25,14 +25,15 @@ class TestPDFWorkflowE2E(unittest.TestCase):
     def tearDown(self):
         """Clean up temp files."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _create_sample_pdf(self):
         """Create a sample PDF for testing."""
         try:
             from reportlab.lib.pagesizes import letter
-            from reportlab.platypus import SimpleDocTemplate, Paragraph
             from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.platypus import Paragraph, SimpleDocTemplate
 
             doc = SimpleDocTemplate(self.sample_pdf_path, pagesize=letter)
             styles = getSampleStyleSheet()
@@ -53,7 +54,7 @@ class TestPDFWorkflowE2E(unittest.TestCase):
         """Test that DataLayer extracts PDF content."""
         # Skip if pypdf not installed
         try:
-            import pypdf
+            import pypdf  # noqa: F401
         except ImportError:
             self.skipTest("pypdf not installed")
 
@@ -72,8 +73,7 @@ class TestPDFWorkflowE2E(unittest.TestCase):
         adapter = GoogleADKAdapter(model="gemini-1.5-pro", api_key="test-key")
         adapter._model = MagicMock()
         adapter._model.generate_content.return_value = MagicMock(
-            text="This is the AI summary of the document.",
-            usage_metadata=None
+            text="This is the AI summary of the document.", usage_metadata=None
         )
 
         intel_layer = IntelligenceLayer(agents=adapter)
@@ -99,18 +99,14 @@ class TestPDFWorkflowE2E(unittest.TestCase):
         input_data = {
             "intelligence_output": {
                 "content": "This is the generated content for the PDF.",
-                "model": "gemini-1.5-pro"
+                "model": "gemini-1.5-pro",
             },
-            "metadata": {}
+            "metadata": {},
         }
 
         # Patch the output path
         with patch.object(generator, "generate") as mock_gen:
-            mock_gen.return_value = MagicMock(
-                file_path=output_path,
-                format="pdf",
-                size_bytes=1000
-            )
+            mock_gen.return_value = MagicMock(file_path=output_path, format="pdf", size_bytes=1000)
             result = output_layer.invoke(input_data)
 
         self.assertIn("generated_outputs", result)
@@ -120,7 +116,7 @@ class TestPDFWorkflowE2E(unittest.TestCase):
         """Test full workflow composition with mock."""
         # Skip if pypdf not installed
         try:
-            import pypdf
+            import pypdf  # noqa: F401
         except ImportError:
             self.skipTest("pypdf not installed")
 
@@ -130,8 +126,7 @@ class TestPDFWorkflowE2E(unittest.TestCase):
         adapter = GoogleADKAdapter(model="gemini-1.5-pro", api_key="test-key")
         adapter._model = MagicMock()
         adapter._model.generate_content.return_value = MagicMock(
-            text="AI-generated summary of the document content.",
-            usage_metadata=None
+            text="AI-generated summary of the document content.", usage_metadata=None
         )
 
         output_path = os.path.join(self.temp_dir, "final_output.pdf")
@@ -155,7 +150,7 @@ class TestPDFWorkflowE2E(unittest.TestCase):
     def test_workflow_with_markdown_output(self, mock_init):
         """Test workflow with Markdown output."""
         try:
-            import pypdf
+            import pypdf  # noqa: F401
         except ImportError:
             self.skipTest("pypdf not installed")
 
@@ -164,8 +159,7 @@ class TestPDFWorkflowE2E(unittest.TestCase):
         adapter = GoogleADKAdapter(model="gemini-1.5-pro", api_key="test-key")
         adapter._model = MagicMock()
         adapter._model.generate_content.return_value = MagicMock(
-            text="# Summary\n\nThis is the summary.",
-            usage_metadata=None
+            text="# Summary\n\nThis is the summary.", usage_metadata=None
         )
 
         output_path = os.path.join(self.temp_dir, "output.md")
@@ -192,6 +186,7 @@ class TestWorkflowDataFlow(unittest.TestCase):
     def tearDown(self):
         """Clean up temp files."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_data_layer_output_format(self):
@@ -214,8 +209,7 @@ class TestWorkflowDataFlow(unittest.TestCase):
         adapter = GoogleADKAdapter(model="gemini-1.5-pro", api_key="test-key")
         adapter._model = MagicMock()
         adapter._model.generate_content.return_value = MagicMock(
-            text="Generated content",
-            usage_metadata=None
+            text="Generated content", usage_metadata=None
         )
 
         intel_layer = IntelligenceLayer(agents=adapter)
@@ -234,10 +228,9 @@ class TestWorkflowDataFlow(unittest.TestCase):
         output_layer = OutputLayer(generators=generator)
 
         output_path = os.path.join(self.temp_dir, "test.pdf")
-        result = output_layer.invoke({
-            "intelligence_output": {"content": "Test"},
-            "output_path": output_path
-        })
+        result = output_layer.invoke(
+            {"intelligence_output": {"content": "Test"}, "output_path": output_path}
+        )
 
         self.assertIn("generated_outputs", result)
         self.assertIn("metadata", result)
@@ -253,18 +246,13 @@ class TestAdapterIntegration(unittest.TestCase):
         adapter = GoogleADKAdapter(model="gemini-1.5-pro", api_key="test-key")
         adapter._model = MagicMock()
         adapter._model.generate_content.return_value = MagicMock(
-            text="Processed content",
-            usage_metadata=None
+            text="Processed content", usage_metadata=None
         )
 
         # DataLayer output format
         mock_raw = MagicMock()
         mock_raw.content = "PDF extracted text"
-        data_output = {
-            "raw_data": [mock_raw],
-            "indexed_ids": [],
-            "metadata": {"layer": "data"}
-        }
+        data_output = {"raw_data": [mock_raw], "indexed_ids": [], "metadata": {"layer": "data"}}
 
         result = adapter.invoke(data_output)
 
@@ -277,18 +265,14 @@ class TestAdapterIntegration(unittest.TestCase):
         adapter = GoogleADKAdapter(model="gemini-1.5-pro", api_key="test-key")
         adapter._model = MagicMock()
         adapter._model.generate_content.return_value = MagicMock(
-            text="Summarized content",
-            usage_metadata=None
+            text="Summarized content", usage_metadata=None
         )
 
         mock_raw = MagicMock()
         mock_raw.content = "Long document text"
-        input_data = {
-            "raw_data": [mock_raw],
-            "goal": "Summarize this document in 3 sentences"
-        }
+        input_data = {"raw_data": [mock_raw], "goal": "Summarize this document in 3 sentences"}
 
-        result = adapter.invoke(input_data)
+        adapter.invoke(input_data)
 
         # Verify the model was called with prompt containing the goal
         call_args = adapter._model.generate_content.call_args

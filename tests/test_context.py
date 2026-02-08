@@ -1,6 +1,5 @@
 """Tests for project context and registry."""
 
-import json
 import tempfile
 import unittest
 from datetime import datetime

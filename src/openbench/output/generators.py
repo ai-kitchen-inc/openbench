@@ -12,7 +12,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from openbench.core.abstractions import GeneratedOutput, OutputGenerator
 
@@ -57,7 +57,7 @@ class PDFGenerator(OutputGenerator):
         self,
         template: str = "default",
         page_size: str = "letter",
-        margins: Optional[Dict[str, float]] = None,
+        margins: dict[str, float] | None = None,
         font_name: str = "Helvetica",
         font_size: int = 11,
         title_font_size: int = 18,
@@ -162,8 +162,7 @@ class PDFGenerator(OutputGenerator):
         """Extract content from raw_data field."""
         if isinstance(raw, list):
             return "\n\n".join(
-                str(item.content) if hasattr(item, "content") else str(item)
-                for item in raw
+                str(item.content) if hasattr(item, "content") else str(item) for item in raw
             )
 
         if hasattr(raw, "content"):
@@ -174,10 +173,10 @@ class PDFGenerator(OutputGenerator):
     def generate(
         self,
         content: Any,
-        template: Optional[str] = None,
+        template: str | None = None,
         output_path: str = "report.pdf",
-        title: Optional[str] = None,
-        author: Optional[str] = None,
+        title: str | None = None,
+        author: str | None = None,
         **options,
     ) -> GeneratedOutput:
         """
@@ -211,8 +210,10 @@ class PDFGenerator(OutputGenerator):
                 text_content, output_path, title, author, used_template, **options
             )
         except ImportError:
-            logger.warning("ReportLab not installed, falling back to simple text PDF")
-            size_bytes = self._generate_simple_pdf(text_content, output_path)
+            raise ImportError(
+                "ReportLab is required for PDF generation. "
+                "Install with: pip install openbench[output]"
+            ) from None
 
         logger.info(f"PDF generated: {output_path} ({size_bytes} bytes)")
 
@@ -234,8 +235,8 @@ class PDFGenerator(OutputGenerator):
         self,
         content: str,
         output_path: str,
-        title: Optional[str],
-        author: Optional[str],
+        title: str | None,
+        author: str | None,
         template: str,
         **options,
     ) -> int:
@@ -253,16 +254,14 @@ class PDFGenerator(OutputGenerator):
         Returns:
             File size in bytes
         """
-        from reportlab.lib.pagesizes import letter, A4, legal
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import inch
+        from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+        from reportlab.lib.pagesizes import A4, legal, letter
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.platypus import (
-            SimpleDocTemplate,
             Paragraph,
+            SimpleDocTemplate,
             Spacer,
-            PageBreak,
         )
-        from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
 
         # Select page size
         page_size_map = {"letter": letter, "a4": A4, "legal": legal}
@@ -378,7 +377,7 @@ class PDFGenerator(OutputGenerator):
             elif line.endswith(":") and len(line) < 100 and not line.startswith(" "):
                 # Section heading (text ending with colon)
                 story.append(Paragraph(self._escape_xml(line), heading_style))
-            elif line.startswith("- ") or line.startswith("* "):
+            elif line.startswith(("- ", "* ")):
                 # Bullet list item
                 bullet_text = self._convert_markdown_inline(line[2:].strip())
                 story.append(Paragraph(f"\u2022 {bullet_text}", body_style))
@@ -425,11 +424,7 @@ class PDFGenerator(OutputGenerator):
 
     def _escape_xml(self, text: str) -> str:
         """Escape XML special characters for ReportLab."""
-        return (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     def _convert_markdown_inline(self, text: str) -> str:
         """
@@ -446,37 +441,21 @@ class PDFGenerator(OutputGenerator):
         text = self._escape_xml(text)
 
         # Convert **bold** to <b>bold</b>
-        text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+        text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
 
         # Convert *italic* to <i>italic</i> (but not if it's a bullet)
-        text = re.sub(r'(?<!\*)\*([^*]+?)\*(?!\*)', r'<i>\1</i>', text)
+        text = re.sub(r"(?<!\*)\*([^*]+?)\*(?!\*)", r"<i>\1</i>", text)
 
         # Convert `code` to <font name="Courier">code</font>
-        text = re.sub(r'`([^`]+?)`', r'<font name="Courier" size="9">\1</font>', text)
+        text = re.sub(r"`([^`]+?)`", r'<font name="Courier" size="9">\1</font>', text)
 
         return text
 
     def _generate_simple_pdf(self, content: str, output_path: str) -> int:
-        """
-        Generate a simple text file as fallback when ReportLab is not available.
-
-        Args:
-            content: Text content
-            output_path: Output file path
-
-        Returns:
-            File size in bytes
-        """
-        # Write as text file with .pdf extension (not a real PDF)
-        # This is a fallback for when ReportLab is not installed
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write("=" * 60 + "\n")
-            f.write("OpenBench Report (Text Format)\n")
-            f.write("ReportLab not installed - install with: pip install reportlab\n")
-            f.write("=" * 60 + "\n\n")
-            f.write(content)
-
-        return os.path.getsize(output_path)
+        """Removed: was writing text files with .pdf extension."""
+        raise ImportError(
+            "ReportLab is required for PDF generation. Install with: pip install openbench[output]"
+        )
 
 
 class MarkdownGenerator(OutputGenerator):
@@ -504,7 +483,9 @@ class MarkdownGenerator(OutputGenerator):
         """
         self.default_output_path = output_path
         self.add_toc = add_toc
-        logger.debug(f"MarkdownGenerator initialized (output_path: {output_path}, add_toc: {add_toc})")
+        logger.debug(
+            f"MarkdownGenerator initialized (output_path: {output_path}, add_toc: {add_toc})"
+        )
 
     @property
     def output_format(self) -> str:
@@ -552,9 +533,9 @@ class MarkdownGenerator(OutputGenerator):
     def generate(
         self,
         content: Any,
-        template: Optional[str] = None,
-        output_path: Optional[str] = None,
-        title: Optional[str] = None,
+        template: str | None = None,
+        output_path: str | None = None,
+        title: str | None = None,
         **options,
     ) -> GeneratedOutput:
         """
@@ -658,7 +639,7 @@ class PowerPointGenerator(OutputGenerator):
     def generate(
         self,
         content: Any,
-        template: Optional[str] = None,
+        template: str | None = None,
         output_path: str = "presentation.pptx",
         **options,
     ) -> GeneratedOutput:
@@ -695,8 +676,10 @@ class PowerPointGenerator(OutputGenerator):
         try:
             size_bytes = self._generate_with_pptx(slides, output_path, used_template, **options)
         except ImportError:
-            logger.warning("python-pptx not installed, creating placeholder file")
-            size_bytes = self._generate_placeholder(slides, output_path)
+            raise ImportError(
+                "python-pptx is required for PowerPoint generation. "
+                "Install with: pip install openbench[output]"
+            ) from None
 
         return GeneratedOutput(
             file_path=output_path,
@@ -710,7 +693,7 @@ class PowerPointGenerator(OutputGenerator):
         )
 
     def _generate_with_pptx(
-        self, slides: List[Any], output_path: str, template: str, **options
+        self, slides: list[Any], output_path: str, template: str, **options
     ) -> int:
         """Generate PPTX using python-pptx."""
         from pptx import Presentation
@@ -739,9 +722,7 @@ class PowerPointGenerator(OutputGenerator):
                 title_frame.paragraphs[0].font.bold = True
 
             # Add content
-            content_box = slide.shapes.add_textbox(
-                Inches(0.5), Inches(1.5), Inches(9), Inches(5)
-            )
+            content_box = slide.shapes.add_textbox(Inches(0.5), Inches(1.5), Inches(9), Inches(5))
             content_frame = content_box.text_frame
             content_frame.word_wrap = True
             content_frame.text = content_text
@@ -749,14 +730,12 @@ class PowerPointGenerator(OutputGenerator):
         prs.save(output_path)
         return os.path.getsize(output_path)
 
-    def _generate_placeholder(self, slides: List[Any], output_path: str) -> int:
-        """Generate placeholder text file when python-pptx not installed."""
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write("PowerPoint Placeholder\n")
-            f.write("Install python-pptx: pip install python-pptx\n\n")
-            for i, slide in enumerate(slides, 1):
-                f.write(f"--- Slide {i} ---\n{slide}\n\n")
-        return os.path.getsize(output_path)
+    def _generate_placeholder(self, slides: list[Any], output_path: str) -> int:
+        """Removed: was writing text files with .pptx extension."""
+        raise ImportError(
+            "python-pptx is required for PowerPoint generation. "
+            "Install with: pip install openbench[output]"
+        )
 
 
 class DashboardGenerator(OutputGenerator):
@@ -803,9 +782,9 @@ class DashboardGenerator(OutputGenerator):
     def generate(
         self,
         content: Any,
-        template: Optional[str] = None,
+        template: str | None = None,
         port: int = 8501,
-        output_path: Optional[str] = None,
+        output_path: str | None = None,
         **options,
     ) -> GeneratedOutput:
         """
@@ -821,22 +800,10 @@ class DashboardGenerator(OutputGenerator):
         Returns:
             GeneratedOutput with dashboard URL and metadata
         """
-        dashboard_url = f"http://localhost:{port}"
-        file_path = output_path or f"dashboard_{port}"
-
-        logger.info(f"Creating {self.framework} dashboard on port {port}")
-
-        return GeneratedOutput(
-            file_path=file_path,
-            format=self.output_format,
-            size_bytes=0,  # Dashboards are served, not static files
-            metadata={
-                "framework": self.framework,
-                "url": dashboard_url,
-                "port": port,
-                "template": template,
-                **options,
-            },
+        raise NotImplementedError(
+            "DashboardGenerator: Interactive dashboards not yet implemented. "
+            "Planned frameworks: streamlit, dash, gradio. "
+            "Track progress: https://github.com/ai-kitchen-inc/openbench/issues"
         )
 
 
@@ -890,7 +857,7 @@ class AudioGenerator(OutputGenerator):
     def generate(
         self,
         content: Any,
-        template: Optional[str] = None,
+        template: str | None = None,
         output_path: str = "audio.mp3",
         **options,
     ) -> GeneratedOutput:
@@ -906,30 +873,8 @@ class AudioGenerator(OutputGenerator):
         Returns:
             GeneratedOutput with audio file path and metadata
         """
-        # Extract text from content
-        if isinstance(content, str):
-            text = content
-        elif hasattr(content, "text"):
-            text = str(content.text)
-        else:
-            text = str(content)
-
-        logger.info(f"Generating audio: {output_path}")
-
-        # Placeholder for actual TTS generation
-        # Estimate size based on text length (rough MP3 estimate)
-        estimated_duration_secs = len(text.split()) / 2.5  # ~150 words per minute
-        estimated_size = int(estimated_duration_secs * 16000)  # ~128kbps MP3
-
-        return GeneratedOutput(
-            file_path=output_path,
-            format=self.output_format,
-            size_bytes=estimated_size,
-            metadata={
-                "provider": self.provider,
-                "voice": self.voice,
-                "text_length": len(text),
-                "estimated_duration_secs": estimated_duration_secs,
-                **options,
-            },
+        raise NotImplementedError(
+            "AudioGenerator: TTS not yet implemented. "
+            "Planned providers: elevenlabs, openai, google. "
+            "Track progress: https://github.com/ai-kitchen-inc/openbench/issues"
         )

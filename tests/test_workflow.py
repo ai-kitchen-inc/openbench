@@ -1,17 +1,14 @@
 """Tests for Workflow class."""
 
-import unittest
-import tempfile
 import shutil
+import tempfile
+import unittest
 from pathlib import Path
 
 from openbench.core import (
-    Chainable,
     Chain,
-    StateStore,
+    Chainable,
     LocalStateStore,
-    WorkflowState,
-    WorkflowStatus,
 )
 from openbench.workflows import Workflow, workflow
 
@@ -57,7 +54,7 @@ class TestWorkflow(unittest.TestCase):
             name="test-workflow",
             chain=step1 | step2,
             state_store=self.state_store,
-            checkpoints=True
+            checkpoints=True,
         )
 
         self.assertEqual(wf.name, "test-workflow")
@@ -72,7 +69,7 @@ class TestWorkflow(unittest.TestCase):
             name="test-workflow",
             chain=step1 | step2,
             state_store=self.state_store,
-            checkpoints=False  # Disable for simpler test
+            checkpoints=False,  # Disable for simpler test
         )
 
         result = wf.run({})
@@ -91,7 +88,7 @@ class TestWorkflow(unittest.TestCase):
             chain=step,
             state_store=self.state_store,
             checkpoints=False,
-            metadata={"project": "test", "version": "1.0"}
+            metadata={"project": "test", "version": "1.0"},
         )
 
         self.assertEqual(wf.metadata["project"], "test")
@@ -101,11 +98,7 @@ class TestWorkflow(unittest.TestCase):
         """Test workflow string representation."""
         step = SimpleStep("step1")
 
-        wf = Workflow(
-            name="my-workflow",
-            chain=step,
-            state_store=self.state_store
-        )
+        wf = Workflow(name="my-workflow", chain=step, state_store=self.state_store)
 
         self.assertEqual(repr(wf), "Workflow(name='my-workflow')")
         self.assertEqual(str(wf), "Workflow: my-workflow")
@@ -128,7 +121,7 @@ class TestWorkflow(unittest.TestCase):
             name="sequential-workflow",
             chain=Chain(steps),
             state_store=self.state_store,
-            checkpoints=False
+            checkpoints=False,
         )
 
         result = wf.run({})
@@ -146,11 +139,11 @@ class TestWorkflow(unittest.TestCase):
             name="checkpoint-workflow",
             chain=step1 | step2,
             state_store=self.state_store,
-            checkpoints=True  # Enable checkpointing
+            checkpoints=True,  # Enable checkpointing
         )
 
         # Execute workflow
-        result = wf.run({"initial": "data"})
+        wf.run({"initial": "data"})
 
         # Should have created state files
         state_files = list(Path(self.temp_dir).glob("*.json"))
@@ -176,7 +169,7 @@ class TestWorkflow(unittest.TestCase):
             name="no-checkpoint-workflow",
             chain=step,
             state_store=self.state_store,
-            checkpoints=False
+            checkpoints=False,
         )
 
         result = wf.run({})
@@ -207,13 +200,11 @@ class TestWorkflowIntegration(unittest.TestCase):
 
         # Build the DAG
         from openbench.core import Parallel
+
         dag = a | Parallel([b, c]) | d
 
         wf = Workflow(
-            name="dag-workflow",
-            chain=dag,
-            state_store=self.state_store,
-            checkpoints=False
+            name="dag-workflow", chain=dag, state_store=self.state_store, checkpoints=False
         )
 
         result = wf.run({})
@@ -231,16 +222,14 @@ class TestWorkflowIntegration(unittest.TestCase):
         false_step = SimpleStep("false_path")
 
         conditional = Conditional(
-            condition=lambda x: x.get("condition") == True,
-            true_branch=true_step,
-            false_branch=false_step
+            condition=lambda x: x.get("condition"), true_branch=true_step, false_branch=false_step
         )
 
         wf = Workflow(
             name="conditional-workflow",
             chain=conditional,
             state_store=self.state_store,
-            checkpoints=False
+            checkpoints=False,
         )
 
         # Test true branch
@@ -262,19 +251,11 @@ class TestWorkflowIntegration(unittest.TestCase):
         route_c = SimpleStep("route_c")
 
         router = Router(
-            routes={
-                "a": route_a,
-                "b": route_b,
-                "c": route_c
-            },
-            router=lambda x: x["route"]
+            routes={"a": route_a, "b": route_b, "c": route_c}, router=lambda x: x["route"]
         )
 
         wf = Workflow(
-            name="router-workflow",
-            chain=router,
-            state_store=self.state_store,
-            checkpoints=False
+            name="router-workflow", chain=router, state_store=self.state_store, checkpoints=False
         )
 
         # Test different routes

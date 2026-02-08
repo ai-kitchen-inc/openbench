@@ -30,16 +30,14 @@ Requires:
 """
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from openbench.data.sources import LangExtractSource, PDFSource
 from openbench.adapters.google_adk import GoogleADKAdapter
 from openbench.core.abstractions import RawData
-
+from openbench.data.sources import LangExtractSource, PDFSource
 
 # --- Configuration ---
 
@@ -149,7 +147,7 @@ def print_header(title: str):
     print(f"{'=' * 60}")
 
 
-def print_analysis(result: Dict[str, Any]):
+def print_analysis(result: dict[str, Any]):
     """Print ADK analysis result."""
     content = result.get("content", "")
     model = result.get("model", "unknown")
@@ -206,10 +204,12 @@ def demo_step_by_step(text: str, provider: str = "gemini"):
         generation_config={"temperature": 0.3, "max_output_tokens": 2048},
     )
 
-    result = adapter.invoke({
-        "goal": "Analyze the relationships between these entities and identify key insights",
-        "data": formatted,
-    })
+    result = adapter.invoke(
+        {
+            "goal": "Analyze the relationships between these entities and identify key insights",
+            "data": formatted,
+        }
+    )
 
     print_analysis(result)
     return result
@@ -256,10 +256,12 @@ def demo_l1_chain(pdf_path: str, provider: str = "gemini"):
         generation_config={"temperature": 0.3, "max_output_tokens": 2048},
     )
 
-    result = adapter.invoke({
-        "goal": "Summarize the key entities and their relationships from this document",
-        "data": formatted,
-    })
+    result = adapter.invoke(
+        {
+            "goal": "Summarize the key entities and their relationships from this document",
+            "data": formatted,
+        }
+    )
 
     print_analysis(result)
     return result
@@ -272,10 +274,10 @@ def demo_l2_composition(pdf_path: str, output_path: str, provider: str = "gemini
     """
     print_header("Demo 3: Full Pipeline — PDF → Entities → Analysis → Report")
 
-    print(f"\n  [Step 1] PDFSource → text extraction")
-    print(f"  [Step 2] LangExtractSource → entity extraction")
-    print(f"  [Step 3] GoogleADKAdapter → entity analysis")
-    print(f"  [Step 4] Write Markdown report")
+    print("\n  [Step 1] PDFSource → text extraction")
+    print("  [Step 2] LangExtractSource → entity extraction")
+    print("  [Step 3] GoogleADKAdapter → entity analysis")
+    print("  [Step 4] Write Markdown report")
 
     # Step 1: Extract text from PDF
     print("\n[Step 1] Extracting text from PDF...")
@@ -309,10 +311,12 @@ def demo_l2_composition(pdf_path: str, output_path: str, provider: str = "gemini
         generation_config={"temperature": 0.3, "max_output_tokens": 4096},
     )
 
-    result = adapter.invoke({
-        "goal": "Create a detailed entity analysis report from this document",
-        "data": formatted,
-    })
+    result = adapter.invoke(
+        {
+            "goal": "Create a detailed entity analysis report from this document",
+            "data": formatted,
+        }
+    )
 
     # Step 4: Write Markdown report
     print("\n[Step 4] Writing Markdown report...")
@@ -353,10 +357,12 @@ def demo_multi_analysis(text: str, provider: str = "gemini"):
         system_instruction="Provide a factual, data-driven summary. No speculation.",
         generation_config={"temperature": 0.1, "max_output_tokens": 1024},
     )
-    summary_result = summary_adapter.invoke({
-        "goal": "Create a factual summary of all entities with key statistics",
-        "data": formatted,
-    })
+    summary_result = summary_adapter.invoke(
+        {
+            "goal": "Create a factual summary of all entities with key statistics",
+            "data": formatted,
+        }
+    )
 
     print("\n--- Factual Summary ---")
     print(summary_result.get("content", ""))
@@ -371,10 +377,12 @@ def demo_multi_analysis(text: str, provider: str = "gemini"):
         ),
         generation_config={"temperature": 0.7, "max_output_tokens": 1024},
     )
-    insights_result = insights_adapter.invoke({
-        "goal": "Identify strategic patterns, risks, and opportunities",
-        "data": formatted,
-    })
+    insights_result = insights_adapter.invoke(
+        {
+            "goal": "Identify strategic patterns, risks, and opportunities",
+            "data": formatted,
+        }
+    )
 
     print("\n--- Strategic Insights ---")
     print(insights_result.get("content", ""))
@@ -390,19 +398,27 @@ def main():
         description="Entity Analysis with ADK - Extract + Analyze Workflow",
     )
     parser.add_argument(
-        "input", nargs="?", default=None,
+        "input",
+        nargs="?",
+        default=None,
         help="Path to PDF file (uses built-in sample text if not provided)",
     )
     parser.add_argument(
-        "--demo", choices=["1", "2", "3", "4", "all"], default="all",
+        "--demo",
+        choices=["1", "2", "3", "4", "all"],
+        default="all",
         help="Which demo to run (default: all)",
     )
     parser.add_argument(
-        "--extraction-provider", choices=["gemini", "openai", "ollama"],
-        default="gemini", help="Provider for entity extraction (default: gemini)",
+        "--extraction-provider",
+        choices=["gemini", "openai", "ollama"],
+        default="gemini",
+        help="Provider for entity extraction (default: gemini)",
     )
     parser.add_argument(
-        "--output", "-o", default=None,
+        "--output",
+        "-o",
+        default=None,
         help="Output path for Demo 3 Markdown report",
     )
     args = parser.parse_args()
@@ -461,6 +477,7 @@ def main():
     except Exception as e:
         print(f"\nError: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

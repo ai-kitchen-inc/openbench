@@ -2,13 +2,12 @@
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Confirm
+from rich.table import Table
 
 from openbench.core.providers import (
     ProviderConfig,
-    ProviderService,
     ProviderType,
     get_provider_service,
 )
@@ -25,7 +24,6 @@ def get_provider_type_choice():
 @click.group()
 def provider():
     """Manage providers (LLM, Vector, Storage, etc.)."""
-    pass
 
 
 @provider.command("add")
@@ -37,8 +35,12 @@ def provider():
     required=True,
     help="Provider type (llm, embedding, vector, storage, voice)",
 )
-@click.option("--provider", "provider_name", required=True, help="Provider name (e.g., openai, pinecone)")
-@click.option("--plugin", "plugin_type", required=True, help="Plugin type (e.g., chat, vector, blob)")
+@click.option(
+    "--provider", "provider_name", required=True, help="Provider name (e.g., openai, pinecone)"
+)
+@click.option(
+    "--plugin", "plugin_type", required=True, help="Plugin type (e.g., chat, vector, blob)"
+)
 @click.option("--api-key", help="API key for the provider")
 @click.option("--default", is_flag=True, help="Set as default for this type")
 @click.option("--setting", multiple=True, help="Additional settings (key=value)")
@@ -108,7 +110,9 @@ def list_providers(provider_type, enabled_only):
     if not providers:
         console.print("[dim]No providers configured.[/dim]")
         console.print("\nAdd a provider with:")
-        console.print("  openbench provider add my-llm --type llm --provider openai --plugin chat\n")
+        console.print(
+            "  openbench provider add my-llm --type llm --provider openai --plugin chat\n"
+        )
         return
 
     table = Table()
@@ -199,9 +203,11 @@ def set_default(name):
         return
 
     if service.set_default(name):
-        console.print(f"\n[green]✓[/green] '{name}' is now the default {config.provider_type.value} provider.\n")
+        console.print(
+            f"\n[green]✓[/green] '{name}' is now the default {config.provider_type.value} provider.\n"
+        )
     else:
-        console.print(f"\n[red]Failed to set default.[/red]\n")
+        console.print("\n[red]Failed to set default.[/red]\n")
 
 
 @provider.command("test")

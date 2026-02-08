@@ -24,12 +24,11 @@ import os
 import sys
 from typing import Any
 
-from openbench.intelligence.llm_providers import GeminiLLMProvider  # noqa: F401
-from openbench.intelligence.base import BaseAgent
 from openbench.core.abstractions import ExecutionContext, Query
-from openbench.core.providers import configure_provider, ProviderType
+from openbench.core.providers import ProviderType, configure_provider
 from openbench.data.sources import GroundedSearchSource
-
+from openbench.intelligence.base import BaseAgent
+from openbench.intelligence.llm_providers import GeminiLLMProvider  # noqa: F401
 
 # --- Constants ---
 
@@ -78,9 +77,7 @@ SEARCH_KB_SCHEMA: dict[str, Any] = {
                 },
                 "namespace": {
                     "type": "string",
-                    "description": (
-                        f"Knowledge base namespace (default: {DEFAULT_NAMESPACE})"
-                    ),
+                    "description": (f"Knowledge base namespace (default: {DEFAULT_NAMESPACE})"),
                 },
             },
             "required": ["query"],
@@ -140,7 +137,7 @@ def search_knowledge_base(query: str, namespace: str = DEFAULT_NAMESPACE) -> str
             if score >= 0.7:
                 content = item.get("content", "")[:1000]
                 source = item.get("metadata", {}).get("source", "unknown")
-                docs.append(f"[{i+1}] (score: {score:.2f}, source: {source})\n{content}")
+                docs.append(f"[{i + 1}] (score: {score:.2f}, source: {source})\n{content}")
 
         return "\n---\n".join(docs) if docs else "No relevant documents found."
 
@@ -207,7 +204,7 @@ def demo_builtin_store(model: str, query: str, namespace: str = DEFAULT_NAMESPAC
 
     print(f"\n  Model: {model}")
     print(f"  Store: PineconeStore(namespace={namespace}) -- auto-retrieve")
-    print(f"  Tool: search_web -- agent decides when to use")
+    print("  Tool: search_web -- agent decides when to use")
     print(f"  Query: {query}")
 
     agent = BaseAgent(
@@ -261,9 +258,7 @@ def demo_tool_based(model: str, query: str):
     )
 
     agent.tools.register("search_web", search_web, schema=SEARCH_WEB_SCHEMA)
-    agent.tools.register(
-        "search_knowledge_base", search_knowledge_base, schema=SEARCH_KB_SCHEMA
-    )
+    agent.tools.register("search_knowledge_base", search_knowledge_base, schema=SEARCH_KB_SCHEMA)
 
     print(f"  Registered tools: {list(agent.tools._tools.keys())}")
     print("\n  Executing agent (reasoning loop)...\n")
@@ -310,9 +305,7 @@ def demo_combined(model: str, query: str, namespace: str = DEFAULT_NAMESPACE):
     )
 
     agent.tools.register("search_web", search_web, schema=SEARCH_WEB_SCHEMA)
-    agent.tools.register(
-        "search_knowledge_base", search_knowledge_base, schema=SEARCH_KB_SCHEMA
-    )
+    agent.tools.register("search_knowledge_base", search_knowledge_base, schema=SEARCH_KB_SCHEMA)
 
     print(f"  Registered tools: {list(agent.tools._tools.keys())}")
     print("\n  Executing agent...\n")
@@ -334,19 +327,25 @@ def main():
         description="Agentic Research Demo - BaseAgent with RAG + Web Search",
     )
     parser.add_argument(
-        "--demo", choices=["1", "2", "3", "all"], default="all",
+        "--demo",
+        choices=["1", "2", "3", "all"],
+        default="all",
         help="Which demo to run (default: all)",
     )
     parser.add_argument(
-        "--model", default=DEFAULT_MODEL,
+        "--model",
+        default=DEFAULT_MODEL,
         help=f"Gemini model to use (default: {DEFAULT_MODEL})",
     )
     parser.add_argument(
-        "--query", "-q", default=None,
+        "--query",
+        "-q",
+        default=None,
         help="Custom query (default: demo-specific query)",
     )
     parser.add_argument(
-        "--namespace", default=DEFAULT_NAMESPACE,
+        "--namespace",
+        default=DEFAULT_NAMESPACE,
         help=f"Pinecone namespace (default: {DEFAULT_NAMESPACE})",
     )
     args = parser.parse_args()
@@ -354,7 +353,7 @@ def main():
     print("=" * 60)
     print("  OpenBench: Agentic Research Demo")
     print("=" * 60)
-    print(f"\n  BaseAgent reasoning loop + RAG + Web Search")
+    print("\n  BaseAgent reasoning loop + RAG + Web Search")
     print(f"  Model: {args.model}")
     print(f"  GOOGLE_API_KEY: {'set' if os.getenv('GOOGLE_API_KEY') else 'NOT SET'}")
     print(f"  PINECONE_API_KEY: {'set' if os.getenv('PINECONE_API_KEY') else 'not set (optional)'}")
@@ -379,6 +378,7 @@ def main():
     except Exception as e:
         print(f"\nError: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

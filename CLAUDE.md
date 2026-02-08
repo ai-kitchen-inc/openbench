@@ -371,6 +371,8 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `/test` | Run test suite |
 | `/lint` | Run linting and formatting |
 | `/example` | Run an example workflow |
+| `/check` | Run all quality checks (lint + type check + tests) |
+| `/coverage` | Run tests with coverage report |
 
 ## Skills (Auto-Invoked)
 
@@ -379,6 +381,9 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | **composing-workflows** | Creating workflows, L1/L2 composition, DAG patterns |
 | **creating-abstractions** | Implementing DataSource, Agent, OutputGenerator, DataStore |
 | **data-layer** | PineconeStore, chunking, embeddings, RAG, vector search |
+| **intelligence-layer** | BaseAgent, LLM providers, tools, memory, RAG agents |
+| **output-layer** | PDF, PPTX, Dashboard, Audio, Markdown generators |
+| **adapters** | LangChain, CrewAI, AG2, E2B, Google ADK adapters |
 | **testing-openbench** | Writing tests, test patterns, coverage |
 
 ## Additional Documentation

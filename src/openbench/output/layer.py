@@ -6,7 +6,7 @@ This module provides factory functions for creating output generators.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from openbench.core.abstractions import GeneratedOutput
 
@@ -37,8 +37,8 @@ class OutputFactory:
         cls,
         data: Any,
         format: str = "pdf",
-        output: Optional[str] = None,
-        template: Optional[str] = None,
+        output: str | None = None,
+        template: str | None = None,
         **kwargs,
     ) -> GeneratedOutput:
         """
@@ -55,10 +55,10 @@ class OutputFactory:
             GeneratedOutput with file path and metadata
         """
         from openbench.output.generators import (
+            AudioGenerator,
+            DashboardGenerator,
             PDFGenerator,
             PowerPointGenerator,
-            DashboardGenerator,
-            AudioGenerator,
         )
 
         # Map format to generator class and constructor kwargs
@@ -133,7 +133,7 @@ class OutputFactory:
         cls,
         data: Any,
         template: str = "default",
-        output: Optional[str] = None,
+        output: str | None = None,
         page_size: str = "letter",
         **kwargs,
     ) -> GeneratedOutput:
@@ -159,7 +159,7 @@ class OutputFactory:
         cls,
         data: Any,
         template: str = "corporate",
-        output: Optional[str] = None,
+        output: str | None = None,
         **kwargs,
     ) -> GeneratedOutput:
         """
@@ -204,7 +204,7 @@ class OutputFactory:
         text: str,
         provider: str = "elevenlabs",
         voice: str = "professional_male",
-        output: Optional[str] = None,
+        output: str | None = None,
         **kwargs,
     ) -> GeneratedOutput:
         """
@@ -228,10 +228,10 @@ class OutputFactory:
     def batch(
         cls,
         data: Any,
-        formats: List[str],
+        formats: list[str],
         output_dir: str = "outputs",
         **kwargs,
-    ) -> Dict[str, GeneratedOutput]:
+    ) -> dict[str, GeneratedOutput]:
         """
         Export to multiple formats simultaneously.
 

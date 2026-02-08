@@ -30,11 +30,10 @@ import logging
 import os
 import urllib.request
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from openbench.core.abstractions import DataSource, RawData
 from openbench.data.exceptions import ExtractionError, ValidationError
-
 
 logger = logging.getLogger(__name__)
 
@@ -110,9 +109,9 @@ class GroundedSearchSource(DataSource):
         self,
         query: str,
         provider: GroundedProvider = "gemini",
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
-        system_prompt: Optional[str] = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        system_prompt: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
     ):
@@ -135,7 +134,7 @@ class GroundedSearchSource(DataSource):
         self.max_tokens = max_tokens
 
         self.api_key = api_key or self._get_api_key()
-        self._sources: List[Dict[str, Any]] = []
+        self._sources: list[dict[str, Any]] = []
 
     def _default_system_prompt(self) -> str:
         return """You are a research assistant with real-time web search capabilities.
@@ -147,7 +146,7 @@ When answering questions:
 4. Be factual and objective
 5. Acknowledge when information is uncertain or unavailable"""
 
-    def _get_api_key(self) -> Optional[str]:
+    def _get_api_key(self) -> str | None:
         """Get API key from environment."""
         for key_name in self.ENV_KEYS.get(self.provider, []):
             if key := os.getenv(key_name):
@@ -169,8 +168,7 @@ When answering questions:
 
         if self.provider not in self.ENV_KEYS:
             raise ValidationError(
-                f"Unsupported provider: {self.provider}. "
-                f"Available: {list(self.ENV_KEYS.keys())}"
+                f"Unsupported provider: {self.provider}. Available: {list(self.ENV_KEYS.keys())}"
             )
 
         if not self.api_key:
@@ -182,7 +180,7 @@ When answering questions:
 
         return True
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         return {
             "query": self.query,
             "provider": self.provider,
@@ -191,7 +189,7 @@ When answering questions:
             "max_tokens": self.max_tokens,
         }
 
-    def _search_gemini(self) -> Dict[str, Any]:
+    def _search_gemini(self) -> dict[str, Any]:
         """Search using Gemini with Google Search grounding."""
         # Try new SDK first (google-genai), fall back to old (google-generativeai)
         try:
@@ -199,7 +197,7 @@ When answering questions:
         except ImportError:
             return self._search_gemini_old_sdk()
 
-    def _search_gemini_new_sdk(self) -> Dict[str, Any]:
+    def _search_gemini_new_sdk(self) -> dict[str, Any]:
         """Use new google-genai SDK."""
         from google import genai
         from google.genai import types
@@ -227,20 +225,31 @@ When answering questions:
             candidate = response.candidates[0]
             if hasattr(candidate, "grounding_metadata"):
                 grounding = candidate.grounding_metadata
-                if grounding and hasattr(grounding, "grounding_chunks") and grounding.grounding_chunks:
+                if (
+                    grounding
+                    and hasattr(grounding, "grounding_chunks")
+                    and grounding.grounding_chunks
+                ):
                     for chunk in grounding.grounding_chunks:
                         if hasattr(chunk, "web"):
                             raw_url = getattr(chunk.web, "uri", "")
-                            sources.append({
-                                "title": getattr(chunk.web, "title", ""),
-                                "url": _resolve_redirect_url(raw_url),
-                            })
-                if grounding and hasattr(grounding, "search_entry_point"):
-                    if hasattr(grounding.search_entry_point, "rendered_content"):
-                        sources.append({
+                            sources.append(
+                                {
+                                    "title": getattr(chunk.web, "title", ""),
+                                    "url": _resolve_redirect_url(raw_url),
+                                }
+                            )
+                if (
+                    grounding
+                    and hasattr(grounding, "search_entry_point")
+                    and hasattr(grounding.search_entry_point, "rendered_content")
+                ):
+                    sources.append(
+                        {
                             "type": "search_suggestion",
                             "content": grounding.search_entry_point.rendered_content,
-                        })
+                        }
+                    )
 
         return {
             "content": response.text,
@@ -248,15 +257,14 @@ When answering questions:
             "model": self.model,
         }
 
-    def _search_gemini_old_sdk(self) -> Dict[str, Any]:
+    def _search_gemini_old_sdk(self) -> dict[str, Any]:
         """Use old google-generativeai SDK (without grounding)."""
         try:
             import google.generativeai as genai
         except ImportError:
             raise ExtractionError(
-                "google-genai or google-generativeai required. "
-                "Install: pip install google-genai"
-            )
+                "google-genai or google-generativeai required. Install: pip install google-genai"
+            ) from None
 
         genai.configure(api_key=self.api_key)
 
@@ -284,23 +292,20 @@ Provide factual, up-to-date information with sources where possible."""
             "model": self.model,
         }
 
-    def _search_perplexity(self) -> Dict[str, Any]:
+    def _search_perplexity(self) -> dict[str, Any]:
         """Search using Perplexity API."""
         try:
             from openai import OpenAI
         except ImportError:
             raise ExtractionError(
                 "openai required for Perplexity. Install: pip install openai"
-            )
+            ) from None
 
-        client = OpenAI(
-            api_key=self.api_key,
-            base_url="https://api.perplexity.ai"
-        )
+        client = OpenAI(api_key=self.api_key, base_url="https://api.perplexity.ai")
 
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": self.query}
+            {"role": "user", "content": self.query},
         ]
 
         response = client.chat.completions.create(
@@ -316,10 +321,12 @@ Provide factual, up-to-date information with sources where possible."""
         sources = []
         if hasattr(response, "citations"):
             for i, url in enumerate(response.citations):
-                sources.append({
-                    "title": f"Source {i+1}",
-                    "url": url,
-                })
+                sources.append(
+                    {
+                        "title": f"Source {i + 1}",
+                        "url": url,
+                    }
+                )
 
         return {
             "content": content,
@@ -343,7 +350,7 @@ Provide factual, up-to-date information with sources where possible."""
         try:
             result = search_methods[self.provider]()
         except Exception as e:
-            raise ExtractionError(f"{self.provider} grounded search failed: {e}")
+            raise ExtractionError(f"{self.provider} grounded search failed: {e}") from e
 
         self._sources = result.get("sources", [])
 
@@ -383,7 +390,7 @@ Provide factual, up-to-date information with sources where possible."""
             source=self,
         )
 
-    def invoke(self, input: Any = None, config: Optional[Any] = None) -> RawData:
+    def invoke(self, input: Any = None, config: Any | None = None) -> RawData:
         """Chainable invoke for workflow composition."""
         if isinstance(input, dict) and "query" in input:
             self.query = input["query"]
@@ -394,9 +401,10 @@ Provide factual, up-to-date information with sources where possible."""
     async def aextract(self) -> RawData:
         """Async extraction."""
         import asyncio
+
         return await asyncio.get_event_loop().run_in_executor(None, self.extract)
 
-    def get_sources(self) -> List[Dict[str, Any]]:
+    def get_sources(self) -> list[dict[str, Any]]:
         """Get extracted sources after calling extract().
 
         Returns:

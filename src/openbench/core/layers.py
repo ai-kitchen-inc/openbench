@@ -5,15 +5,52 @@ DataLayer, IntelligenceLayer, and OutputLayer are Chainable,
 enabling E2E system composition: DataLayer | IntelligenceLayer | OutputLayer
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
+
+try:
+    from typing import NotRequired, TypedDict  # Python 3.12+
+except ImportError:
+    from typing_extensions import NotRequired, TypedDict
+from openbench.core.abstractions import Agent, DataSource, DataStore, OutputGenerator, RawData
 from openbench.core.chainable import Chainable, RunnableConfig
-from openbench.core.abstractions import DataSource, DataStore, Agent, OutputGenerator, RawData
 
 # Keys to preserve across layer boundaries
 PRESERVED_KEYS = ("goal", "output_path", "title", "author", "template")
 
 
-def _preserve_input_params(output: Dict[str, Any], input: Any) -> None:
+class DataLayerOutput(TypedDict):
+    """Type contract for DataLayer output."""
+
+    raw_data: list[Any]
+    indexed_ids: list[str]
+    metadata: dict[str, Any]
+    goal: NotRequired[str]
+    output_path: NotRequired[str]
+    title: NotRequired[str]
+    author: NotRequired[str]
+    template: NotRequired[str]
+
+
+class IntelligenceLayerOutput(TypedDict):
+    """Type contract for IntelligenceLayer output."""
+
+    intelligence_output: Any
+    metadata: dict[str, Any]
+    goal: NotRequired[str]
+    output_path: NotRequired[str]
+    title: NotRequired[str]
+    author: NotRequired[str]
+    template: NotRequired[str]
+
+
+class OutputLayerOutput(TypedDict):
+    """Type contract for OutputLayer output."""
+
+    generated_outputs: list[Any]
+    metadata: dict[str, Any]
+
+
+def _preserve_input_params(output: dict[str, Any], input: Any) -> None:
     """Copy workflow-level parameters from input to output."""
     if isinstance(input, dict):
         for key in PRESERVED_KEYS:
@@ -21,7 +58,7 @@ def _preserve_input_params(output: Dict[str, Any], input: Any) -> None:
                 output[key] = input[key]
 
 
-class DataLayer(Chainable[Any, Dict[str, Any]]):
+class DataLayer(Chainable[Any, dict[str, Any]]):
     """
     L2: Data Layer Orchestrator.
 
@@ -43,9 +80,7 @@ class DataLayer(Chainable[Any, Dict[str, Any]]):
     """
 
     def __init__(
-        self,
-        sources: Optional[Union[DataSource, Chainable]] = None,
-        stores: Optional[List[DataStore]] = None
+        self, sources: DataSource | Chainable | None = None, stores: list[DataStore] | None = None
     ):
         """
         Initialize Data Layer.
@@ -57,7 +92,7 @@ class DataLayer(Chainable[Any, Dict[str, Any]]):
         self.sources = sources
         self.stores = stores or []
 
-    def invoke(self, input: Any, config: Optional[RunnableConfig] = None) -> Dict[str, Any]:
+    def invoke(self, input: Any, config: RunnableConfig | None = None) -> dict[str, Any]:
         """
         Execute data layer.
 
@@ -105,15 +140,15 @@ class DataLayer(Chainable[Any, Dict[str, Any]]):
                 "layer": "data",
                 "num_sources": len(results),
                 "num_stores": len(self.stores),
-                "num_indexed": len(indexed_ids)
-            }
+                "num_indexed": len(indexed_ids),
+            },
         }
 
         _preserve_input_params(output, input)
         return output
 
 
-class IntelligenceLayer(Chainable[Any, Dict[str, Any]]):
+class IntelligenceLayer(Chainable[Any, dict[str, Any]]):
     """
     L2: Intelligence Layer Orchestrator.
 
@@ -134,7 +169,7 @@ class IntelligenceLayer(Chainable[Any, Dict[str, Any]]):
         >>> result = workflow.invoke({})
     """
 
-    def __init__(self, agents: Union[Agent, Chainable]):
+    def __init__(self, agents: Agent | Chainable):
         """
         Initialize Intelligence Layer.
 
@@ -143,7 +178,7 @@ class IntelligenceLayer(Chainable[Any, Dict[str, Any]]):
         """
         self.agents = agents
 
-    def invoke(self, input: Any, config: Optional[RunnableConfig] = None) -> Dict[str, Any]:
+    def invoke(self, input: Any, config: RunnableConfig | None = None) -> dict[str, Any]:
         """
         Execute intelligence layer.
 
@@ -162,18 +197,13 @@ class IntelligenceLayer(Chainable[Any, Dict[str, Any]]):
         # Execute agent(s)
         result = self.agents.invoke(input, config)
 
-        output = {
-            "intelligence_output": result,
-            "metadata": {
-                "layer": "intelligence"
-            }
-        }
+        output = {"intelligence_output": result, "metadata": {"layer": "intelligence"}}
 
         _preserve_input_params(output, input)
         return output
 
 
-class OutputLayer(Chainable[Any, Dict[str, Any]]):
+class OutputLayer(Chainable[Any, dict[str, Any]]):
     """
     L2: Output Layer Orchestrator.
 
@@ -194,7 +224,7 @@ class OutputLayer(Chainable[Any, Dict[str, Any]]):
         >>> result = workflow.invoke({})
     """
 
-    def __init__(self, generators: Union[OutputGenerator, Chainable]):
+    def __init__(self, generators: OutputGenerator | Chainable):
         """
         Initialize Output Layer.
 
@@ -203,7 +233,7 @@ class OutputLayer(Chainable[Any, Dict[str, Any]]):
         """
         self.generators = generators
 
-    def invoke(self, input: Any, config: Optional[RunnableConfig] = None) -> Dict[str, Any]:
+    def invoke(self, input: Any, config: RunnableConfig | None = None) -> dict[str, Any]:
         """
         Execute output layer.
 
@@ -227,19 +257,16 @@ class OutputLayer(Chainable[Any, Dict[str, Any]]):
 
         return {
             "generated_outputs": outputs,
-            "metadata": {
-                "layer": "output",
-                "num_outputs": len(outputs)
-            }
+            "metadata": {"layer": "output", "num_outputs": len(outputs)},
         }
 
 
 # Convenience function for creating complete workflows
 def create_workflow(
-    data_sources: Optional[Union[DataSource, Chainable]] = None,
-    data_stores: Optional[List[DataStore]] = None,
-    agents: Optional[Union[Agent, Chainable]] = None,
-    generators: Optional[Union[OutputGenerator, Chainable]] = None
+    data_sources: DataSource | Chainable | None = None,
+    data_stores: list[DataStore] | None = None,
+    agents: Agent | Chainable | None = None,
+    generators: OutputGenerator | Chainable | None = None,
 ) -> Chainable:
     """
     Create complete L2 workflow from components.

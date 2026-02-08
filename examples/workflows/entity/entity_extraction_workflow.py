@@ -37,11 +37,9 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 
-from openbench.data.sources import LangExtractSource, PDFSource
 from openbench.core.abstractions import RawData
-
+from openbench.data.sources import LangExtractSource, PDFSource
 
 # --- Few-shot Examples ---
 
@@ -129,20 +127,20 @@ def check_api_keys(provider: str):
         key_name = required[provider]
         if not os.getenv(key_name):
             print(f"Error: Missing environment variable: {key_name}")
-            print(f"\nSet it with:")
+            print("\nSet it with:")
             print(f"  export {key_name}=your-api-key")
             sys.exit(1)
 
 
 def load_text_file(path: str) -> str:
     """Load text content from a file."""
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return f.read()
 
 
 def extract_from_pdf(pdf_path: str) -> str:
     """Extract raw text from PDF using PDFSource."""
-    print(f"\n[1/3] Extracting text from PDF...")
+    print("\n[1/3] Extracting text from PDF...")
     source = PDFSource(path=pdf_path)
 
     if not source.validate():
@@ -160,13 +158,13 @@ def run_extraction(
     text: str,
     provider: str,
     prompt: str,
-    examples: List[Dict],
-    filter_classes: Optional[List[str]] = None,
+    examples: list[dict],
+    filter_classes: list[str] | None = None,
     extraction_passes: int = 1,
     max_workers: int = 10,
 ) -> RawData:
     """Run LangExtract entity extraction on text."""
-    print(f"\n[2/3] Running entity extraction...")
+    print("\n[2/3] Running entity extraction...")
     print(f"  Provider: {provider}")
     print(f"  Passes: {extraction_passes}")
     if filter_classes:
@@ -193,7 +191,7 @@ def run_extraction(
 
 def display_results(result: RawData):
     """Display extraction results in formatted output."""
-    print(f"\n[3/3] Results")
+    print("\n[3/3] Results")
     print("-" * 60)
 
     by_class = result.content["by_class"]
@@ -227,10 +225,10 @@ def run_workflow_composition(pdf_path: str, provider: str):
     print("Workflow Composition Demo")
     print("=" * 60)
 
-    print(f"\nPipeline:")
+    print("\nPipeline:")
     print(f"  PDFSource({Path(pdf_path).name})")
     print(f"  -> LangExtractSource(provider={provider})")
-    print(f"  -> Structured Entities")
+    print("  -> Structured Entities")
 
     # Compose using pipe operator
     workflow = PDFSource(path=pdf_path) | LangExtractSource(
@@ -240,7 +238,7 @@ def run_workflow_composition(pdf_path: str, provider: str):
     )
 
     print(f"\n  Workflow type: {type(workflow).__name__}")
-    print(f"  Running workflow...")
+    print("  Running workflow...")
 
     result = workflow.invoke({})
 

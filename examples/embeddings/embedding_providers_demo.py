@@ -81,9 +81,9 @@ def demo_semantic_similarity():
     # Candidate texts
     candidates = [
         "Steps to build and train ML models effectively.",  # Similar
-        "The weather forecast for tomorrow is sunny.",      # Not similar
+        "The weather forecast for tomorrow is sunny.",  # Not similar
         "Training neural networks requires labeled data.",  # Similar
-        "Best restaurants in Jakarta.",                     # Not similar
+        "Best restaurants in Jakarta.",  # Not similar
     ]
 
     print(f"\nQuery: {query}")
@@ -95,14 +95,14 @@ def demo_semantic_similarity():
 
     # Calculate cosine similarity
     def cosine_similarity(a, b):
-        dot_product = sum(x * y for x, y in zip(a, b))
+        dot_product = sum(x * y for x, y in zip(a, b, strict=False))
         norm_a = sum(x * x for x in a) ** 0.5
         norm_b = sum(x * x for x in b) ** 0.5
         return dot_product / (norm_a * norm_b)
 
     # Rank by similarity
     results = []
-    for text, embedding in zip(candidates, candidate_embeddings):
+    for text, embedding in zip(candidates, candidate_embeddings, strict=False):
         score = cosine_similarity(query_embedding, embedding)
         results.append((score, text))
 
@@ -124,13 +124,13 @@ def demo_custom_model():
     # This allows using unreleased models
     provider = GoogleEmbeddingProvider(
         model="text-embedding-005",
-        dimension=1024  # Specify dimension for unknown model
+        dimension=1024,  # Specify dimension for unknown model
     )
 
-    print(f"  provider = GoogleEmbeddingProvider(")
-    print(f"      model='text-embedding-005',")
-    print(f"      dimension=1024")
-    print(f"  )")
+    print("  provider = GoogleEmbeddingProvider(")
+    print("      model='text-embedding-005',")
+    print("      dimension=1024")
+    print("  )")
     print(f"\n  Model: {provider.default_model}")
     print(f"  Dimension: {provider.get_dimension()}")
     print("\n  Note: API call will fail until model is released by Google")
