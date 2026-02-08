@@ -27,14 +27,14 @@ Usage:
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from openbench.core.abstractions import LLMProvider, LLMResponse
 
 logger = logging.getLogger(__name__)
 
 # Cost per 1M tokens in USD (converted to per-1K for compatibility with config.py)
-_GEMINI_COSTS: Dict[str, Dict[str, float]] = {
+_GEMINI_COSTS: dict[str, dict[str, float]] = {
     "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
     "gemini-2.5-pro": {"input": 1.25, "output": 5.00},
     "gemini-3-flash-preview": {"input": 0.10, "output": 0.40},
@@ -61,7 +61,7 @@ class GeminiLLMProvider(LLMProvider):
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str = "gemini-2.5-flash",
         temperature: float = 0.7,
         max_output_tokens: int = 8192,
@@ -87,7 +87,7 @@ class GeminiLLMProvider(LLMProvider):
                 raise ImportError(
                     "google-genai package required for GeminiLLMProvider. "
                     "Install with: pip install google-genai"
-                )
+                ) from None
 
             if not self.api_key:
                 raise ValueError(
@@ -99,9 +99,7 @@ class GeminiLLMProvider(LLMProvider):
 
         return self._client
 
-    def _convert_messages(
-        self, messages: List[Dict[str, Any]]
-    ) -> tuple:
+    def _convert_messages(self, messages: list[dict[str, Any]]) -> tuple:
         """Convert OpenAI-style messages to Gemini format.
 
         BaseAgent sends messages as:
@@ -129,10 +127,12 @@ class GeminiLLMProvider(LLMProvider):
                 system_instruction = content
 
             elif role == "user":
-                contents.append(types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=content)],
-                ))
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=content)],
+                    )
+                )
 
             elif role == "assistant":
                 parts = []
@@ -142,11 +142,7 @@ class GeminiLLMProvider(LLMProvider):
                 # Handle tool_calls from assistant message
                 if msg.get("tool_calls"):
                     for tc in msg["tool_calls"]:
-                        name = (
-                            tc["function"]["name"]
-                            if "function" in tc
-                            else tc.get("name", "")
-                        )
+                        name = tc["function"]["name"] if "function" in tc else tc.get("name", "")
                         args = (
                             tc["function"]["arguments"]
                             if "function" in tc
@@ -159,10 +155,12 @@ class GeminiLLMProvider(LLMProvider):
                             except (json.JSONDecodeError, TypeError):
                                 args = {"raw": args}
 
-                        parts.append(types.Part.from_function_call(
-                            name=name,
-                            args=args,
-                        ))
+                        parts.append(
+                            types.Part.from_function_call(
+                                name=name,
+                                args=args,
+                            )
+                        )
 
                 if parts:
                     contents.append(types.Content(role="model", parts=parts))
@@ -179,17 +177,21 @@ class GeminiLLMProvider(LLMProvider):
                 if not isinstance(tool_content, dict):
                     tool_content = {"result": str(tool_content)}
 
-                contents.append(types.Content(
-                    role="user",
-                    parts=[types.Part.from_function_response(
-                        name=tool_name,
-                        response=tool_content,
-                    )],
-                ))
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_function_response(
+                                name=tool_name,
+                                response=tool_content,
+                            )
+                        ],
+                    )
+                )
 
         return system_instruction, contents
 
-    def _convert_tools(self, tools: List[Dict[str, Any]]) -> list:
+    def _convert_tools(self, tools: list[dict[str, Any]]) -> list:
         """Convert OpenAI-style tool schemas to Gemini FunctionDeclarations.
 
         BaseAgent tools.get_schemas() returns:
@@ -209,15 +211,17 @@ class GeminiLLMProvider(LLMProvider):
         declarations = []
         for tool in tools:
             func = tool.get("function", tool)
-            declarations.append(types.FunctionDeclaration(
-                name=func["name"],
-                description=func.get("description", ""),
-                parameters=func.get("parameters"),
-            ))
+            declarations.append(
+                types.FunctionDeclaration(
+                    name=func["name"],
+                    description=func.get("description", ""),
+                    parameters=func.get("parameters"),
+                )
+            )
 
         return [types.Tool(function_declarations=declarations)]
 
-    def _extract_tool_calls(self, response) -> List[Dict[str, Any]]:
+    def _extract_tool_calls(self, response) -> list[dict[str, Any]]:
         """Extract tool calls from Gemini response.
 
         Converts Gemini's function_calls to the dict format that
@@ -240,17 +244,17 @@ class GeminiLLMProvider(LLMProvider):
         for i, part in enumerate(candidate.content.parts):
             if hasattr(part, "function_call") and part.function_call:
                 fc = part.function_call
-                tool_calls.append({
-                    "id": f"call_{i}",
-                    "name": fc.name,
-                    "arguments": dict(fc.args) if fc.args else {},
-                })
+                tool_calls.append(
+                    {
+                        "id": f"call_{i}",
+                        "name": fc.name,
+                        "arguments": dict(fc.args) if fc.args else {},
+                    }
+                )
 
         return tool_calls
 
-    def _estimate_cost(
-        self, model: str, prompt_tokens: int, completion_tokens: int
-    ) -> float:
+    def _estimate_cost(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
         """Estimate cost in USD based on token usage.
 
         Args:
@@ -272,7 +276,7 @@ class GeminiLLMProvider(LLMProvider):
 
     def generate(
         self,
-        prompt: Union[str, List[Dict[str, Any]]],
+        prompt: str | list[dict[str, Any]],
         model: str = "",
         **params,
     ) -> LLMResponse:
@@ -364,7 +368,7 @@ class GeminiLLMProvider(LLMProvider):
 
         return llm_response
 
-    def embed(self, text: str, model: Optional[str] = None) -> List[float]:
+    def embed(self, text: str, model: str | None = None) -> list[float]:
         """Generate embedding vector for text using Gemini.
 
         Args:
@@ -385,9 +389,45 @@ class GeminiLLMProvider(LLMProvider):
         return list(result.embeddings[0].values)
 
 
-# --- Registration ---
+# ============================================================================
+# TODO: OpenAI LLM Provider
+# ============================================================================
+# OpenAILLMProvider — planned but not yet implemented.
+#
+# Will provide:
+# - Native OpenAI message format (no conversion needed)
+# - Tool schema pass-through (BaseAgent already uses OpenAI format)
+# - Tool call response parsing
+# - Token usage tracking and cost estimation
+# - Embedding via text-embedding-3-small
+#
+# Models: gpt-4o, gpt-4o-mini, gpt-4.1, gpt-4.1-mini, gpt-4.1-nano, o3-mini
+# SDK: pip install openai
+# Env: OPENAI_API_KEY
 
-from openbench.core.registry import LLMProviderRegistry
+
+# ============================================================================
+# TODO: Anthropic LLM Provider
+# ============================================================================
+# AnthropicLLMProvider — planned but not yet implemented.
+#
+# Will provide:
+# - Message format conversion (OpenAI-style → Anthropic format)
+# - Tool schema conversion (OpenAI function format → Anthropic tool format)
+# - Tool call response parsing
+# - Token usage tracking and cost estimation
+# - Note: Anthropic does not offer an embeddings API
+#
+# Models: claude-sonnet-4-5, claude-haiku-4-5, claude-opus-4-6
+# SDK: pip install anthropic
+# Env: ANTHROPIC_API_KEY
+
+
+# ============================================================================
+# Registration
+# ============================================================================
+
+from openbench.core.registry import LLMProviderRegistry  # noqa: E402
 
 LLMProviderRegistry.register(
     "chat",

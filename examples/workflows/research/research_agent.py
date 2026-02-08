@@ -24,12 +24,11 @@ Requires:
 import argparse
 import os
 import sys
-from typing import List, Optional
 
+from openbench.adapters import GoogleADKAdapter
 from openbench.core.abstractions import Query
 from openbench.data.stores import PineconeStore
 from openbench.intelligence import GoogleEmbeddingProvider
-from openbench.adapters import GoogleADKAdapter
 
 
 class ResearchAgent:
@@ -76,7 +75,7 @@ class ResearchAgent:
         self._init_components()
 
         # Conversation history for context
-        self.history: List[dict] = []
+        self.history: list[dict] = []
 
     def _init_components(self):
         """Initialize store and LLM."""
@@ -109,7 +108,7 @@ Format your response as:
 - Any caveats or limitations""",
         )
 
-    def search(self, query: str) -> List[dict]:
+    def search(self, query: str) -> list[dict]:
         """Search knowledge base for relevant content.
 
         Args:
@@ -130,16 +129,18 @@ Format your response as:
         for i, item in enumerate(result.items):
             score = result.scores[i] if result.scores else 0
             if score >= self.min_score:
-                relevant.append({
-                    "id": item.get("id", f"doc-{i}"),
-                    "content": item.get("content", ""),
-                    "score": score,
-                    "metadata": item.get("metadata", {}),
-                })
+                relevant.append(
+                    {
+                        "id": item.get("id", f"doc-{i}"),
+                        "content": item.get("content", ""),
+                        "score": score,
+                        "metadata": item.get("metadata", {}),
+                    }
+                )
 
         return relevant
 
-    def synthesize(self, query: str, context: List[dict]) -> str:
+    def synthesize(self, query: str, context: list[dict]) -> str:
         """Synthesize answer from context using LLM.
 
         Args:
@@ -194,19 +195,23 @@ Provide a comprehensive answer with citations [1], [2], etc. referencing the sou
         # Step 3: Build response
         sources = []
         for i, doc in enumerate(context, 1):
-            sources.append({
-                "id": f"[{i}]",
-                "filename": doc.get("metadata", {}).get("filename", "Unknown"),
-                "score": round(doc.get("score", 0), 3),
-                "snippet": doc.get("content", "")[:200] + "...",
-            })
+            sources.append(
+                {
+                    "id": f"[{i}]",
+                    "filename": doc.get("metadata", {}).get("filename", "Unknown"),
+                    "score": round(doc.get("score", 0), 3),
+                    "snippet": doc.get("content", "")[:200] + "...",
+                }
+            )
 
         # Add to history
-        self.history.append({
-            "query": query,
-            "answer": answer,
-            "sources": sources,
-        })
+        self.history.append(
+            {
+                "query": query,
+                "answer": answer,
+                "sources": sources,
+            }
+        )
 
         return {
             "query": query,
@@ -286,8 +291,8 @@ def interactive_mode(agent: ResearchAgent):
                     stats = agent.store.describe_index()
                     print(f"\nIndex: {stats['index_name']}")
                     print(f"Total vectors: {stats['total_vector_count']}")
-                    if stats.get('namespaces'):
-                        for ns, data in stats['namespaces'].items():
+                    if stats.get("namespaces"):
+                        for ns, data in stats["namespaces"].items():
                             marker = "→" if ns == agent.namespace else " "
                             print(f"  {marker} {ns}: {data['vector_count']} vectors")
                 except Exception as e:
@@ -298,7 +303,7 @@ def interactive_mode(agent: ResearchAgent):
             print("\n🔍 Searching knowledge base...")
             result = agent.research(query)
 
-            print(f"\n🤖 Agent:\n")
+            print("\n🤖 Agent:\n")
             print(result["answer"])
 
             if result["sources"]:
@@ -346,9 +351,7 @@ def single_query(agent: ResearchAgent, query: str, verbose: bool = False):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Research Agent - Query knowledge base with RAG"
-    )
+    parser = argparse.ArgumentParser(description="Research Agent - Query knowledge base with RAG")
     parser.add_argument("query", nargs="?", help="Research query")
     parser.add_argument("--index", default="openbench", help="Pinecone index name")
     parser.add_argument("--namespace", default="knowledge-base", help="Pinecone namespace")
@@ -378,7 +381,7 @@ def main():
         parser.print_help()
         print("\nExamples:")
         print('  python research_agent.py "What are the main findings?"')
-        print('  python research_agent.py --interactive')
+        print("  python research_agent.py --interactive")
 
 
 if __name__ == "__main__":

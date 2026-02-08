@@ -28,17 +28,14 @@ Requires:
 
 import argparse
 import os
-import re
 import sys
-from typing import Dict, List, Optional
 
+from openbench.adapters import GoogleADKAdapter
 from openbench.core.abstractions import Query
 from openbench.data.sources import GroundedSearchSource
-from openbench.adapters import GoogleADKAdapter
-
 
 # Known namespaces with keywords for auto-detection
-KNOWN_NAMESPACES: Dict[str, List[str]] = {
+KNOWN_NAMESPACES: dict[str, list[str]] = {
     "acme": ["acme", "acme corp", "acme inc", "acme company"],
     "knowledge-base": ["default", "general"],
 }
@@ -64,7 +61,7 @@ def detect_namespace(query: str, default: str = "knowledge-base") -> str:
     return default
 
 
-def list_namespaces(index_name: str = "openbench") -> Dict[str, int]:
+def list_namespaces(index_name: str = "openbench") -> dict[str, int]:
     """List available namespaces in Pinecone index.
 
     Returns:
@@ -115,7 +112,7 @@ class HybridResearchAgent:
         mode: str = "grounded",
         # RAG settings
         index_name: str = "openbench",
-        namespace: Optional[str] = None,  # None = auto-detect
+        namespace: str | None = None,  # None = auto-detect
         auto_detect_namespace: bool = True,
         # Search settings
         grounded_provider: str = "gemini",
@@ -149,7 +146,7 @@ class HybridResearchAgent:
         self.quiet = quiet
 
         self._init_components()
-        self.history: List[dict] = []
+        self.history: list[dict] = []
 
     def _log(self, message: str):
         """Print message if not in quiet mode."""
@@ -165,7 +162,7 @@ class HybridResearchAgent:
                 from openbench.data.stores import PineconeStore
                 from openbench.intelligence import GoogleEmbeddingProvider
 
-                self._log(f"\n🔧 Initializing RAG components...")
+                self._log("\n🔧 Initializing RAG components...")
                 self._log(f"   Index: {self.index_name}")
                 self._log(f"   Namespace: {self.namespace}")
 
@@ -191,11 +188,12 @@ class HybridResearchAgent:
                 self._log(f"   ✗ RAG disabled - {e}")
                 if not self.quiet:
                     import traceback
+
                     traceback.print_exc()
 
-    def search_rag(self, query: str) -> List[dict]:
+    def search_rag(self, query: str) -> list[dict]:
         """Search vector store."""
-        self._log(f"\n📚 RAG Search")
+        self._log("\n📚 RAG Search")
         self._log(f"   Query: '{query}'")
         self._log(f"   Store: {self.store is not None}")
 
@@ -214,19 +212,21 @@ class HybridResearchAgent:
                 return []
 
             docs = []
-            self._log(f"\n   Results (threshold: 0.7):")
+            self._log("\n   Results (threshold: 0.7):")
             for i, item in enumerate(result.items):
                 score = result.scores[i] if result.scores else 0
                 content_preview = item.get("content", "")[:80].replace("\n", " ")
                 status = "✓" if score >= 0.7 else "✗"
-                self._log(f"   {status} [{i+1}] score={score:.3f} | {content_preview}...")
+                self._log(f"   {status} [{i + 1}] score={score:.3f} | {content_preview}...")
                 if score >= 0.7:
-                    docs.append({
-                        "id": f"RAG-{i+1}",
-                        "content": item.get("content", "")[:2000],
-                        "score": score,
-                        "source": item.get("metadata", {}).get("filename", "Internal"),
-                    })
+                    docs.append(
+                        {
+                            "id": f"RAG-{i + 1}",
+                            "content": item.get("content", "")[:2000],
+                            "score": score,
+                            "source": item.get("metadata", {}).get("filename", "Internal"),
+                        }
+                    )
 
             self._log(f"\n   Summary: {len(docs)}/{len(result.items)} passed threshold")
             return docs
@@ -234,6 +234,7 @@ class HybridResearchAgent:
             self._log(f"   ✗ RAG search error: {e}")
             if not self.quiet:
                 import traceback
+
                 traceback.print_exc()
             return []
 
@@ -281,7 +282,9 @@ class HybridResearchAgent:
             if rag_docs:
                 context = "\n\n".join([f"[{d['id']}] {d['content']}" for d in rag_docs])
                 llm = GoogleADKAdapter(model=self.model)
-                res = llm.invoke({"goal": f"Answer based on context:\n{context}\n\nQuestion: {query}"})
+                res = llm.invoke(
+                    {"goal": f"Answer based on context:\n{context}\n\nQuestion: {query}"}
+                )
                 results["answer"] = res.get("content", "")
                 results["sources"] = [{"id": d["id"], "source": d["source"]} for d in rag_docs]
             else:
@@ -307,7 +310,10 @@ class HybridResearchAgent:
 
             if rag_docs:
                 rag_context = "\n\n".join(
-                    [f"[RAG-{i+1}] Source: {d['source']}\n{d['content']}" for i, d in enumerate(rag_docs)]
+                    [
+                        f"[RAG-{i + 1}] Source: {d['source']}\n{d['content']}"
+                        for i, d in enumerate(rag_docs)
+                    ]
                 )
                 context_parts.append(f"INTERNAL DOCUMENTS (from knowledge base):\n{rag_context}")
 
@@ -384,24 +390,33 @@ Examples:
 
   # List available namespaces
   python hybrid_research_agent.py --list-namespaces
-        """
+        """,
     )
     parser.add_argument("query", nargs="?", help="Research query")
-    parser.add_argument("--mode", default="grounded",
-                        choices=["grounded", "rag", "hybrid"],
-                        help="Search mode (default: grounded)")
-    parser.add_argument("--grounded-provider", default="gemini",
-                        choices=["gemini", "perplexity"])
+    parser.add_argument(
+        "--mode",
+        default="grounded",
+        choices=["grounded", "rag", "hybrid"],
+        help="Search mode (default: grounded)",
+    )
+    parser.add_argument("--grounded-provider", default="gemini", choices=["gemini", "perplexity"])
     parser.add_argument("--model", default="gemini-2.5-flash")
     parser.add_argument("--index", default="openbench", help="Pinecone index name")
-    parser.add_argument("--namespace", default=None,
-                        help="Pinecone namespace (auto-detected if not specified)")
-    parser.add_argument("--no-auto-detect", action="store_true",
-                        help="Disable namespace auto-detection")
-    parser.add_argument("--quiet", "-q", action="store_true",
-                        help="Quiet mode - minimal output for chatbot integration")
-    parser.add_argument("--list-namespaces", "-l", action="store_true",
-                        help="List available namespaces in Pinecone")
+    parser.add_argument(
+        "--namespace", default=None, help="Pinecone namespace (auto-detected if not specified)"
+    )
+    parser.add_argument(
+        "--no-auto-detect", action="store_true", help="Disable namespace auto-detection"
+    )
+    parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Quiet mode - minimal output for chatbot integration",
+    )
+    parser.add_argument(
+        "--list-namespaces", "-l", action="store_true", help="List available namespaces in Pinecone"
+    )
     parser.add_argument("--interactive", "-i", action="store_true")
     args = parser.parse_args()
 
@@ -491,7 +506,9 @@ Examples:
                         if sources.get("rag"):
                             print("\n📚 Internal Sources:")
                             for src in sources["rag"]:
-                                print(f"   [{src['id']}] {src['source']} ({src.get('score', 0):.2f})")
+                                print(
+                                    f"   [{src['id']}] {src['source']} ({src.get('score', 0):.2f})"
+                                )
                         if sources.get("web"):
                             print("\n🌐 Web Sources:")
                             for src in sources["web"]:
@@ -548,7 +565,7 @@ Examples:
         print("\nExamples:")
         print('  python hybrid_research_agent.py "AI trends 2026" --mode grounded')
         print('  python hybrid_research_agent.py "revenue 2024" --mode rag --namespace acme')
-        print('  python hybrid_research_agent.py --interactive')
+        print("  python hybrid_research_agent.py --interactive")
 
 
 if __name__ == "__main__":

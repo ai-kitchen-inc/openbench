@@ -6,10 +6,9 @@ of dimensions and model capabilities.
 """
 
 import os
-from typing import Any, Dict, List, Optional
 
 from openbench.core.abstractions import EmbeddingProvider
-from openbench.core.config import EMBEDDING_MODELS, get_embedding_dimension
+from openbench.core.config import EMBEDDING_MODELS
 
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
@@ -50,8 +49,8 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     def __init__(
         self,
         model: str = "text-embedding-3-small",
-        api_key: Optional[str] = None,
-        dimension: Optional[int] = None,
+        api_key: str | None = None,
+        dimension: int | None = None,
     ):
         """
         Initialize OpenAI embedding provider.
@@ -74,7 +73,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     def default_model(self) -> str:
         return self._model
 
-    def get_dimension(self, model: Optional[str] = None) -> int:
+    def get_dimension(self, model: str | None = None) -> int:
         model = model or self._model
 
         # 1. Custom dimension override
@@ -101,7 +100,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             except ImportError:
                 raise ImportError(
                     "openai package required. Install with: pip install openai"
-                )
+                ) from None
 
             if not self._api_key:
                 raise ValueError(
@@ -113,7 +112,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
 
         return self._client
 
-    def embed(self, text: str, model: Optional[str] = None) -> List[float]:
+    def embed(self, text: str, model: str | None = None) -> list[float]:
         model = model or self._model
         client = self._get_client()
 
@@ -125,17 +124,14 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         return response.data[0].embedding
 
     def embed_batch(
-        self,
-        texts: List[str],
-        model: Optional[str] = None,
-        batch_size: int = 100
-    ) -> List[List[float]]:
+        self, texts: list[str], model: str | None = None, batch_size: int = 100
+    ) -> list[list[float]]:
         model = model or self._model
         client = self._get_client()
 
         embeddings = []
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
             response = client.embeddings.create(
                 input=batch,
                 model=model,
@@ -146,7 +142,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
 
         return embeddings
 
-    def list_models(self) -> Dict[str, int]:
+    def list_models(self) -> dict[str, int]:
         return dict(self.MODELS)
 
 
@@ -183,8 +179,8 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
     def __init__(
         self,
         model: str = "text-embedding-004",
-        api_key: Optional[str] = None,
-        dimension: Optional[int] = None,
+        api_key: str | None = None,
+        dimension: int | None = None,
     ):
         """
         Initialize Google embedding provider.
@@ -207,7 +203,7 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
     def default_model(self) -> str:
         return self._model
 
-    def get_dimension(self, model: Optional[str] = None) -> int:
+    def get_dimension(self, model: str | None = None) -> int:
         model = model or self._model
 
         # 1. Custom dimension override
@@ -237,7 +233,7 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
             raise ImportError(
                 "google-generativeai package required. "
                 "Install with: pip install google-generativeai"
-            )
+            ) from None
 
         if not self._api_key:
             raise ValueError(
@@ -248,7 +244,7 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
         genai.configure(api_key=self._api_key)
         self._configured = True
 
-    def embed(self, text: str, model: Optional[str] = None) -> List[float]:
+    def embed(self, text: str, model: str | None = None) -> list[float]:
         self._configure()
         import google.generativeai as genai
 
@@ -263,11 +259,8 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
         return result["embedding"]
 
     def embed_batch(
-        self,
-        texts: List[str],
-        model: Optional[str] = None,
-        batch_size: int = 100
-    ) -> List[List[float]]:
+        self, texts: list[str], model: str | None = None, batch_size: int = 100
+    ) -> list[list[float]]:
         self._configure()
         import google.generativeai as genai
 
@@ -275,7 +268,7 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
         embeddings = []
 
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
             # Google API supports batch embedding
             result = genai.embed_content(
                 model=f"models/{model}",
@@ -286,7 +279,7 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
 
         return embeddings
 
-    def list_models(self) -> Dict[str, int]:
+    def list_models(self) -> dict[str, int]:
         return dict(self.MODELS)
 
 
@@ -297,11 +290,7 @@ EMBEDDING_PROVIDERS = {
 }
 
 
-def get_embedding_provider(
-    provider: str,
-    model: Optional[str] = None,
-    **kwargs
-) -> EmbeddingProvider:
+def get_embedding_provider(provider: str, model: str | None = None, **kwargs) -> EmbeddingProvider:
     """
     Get an embedding provider by name.
 
@@ -318,8 +307,7 @@ def get_embedding_provider(
     """
     if provider not in EMBEDDING_PROVIDERS:
         raise ValueError(
-            f"Unknown embedding provider: {provider}. "
-            f"Available: {list(EMBEDDING_PROVIDERS.keys())}"
+            f"Unknown embedding provider: {provider}. Available: {list(EMBEDDING_PROVIDERS.keys())}"
         )
 
     provider_class = EMBEDDING_PROVIDERS[provider]
@@ -330,9 +318,7 @@ def get_embedding_provider(
 
 
 def resolve_embedding_provider(
-    model: Optional[str] = None,
-    provider: Optional[str] = None,
-    **kwargs
+    model: str | None = None, provider: str | None = None, **kwargs
 ) -> EmbeddingProvider:
     """
     Resolve an embedding provider from model or provider name.

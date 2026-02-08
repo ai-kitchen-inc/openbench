@@ -7,13 +7,15 @@ from openbench.core.abstractions import EmbeddingProvider
 from openbench.core.config import (
     EMBEDDING_MODELS,
     get_embedding_dimension,
-    get_embedding_provider as get_provider_name,
     list_embedding_models,
 )
+from openbench.core.config import (
+    get_embedding_provider as get_provider_name,
+)
 from openbench.intelligence.embeddings import (
-    OpenAIEmbeddingProvider,
-    GoogleEmbeddingProvider,
     EMBEDDING_PROVIDERS,
+    GoogleEmbeddingProvider,
+    OpenAIEmbeddingProvider,
     get_embedding_provider,
     resolve_embedding_provider,
 )
@@ -29,6 +31,7 @@ class TestEmbeddingProviderABC(unittest.TestCase):
 
     def test_concrete_class_works(self):
         """Test that a concrete implementation can be created."""
+
         class ConcreteProvider(EmbeddingProvider):
             @property
             def provider_name(self) -> str:
@@ -138,10 +141,7 @@ class TestOpenAIEmbeddingProvider(unittest.TestCase):
 
     def test_custom_dimension_override(self):
         """Test custom dimension parameter for new models."""
-        provider = OpenAIEmbeddingProvider(
-            model="text-embedding-4",
-            dimension=2048
-        )
+        provider = OpenAIEmbeddingProvider(model="text-embedding-4", dimension=2048)
         self.assertEqual(provider.get_dimension(), 2048)
 
     def test_get_dimension(self):
@@ -210,10 +210,7 @@ class TestGoogleEmbeddingProvider(unittest.TestCase):
 
     def test_custom_dimension_override(self):
         """Test custom dimension parameter for new models."""
-        provider = GoogleEmbeddingProvider(
-            model="text-embedding-005",
-            dimension=1024
-        )
+        provider = GoogleEmbeddingProvider(model="text-embedding-005", dimension=1024)
         self.assertEqual(provider.get_dimension(), 1024)
 
     def test_get_dimension(self):
@@ -284,10 +281,7 @@ class TestResolveEmbeddingProvider(unittest.TestCase):
 
     def test_resolve_with_both_provider_and_model(self):
         """Test resolution with both provider and model."""
-        provider = resolve_embedding_provider(
-            provider="openai",
-            model="text-embedding-3-large"
-        )
+        provider = resolve_embedding_provider(provider="openai", model="text-embedding-3-large")
         self.assertIsInstance(provider, OpenAIEmbeddingProvider)
         self.assertEqual(provider.default_model, "text-embedding-3-large")
 

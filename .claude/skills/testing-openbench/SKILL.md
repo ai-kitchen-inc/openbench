@@ -105,6 +105,24 @@ class TestWithMocks(unittest.TestCase):
 - **Edge cases**: Boundary conditions, empty inputs
 - **Error handling**: Invalid inputs, exceptions
 
+## Anti-Patterns
+
+**DO NOT:**
+- Write trivial tests that always pass (e.g., `assertTrue(validator.validate("hello"))` when validate always returns True)
+- Mix mocking styles inconsistently - prefer `Mock*` classes for abstractions, `@patch` for external deps
+- Test internal methods directly - test through public API (`invoke()`, `execute()`, `extract()`)
+- Skip mocking LLM calls - real API calls make tests slow, flaky, and expensive
+- Forget to test the Chainable interface - every component should test `invoke()` and `|` operator
+- Use hardcoded test values without explanation - add comments for magic numbers
+
+## Cross-References
+
+- **Intelligence Layer**: Mock `LLMProvider.generate()` and `ToolExecutor` → see `intelligence-layer` skill
+- **Data Layer**: Mock store operations and embedding calls → see `data-layer` skill
+- **Adapters**: Mock external framework imports with lazy import pattern → see `adapters` skill
+- **Output Layer**: Mock file I/O for generator tests → see `output-layer` skill
+- **Creating Abstractions**: Test abstract property implementations → see `creating-abstractions` skill
+
 ## Best Practices
 
 1. One assertion per concept

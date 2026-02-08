@@ -16,7 +16,9 @@
       "Write(examples/**)",
       "Edit(src/**)",
       "Edit(tests/**)",
-      "Edit(examples/**)"
+      "Edit(examples/**)",
+      "Write(docs/**)",
+      "Edit(docs/**)"
     ],
     "deny": []
   }

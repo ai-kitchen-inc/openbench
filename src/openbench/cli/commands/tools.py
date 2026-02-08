@@ -1,12 +1,11 @@
 """Tools and MCP registry CLI commands."""
 
 import time
-from typing import Optional
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
 
 console = Console()
 
@@ -14,7 +13,6 @@ console = Console()
 @click.group()
 def tools() -> None:
     """Manage tools and MCP integrations."""
-    pass
 
 
 @tools.command()
@@ -27,7 +25,7 @@ def tools() -> None:
 )
 @click.option("--path", help="Path to tool definition")
 @click.option("--url", help="URL for MCP server")
-def register(name: str, tool_type: Optional[str], path: Optional[str], url: Optional[str]) -> None:
+def register(name: str, tool_type: str | None, path: str | None, url: str | None) -> None:
     """Register a new tool or MCP server."""
 
     console.print(f"\n[bold cyan]Registering Tool: {name}[/bold cyan]\n")
@@ -89,13 +87,13 @@ def test(name: str) -> None:
 
     console.print(
         Panel(
-            f"[green]Done[/green] Tool test successful!\n\n"
-            f"[bold]Test Results:[/bold]\n"
-            f"  - Connection: OK\n"
-            f"  - Response time: 234ms\n"
-            f"  - Output: Valid\n\n"
-            f"[bold]Sample Output:[/bold]\n"
-            f"  {{'status': 'success', 'data': [...]}}",
+            "[green]Done[/green] Tool test successful!\n\n"
+            "[bold]Test Results:[/bold]\n"
+            "  - Connection: OK\n"
+            "  - Response time: 234ms\n"
+            "  - Output: Valid\n\n"
+            "[bold]Sample Output:[/bold]\n"
+            "  {'status': 'success', 'data': [...]}",
             title=f"[bold green]{name} Test[/bold green]",
             border_style="green",
         )
@@ -122,7 +120,7 @@ def remove(name: str) -> None:
 @click.argument("name")
 @click.option("--key", help="Configuration key")
 @click.option("--value", help="Configuration value")
-def configure(name: str, key: Optional[str], value: Optional[str]) -> None:
+def configure(name: str, key: str | None, value: str | None) -> None:
     """Configure a tool's settings."""
 
     console.print(f"\n[bold cyan]Configuring Tool: {name}[/bold cyan]\n")

@@ -1,13 +1,12 @@
 """Intelligence Layer - Agent CLI commands."""
 
 import time
-from typing import Optional, Tuple
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.table import Table
 
 console = Console()
 
@@ -15,7 +14,6 @@ console = Console()
 @click.group()
 def agent() -> None:
     """Manage AI agents and the Intelligence Layer."""
-    pass
 
 
 @agent.command()
@@ -29,7 +27,7 @@ def agent() -> None:
 )
 @click.option("--model", default="gpt-4", help="LLM model to use")
 @click.option("--tools", multiple=True, help="Tools available to the agent")
-def create(name: str, agent_type: str, model: str, tools: Tuple[str, ...]) -> None:
+def create(name: str, agent_type: str, model: str, tools: tuple[str, ...]) -> None:
     """Create a new AI agent."""
 
     console.print(f"\n[bold cyan]Creating Agent: {name}[/bold cyan]\n")
@@ -83,7 +81,7 @@ def list_agents() -> None:
 @click.argument("name")
 @click.option("--prompt", help="Test prompt for the agent")
 @click.option("--data", help="Data source to use")
-def test(name: str, prompt: Optional[str], data: Optional[str]) -> None:
+def test(name: str, prompt: str | None, data: str | None) -> None:
     """Test an agent with a sample prompt."""
 
     console.print(f"\n[bold cyan]Testing Agent: {name}[/bold cyan]\n")
@@ -117,7 +115,7 @@ def test(name: str, prompt: Optional[str], data: Optional[str]) -> None:
 @click.argument("name")
 @click.option("--key", help="Configuration key to update")
 @click.option("--value", help="New value")
-def configure(name: str, key: Optional[str], value: Optional[str]) -> None:
+def configure(name: str, key: str | None, value: str | None) -> None:
     """Configure agent settings."""
 
     console.print(f"\n[bold cyan]Configuring Agent: {name}[/bold cyan]\n")
@@ -144,7 +142,7 @@ def _get_default_goal(agent_type: str) -> str:
     return goals.get(agent_type, "Accomplish the given task")
 
 
-def _format_tools(tools: Tuple[str, ...]) -> str:
+def _format_tools(tools: tuple[str, ...]) -> str:
     """Format tools list for YAML."""
     if not tools:
         return ""

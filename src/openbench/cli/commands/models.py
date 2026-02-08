@@ -2,10 +2,10 @@
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
 
-from openbench.core.config import get_config, ModelInfo
+from openbench.core.config import ModelInfo, get_config
 
 console = Console()
 
@@ -13,12 +13,16 @@ console = Console()
 @click.group()
 def models():
     """Manage LLM models and configurations."""
-    pass
 
 
 @models.command()
 @click.argument("name")
-@click.option("--provider", required=True, type=click.Choice(["openai", "anthropic", "google", "local"]), help="Model provider")
+@click.option(
+    "--provider",
+    required=True,
+    type=click.Choice(["openai", "anthropic", "google", "local"]),
+    help="Model provider",
+)
 @click.option("--context", type=int, default=128000, help="Context window size")
 @click.option("--max-output", type=int, default=4096, help="Maximum output tokens")
 @click.option("--vision/--no-vision", default=False, help="Supports vision input")
@@ -60,7 +64,11 @@ def register(name, provider, context, max_output, vision, tools, alias):
 
 
 @models.command("list")
-@click.option("--provider", type=click.Choice(["openai", "anthropic", "google", "local"]), help="Filter by provider")
+@click.option(
+    "--provider",
+    type=click.Choice(["openai", "anthropic", "google", "local"]),
+    help="Filter by provider",
+)
 def list_models(provider):
     """List all registered models."""
     console.print("\n[bold cyan]Registered Models[/bold cyan]\n")
@@ -138,7 +146,7 @@ def test(name, prompt):
 
     This tests the model through ProviderService integration.
     """
-    from openbench.core.providers import get_provider_service, ProviderType
+    from openbench.core.providers import ProviderType, get_provider_service
 
     config = get_config()
     model = config.get_model(name)
@@ -191,7 +199,7 @@ def test(name, prompt):
         except Exception as e:
             console.print(
                 Panel.fit(
-                    f"[red]✗[/red] Test failed\n\n{str(e)}",
+                    f"[red]✗[/red] Test failed\n\n{e!s}",
                     title="[bold red]Error[/bold red]",
                     border_style="red",
                 )

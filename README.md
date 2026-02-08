@@ -63,6 +63,8 @@ Bring your own agents from ANY framework:
 
 ```python
 from openbench.adapters.langchain import LangChainAdapter
+from openbench.data.sources import PDFSource
+from openbench.output.generators import PDFGenerator
 from openbench import Workflow
 
 # Your existing LangChain agent
@@ -70,12 +72,14 @@ my_langchain_agent = AgentExecutor(...)
 
 # Use it in OpenBench
 workflow = Workflow(
+    name="langchain-report",
     chain=(
-        WebSource("https://example.com")      # OpenBench data layer
+        PDFSource("./documents/report.pdf")    # OpenBench data layer
         | LangChainAdapter(my_langchain_agent)  # Your LangChain agent
-        | PDFGenerator()                       # OpenBench output layer
+        | PDFGenerator()                        # OpenBench output layer
     )
 )
+result = workflow.run()
 ```
 
 **No rewrites. No lock-in. Pure interoperability.**
@@ -131,11 +135,17 @@ python examples/sustainability_report.py
 
 ```python
 from openbench import DataLayer, IntelligenceLayer, OutputLayer
+from openbench.data.sources import PDFSource
+from openbench.intelligence.agents import ResearchAgent
+from openbench.output.generators import PDFGenerator
 
-data = DataLayer.connect(sources=["./documents", "postgres://mydb"])
-agent = IntelligenceLayer.create_agent(task="Analyze Q4 sales", tools=["semantic_search", "sql_query"])
-result = agent.execute(data)
-OutputLayer.export(result, format="presentation")
+# Compose layers with pipe operators
+workflow = (
+    DataLayer(sources=PDFSource("./documents/report.pdf"))
+    | IntelligenceLayer(agents=ResearchAgent(goal="Analyze Q4 sales"))
+    | OutputLayer(generators=PDFGenerator())
+)
+result = workflow.invoke({"goal": "Q4 Sales Analysis"})
 ```
 
 ## Architecture
@@ -149,13 +159,22 @@ Three layers working in harmony:
 **Output Layer** - Export anywhere: PDF, PowerPoint, Audio, Video, Dashboards, API endpoints.
 
 ```python
-workflow = IntelligenceLayer.workflow([
-    ResearchAgent(goal="Competitive intelligence", sources=["web", "news"]),
-    AnalysisAgent(goal="Market gaps", methods=["swot"]),
-    ContentAgent(goal="Strategic memo", style="executive")
-])
-result = workflow.execute(checkpoints=True)
-OutputLayer.export(result, format="slides", narration=True)
+from openbench import Workflow
+from openbench.intelligence.agents import ResearchAgent, AnalysisAgent, ContentAgent
+from openbench.output.generators import PDFGenerator, PowerPointGenerator
+
+# Chain agents sequentially, output in parallel
+workflow = Workflow(
+    name="strategic-analysis",
+    chain=(
+        ResearchAgent(goal="Competitive intelligence")
+        | AnalysisAgent(goal="Market gaps")
+        | ContentAgent(goal="Strategic memo")
+        | (PDFGenerator() & PowerPointGenerator())
+    ),
+    checkpoints=True
+)
+result = workflow.run({"goal": "Strategic Analysis"})
 ```
 
 ---
@@ -189,7 +208,7 @@ Research data + Brand guidelines → Multi-agent workflow → Blog + Video + Soc
 
 ## Tech Stack
 
-Python (FastAPI), LangChain, LlamaIndex, OpenAI/Anthropic, DuckDB, Pandas, ChromaDB/Pinecone, Docker/Kubernetes.
+Python, Click, Pydantic, Google GenAI, OpenAI, Anthropic, LangChain, CrewAI, AG2, Pandas, ChromaDB/Pinecone, ReportLab, python-pptx.
 
 ## Features
 
@@ -207,6 +226,27 @@ Python (FastAPI), LangChain, LlamaIndex, OpenAI/Anthropic, DuckDB, Pandas, Chrom
 - [ ] **Q2 2026**: Marketplace for community agents and templates
 - [ ] **Q3 2026**: Edge deployment for air-gapped environments
 - [ ] **Q4 2026**: Multi-modal agent support (vision, audio, code)
+
+## Development
+
+```bash
+# Install with dev dependencies
+pip install -e ".[dev]"
+
+# Linting & formatting (Ruff - all-in-one)
+ruff check src/ tests/       # Lint
+ruff check --fix src/ tests/  # Lint + auto-fix
+ruff format src/ tests/       # Format
+
+# Setup pre-commit hooks (runs ruff automatically on git commit)
+pre-commit install
+
+# Run tests
+python -m unittest discover tests -v
+
+# Run tests with coverage
+pytest tests/ --cov=openbench --cov-report=term-missing
+```
 
 ## Contributing
 

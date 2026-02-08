@@ -8,13 +8,13 @@ Provides single source of truth for all configuration:
 - Hierarchical config with dot notation access
 """
 
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional, TypeVar, Union
 import json
 import logging
 import os
 import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +55,9 @@ class ModelInfo:
     supports_tools: bool = True
     cost_per_1k_input: float = 0.0
     cost_per_1k_output: float = 0.0
-    aliases: List[str] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "name": self.name,
@@ -72,7 +72,7 @@ class ModelInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ModelInfo":
+    def from_dict(cls, data: dict[str, Any]) -> "ModelInfo":
         """Create from dictionary."""
         return cls(
             name=data["name"],
@@ -104,17 +104,17 @@ class Config:
         >>> api_key = config.get("credentials.openai.api_key")
     """
 
-    def __init__(self, data: Optional[Dict[str, Any]] = None):
+    def __init__(self, data: dict[str, Any] | None = None):
         """
         Initialize config.
 
         Args:
             data: Initial configuration data
         """
-        self._data: Dict[str, Any] = data or {}
-        self._models: Dict[str, ModelInfo] = {}
+        self._data: dict[str, Any] = data or {}
+        self._models: dict[str, ModelInfo] = {}
 
-    def load(self, path: Union[str, Path]) -> "Config":
+    def load(self, path: str | Path) -> "Config":
         """
         Load configuration from file.
 
@@ -141,7 +141,9 @@ class Config:
 
                 data = yaml.safe_load(content)
             except ImportError:
-                raise ImportError("PyYAML required for YAML config files: pip install pyyaml")
+                raise ImportError(
+                    "PyYAML required for YAML config files: pip install pyyaml"
+                ) from None
         elif path.suffix == ".json":
             data = json.loads(content)
         else:
@@ -184,7 +186,7 @@ class Config:
 
         return self
 
-    def _merge(self, base: Dict[str, Any], override: Dict[str, Any]) -> None:
+    def _merge(self, base: dict[str, Any], override: dict[str, Any]) -> None:
         """Deep merge override into base."""
         for key, value in override.items():
             if key in base and isinstance(base[key], dict) and isinstance(value, dict):
@@ -192,7 +194,7 @@ class Config:
             else:
                 base[key] = value
 
-    def get(self, key: str, default: T = None) -> Union[Any, T]:
+    def get(self, key: str, default: T = None) -> Any | T:
         """
         Get config value by dot-notation key.
 
@@ -239,7 +241,7 @@ class Config:
             return value.lower() in ("true", "1", "yes", "on")
         return bool(value)
 
-    def get_list(self, key: str, default: Optional[List] = None) -> List:
+    def get_list(self, key: str, default: list | None = None) -> list:
         """Get config value as list."""
         value = self.get(key)
         if value is None:
@@ -266,7 +268,7 @@ class Config:
 
         data[parts[-1]] = value
 
-    def get_model(self, name: str) -> Optional[ModelInfo]:
+    def get_model(self, name: str) -> ModelInfo | None:
         """
         Get model info by name or alias.
 
@@ -289,7 +291,7 @@ class Config:
         for alias in model.aliases:
             self._models[alias] = model
 
-    def list_models(self, provider: Optional[str] = None) -> List[ModelInfo]:
+    def list_models(self, provider: str | None = None) -> list[ModelInfo]:
         """
         List registered models.
 
@@ -308,7 +310,7 @@ class Config:
 
         return models
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Export config as dictionary."""
         data = dict(self._data)
         if self._models:
@@ -317,7 +319,7 @@ class Config:
             data["models"] = [m.to_dict() for m in unique.values()]
         return data
 
-    def save(self, path: Union[str, Path]) -> None:
+    def save(self, path: str | Path) -> None:
         """
         Save configuration to file.
 
@@ -335,7 +337,9 @@ class Config:
 
                 content = yaml.dump(data, default_flow_style=False)
             except ImportError:
-                raise ImportError("PyYAML required for YAML config files: pip install pyyaml")
+                raise ImportError(
+                    "PyYAML required for YAML config files: pip install pyyaml"
+                ) from None
         else:
             content = json.dumps(data, indent=2)
 
@@ -400,16 +404,16 @@ DEFAULT_MODELS = [
 
 
 # Lazy-loaded registry (built from provider classes)
-_EMBEDDING_MODELS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+_EMBEDDING_MODELS_CACHE: dict[str, dict[str, Any]] | None = None
 
 
-def _build_embedding_models_registry() -> Dict[str, Dict[str, Any]]:
+def _build_embedding_models_registry() -> dict[str, dict[str, Any]]:
     """Build embedding models registry from provider classes.
 
     Returns:
         Dict mapping model name to {dimension, provider}.
     """
-    registry: Dict[str, Dict[str, Any]] = {}
+    registry: dict[str, dict[str, Any]] = {}
 
     try:
         from openbench.intelligence.embeddings import EMBEDDING_PROVIDERS
@@ -424,7 +428,7 @@ def _build_embedding_models_registry() -> Dict[str, Dict[str, Any]]:
     return registry
 
 
-def get_embedding_models_registry() -> Dict[str, Dict[str, Any]]:
+def get_embedding_models_registry() -> dict[str, dict[str, Any]]:
     """Get the embedding models registry (lazy-loaded).
 
     Returns:
@@ -440,7 +444,7 @@ def get_embedding_models_registry() -> Dict[str, Dict[str, Any]]:
 class _EmbeddingModelsProxy:
     """Proxy class for lazy-loading EMBEDDING_MODELS."""
 
-    def __getitem__(self, key: str) -> Dict[str, Any]:
+    def __getitem__(self, key: str) -> dict[str, Any]:
         return get_embedding_models_registry()[key]
 
     def __contains__(self, key: str) -> bool:
@@ -488,10 +492,7 @@ def get_embedding_dimension(model: str) -> int:
     registry = get_embedding_models_registry()
     if model in registry:
         return registry[model]["dimension"]
-    raise ValueError(
-        f"Unknown embedding model: {model}. "
-        f"Known models: {list(registry.keys())}"
-    )
+    raise ValueError(f"Unknown embedding model: {model}. Known models: {list(registry.keys())}")
 
 
 def get_embedding_provider(model: str) -> str:
@@ -513,7 +514,7 @@ def get_embedding_provider(model: str) -> str:
     raise ValueError(f"Unknown embedding model: {model}")
 
 
-def list_embedding_models(provider: Optional[str] = None) -> Dict[str, int]:
+def list_embedding_models(provider: str | None = None) -> dict[str, int]:
     """
     List embedding models with their dimensions.
 
@@ -547,7 +548,7 @@ DEFAULT_CONFIG = {
 }
 
 # Global config instance
-_config: Optional[Config] = None
+_config: Config | None = None
 
 
 def get_config() -> Config:

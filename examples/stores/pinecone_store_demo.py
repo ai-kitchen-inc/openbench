@@ -170,7 +170,7 @@ def demo_index_documents(store):
 
     # Show index stats
     stats = store.describe_index()
-    print(f"\nIndex Statistics:")
+    print("\nIndex Statistics:")
     print(f"  Dimension: {stats['dimension']}")
     print(f"  Total vectors: {stats['total_vector_count']}")
     print(f"  Namespaces: {list(stats['namespaces'].keys())}")
@@ -191,14 +191,14 @@ def demo_semantic_search(store):
     ]
 
     for query_text in queries:
-        print(f"\nQuery: \"{query_text}\"")
+        print(f'\nQuery: "{query_text}"')
         print("-" * 40)
 
         query = Query(text=query_text, limit=3)
         results = store.search(query)
 
         print(f"Found {results.total} results:")
-        for i, (item, score) in enumerate(zip(results.items, results.scores), 1):
+        for i, (item, score) in enumerate(zip(results.items, results.scores, strict=False), 1):
             title = item["metadata"].get("title", "Unknown")
             category = item["metadata"].get("category", "N/A")
             print(f"  {i}. [{score:.4f}] {title} ({category})")
@@ -223,7 +223,7 @@ def demo_filtered_search(store):
     results = store.search(query)
 
     print(f"Found {results.total} results (AI category only):")
-    for i, (item, score) in enumerate(zip(results.items, results.scores), 1):
+    for i, (item, score) in enumerate(zip(results.items, results.scores, strict=False), 1):
         title = item["metadata"].get("title", "Unknown")
         author = item["metadata"].get("author", "N/A")
         print(f"  {i}. [{score:.4f}] {title} by {author}")
@@ -254,6 +254,7 @@ def demo_crud_operations(store):
 
     # Search for the new document
     from openbench.core.abstractions import Query
+
     query = Query(text="container orchestration", limit=1)
     results = store.search(query)
 
@@ -265,18 +266,20 @@ def demo_crud_operations(store):
         print(f"  Score: {results.scores[0]:.4f}")
 
         # Update the document
-        print(f"\n[UPDATE] Updating metadata...")
+        print("\n[UPDATE] Updating metadata...")
         success = store.update(item_id, {"version": "2.0", "reviewed": True})
         print(f"  Update successful: {success}")
 
         # Read updated item
         updated = store.get(item_id)
         if updated:
-            print(f"  New metadata: version={updated['metadata'].get('version')}, "
-                  f"reviewed={updated['metadata'].get('reviewed')}")
+            print(
+                f"  New metadata: version={updated['metadata'].get('version')}, "
+                f"reviewed={updated['metadata'].get('reviewed')}"
+            )
 
         # Delete the document
-        print(f"\n[DELETE] Removing item...")
+        print("\n[DELETE] Removing item...")
         deleted = store.delete(item_id)
         print(f"  Delete successful: {deleted}")
 
@@ -288,38 +291,17 @@ def demo_chunking_config(store):
     print("=" * 60)
 
     # Create a longer document
-    long_content = """
-    Artificial Intelligence has evolved significantly over the decades.
-
-    In the 1950s, pioneers like Alan Turing laid the theoretical foundations.
-    The Turing Test was proposed as a measure of machine intelligence.
-
-    The 1960s and 70s saw the development of early AI programs.
-    ELIZA was one of the first chatbots, simulating conversation.
-
-    The 1980s brought expert systems to industry.
-    These rule-based systems captured human expertise in specific domains.
-
-    The 1990s introduced machine learning algorithms.
-    Support Vector Machines and decision trees became popular.
-
-    The 2010s marked the deep learning revolution.
-    Convolutional Neural Networks achieved breakthrough results in image recognition.
-
-    Today, large language models like GPT and Claude represent the cutting edge.
-    These models can understand and generate human-like text.
-    """
 
     # Create store with custom chunking
-    embedding_provider = GoogleEmbeddingProvider(model="text-embedding-004")
+    GoogleEmbeddingProvider(model="text-embedding-004")
 
     custom_config = ChunkingConfig(
         strategy="sentence",
         chunk_size=200,  # Smaller chunks
-        overlap=50,      # Some overlap
+        overlap=50,  # Some overlap
     )
 
-    print(f"\nChunking Config:")
+    print("\nChunking Config:")
     print(f"  Strategy: {custom_config.strategy}")
     print(f"  Chunk Size: {custom_config.chunk_size}")
     print(f"  Overlap: {custom_config.overlap}")
@@ -355,4 +337,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n\nError: {e}")
         import traceback
+
         traceback.print_exc()

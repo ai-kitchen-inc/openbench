@@ -1,25 +1,25 @@
 """Tests for L2 Layer classes."""
 
 import unittest
-from typing import Any, Dict, Optional
+from typing import Any
 
 from openbench.core import (
-    DataSource,
-    RawData,
-    DataStore,
-    Query,
-    SearchResult,
     Agent,
+    Chain,
+    DataLayer,
+    DataSource,
+    DataStore,
     ExecutionContext,
     ExecutionResult,
-    OutputGenerator,
     GeneratedOutput,
-    DataLayer,
     IntelligenceLayer,
+    OutputGenerator,
     OutputLayer,
-    create_workflow,
-    Chain,
     Parallel,
+    Query,
+    RawData,
+    SearchResult,
+    create_workflow,
 )
 
 
@@ -36,7 +36,7 @@ class MockSource(DataSource):
     def source_id(self) -> str:
         return f"mock:{self.name}"
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         return {"name": self.name}
 
     def extract(self) -> RawData:
@@ -62,7 +62,7 @@ class MockStore(DataStore):
     def search(self, query: Query) -> SearchResult:
         return SearchResult(items=self._data, total=len(self._data))
 
-    def get(self, item_id: str) -> Optional[Any]:
+    def get(self, item_id: str) -> Any | None:
         return next((item for item in self._data if item["id"] == item_id), None)
 
     def delete(self, item_id: str) -> bool:
@@ -85,7 +85,7 @@ class MockAgent(Agent):
             output={f"{self.name}_result": f"completed {self.name}"},
             status="completed",
             metadata={"agent": self.name},
-            cost=0.0
+            cost=0.0,
         )
 
     def estimate_cost(self, context: ExecutionContext) -> float:
@@ -100,12 +100,9 @@ class MockGenerator(OutputGenerator):
     def output_format(self) -> str:
         return self._format
 
-    def generate(self, content: Any, template: Optional[str] = None, **options) -> GeneratedOutput:
+    def generate(self, content: Any, template: str | None = None, **options) -> GeneratedOutput:
         return GeneratedOutput(
-            file_path=f"/tmp/test.{self._format}",
-            format=self._format,
-            size_bytes=100,
-            metadata={}
+            file_path=f"/tmp/test.{self._format}", format=self._format, size_bytes=100, metadata={}
         )
 
     def validate(self, content: Any) -> bool:
@@ -178,6 +175,7 @@ class TestDataLayer(unittest.TestCase):
 
         # Should be chainable with other layers
         from openbench.core import Chainable
+
         self.assertIsInstance(layer, Chainable)
 
 
@@ -237,6 +235,7 @@ class TestIntelligenceLayer(unittest.TestCase):
         layer = IntelligenceLayer(agents=agent)
 
         from openbench.core import Chainable
+
         self.assertIsInstance(layer, Chainable)
 
 
@@ -283,6 +282,7 @@ class TestOutputLayer(unittest.TestCase):
         layer = OutputLayer(generators=generator)
 
         from openbench.core import Chainable
+
         self.assertIsInstance(layer, Chainable)
 
 
@@ -353,14 +353,12 @@ class TestCreateWorkflow(unittest.TestCase):
         generator = MockGenerator("pdf")
 
         wf = create_workflow(
-            data_sources=source,
-            data_stores=[store],
-            agents=agent,
-            generators=generator
+            data_sources=source, data_stores=[store], agents=agent, generators=generator
         )
 
         # Should be a chainable
         from openbench.core import Chainable
+
         self.assertIsInstance(wf, Chainable)
 
         # Should execute successfully
@@ -373,10 +371,7 @@ class TestCreateWorkflow(unittest.TestCase):
         generator = MockGenerator("pdf")
 
         # Only intelligence and output layers
-        wf = create_workflow(
-            agents=agent,
-            generators=generator
-        )
+        wf = create_workflow(agents=agent, generators=generator)
 
         result = wf.invoke({})
         self.assertIsNotNone(result)

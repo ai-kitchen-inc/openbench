@@ -4,7 +4,8 @@ AG2 (AutoGen) framework adapter for OpenBench.
 Allows using AG2 agents in OpenBench workflows.
 """
 
-from typing import Any, Optional
+from typing import Any
+
 from openbench.core import FrameworkAdapter
 
 
@@ -46,7 +47,7 @@ class AG2Adapter(FrameworkAdapter):
     def framework_name(self) -> str:
         return "ag2"
 
-    def __init__(self, agent: Any, user_proxy: Optional[Any] = None):
+    def __init__(self, agent: Any, user_proxy: Any | None = None):
         """
         Initialize the AG2 adapter.
 
@@ -61,18 +62,16 @@ class AG2Adapter(FrameworkAdapter):
         if self.user_proxy is None:
             try:
                 from autogen import UserProxyAgent
+
                 self.user_proxy = UserProxyAgent(
-                    "user",
-                    code_execution_config=False,
-                    human_input_mode="NEVER"
+                    "user", code_execution_config=False, human_input_mode="NEVER"
                 )
             except ImportError:
                 raise ImportError(
-                    "AG2 (autogen) is not installed. "
-                    "Install it with: pip install pyautogen"
-                )
+                    "AG2 (autogen) is not installed. Install it with: pip install pyautogen"
+                ) from None
 
-    def invoke(self, input: Any, config: Optional[Any] = None) -> Any:
+    def invoke(self, input: Any, config: Any | None = None) -> Any:
         """
         Execute the AG2 agent.
 
@@ -86,10 +85,7 @@ class AG2Adapter(FrameworkAdapter):
         # AG2 uses chat-based interaction
         message = input if isinstance(input, str) else str(input)
 
-        self.user_proxy.initiate_chat(
-            self.agent,
-            message=message
-        )
+        self.user_proxy.initiate_chat(self.agent, message=message)
 
         # Return last message from agent
         return self.user_proxy.last_message()["content"]

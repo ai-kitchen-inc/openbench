@@ -28,23 +28,21 @@ import argparse
 import math
 import os
 import sys
-from typing import Any, Dict
+from typing import Any
+
+# Trigger LLMProviderRegistry registration (import side-effect)
+from openbench.core.abstractions import ExecutionContext
+from openbench.core.providers import ProviderType, configure_provider
+from openbench.intelligence.base import BaseAgent
 
 # OpenBench imports
 from openbench.intelligence.llm_providers import GeminiLLMProvider
-from openbench.intelligence.base import BaseAgent
-from openbench.core.abstractions import ExecutionContext
-from openbench.core.providers import configure_provider, ProviderType
-
-# Trigger LLMProviderRegistry registration (import side-effect)
-import openbench.intelligence.llm_providers  # noqa: F811
-
 
 # --- Constants ---
 
 DEFAULT_MODEL = "gemini-2.5-flash"
 
-KNOWLEDGE_BASE: Dict[str, Dict[str, str]] = {
+KNOWLEDGE_BASE: dict[str, dict[str, str]] = {
     "renewable_energy": {
         "solar": (
             "Global solar capacity reached 1.6 TW in 2025. Average cost dropped to "
@@ -96,7 +94,7 @@ KNOWLEDGE_BASE: Dict[str, Dict[str, str]] = {
 
 # --- Tool Schemas (explicit for Gemini) ---
 
-CALCULATE_SCHEMA: Dict[str, Any] = {
+CALCULATE_SCHEMA: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "calculate",
@@ -118,7 +116,7 @@ CALCULATE_SCHEMA: Dict[str, Any] = {
     },
 }
 
-KNOWLEDGE_LOOKUP_SCHEMA: Dict[str, Any] = {
+KNOWLEDGE_LOOKUP_SCHEMA: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "knowledge_lookup",
@@ -133,8 +131,7 @@ KNOWLEDGE_LOOKUP_SCHEMA: Dict[str, Any] = {
                 "topic": {
                     "type": "string",
                     "description": (
-                        "Main topic to look up. "
-                        "One of: renewable_energy, ai_trends, market_data"
+                        "Main topic to look up. One of: renewable_energy, ai_trends, market_data"
                     ),
                 },
                 "subtopic": {
@@ -175,7 +172,7 @@ def calculate(expression: str) -> str:
     }
     try:
         # Sandboxed eval: builtins disabled, only math names allowed
-        result = eval(expression, {"__builtins__": {}}, allowed_names)  # noqa: S307
+        result = eval(expression, {"__builtins__": {}}, allowed_names)
         return str(result)
     except Exception as e:
         return f"Error evaluating '{expression}': {e}"
@@ -349,15 +346,15 @@ def demo_multi_turn(model: str):
         max_iterations=5,
     )
 
-    agent.tools.register(
-        "knowledge_lookup", knowledge_lookup, schema=KNOWLEDGE_LOOKUP_SCHEMA
-    )
+    agent.tools.register("knowledge_lookup", knowledge_lookup, schema=KNOWLEDGE_LOOKUP_SCHEMA)
 
     # Turn 1: Initial question
     print("--- Turn 1: Initial Question ---")
-    result1 = agent.execute(ExecutionContext(
-        goal="What are the latest AI agent trends? Use the knowledge base.",
-    ))
+    result1 = agent.execute(
+        ExecutionContext(
+            goal="What are the latest AI agent trends? Use the knowledge base.",
+        )
+    )
     print(f"  Status: {result1.status}")
     print(f"  Iterations: {result1.metadata.get('iterations')}")
     print(f"  Response: {(result1.output or '')[:200]}...")
@@ -365,12 +362,14 @@ def demo_multi_turn(model: str):
 
     # Turn 2: Follow-up (agent has memory of Turn 1)
     print("\n--- Turn 2: Follow-up (memory preserved) ---")
-    result2 = agent.execute(ExecutionContext(
-        goal=(
-            "Based on what you just found, how does VC funding relate to the AI agent growth? "
-            "Look up market_data venture_capital for context."
-        ),
-    ))
+    result2 = agent.execute(
+        ExecutionContext(
+            goal=(
+                "Based on what you just found, how does VC funding relate to the AI agent growth? "
+                "Look up market_data venture_capital for context."
+            ),
+        )
+    )
     print(f"  Status: {result2.status}")
     print(f"  Iterations: {result2.metadata.get('iterations')}")
     print(f"  Response: {(result2.output or '')[:200]}...")
@@ -382,15 +381,19 @@ def demo_multi_turn(model: str):
     print(f"  Memory messages after reset: {len(agent.memory.messages)}")
 
     # Turn 3: New question after reset (no prior context)
-    result3 = agent.execute(ExecutionContext(
-        goal="What is the current state of battery storage? Look it up.",
-    ))
+    result3 = agent.execute(
+        ExecutionContext(
+            goal="What is the current state of battery storage? Look it up.",
+        )
+    )
     print(f"  Status: {result3.status}")
     print(f"  Iterations: {result3.metadata.get('iterations')}")
     print(f"  Response: {(result3.output or '')[:200]}...")
 
     # Summary
-    total_tokens = (result1.tokens_used or 0) + (result2.tokens_used or 0) + (result3.tokens_used or 0)
+    total_tokens = (
+        (result1.tokens_used or 0) + (result2.tokens_used or 0) + (result3.tokens_used or 0)
+    )
     total_cost = result1.cost + result2.cost + result3.cost
     print(f"\n  Total tokens (3 turns): {total_tokens}")
     print(f"  Total cost (3 turns): ${total_cost:.6f}")
@@ -419,7 +422,7 @@ def main():
     print("=" * 60)
     print("  OpenBench: Gemini Agent Demo")
     print("=" * 60)
-    print(f"\n  GeminiLLMProvider + BaseAgent reasoning loop")
+    print("\n  GeminiLLMProvider + BaseAgent reasoning loop")
     print(f"  Model: {args.model}")
 
     check_api_key()
@@ -443,6 +446,7 @@ def main():
     except Exception as e:
         print(f"\nError: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

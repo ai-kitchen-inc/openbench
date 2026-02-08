@@ -8,16 +8,13 @@ All core abstractions are Chainable, enabling L1 component-level composition.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime
-
-if TYPE_CHECKING:
-    from openbench.core.chainable import Chainable, RunnableConfig
-
+from typing import Any
 
 # ============================================================================
 # Data Layer Abstractions
 # ============================================================================
+
 
 class DataSource(ABC):
     """
@@ -32,23 +29,20 @@ class DataSource(ABC):
     @abstractmethod
     def source_type(self) -> str:
         """Type identifier (e.g., 'youtube', 'pdf', 'url', 'google_doc')."""
-        pass
 
     @property
     @abstractmethod
     def source_id(self) -> str:
         """Unique identifier for this data source."""
-        pass
 
     @abstractmethod
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         """
         Get metadata about the data source.
 
         Returns:
             Dict with keys like: title, author, created_at, size, etc.
         """
-        pass
 
     @abstractmethod
     def extract(self) -> "RawData":
@@ -58,14 +52,12 @@ class DataSource(ABC):
         Returns:
             RawData object containing the extracted content
         """
-        pass
 
     @abstractmethod
     def validate(self) -> bool:
         """Validate that the data source is accessible and valid."""
-        pass
 
-    def invoke(self, input: Any = None, config: Optional[Any] = None) -> "RawData":
+    def invoke(self, input: Any = None, config: Any | None = None) -> "RawData":
         """
         Chainable invoke method.
 
@@ -95,8 +87,8 @@ class RawData:
         self,
         content: Any,
         content_type: str,
-        metadata: Dict[str, Any],
-        source: Optional[DataSource] = None
+        metadata: dict[str, Any],
+        source: DataSource | None = None,
     ):
         self.content = content
         self.content_type = content_type  # 'text', 'binary', 'structured'
@@ -114,12 +106,12 @@ class Query:
 
     def __init__(
         self,
-        text: Optional[str] = None,
-        vector: Optional[List[float]] = None,
-        filters: Optional[Dict[str, Any]] = None,
+        text: str | None = None,
+        vector: list[float] | None = None,
+        filters: dict[str, Any] | None = None,
         limit: int = 10,
         offset: int = 0,
-        sort: Optional[List[tuple]] = None
+        sort: list[tuple] | None = None,
     ):
         self.text = text
         self.vector = vector
@@ -134,10 +126,10 @@ class SearchResult:
 
     def __init__(
         self,
-        items: List[Any],
+        items: list[Any],
         total: int,
-        scores: Optional[List[float]] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        scores: list[float] | None = None,
+        metadata: dict[str, Any] | None = None,
     ):
         self.items = items
         self.total = total
@@ -156,7 +148,6 @@ class DataStore(ABC):
     @abstractmethod
     def store_type(self) -> str:
         """Type of store ('vector', 'sql', 'search', 'graph', 'kv')."""
-        pass
 
     @abstractmethod
     def index(self, data: RawData, **options) -> str:
@@ -170,7 +161,6 @@ class DataStore(ABC):
         Returns:
             Unique ID of the indexed data
         """
-        pass
 
     @abstractmethod
     def search(self, query: Query) -> SearchResult:
@@ -183,27 +173,24 @@ class DataStore(ABC):
         Returns:
             SearchResult with matched items
         """
-        pass
 
     @abstractmethod
-    def get(self, item_id: str) -> Optional[Any]:
+    def get(self, item_id: str) -> Any | None:
         """Retrieve a specific item by ID."""
-        pass
 
     @abstractmethod
     def delete(self, item_id: str) -> bool:
         """Delete an item from the store."""
-        pass
 
     @abstractmethod
     def update(self, item_id: str, data: Any) -> bool:
         """Update an existing item."""
-        pass
 
 
 # ============================================================================
 # Intelligence Layer Abstractions
 # ============================================================================
+
 
 class ExecutionContext:
     """Implementation-independent execution context for agents."""
@@ -211,10 +198,10 @@ class ExecutionContext:
     def __init__(
         self,
         goal: str,
-        data: Optional[Any] = None,
-        tools: Optional[List["Tool"]] = None,
-        memory: Optional[Any] = None,
-        constraints: Optional[Dict[str, Any]] = None
+        data: Any | None = None,
+        tools: list["Tool"] | None = None,
+        memory: Any | None = None,
+        constraints: dict[str, Any] | None = None,
     ):
         self.goal = goal
         self.data = data
@@ -230,9 +217,9 @@ class ExecutionResult:
         self,
         output: Any,
         status: str,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
         cost: float = 0.0,
-        tokens_used: Optional[int] = None
+        tokens_used: int | None = None,
     ):
         self.output = output
         self.status = status
@@ -254,7 +241,6 @@ class Agent(ABC):
     @abstractmethod
     def agent_type(self) -> str:
         """Type of agent ('research', 'analysis', 'content', etc.)."""
-        pass
 
     @abstractmethod
     def execute(self, context: ExecutionContext) -> ExecutionResult:
@@ -267,14 +253,12 @@ class Agent(ABC):
         Returns:
             ExecutionResult with agent's output
         """
-        pass
 
     @abstractmethod
     def estimate_cost(self, context: ExecutionContext) -> float:
         """Estimate cost of execution in USD."""
-        pass
 
-    def invoke(self, input: Any, config: Optional[Any] = None) -> ExecutionResult:
+    def invoke(self, input: Any, config: Any | None = None) -> ExecutionResult:
         """
         Chainable invoke method.
 
@@ -292,19 +276,18 @@ class Agent(ABC):
         if isinstance(input, ExecutionContext):
             context = input
         # If input is a dict with 'goal' and 'data', convert to ExecutionContext
-        elif isinstance(input, dict) and 'goal' in input:
+        elif isinstance(input, dict) and "goal" in input:
             context = ExecutionContext(
-                goal=input['goal'],
-                data=input.get('data'),
-                tools=input.get('tools'),
-                memory=input.get('memory'),
-                constraints=input.get('constraints')
+                goal=input["goal"],
+                data=input.get("data"),
+                tools=input.get("tools"),
+                memory=input.get("memory"),
+                constraints=input.get("constraints"),
             )
         # Otherwise, wrap input as data
         else:
             context = ExecutionContext(
-                goal=getattr(self, 'goal', f'Execute {self.agent_type} task'),
-                data=input
+                goal=getattr(self, "goal", f"Execute {self.agent_type} task"), data=input
             )
 
         return self.execute(context)
@@ -358,10 +341,9 @@ class FrameworkAdapter(ABC):
 
         Examples: 'langchain', 'mastra', 'ag2', 'google_adk', 'crewai', 'e2b'
         """
-        pass
 
     @abstractmethod
-    def invoke(self, input: Any, config: Optional[Any] = None) -> Any:
+    def invoke(self, input: Any, config: Any | None = None) -> Any:
         """
         Execute the wrapped agent/workflow from the external framework.
 
@@ -375,9 +357,8 @@ class FrameworkAdapter(ABC):
         Returns:
             Output from your framework (any format)
         """
-        pass
 
-    async def ainvoke(self, input: Any, config: Optional[Any] = None) -> Any:
+    async def ainvoke(self, input: Any, config: Any | None = None) -> Any:
         """
         Async execution (optional).
 
@@ -403,7 +384,7 @@ class LLMResponse:
         model: str,
         tokens_used: int,
         cost: float,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: dict[str, Any] | None = None,
     ):
         self.text = text
         self.model = model
@@ -423,15 +404,9 @@ class LLMProvider(ABC):
     @abstractmethod
     def provider_name(self) -> str:
         """Provider name ('openai', 'anthropic', 'huggingface', etc.)."""
-        pass
 
     @abstractmethod
-    def generate(
-        self,
-        prompt: str,
-        model: str,
-        **params
-    ) -> LLMResponse:
+    def generate(self, prompt: str, model: str, **params) -> LLMResponse:
         """
         Generate text from prompt.
 
@@ -443,16 +418,10 @@ class LLMProvider(ABC):
         Returns:
             LLMResponse with generated text
         """
-        pass
 
     @abstractmethod
-    def embed(
-        self,
-        text: str,
-        model: Optional[str] = None
-    ) -> List[float]:
+    def embed(self, text: str, model: str | None = None) -> list[float]:
         """Generate embedding vector for text."""
-        pass
 
 
 class EmbeddingProvider(ABC):
@@ -470,16 +439,14 @@ class EmbeddingProvider(ABC):
     @abstractmethod
     def provider_name(self) -> str:
         """Provider name ('openai', 'google')."""
-        pass
 
     @property
     @abstractmethod
     def default_model(self) -> str:
         """Default embedding model for this provider."""
-        pass
 
     @abstractmethod
-    def get_dimension(self, model: Optional[str] = None) -> int:
+    def get_dimension(self, model: str | None = None) -> int:
         """
         Get embedding dimension for a model.
 
@@ -489,10 +456,9 @@ class EmbeddingProvider(ABC):
         Returns:
             Vector dimension (e.g., 1536, 768, 3072)
         """
-        pass
 
     @abstractmethod
-    def embed(self, text: str, model: Optional[str] = None) -> List[float]:
+    def embed(self, text: str, model: str | None = None) -> list[float]:
         """
         Generate embedding for single text.
 
@@ -503,15 +469,11 @@ class EmbeddingProvider(ABC):
         Returns:
             Embedding vector as list of floats.
         """
-        pass
 
     @abstractmethod
     def embed_batch(
-        self,
-        texts: List[str],
-        model: Optional[str] = None,
-        batch_size: int = 100
-    ) -> List[List[float]]:
+        self, texts: list[str], model: str | None = None, batch_size: int = 100
+    ) -> list[list[float]]:
         """
         Generate embeddings for multiple texts.
 
@@ -523,9 +485,8 @@ class EmbeddingProvider(ABC):
         Returns:
             List of embedding vectors.
         """
-        pass
 
-    def list_models(self) -> Dict[str, int]:
+    def list_models(self) -> dict[str, int]:
         """
         List available embedding models with their dimensions.
 
@@ -546,13 +507,11 @@ class Tool(ABC):
     @abstractmethod
     def name(self) -> str:
         """Tool name."""
-        pass
 
     @property
     @abstractmethod
     def description(self) -> str:
         """What the tool does."""
-        pass
 
     @abstractmethod
     def execute(self, **params) -> Any:
@@ -565,52 +524,45 @@ class Tool(ABC):
         Returns:
             Tool execution result
         """
-        pass
 
     @abstractmethod
-    def get_schema(self) -> Dict[str, Any]:
+    def get_schema(self) -> dict[str, Any]:
         """Get tool's input schema."""
-        pass
 
 
 # ============================================================================
 # Output Layer Abstractions
 # ============================================================================
 
+
 class GeneratedOutput:
     """Implementation-independent generated output."""
 
-    def __init__(
-        self,
-        file_path: str,
-        format: str,
-        size_bytes: int,
-        metadata: Dict[str, Any]
-    ):
+    def __init__(self, file_path: str, format: str, size_bytes: int, metadata: dict[str, Any]):
         self.file_path = file_path
         self.format = format
         self.size_bytes = size_bytes
         self.metadata = metadata
         self.generated_at = datetime.now()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "file_path": self.file_path,
             "format": self.format,
             "size_bytes": self.size_bytes,
             "metadata": self.metadata,
-            "generated_at": self.generated_at.isoformat()
+            "generated_at": self.generated_at.isoformat(),
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "GeneratedOutput":
+    def from_dict(cls, data: dict[str, Any]) -> "GeneratedOutput":
         """Create from dictionary."""
         obj = cls(
             file_path=data["file_path"],
             format=data["format"],
             size_bytes=data["size_bytes"],
-            metadata=data["metadata"]
+            metadata=data["metadata"],
         )
         if "generated_at" in data:
             obj.generated_at = datetime.fromisoformat(data["generated_at"])
@@ -630,15 +582,9 @@ class OutputGenerator(ABC):
     @abstractmethod
     def output_format(self) -> str:
         """Output format ('pdf', 'pptx', 'html', 'audio', etc.)."""
-        pass
 
     @abstractmethod
-    def generate(
-        self,
-        content: Any,
-        template: Optional[str] = None,
-        **options
-    ) -> GeneratedOutput:
+    def generate(self, content: Any, template: str | None = None, **options) -> GeneratedOutput:
         """
         Generate output.
 
@@ -650,14 +596,12 @@ class OutputGenerator(ABC):
         Returns:
             GeneratedOutput with file path and metadata
         """
-        pass
 
     @abstractmethod
     def validate(self, content: Any) -> bool:
         """Validate that content can be rendered in this format."""
-        pass
 
-    def invoke(self, input: Any, config: Optional[Any] = None) -> GeneratedOutput:
+    def invoke(self, input: Any, config: Any | None = None) -> GeneratedOutput:
         """
         Chainable invoke method.
 
@@ -676,15 +620,15 @@ class OutputGenerator(ABC):
 
         # Extract template and options from config
         if config and isinstance(config, dict):
-            template = config.get('template')
-            options = {k: v for k, v in config.items() if k != 'template'}
+            template = config.get("template")
+            options = {k: v for k, v in config.items() if k != "template"}
 
         # Extract output options from input dict
         if isinstance(input, dict):
-            for key in ('output_path', 'title', 'author'):
+            for key in ("output_path", "title", "author"):
                 if key in input:
                     options[key] = input[key]
-            if not template and 'template' in input:
-                template = input['template']
+            if not template and "template" in input:
+                template = input["template"]
 
         return self.generate(content=input, template=template, **options)

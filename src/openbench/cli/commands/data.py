@@ -1,12 +1,11 @@
 """Data Layer CLI commands."""
 
 import time
-from typing import Optional, Tuple
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
 
 console = Console()
 
@@ -14,7 +13,6 @@ console = Console()
 @click.group()
 def data() -> None:
     """Manage data sources and the Data Layer."""
-    pass
 
 
 @data.command()
@@ -27,10 +25,10 @@ def data() -> None:
 )
 @click.option("--name", help="Name for this data source")
 @click.option("--index/--no-index", default=True, help="Index data for semantic search")
-def add(source: str, source_type: Optional[str], name: Optional[str], index: bool) -> None:
+def add(source: str, source_type: str | None, name: str | None, index: bool) -> None:
     """Add a new data source to the project."""
 
-    console.print(f"\n[bold cyan]Adding Data Source[/bold cyan]\n")
+    console.print("\n[bold cyan]Adding Data Source[/bold cyan]\n")
 
     # Simulate adding data source
     if not source_type:
@@ -90,7 +88,7 @@ def list_sources() -> None:
 @click.argument("query")
 @click.option("--sources", multiple=True, help="Specific sources to query")
 @click.option("--limit", default=10, help="Number of results")
-def search(query: str, sources: Tuple[str, ...], limit: int) -> None:
+def search(query: str, sources: tuple[str, ...], limit: int) -> None:
     """Search across data sources."""
 
     console.print(f"\n[bold cyan]Searching: '{query}'[/bold cyan]\n")
@@ -99,13 +97,13 @@ def search(query: str, sources: Tuple[str, ...], limit: int) -> None:
         time.sleep(1)
 
     # Simulate search results
-    console.print(f"[green]Found 3 results[/green]\n")
+    console.print("[green]Found 3 results[/green]\n")
 
     for i in range(3):
-        console.print(f"[bold]{i+1}. Sustainability Report Q{i+1} 2024[/bold]")
-        console.print(f"   [dim]Source: sustainability-reports[/dim]")
-        console.print(f"   [dim]Relevance: 0.{95-i*10}[/dim]")
-        console.print(f"   The report shows carbon emissions decreased by 15%...\n")
+        console.print(f"[bold]{i + 1}. Sustainability Report Q{i + 1} 2024[/bold]")
+        console.print("   [dim]Source: sustainability-reports[/dim]")
+        console.print(f"   [dim]Relevance: 0.{95 - i * 10}[/dim]")
+        console.print("   The report shows carbon emissions decreased by 15%...\n")
 
 
 @data.command()
@@ -126,7 +124,7 @@ def remove(source_name: str) -> None:
 
 @data.command()
 @click.option("--source", help="Specific source to sync")
-def sync(source: Optional[str]) -> None:
+def sync(source: str | None) -> None:
     """Sync data sources with latest data."""
 
     console.print("\n[bold cyan]Syncing Data Sources[/bold cyan]\n")
