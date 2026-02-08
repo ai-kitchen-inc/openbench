@@ -1,10 +1,11 @@
 """Initialize OpenBench project."""
 
-import click
 from pathlib import Path
+
+import click
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Prompt
 
 console = Console()
 
@@ -12,8 +13,12 @@ console = Console()
 @click.command()
 @click.option("--name", help="Project name")
 @click.option("--path", type=click.Path(), default=".", help="Project path")
-@click.option("--template", type=click.Choice(["minimal", "standard", "enterprise"]),
-              default="standard", help="Project template")
+@click.option(
+    "--template",
+    type=click.Choice(["minimal", "standard", "enterprise"]),
+    default="standard",
+    help="Project template",
+)
 def init(name, path, template):
     """Initialize a new OpenBench project."""
 
@@ -30,16 +35,18 @@ def init(name, path, template):
     # Create project structure
     _create_project_structure(project_path, template)
 
-    console.print(Panel.fit(
-        f"[green]✓[/green] Project '{name}' initialized successfully!\n\n"
-        f"[bold]Next steps:[/bold]\n"
-        f"  1. cd {name}\n"
-        f"  2. openbench data add <source>\n"
-        f"  3. openbench agent create <agent-name>\n"
-        f"  4. openbench workflow run\n",
-        title="[bold green]Success![/bold green]",
-        border_style="green"
-    ))
+    console.print(
+        Panel.fit(
+            f"[green]✓[/green] Project '{name}' initialized successfully!\n\n"
+            f"[bold]Next steps:[/bold]\n"
+            f"  1. cd {name}\n"
+            f"  2. openbench data add <source>\n"
+            f"  3. openbench agent create <agent-name>\n"
+            f"  4. openbench workflow run\n",
+            title="[bold green]Success![/bold green]",
+            border_style="green",
+        )
+    )
 
 
 def _create_project_structure(project_path: Path, template: str):
@@ -82,7 +89,7 @@ output:
 
     config_file = project_path / "config" / "openbench.yaml"
     config_file.write_text(config_content)
-    console.print(f"[green]✓[/green] Created config/openbench.yaml")
+    console.print("[green]✓[/green] Created config/openbench.yaml")
 
     # Create .env template
     env_content = """# OpenBench Environment Variables
@@ -101,7 +108,7 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 
     env_file = project_path / ".env.example"
     env_file.write_text(env_content)
-    console.print(f"[green]✓[/green] Created .env.example")
+    console.print("[green]✓[/green] Created .env.example")
 
     # Create README
     readme_content = f"""# {project_path.name}
@@ -140,4 +147,4 @@ See [OpenBench Documentation](https://github.com/ai-kitchen-inc/openbench/tree/m
 
     readme_file = project_path / "README.md"
     readme_file.write_text(readme_content)
-    console.print(f"[green]✓[/green] Created README.md")
+    console.print("[green]✓[/green] Created README.md")

@@ -4,20 +4,23 @@ State management for workflows.
 Enables checkpointing, pause/resume, and replay capabilities.
 """
 
+import contextlib
+import json
+import os
+import tempfile
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
-import json
-import pickle
 from pathlib import Path
+from typing import Any
 
-from openbench.core.chainable import Chainable, RunnableConfig
+from openbench.core.chainable import Chain, Chainable, RunnableConfig
 
 
 class WorkflowStatus(Enum):
     """Workflow execution status."""
+
     PENDING = "pending"
     RUNNING = "running"
     PAUSED = "paused"
@@ -28,6 +31,7 @@ class WorkflowStatus(Enum):
 @dataclass
 class StepRecord:
     """Record of a single workflow step execution."""
+
     step_name: str
     step_index: int
     input_data: Any
@@ -36,27 +40,27 @@ class StepRecord:
     completed_at: datetime
     duration_seconds: float
     status: str
-    error: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         data = asdict(self)
-        data['started_at'] = self.started_at.isoformat()
-        data['completed_at'] = self.completed_at.isoformat()
+        data["started_at"] = self.started_at.isoformat()
+        data["completed_at"] = self.completed_at.isoformat()
 
         # Handle output_data serialization
         if self.output_data is not None:
-            data['output_data'] = self._serialize_data(self.output_data)
+            data["output_data"] = self._serialize_data(self.output_data)
         if self.input_data is not None:
-            data['input_data'] = self._serialize_data(self.input_data)
+            data["input_data"] = self._serialize_data(self.input_data)
 
         return data
 
     @staticmethod
     def _serialize_data(data: Any) -> Any:
         """Serialize data for JSON storage."""
-        if hasattr(data, 'to_dict'):
+        if hasattr(data, "to_dict"):
             return data.to_dict()
         elif isinstance(data, list):
             return [StepRecord._serialize_data(item) for item in data]
@@ -69,10 +73,10 @@ class StepRecord:
             return {"__type__": type(data).__name__, "__repr__": repr(data)}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "StepRecord":
+    def from_dict(cls, data: dict[str, Any]) -> "StepRecord":
         """Create from dictionary."""
-        data['started_at'] = datetime.fromisoformat(data['started_at'])
-        data['completed_at'] = datetime.fromisoformat(data['completed_at'])
+        data["started_at"] = datetime.fromisoformat(data["started_at"])
+        data["completed_at"] = datetime.fromisoformat(data["completed_at"])
         return cls(**data)
 
 
@@ -83,15 +87,16 @@ class WorkflowState:
 
     Tracks execution history and enables checkpoint/resume.
     """
+
     workflow_id: str
     workflow_name: str
     status: WorkflowStatus = WorkflowStatus.PENDING
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
-    completed_at: Optional[datetime] = None
+    completed_at: datetime | None = None
 
     # Execution history
-    steps: List[StepRecord] = field(default_factory=list)
+    steps: list[StepRecord] = field(default_factory=list)
     current_step_index: int = 0
 
     # Data
@@ -99,8 +104,8 @@ class WorkflowState:
     final_output: Any = None
 
     # Metadata
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    error: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
 
     def checkpoint(
         self,
@@ -111,8 +116,8 @@ class WorkflowState:
         started_at: datetime,
         completed_at: datetime,
         status: str = "completed",
-        error: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        error: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Record a checkpoint for a workflow step.
@@ -140,7 +145,7 @@ class WorkflowState:
             duration_seconds=duration,
             status=status,
             error=error,
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
         self.steps.append(record)
@@ -150,17 +155,17 @@ class WorkflowState:
         if status == "failed":
             self.status = WorkflowStatus.FAILED
             self.error = error
-        elif step_index == self.metadata.get('total_steps', 0) - 1:
+        elif step_index == self.metadata.get("total_steps", 0) - 1:
             # Last step completed
             self.status = WorkflowStatus.COMPLETED
             self.completed_at = datetime.now()
             self.final_output = output_data
 
-    def get_last_checkpoint(self) -> Optional[StepRecord]:
+    def get_last_checkpoint(self) -> StepRecord | None:
         """Get the most recent checkpoint."""
         return self.steps[-1] if self.steps else None
 
-    def get_step(self, step_index: int) -> Optional[StepRecord]:
+    def get_step(self, step_index: int) -> StepRecord | None:
         """Get checkpoint for a specific step."""
         for step in self.steps:
             if step.step_index == step_index:
@@ -177,33 +182,33 @@ class WorkflowState:
             return 0
         return self.current_step_index
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
-            'workflow_id': self.workflow_id,
-            'workflow_name': self.workflow_name,
-            'status': self.status.value,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
-            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
-            'steps': [step.to_dict() for step in self.steps],
-            'current_step_index': self.current_step_index,
-            'metadata': self.metadata,
-            'error': self.error,
+            "workflow_id": self.workflow_id,
+            "workflow_name": self.workflow_name,
+            "status": self.status.value,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "steps": [step.to_dict() for step in self.steps],
+            "current_step_index": self.current_step_index,
+            "metadata": self.metadata,
+            "error": self.error,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowState":
+    def from_dict(cls, data: dict[str, Any]) -> "WorkflowState":
         """Create from dictionary."""
-        data['status'] = WorkflowStatus(data['status'])
-        data['created_at'] = datetime.fromisoformat(data['created_at'])
-        data['updated_at'] = datetime.fromisoformat(data['updated_at'])
-        if data['completed_at']:
-            data['completed_at'] = datetime.fromisoformat(data['completed_at'])
-        data['steps'] = [StepRecord.from_dict(step) for step in data['steps']]
+        data["status"] = WorkflowStatus(data["status"])
+        data["created_at"] = datetime.fromisoformat(data["created_at"])
+        data["updated_at"] = datetime.fromisoformat(data["updated_at"])
+        if data["completed_at"]:
+            data["completed_at"] = datetime.fromisoformat(data["completed_at"])
+        data["steps"] = [StepRecord.from_dict(step) for step in data["steps"]]
         # Don't restore initial_input and final_output from dict (too large)
-        data.pop('initial_input', None)
-        data.pop('final_output', None)
+        data.pop("initial_input", None)
+        data.pop("final_output", None)
         return cls(**data)
 
 
@@ -222,10 +227,9 @@ class StateStore(ABC):
         Args:
             state: WorkflowState to save
         """
-        pass
 
     @abstractmethod
-    def load(self, workflow_id: str) -> Optional[WorkflowState]:
+    def load(self, workflow_id: str) -> WorkflowState | None:
         """
         Load workflow state.
 
@@ -235,7 +239,6 @@ class StateStore(ABC):
         Returns:
             WorkflowState if found, None otherwise
         """
-        pass
 
     @abstractmethod
     def delete(self, workflow_id: str) -> bool:
@@ -248,14 +251,11 @@ class StateStore(ABC):
         Returns:
             True if deleted, False if not found
         """
-        pass
 
     @abstractmethod
     def list_workflows(
-        self,
-        status: Optional[WorkflowStatus] = None,
-        limit: int = 100
-    ) -> List[WorkflowState]:
+        self, status: WorkflowStatus | None = None, limit: int = 100
+    ) -> list[WorkflowState]:
         """
         List workflow states.
 
@@ -266,7 +266,6 @@ class StateStore(ABC):
         Returns:
             List of WorkflowState objects
         """
-        pass
 
 
 class LocalStateStore(StateStore):
@@ -291,18 +290,25 @@ class LocalStateStore(StateStore):
         return self.base_path / f"{workflow_id}.json"
 
     def save(self, state: WorkflowState) -> None:
-        """Save workflow state to JSON file."""
+        """Save workflow state to JSON file (atomic write)."""
         path = self._get_path(state.workflow_id)
-        with open(path, 'w') as f:
-            json.dump(state.to_dict(), f, indent=2)
+        fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(state.to_dict(), f, indent=2)
+            os.replace(tmp_path, path)  # Atomic on POSIX
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+            raise
 
-    def load(self, workflow_id: str) -> Optional[WorkflowState]:
+    def load(self, workflow_id: str) -> WorkflowState | None:
         """Load workflow state from JSON file."""
         path = self._get_path(workflow_id)
         if not path.exists():
             return None
 
-        with open(path, 'r') as f:
+        with open(path) as f:
             data = json.load(f)
 
         return WorkflowState.from_dict(data)
@@ -316,16 +322,14 @@ class LocalStateStore(StateStore):
         return False
 
     def list_workflows(
-        self,
-        status: Optional[WorkflowStatus] = None,
-        limit: int = 100
-    ) -> List[WorkflowState]:
+        self, status: WorkflowStatus | None = None, limit: int = 100
+    ) -> list[WorkflowState]:
         """List all workflow states."""
         workflows = []
 
         for path in self.base_path.glob("*.json"):
             try:
-                with open(path, 'r') as f:
+                with open(path) as f:
                     data = json.load(f)
                 state = WorkflowState.from_dict(data)
 
@@ -368,7 +372,7 @@ class StatefulChainable(Chainable):
         chainable: Chainable,
         state_store: StateStore,
         workflow_name: str,
-        auto_checkpoint: bool = True
+        auto_checkpoint: bool = True,
     ):
         """
         Initialize stateful chainable.
@@ -384,19 +388,27 @@ class StatefulChainable(Chainable):
         self.workflow_name = workflow_name
         self.auto_checkpoint = auto_checkpoint
 
+    def _get_steps(self) -> list:
+        """Unwrap chainable into individual steps for per-step checkpointing."""
+        if isinstance(self.chainable, Chain):
+            return self.chainable.steps
+        return [self.chainable]
+
     def invoke(
         self,
         input: Any,
-        config: Optional[RunnableConfig] = None,
-        workflow_id: Optional[str] = None
+        config: RunnableConfig | None = None,
+        workflow_id: str | None = None,
+        start_index: int = 0,
     ) -> Any:
         """
-        Execute with state management.
+        Execute with state management and per-step checkpointing.
 
         Args:
             input: Input data
             config: Execution configuration
             workflow_id: Optional workflow ID (for resume)
+            start_index: Step index to start from (for resume)
 
         Returns:
             Output data
@@ -408,57 +420,69 @@ class StatefulChainable(Chainable):
                 raise ValueError(f"Workflow {workflow_id} not found")
         else:
             from uuid import uuid4
+
             workflow_id = str(uuid4())
             state = WorkflowState(
-                workflow_id=workflow_id,
-                workflow_name=self.workflow_name,
-                initial_input=input
+                workflow_id=workflow_id, workflow_name=self.workflow_name, initial_input=input
             )
             state.status = WorkflowStatus.RUNNING
-            self.state_store.save(state)
 
-        try:
-            # Execute chainable
+        steps = self._get_steps()
+        state.metadata["total_steps"] = len(steps)
+        self.state_store.save(state)
+
+        result = input
+        for i, step in enumerate(steps):
+            # Skip already completed steps (for resume)
+            if i < start_index:
+                completed_step = state.get_step(i)
+                if completed_step and completed_step.status == "completed":
+                    result = completed_step.output_data
+                    continue
+
+            step_name = getattr(step, "name", step.__class__.__name__)
             started_at = datetime.now()
-            output = self.chainable.invoke(input, config)
-            completed_at = datetime.now()
 
-            # Checkpoint success
-            if self.auto_checkpoint:
+            try:
+                result = step.invoke(result, config)
+                completed_at = datetime.now()
+
+                if self.auto_checkpoint:
+                    state.checkpoint(
+                        step_name=step_name,
+                        step_index=i,
+                        input_data=None,  # Skip storing input to save space
+                        output_data=result,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                        status="completed",
+                    )
+                    self.state_store.save(state)
+
+            except Exception as e:
                 state.checkpoint(
-                    step_name=self.workflow_name,
-                    step_index=0,
-                    input_data=input,
-                    output_data=output,
+                    step_name=step_name,
+                    step_index=i,
+                    input_data=None,
+                    output_data=None,
                     started_at=started_at,
-                    completed_at=completed_at,
-                    status="completed"
+                    completed_at=datetime.now(),
+                    status="failed",
+                    error=str(e),
                 )
-                state.status = WorkflowStatus.COMPLETED
-                state.final_output = output
+                state.status = WorkflowStatus.FAILED
                 self.state_store.save(state)
+                raise
 
-            return output
+        state.status = WorkflowStatus.COMPLETED
+        state.final_output = result
+        state.completed_at = datetime.now()
+        self.state_store.save(state)
+        return result
 
-        except Exception as e:
-            # Checkpoint failure
-            state.checkpoint(
-                step_name=self.workflow_name,
-                step_index=0,
-                input_data=input,
-                output_data=None,
-                started_at=started_at,
-                completed_at=datetime.now(),
-                status="failed",
-                error=str(e)
-            )
-            state.status = WorkflowStatus.FAILED
-            self.state_store.save(state)
-            raise
-
-    def resume(self, workflow_id: str, config: Optional[RunnableConfig] = None) -> Any:
+    def resume(self, workflow_id: str, config: RunnableConfig | None = None) -> Any:
         """
-        Resume a paused or failed workflow.
+        Resume a paused or failed workflow from the last completed step.
 
         Args:
             workflow_id: ID of workflow to resume
@@ -474,18 +498,21 @@ class StatefulChainable(Chainable):
         if not state.can_resume():
             raise ValueError(f"Workflow {workflow_id} cannot be resumed (status: {state.status})")
 
-        # Get last successful output as input
-        last_checkpoint = state.get_last_checkpoint()
-        if last_checkpoint and last_checkpoint.status == "completed":
-            input_data = last_checkpoint.output_data
+        # Find last completed step
+        completed_steps = [s for s in state.steps if s.status == "completed"]
+        if completed_steps:
+            last_completed = max(completed_steps, key=lambda s: s.step_index)
+            input_data = last_completed.output_data
+            start_index = last_completed.step_index + 1
         else:
             input_data = state.initial_input
+            start_index = 0
 
-        # Resume execution
+        # Resume execution from next step
         state.status = WorkflowStatus.RUNNING
         self.state_store.save(state)
 
-        return self.invoke(input_data, config, workflow_id)
+        return self.invoke(input_data, config, workflow_id, start_index=start_index)
 
     def pause(self, workflow_id: str) -> None:
         """
@@ -499,7 +526,7 @@ class StatefulChainable(Chainable):
             state.status = WorkflowStatus.PAUSED
             self.state_store.save(state)
 
-    def get_state(self, workflow_id: str) -> Optional[WorkflowState]:
+    def get_state(self, workflow_id: str) -> WorkflowState | None:
         """
         Get current state of a workflow.
 

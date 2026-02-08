@@ -1,23 +1,23 @@
 """Tests for core abstractions."""
 
 import unittest
-from typing import Any, Dict, List, Optional
 from datetime import datetime
+from typing import Any
 
 from openbench.core.abstractions import (
+    Agent,
     DataSource,
-    RawData,
-    Query,
-    SearchResult,
     DataStore,
     ExecutionContext,
     ExecutionResult,
-    Agent,
-    LLMResponse,
-    LLMProvider,
-    Tool,
     GeneratedOutput,
+    LLMProvider,
+    LLMResponse,
     OutputGenerator,
+    Query,
+    RawData,
+    SearchResult,
+    Tool,
 )
 
 
@@ -36,15 +36,12 @@ class MockDataSource(DataSource):
     def source_id(self) -> str:
         return self._source_id
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         return {"type": "mock", "id": self._source_id}
 
     def extract(self) -> RawData:
         return RawData(
-            content="test content",
-            content_type="text",
-            metadata=self.get_metadata(),
-            source=self
+            content="test content", content_type="text", metadata=self.get_metadata(), source=self
         )
 
     def validate(self) -> bool:
@@ -67,9 +64,9 @@ class MockDataStore(DataStore):
         return item_id
 
     def search(self, query: Query) -> SearchResult:
-        return SearchResult(items=self._data[:query.limit], total=len(self._data))
+        return SearchResult(items=self._data[: query.limit], total=len(self._data))
 
-    def get(self, item_id: str) -> Optional[Any]:
+    def get(self, item_id: str) -> Any | None:
         return next((item for item in self._data if item["id"] == item_id), None)
 
     def delete(self, item_id: str) -> bool:
@@ -100,7 +97,7 @@ class MockAgent(Agent):
             status="completed",
             metadata={"goal": context.goal},
             cost=0.0,
-            tokens_used=0
+            tokens_used=0,
         )
 
     def estimate_cost(self, context: ExecutionContext) -> float:
@@ -115,14 +112,9 @@ class MockLLMProvider(LLMProvider):
         return "mock"
 
     def generate(self, prompt: str, model: str, **params) -> LLMResponse:
-        return LLMResponse(
-            text=f"Response to: {prompt}",
-            model=model,
-            tokens_used=10,
-            cost=0.0
-        )
+        return LLMResponse(text=f"Response to: {prompt}", model=model, tokens_used=10, cost=0.0)
 
-    def embed(self, text: str, model: Optional[str] = None) -> List[float]:
+    def embed(self, text: str, model: str | None = None) -> list[float]:
         return [0.1, 0.2, 0.3]
 
 
@@ -140,7 +132,7 @@ class MockTool(Tool):
     def execute(self, **params) -> Any:
         return {"result": "success"}
 
-    def get_schema(self) -> Dict[str, Any]:
+    def get_schema(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
 
@@ -151,12 +143,12 @@ class MockOutputGenerator(OutputGenerator):
     def output_format(self) -> str:
         return "mock"
 
-    def generate(self, content: Any, template: Optional[str] = None, **options) -> GeneratedOutput:
+    def generate(self, content: Any, template: str | None = None, **options) -> GeneratedOutput:
         return GeneratedOutput(
             file_path="/tmp/test.mock",
             format="mock",
             size_bytes=100,
-            metadata={"template": template}
+            metadata={"template": template},
         )
 
     def validate(self, content: Any) -> bool:
@@ -194,10 +186,7 @@ class TestAbstractions(unittest.TestCase):
         """Test RawData container."""
         source = MockDataSource()
         data = RawData(
-            content="test",
-            content_type="text",
-            metadata={"key": "value"},
-            source=source
+            content="test", content_type="text", metadata={"key": "value"}, source=source
         )
 
         self.assertEqual(data.content, "test")
@@ -208,11 +197,7 @@ class TestAbstractions(unittest.TestCase):
     def test_query(self):
         """Test Query object."""
         query = Query(
-            text="test query",
-            vector=[0.1, 0.2],
-            filters={"category": "test"},
-            limit=5,
-            offset=0
+            text="test query", vector=[0.1, 0.2], filters={"category": "test"}, limit=5, offset=0
         )
 
         self.assertEqual(query.text, "test query")
@@ -222,10 +207,7 @@ class TestAbstractions(unittest.TestCase):
     def test_search_result(self):
         """Test SearchResult object."""
         result = SearchResult(
-            items=[{"id": 1}, {"id": 2}],
-            total=10,
-            scores=[0.9, 0.8],
-            metadata={"query": "test"}
+            items=[{"id": 1}, {"id": 2}], total=10, scores=[0.9, 0.8], metadata={"query": "test"}
         )
 
         self.assertEqual(len(result.items), 2)
@@ -267,7 +249,7 @@ class TestAbstractions(unittest.TestCase):
             data={"key": "value"},
             tools=[],
             memory=None,
-            constraints={"timeout": 60}
+            constraints={"timeout": 60},
         )
 
         self.assertEqual(context.goal, "test goal")
@@ -281,7 +263,7 @@ class TestAbstractions(unittest.TestCase):
             status="completed",
             metadata={"agent": "test"},
             cost=0.05,
-            tokens_used=100
+            tokens_used=100,
         )
 
         self.assertEqual(result.status, "completed")
@@ -333,7 +315,7 @@ class TestAbstractions(unittest.TestCase):
             model="gpt-4",
             tokens_used=50,
             cost=0.001,
-            metadata={"temperature": 0.7}
+            metadata={"temperature": 0.7},
         )
 
         self.assertEqual(response.text, "test response")
@@ -359,7 +341,7 @@ class TestAbstractions(unittest.TestCase):
             file_path="/tmp/test.pdf",
             format="pdf",
             size_bytes=1024,
-            metadata={"template": "corporate"}
+            metadata={"template": "corporate"},
         )
 
         self.assertEqual(output.file_path, "/tmp/test.pdf")

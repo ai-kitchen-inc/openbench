@@ -13,32 +13,41 @@ Example Scenario:
 - PDF and PPTX output generators
 """
 
-from typing import Any, Dict, List, Optional
-from openbench.core import (
-    # Abstractions (L1 components)
-    DataSource, RawData, Query, SearchResult, DataStore,
-    Agent, ExecutionContext, ExecutionResult,
-    OutputGenerator, GeneratedOutput,
-    # Registries
-    DataSourceRegistry, DataStoreRegistry, AgentRegistry, OutputGeneratorRegistry,
-    # Chainable (L1 composition)
-    Chainable, Chain, Parallel, RunnableConfig,
-    # Layers (L2 composition)
-    DataLayer, IntelligenceLayer, OutputLayer, create_workflow,
-)
 from datetime import datetime
+from typing import Any
 
+from openbench.core import (
+    Agent,
+    # Registries
+    Chain,
+    DataLayer,
+    # Abstractions (L1 components)
+    DataSource,
+    DataStore,
+    ExecutionContext,
+    ExecutionResult,
+    GeneratedOutput,
+    IntelligenceLayer,
+    OutputGenerator,
+    OutputLayer,
+    Parallel,
+    Query,
+    RawData,
+    SearchResult,
+    create_workflow,
+)
 
 # ============================================================================
 # L1 Component Implementations
 # ============================================================================
+
 
 class YouTubeSource(DataSource):
     """Mock YouTube video source."""
 
     def __init__(self, url: str):
         self.url = url
-        self._id = url.split('/')[-1]
+        self._id = url.split("/")[-1]
 
     @property
     def source_type(self) -> str:
@@ -48,12 +57,12 @@ class YouTubeSource(DataSource):
     def source_id(self) -> str:
         return f"youtube:{self._id}"
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         return {
             "url": self.url,
             "title": f"Video {self._id}",
             "duration": "10:30",
-            "views": 1000000
+            "views": 1000000,
         }
 
     def extract(self) -> RawData:
@@ -62,7 +71,7 @@ class YouTubeSource(DataSource):
             content=f"Transcript from video {self._id}...",
             content_type="text",
             metadata=self.get_metadata(),
-            source=self
+            source=self,
         )
 
     def validate(self) -> bool:
@@ -83,11 +92,8 @@ class DictionarySource(DataSource):
     def source_id(self) -> str:
         return f"dict:{self.path}"
 
-    def get_metadata(self) -> Dict[str, Any]:
-        return {
-            "path": self.path,
-            "entries": 150
-        }
+    def get_metadata(self) -> dict[str, Any]:
+        return {"path": self.path, "entries": 150}
 
     def extract(self) -> RawData:
         print(f"  📚 Loading dictionary: {self.path}")
@@ -95,7 +101,7 @@ class DictionarySource(DataSource):
             content={"term1": "definition1", "term2": "definition2"},
             content_type="structured",
             metadata=self.get_metadata(),
-            source=self
+            source=self,
         )
 
     def validate(self) -> bool:
@@ -116,12 +122,8 @@ class TableSource(DataSource):
     def source_id(self) -> str:
         return f"table:{self.path}"
 
-    def get_metadata(self) -> Dict[str, Any]:
-        return {
-            "path": self.path,
-            "rows": 500,
-            "columns": 10
-        }
+    def get_metadata(self) -> dict[str, Any]:
+        return {"path": self.path, "rows": 500, "columns": 10}
 
     def extract(self) -> RawData:
         print(f"  📊 Loading table: {self.path}")
@@ -129,7 +131,7 @@ class TableSource(DataSource):
             content=[["col1", "col2"], ["val1", "val2"]],
             content_type="structured",
             metadata=self.get_metadata(),
-            source=self
+            source=self,
         )
 
     def validate(self) -> bool:
@@ -154,9 +156,9 @@ class MockVectorStore(DataStore):
         return item_id
 
     def search(self, query: Query) -> SearchResult:
-        return SearchResult(items=self._data[:query.limit], total=len(self._data))
+        return SearchResult(items=self._data[: query.limit], total=len(self._data))
 
-    def get(self, item_id: str) -> Optional[Any]:
+    def get(self, item_id: str) -> Any | None:
         return next((item for item in self._data if item["id"] == item_id), None)
 
     def delete(self, item_id: str) -> bool:
@@ -188,7 +190,7 @@ class ResearchAgent(Agent):
             status="completed",
             metadata={"agent": "research"},
             cost=0.01,
-            tokens_used=100
+            tokens_used=100,
         )
 
     def estimate_cost(self, context: ExecutionContext) -> float:
@@ -212,7 +214,7 @@ class AnalysisAgent(Agent):
             status="completed",
             metadata={"agent": "analysis"},
             cost=0.02,
-            tokens_used=200
+            tokens_used=200,
         )
 
     def estimate_cost(self, context: ExecutionContext) -> float:
@@ -229,15 +231,12 @@ class PDFGenerator(OutputGenerator):
     def output_format(self) -> str:
         return "pdf"
 
-    def generate(self, content: Any, template: Optional[str] = None, **options) -> GeneratedOutput:
+    def generate(self, content: Any, template: str | None = None, **options) -> GeneratedOutput:
         template = template or self.template
         file_path = f"outputs/report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         print(f"  📄 Generating PDF: {file_path}")
         return GeneratedOutput(
-            file_path=file_path,
-            format="pdf",
-            size_bytes=5120,
-            metadata={"template": template}
+            file_path=file_path, format="pdf", size_bytes=5120, metadata={"template": template}
         )
 
     def validate(self, content: Any) -> bool:
@@ -254,15 +253,12 @@ class PPTXGenerator(OutputGenerator):
     def output_format(self) -> str:
         return "pptx"
 
-    def generate(self, content: Any, template: Optional[str] = None, **options) -> GeneratedOutput:
+    def generate(self, content: Any, template: str | None = None, **options) -> GeneratedOutput:
         template = template or self.template
         file_path = f"outputs/presentation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pptx"
         print(f"  📊 Generating PPTX: {file_path}")
         return GeneratedOutput(
-            file_path=file_path,
-            format="pptx",
-            size_bytes=10240,
-            metadata={"template": template}
+            file_path=file_path, format="pptx", size_bytes=10240, metadata={"template": template}
         )
 
     def validate(self, content: Any) -> bool:
@@ -273,21 +269,24 @@ class PPTXGenerator(OutputGenerator):
 # Demo 1: L1 Component-Level Composition
 # ============================================================================
 
+
 def demo_l1_composition():
     """Demonstrate L1 component-level composition."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("DEMO 1: L1 Component-Level Composition")
-    print("="*70)
+    print("=" * 70)
 
     print("\n1️⃣  Sequential Data Sources (video1 | video2 | video3)")
     print("-" * 70)
 
     # Chain 3 video sources sequentially
-    video_pipeline = Chain([
-        YouTubeSource(url="https://youtube.com/watch?v=video1"),
-        YouTubeSource(url="https://youtube.com/watch?v=video2"),
-        YouTubeSource(url="https://youtube.com/watch?v=video3"),
-    ])
+    video_pipeline = Chain(
+        [
+            YouTubeSource(url="https://youtube.com/watch?v=video1"),
+            YouTubeSource(url="https://youtube.com/watch?v=video2"),
+            YouTubeSource(url="https://youtube.com/watch?v=video3"),
+        ]
+    )
 
     result = video_pipeline.invoke({})
     print(f"\n  ✅ Processed {len(result) if isinstance(result, list) else 1} videos\n")
@@ -296,10 +295,12 @@ def demo_l1_composition():
     print("-" * 70)
 
     # Run dictionary and table in parallel
-    reference_data = Parallel([
-        DictionarySource(path="./data/glossary.json"),
-        TableSource(path="./data/metrics.csv"),
-    ])
+    reference_data = Parallel(
+        [
+            DictionarySource(path="./data/glossary.json"),
+            TableSource(path="./data/metrics.csv"),
+        ]
+    )
 
     result = reference_data.invoke({})
     print(f"\n  ✅ Processed {len(result)} reference sources\n")
@@ -308,22 +309,26 @@ def demo_l1_composition():
     print("-" * 70)
 
     # Chain agents
-    agent_pipeline = Chain([
-        ResearchAgent(goal="Extract themes"),
-        AnalysisAgent(goal="Identify trends"),
-    ])
+    agent_pipeline = Chain(
+        [
+            ResearchAgent(goal="Extract themes"),
+            AnalysisAgent(goal="Identify trends"),
+        ]
+    )
 
     result = agent_pipeline.invoke({"data": "sample data"})
-    print(f"\n  ✅ Agent pipeline completed\n")
+    print("\n  ✅ Agent pipeline completed\n")
 
     print("4️⃣  Parallel Outputs (pdf & pptx)")
     print("-" * 70)
 
     # Generate multiple outputs in parallel
-    output_pipeline = Parallel([
-        PDFGenerator(template="corporate"),
-        PPTXGenerator(template="executive"),
-    ])
+    output_pipeline = Parallel(
+        [
+            PDFGenerator(template="corporate"),
+            PPTXGenerator(template="executive"),
+        ]
+    )
 
     result = output_pipeline.invoke({"content": "analysis results"})
     print(f"\n  ✅ Generated {len(result)} outputs\n")
@@ -333,11 +338,12 @@ def demo_l1_composition():
 # Demo 2: L2 System-Level Composition
 # ============================================================================
 
+
 def demo_l2_composition():
     """Demonstrate L2 system-level layer composition."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("DEMO 2: L2 System-Level Composition (Layers)")
-    print("="*70)
+    print("=" * 70)
 
     print("\n🔧 Building L2 Workflow...")
     print("-" * 70)
@@ -347,16 +353,20 @@ def demo_l2_composition():
     print("  - 3 YouTube videos (sequential)")
     print("  - Dictionary & Table (parallel)")
 
-    video_sources = Chain([
-        YouTubeSource(url="https://youtube.com/watch?v=sustainability1"),
-        YouTubeSource(url="https://youtube.com/watch?v=sustainability2"),
-        YouTubeSource(url="https://youtube.com/watch?v=sustainability3"),
-    ])
+    video_sources = Chain(
+        [
+            YouTubeSource(url="https://youtube.com/watch?v=sustainability1"),
+            YouTubeSource(url="https://youtube.com/watch?v=sustainability2"),
+            YouTubeSource(url="https://youtube.com/watch?v=sustainability3"),
+        ]
+    )
 
-    reference_sources = Parallel([
-        DictionarySource(path="./data/sustainability_glossary.json"),
-        TableSource(path="./data/emission_data.csv"),
-    ])
+    reference_sources = Parallel(
+        [
+            DictionarySource(path="./data/sustainability_glossary.json"),
+            TableSource(path="./data/emission_data.csv"),
+        ]
+    )
 
     # Combine: videos first, then references
     all_sources = video_sources | reference_sources
@@ -365,28 +375,31 @@ def demo_l2_composition():
     print("\nL1 Agents:")
     print("  - Research → Analysis → Synthesis")
 
-    agents = Chain([
-        ResearchAgent(goal="Extract sustainability themes"),
-        AnalysisAgent(goal="Analyze emission trends"),
-        ResearchAgent(goal="Synthesize recommendations"),
-    ])
+    agents = Chain(
+        [
+            ResearchAgent(goal="Extract sustainability themes"),
+            AnalysisAgent(goal="Analyze emission trends"),
+            ResearchAgent(goal="Synthesize recommendations"),
+        ]
+    )
 
     # L1: Compose outputs
     print("\nL1 Outputs:")
     print("  - PDF & PPTX (parallel)")
 
-    outputs = Parallel([
-        PDFGenerator(template="sustainability_report"),
-        PPTXGenerator(template="executive_presentation"),
-    ])
+    outputs = Parallel(
+        [
+            PDFGenerator(template="sustainability_report"),
+            PPTXGenerator(template="executive_presentation"),
+        ]
+    )
 
     # L2: Create layers
     print("\nL2 Layers:")
     print("  - DataLayer | IntelligenceLayer | OutputLayer")
 
     data_layer = DataLayer(
-        sources=all_sources,
-        stores=[MockVectorStore(collection="sustainability")]
+        sources=all_sources, stores=[MockVectorStore(collection="sustainability")]
     )
 
     intelligence_layer = IntelligenceLayer(agents=agents)
@@ -395,33 +408,32 @@ def demo_l2_composition():
     # L2: Compose complete workflow
     complete_workflow = data_layer | intelligence_layer | output_layer
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("🚀 EXECUTING E2E WORKFLOW")
-    print("="*70)
+    print("=" * 70)
 
     # Execute!
-    result = complete_workflow.invoke({
-        "project": "Q1 2026 Sustainability Report",
-        "company": "Acme Corp"
-    })
+    result = complete_workflow.invoke(
+        {"project": "Q1 2026 Sustainability Report", "company": "Acme Corp"}
+    )
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("✅ WORKFLOW COMPLETED")
-    print("="*70)
+    print("=" * 70)
 
     # Print results
-    data_metadata = result.get('metadata', {})
-    intelligence_output = result.get('intelligence_output', {})
-    outputs_data = result.get('generated_outputs', [])
+    data_metadata = result.get("metadata", {})
+    result.get("intelligence_output", {})
+    outputs_data = result.get("generated_outputs", [])
 
-    print(f"\n📊 Results:")
+    print("\n📊 Results:")
     print(f"  - Data sources processed: {data_metadata.get('num_sources', 0)}")
     print(f"  - Items indexed: {data_metadata.get('num_indexed', 0)}")
-    print(f"  - Intelligence tasks completed: ✓")
+    print("  - Intelligence tasks completed: ✓")
     print(f"  - Outputs generated: {len(outputs_data)}")
 
     if outputs_data:
-        print(f"\n📁 Generated Files:")
+        print("\n📁 Generated Files:")
         for output in outputs_data:
             print(f"  - {output.file_path}")
 
@@ -430,25 +442,30 @@ def demo_l2_composition():
 # Demo 3: Using create_workflow Helper
 # ============================================================================
 
+
 def demo_create_workflow_helper():
     """Demonstrate create_workflow helper function."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("DEMO 3: create_workflow() Helper Function")
-    print("="*70)
+    print("=" * 70)
 
     print("\n💡 The create_workflow() helper simplifies L2 workflow creation")
     print("-" * 70)
 
     # Create L1 components
-    data_sources = Chain([
-        YouTubeSource(url="https://youtube.com/watch?v=v1"),
-        YouTubeSource(url="https://youtube.com/watch?v=v2"),
-    ])
+    data_sources = Chain(
+        [
+            YouTubeSource(url="https://youtube.com/watch?v=v1"),
+            YouTubeSource(url="https://youtube.com/watch?v=v2"),
+        ]
+    )
 
-    agents = Chain([
-        ResearchAgent(goal="Research"),
-        AnalysisAgent(goal="Analyze"),
-    ])
+    agents = Chain(
+        [
+            ResearchAgent(goal="Research"),
+            AnalysisAgent(goal="Analyze"),
+        ]
+    )
 
     outputs = PDFGenerator(template="simple")
 
@@ -457,7 +474,7 @@ def demo_create_workflow_helper():
         data_sources=data_sources,
         data_stores=[MockVectorStore(collection="demo")],
         agents=agents,
-        generators=outputs
+        generators=outputs,
     )
 
     print("\n🚀 Executing workflow created with create_workflow()...")
@@ -473,11 +490,12 @@ def demo_create_workflow_helper():
 # Demo 4: Complex DAG at L1 Level
 # ============================================================================
 
+
 def demo_complex_l1_dag():
     """Demonstrate complex L1 DAG within DataLayer."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("DEMO 4: Complex L1 DAG within DataLayer")
-    print("="*70)
+    print("=" * 70)
 
     print("\n📐 Complex Data Source DAG:")
     print("-" * 70)
@@ -487,11 +505,13 @@ def demo_complex_l1_dag():
     print("  Pattern: A & B & C (all parallel at top level)")
 
     # Complex DAG: 3 parallel branches
-    branch_a = Chain([
-        YouTubeSource(url="https://youtube.com/watch?v=a1"),
-        YouTubeSource(url="https://youtube.com/watch?v=a2"),
-        YouTubeSource(url="https://youtube.com/watch?v=a3"),
-    ])
+    branch_a = Chain(
+        [
+            YouTubeSource(url="https://youtube.com/watch?v=a1"),
+            YouTubeSource(url="https://youtube.com/watch?v=a2"),
+            YouTubeSource(url="https://youtube.com/watch?v=a3"),
+        ]
+    )
 
     branch_b = DictionarySource(path="./data/terms.json")
 
@@ -501,17 +521,14 @@ def demo_complex_l1_dag():
     complex_dag = Parallel([branch_a, branch_b, branch_c])
 
     # Use in DataLayer
-    data_layer = DataLayer(
-        sources=complex_dag,
-        stores=[MockVectorStore(collection="complex")]
-    )
+    data_layer = DataLayer(sources=complex_dag, stores=[MockVectorStore(collection="complex")])
 
     print("\n🚀 Executing complex DAG...")
     print("-" * 70)
 
     result = data_layer.invoke({})
 
-    print(f"\n✅ Complex DAG completed!")
+    print("\n✅ Complex DAG completed!")
     print(f"   Total sources processed: {result['metadata']['num_sources']}")
     print(f"   Items indexed: {result['metadata']['num_indexed']}")
 
@@ -520,11 +537,12 @@ def demo_complex_l1_dag():
 # Main Demo Runner
 # ============================================================================
 
+
 def main():
     """Run all L1/L2 orchestration demos."""
-    print("\n" + "🚀"*35)
+    print("\n" + "🚀" * 35)
     print("OpenBench L1/L2 Orchestration Demo")
-    print("🚀"*35)
+    print("🚀" * 35)
 
     print("\nThis demo shows:")
     print("  • L1: Component-level composition (sources, agents, outputs)")
@@ -537,9 +555,9 @@ def main():
     demo_create_workflow_helper()
     demo_complex_l1_dag()
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("✅ ALL DEMOS COMPLETED")
-    print("="*70)
+    print("=" * 70)
 
     print("\n📚 Key Takeaways:")
     print("  1. ✅ L1 composition: Pipe (|) and parallel (&) operators")

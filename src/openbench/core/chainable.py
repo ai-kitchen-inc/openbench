@@ -4,16 +4,19 @@ Chainable workflow system compatible with LangChain's Runnable interface.
 Enables DAG-based workflows with pipe operator composition.
 """
 
-from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar, Union
-from dataclasses import dataclass, field
-from datetime import datetime
 import asyncio
+import logging
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Generic, TypeVar
+
+logger = logging.getLogger(__name__)
 
 # Type variables for input/output
-Input = TypeVar('Input')
-Output = TypeVar('Output')
-OtherOutput = TypeVar('OtherOutput')
+Input = TypeVar("Input")
+Output = TypeVar("Output")
+OtherOutput = TypeVar("OtherOutput")
 
 
 @dataclass
@@ -23,13 +26,14 @@ class RunnableConfig:
 
     Compatible with LangChain's RunnableConfig.
     """
-    tags: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    callbacks: List[Any] = field(default_factory=list)
-    run_name: Optional[str] = None
-    max_concurrency: Optional[int] = None
+
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    callbacks: list[Any] = field(default_factory=list)
+    run_name: str | None = None
+    max_concurrency: int | None = None
     recursion_limit: int = 25
-    configurable: Dict[str, Any] = field(default_factory=dict)
+    configurable: dict[str, Any] = field(default_factory=dict)
 
 
 class Chainable(ABC, Generic[Input, Output]):
@@ -42,7 +46,7 @@ class Chainable(ABC, Generic[Input, Output]):
     """
 
     @abstractmethod
-    def invoke(self, input: Input, config: Optional[RunnableConfig] = None) -> Output:
+    def invoke(self, input: Input, config: RunnableConfig | None = None) -> Output:
         """
         Execute this chainable synchronously.
 
@@ -53,13 +57,8 @@ class Chainable(ABC, Generic[Input, Output]):
         Returns:
             Output data
         """
-        pass
 
-    async def ainvoke(
-        self,
-        input: Input,
-        config: Optional[RunnableConfig] = None
-    ) -> Output:
+    async def ainvoke(self, input: Input, config: RunnableConfig | None = None) -> Output:
         """
         Execute this chainable asynchronously.
 
@@ -74,11 +73,7 @@ class Chainable(ABC, Generic[Input, Output]):
         """
         return self.invoke(input, config)
 
-    def batch(
-        self,
-        inputs: List[Input],
-        config: Optional[RunnableConfig] = None
-    ) -> List[Output]:
+    def batch(self, inputs: list[Input], config: RunnableConfig | None = None) -> list[Output]:
         """
         Execute this chainable on multiple inputs.
 
@@ -92,10 +87,8 @@ class Chainable(ABC, Generic[Input, Output]):
         return [self.invoke(input, config) for input in inputs]
 
     async def abatch(
-        self,
-        inputs: List[Input],
-        config: Optional[RunnableConfig] = None
-    ) -> List[Output]:
+        self, inputs: list[Input], config: RunnableConfig | None = None
+    ) -> list[Output]:
         """
         Execute this chainable on multiple inputs asynchronously.
 
@@ -109,11 +102,7 @@ class Chainable(ABC, Generic[Input, Output]):
         tasks = [self.ainvoke(input, config) for input in inputs]
         return await asyncio.gather(*tasks)
 
-    def stream(
-        self,
-        input: Input,
-        config: Optional[RunnableConfig] = None
-    ):
+    def stream(self, input: Input, config: RunnableConfig | None = None):
         """
         Stream output from this chainable.
 
@@ -167,6 +156,16 @@ class Chainable(ABC, Generic[Input, Output]):
         return Parallel(branches=[self, other])
 
 
+class ChainExecutionError(Exception):
+    """Error raised when a Chain step fails, with step context."""
+
+    def __init__(self, message: str, step_index: int, step_name: str, partial_result: Any = None):
+        super().__init__(message)
+        self.step_index = step_index
+        self.step_name = step_name
+        self.partial_result = partial_result
+
+
 class Chain(Chainable[Input, Output]):
     """
     Sequential chain of chainables: A → B → C
@@ -178,22 +177,32 @@ class Chain(Chainable[Input, Output]):
         >>> # Direct creation
         >>> workflow = Chain(steps=[loader, processor, analyzer, reporter])
         >>>
+        >>> # With error handler
+        >>> workflow = Chain(
+        ...     steps=[loader, processor, analyzer],
+        ...     on_error=lambda e, i, r: r  # Return partial result on error
+        ... )
+        >>>
         >>> # Execute
         >>> result = workflow.invoke(initial_data)
     """
 
-    def __init__(self, steps: List[Chainable]):
+    def __init__(self, steps: list[Chainable], on_error: Callable | None = None):
         """
         Initialize chain.
 
         Args:
             steps: List of chainables to execute sequentially
+            on_error: Optional error handler callable(exception, step_index, partial_result) -> Any.
+                      If provided, its return value becomes the chain result on error.
+                      If not provided, a ChainExecutionError is raised.
         """
         if not steps:
             raise ValueError("Chain must have at least one step")
         self.steps = steps
+        self.on_error = on_error
 
-    def invoke(self, input: Input, config: Optional[RunnableConfig] = None) -> Output:
+    def invoke(self, input: Input, config: RunnableConfig | None = None) -> Output:
         """
         Execute all steps sequentially.
 
@@ -205,17 +214,27 @@ class Chain(Chainable[Input, Output]):
 
         Returns:
             Final output
+
+        Raises:
+            ChainExecutionError: If a step fails and no on_error handler is set
         """
         result = input
-        for step in self.steps:
-            result = step.invoke(result, config)
+        for i, step in enumerate(self.steps):
+            try:
+                result = step.invoke(result, config)
+            except Exception as e:
+                step_name = getattr(step, "name", step.__class__.__name__)
+                if self.on_error:
+                    return self.on_error(e, i, result)
+                raise ChainExecutionError(
+                    f"Step {i} ({step_name}) failed: {e}",
+                    step_index=i,
+                    step_name=step_name,
+                    partial_result=result,
+                ) from e
         return result
 
-    async def ainvoke(
-        self,
-        input: Input,
-        config: Optional[RunnableConfig] = None
-    ) -> Output:
+    async def ainvoke(self, input: Input, config: RunnableConfig | None = None) -> Output:
         """
         Execute all steps sequentially (async).
 
@@ -225,10 +244,24 @@ class Chain(Chainable[Input, Output]):
 
         Returns:
             Final output
+
+        Raises:
+            ChainExecutionError: If a step fails and no on_error handler is set
         """
         result = input
-        for step in self.steps:
-            result = await step.ainvoke(result, config)
+        for i, step in enumerate(self.steps):
+            try:
+                result = await step.ainvoke(result, config)
+            except Exception as e:
+                step_name = getattr(step, "name", step.__class__.__name__)
+                if self.on_error:
+                    return self.on_error(e, i, result)
+                raise ChainExecutionError(
+                    f"Step {i} ({step_name}) failed: {e}",
+                    step_index=i,
+                    step_name=step_name,
+                    partial_result=result,
+                ) from e
         return result
 
     def __or__(self, other: Chainable) -> "Chain":
@@ -239,12 +272,12 @@ class Chain(Chainable[Input, Output]):
             other: Next step to add
 
         Returns:
-            Extended chain
+            Extended chain (preserves on_error handler)
         """
-        return Chain(steps=self.steps + [other])
+        return Chain(steps=[*self.steps, other], on_error=self.on_error)
 
 
-class Parallel(Chainable[Input, List[Any]]):
+class Parallel(Chainable[Input, list[Any]]):
     """
     Parallel execution of multiple chainables: [A, B, C]
 
@@ -261,7 +294,7 @@ class Parallel(Chainable[Input, List[Any]]):
         >>> results = parallel.invoke(data)  # Returns [result_a, result_b, result_c]
     """
 
-    def __init__(self, branches: List[Chainable]):
+    def __init__(self, branches: list[Chainable]):
         """
         Initialize parallel execution.
 
@@ -272,11 +305,7 @@ class Parallel(Chainable[Input, List[Any]]):
             raise ValueError("Parallel must have at least one branch")
         self.branches = branches
 
-    def invoke(
-        self,
-        input: Input,
-        config: Optional[RunnableConfig] = None
-    ) -> List[Any]:
+    def invoke(self, input: Input, config: RunnableConfig | None = None) -> list[Any]:
         """
         Execute all branches sequentially and collect results.
 
@@ -291,11 +320,7 @@ class Parallel(Chainable[Input, List[Any]]):
         """
         return [branch.invoke(input, config) for branch in self.branches]
 
-    async def ainvoke(
-        self,
-        input: Input,
-        config: Optional[RunnableConfig] = None
-    ) -> List[Any]:
+    async def ainvoke(self, input: Input, config: RunnableConfig | None = None) -> list[Any]:
         """
         Execute all branches in parallel (asynchronously).
 
@@ -304,10 +329,19 @@ class Parallel(Chainable[Input, List[Any]]):
             config: Execution configuration
 
         Returns:
-            List of outputs from all branches
+            List of outputs from all branches (exceptions included as-is)
         """
         tasks = [branch.ainvoke(input, config) for branch in self.branches]
-        return await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        errors = [(i, r) for i, r in enumerate(results) if isinstance(r, Exception)]
+        if errors:
+            logger.warning(
+                f"Parallel execution had {len(errors)} failure(s): "
+                + ", ".join(f"branch {i}: {type(e).__name__}: {e}" for i, e in errors)
+            )
+
+        return list(results)
 
     def __and__(self, other: Chainable) -> "Parallel":
         """
@@ -319,7 +353,7 @@ class Parallel(Chainable[Input, List[Any]]):
         Returns:
             Extended parallel execution
         """
-        return Parallel(branches=self.branches + [other])
+        return Parallel(branches=[*self.branches, other])
 
 
 class Conditional(Chainable[Input, Output]):
@@ -342,7 +376,7 @@ class Conditional(Chainable[Input, Output]):
         self,
         condition: Callable[[Input], bool],
         true_branch: Chainable,
-        false_branch: Optional[Chainable] = None
+        false_branch: Chainable | None = None,
     ):
         """
         Initialize conditional.
@@ -356,7 +390,7 @@ class Conditional(Chainable[Input, Output]):
         self.true_branch = true_branch
         self.false_branch = false_branch
 
-    def invoke(self, input: Input, config: Optional[RunnableConfig] = None) -> Output:
+    def invoke(self, input: Input, config: RunnableConfig | None = None) -> Output:
         """
         Execute conditional logic.
 
@@ -374,11 +408,7 @@ class Conditional(Chainable[Input, Output]):
         else:
             return input  # Passthrough if no false branch
 
-    async def ainvoke(
-        self,
-        input: Input,
-        config: Optional[RunnableConfig] = None
-    ) -> Output:
+    async def ainvoke(self, input: Input, config: RunnableConfig | None = None) -> Output:
         """
         Execute conditional logic (async).
 
@@ -421,9 +451,9 @@ class Router(Chainable[Input, Output]):
 
     def __init__(
         self,
-        routes: Dict[str, Chainable],
+        routes: dict[str, Chainable],
         router: Callable[[Input], str],
-        default: Optional[Chainable] = None
+        default: Chainable | None = None,
     ):
         """
         Initialize router.
@@ -437,7 +467,7 @@ class Router(Chainable[Input, Output]):
         self.router = router
         self.default = default
 
-    def invoke(self, input: Input, config: Optional[RunnableConfig] = None) -> Output:
+    def invoke(self, input: Input, config: RunnableConfig | None = None) -> Output:
         """
         Route input to appropriate branch.
 
@@ -462,11 +492,7 @@ class Router(Chainable[Input, Output]):
                 f"Available routes: {list(self.routes.keys())}"
             )
 
-    async def ainvoke(
-        self,
-        input: Input,
-        config: Optional[RunnableConfig] = None
-    ) -> Output:
+    async def ainvoke(self, input: Input, config: RunnableConfig | None = None) -> Output:
         """
         Route input to appropriate branch (async).
 
@@ -483,9 +509,7 @@ class Router(Chainable[Input, Output]):
         elif self.default:
             return await self.default.ainvoke(input, config)
         else:
-            raise ValueError(
-                f"Route key '{key}' not found and no default route specified"
-            )
+            raise ValueError(f"Route key '{key}' not found and no default route specified")
 
 
 class Lambda(Chainable[Input, Output]):
@@ -503,7 +527,7 @@ class Lambda(Chainable[Input, Output]):
         >>> result = workflow.invoke("hello")  # "HELLO"
     """
 
-    def __init__(self, func: Callable[[Input], Output], name: Optional[str] = None):
+    def __init__(self, func: Callable[[Input], Output], name: str | None = None):
         """
         Initialize lambda chainable.
 
@@ -514,7 +538,7 @@ class Lambda(Chainable[Input, Output]):
         self.func = func
         self.name = name or func.__name__
 
-    def invoke(self, input: Input, config: Optional[RunnableConfig] = None) -> Output:
+    def invoke(self, input: Input, config: RunnableConfig | None = None) -> Output:
         """
         Execute wrapped function.
 
@@ -542,7 +566,7 @@ class Passthrough(Chainable[Input, Input]):
         ... )
     """
 
-    def invoke(self, input: Input, config: Optional[RunnableConfig] = None) -> Input:
+    def invoke(self, input: Input, config: RunnableConfig | None = None) -> Input:
         """
         Return input unchanged.
 

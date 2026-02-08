@@ -27,13 +27,13 @@ import os
 import sys
 from datetime import datetime
 
+from openbench.adapters.google_adk import GoogleADKAdapter
+
 # OpenBench imports
 from openbench.core import DataLayer, IntelligenceLayer, OutputLayer
 from openbench.data.sources.pdf import PDFSource
-from openbench.adapters.google_adk import GoogleADKAdapter
-from openbench.output.generators import PDFGenerator, MarkdownGenerator
+from openbench.output.generators import MarkdownGenerator, PDFGenerator
 from openbench.workflows import Workflow
-
 
 # =============================================================================
 # Configuration - Change these values as needed
@@ -79,7 +79,10 @@ def run_pdf_workflow(input_pdf: str, output_pdf: str, goal: str) -> dict:
     google_adapter = GoogleADKAdapter(
         model=MODEL_NAME,
         system_instruction="You are a document analysis assistant. Be concise and informative.",
-        generation_config={"temperature": DEFAULT_TEMPERATURE, "max_output_tokens": DEFAULT_MAX_TOKENS}
+        generation_config={
+            "temperature": DEFAULT_TEMPERATURE,
+            "max_output_tokens": DEFAULT_MAX_TOKENS,
+        },
     )
     pdf_generator = PDFGenerator(template="report")
 
@@ -97,16 +100,18 @@ def run_pdf_workflow(input_pdf: str, output_pdf: str, goal: str) -> dict:
     print("\nExecuting workflow...")
 
     # Execute
-    result = workflow.invoke({
-        "goal": goal,
-        "output_path": output_pdf,
-        "title": f"Document Analysis - {datetime.now().strftime('%Y-%m-%d')}"
-    })
+    result = workflow.invoke(
+        {
+            "goal": goal,
+            "output_path": output_pdf,
+            "title": f"Document Analysis - {datetime.now().strftime('%Y-%m-%d')}",
+        }
+    )
 
-    print(f"\n✓ Workflow completed!")
+    print("\n✓ Workflow completed!")
 
-    if result.get('generated_outputs'):
-        output = result['generated_outputs'][0]
+    if result.get("generated_outputs"):
+        output = result["generated_outputs"][0]
         print(f"  Output file: {output.file_path}")
         print(f"  Size: {output.size_bytes} bytes")
 
@@ -134,7 +139,10 @@ def run_markdown_workflow(input_pdf: str, output_md: str, goal: str) -> dict:
     google_adapter = GoogleADKAdapter(
         model=MODEL_NAME,
         system_instruction="You are a document analysis assistant. Format your response in Markdown.",
-        generation_config={"temperature": DEFAULT_TEMPERATURE, "max_output_tokens": DEFAULT_MAX_TOKENS}
+        generation_config={
+            "temperature": DEFAULT_TEMPERATURE,
+            "max_output_tokens": DEFAULT_MAX_TOKENS,
+        },
     )
     md_generator = MarkdownGenerator(add_toc=True)
 
@@ -151,16 +159,12 @@ def run_markdown_workflow(input_pdf: str, output_md: str, goal: str) -> dict:
     print(f"Model:  {MODEL_NAME}")
     print("\nExecuting workflow...")
 
-    result = workflow.invoke({
-        "goal": goal,
-        "output_path": output_md,
-        "title": "Document Analysis"
-    })
+    result = workflow.invoke({"goal": goal, "output_path": output_md, "title": "Document Analysis"})
 
-    print(f"\n✓ Workflow completed!")
+    print("\n✓ Workflow completed!")
 
-    if result.get('generated_outputs'):
-        output = result['generated_outputs'][0]
+    if result.get("generated_outputs"):
+        output = result["generated_outputs"][0]
         print(f"  Output file: {output.file_path}")
         print(f"  Size: {output.size_bytes} bytes")
 
@@ -196,21 +200,18 @@ def run_named_workflow(input_pdf: str, output_pdf: str, goal: str) -> dict:
             | IntelligenceLayer(agents=google_adapter)
             | OutputLayer(generators=pdf_generator)
         ),
-        checkpoints=True
+        checkpoints=True,
     )
 
     print(f"\nWorkflow: {workflow.name}")
-    print(f"Checkpoints: Enabled")
+    print("Checkpoints: Enabled")
     print(f"Goal: {goal}")
     print("\nExecuting workflow...")
 
     # Execute
-    result = workflow.run({
-        "goal": goal,
-        "output_path": output_pdf
-    })
+    result = workflow.run({"goal": goal, "output_path": output_pdf})
 
-    print(f"\n✓ Named workflow completed!")
+    print("\n✓ Named workflow completed!")
     print(f"  State ID: {workflow.state_id}")
 
     return result
@@ -229,17 +230,30 @@ Examples:
 
 Environment:
     GOOGLE_API_KEY    Required (get from https://aistudio.google.com/apikey)
-        """
+        """,
     )
     parser.add_argument("input_pdf", nargs="?", help="Input PDF file path")
     parser.add_argument("output", nargs="?", help="Output file path (.pdf or .md)")
-    parser.add_argument("--goal", "-g",
-                        default="Summarize this document and extract key insights",
-                        help="Goal/task for the AI to perform")
-    parser.add_argument("--format", "-f", choices=["pdf", "markdown"], default="pdf",
-                        help="Output format (default: pdf)")
-    parser.add_argument("--workflow", "-w", choices=["basic", "named"], default="basic",
-                        help="Workflow type (default: basic)")
+    parser.add_argument(
+        "--goal",
+        "-g",
+        default="Summarize this document and extract key insights",
+        help="Goal/task for the AI to perform",
+    )
+    parser.add_argument(
+        "--format",
+        "-f",
+        choices=["pdf", "markdown"],
+        default="pdf",
+        help="Output format (default: pdf)",
+    )
+    parser.add_argument(
+        "--workflow",
+        "-w",
+        choices=["basic", "named"],
+        default="basic",
+        help="Workflow type (default: basic)",
+    )
 
     args = parser.parse_args()
 

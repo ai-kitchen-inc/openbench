@@ -1,8 +1,7 @@
 """Tests for GeminiLLMProvider."""
 
-import json
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 from openbench.core.abstractions import LLMProvider, LLMResponse
 
@@ -47,9 +46,7 @@ class TestGeminiLLMProviderInit(unittest.TestCase):
         """Test extra kwargs from ProviderService don't break init."""
         from openbench.intelligence.llm_providers import GeminiLLMProvider
 
-        provider = GeminiLLMProvider(
-            api_key="test", extra_param="ignored", another="also_ignored"
-        )
+        provider = GeminiLLMProvider(api_key="test", extra_param="ignored", another="also_ignored")
         self.assertEqual(provider.api_key, "test")
 
     def test_inherits_llm_provider(self):
@@ -102,7 +99,7 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
     def test_assistant_message_converted(self, mock_client):
         """Test assistant message becomes Content with role='model'."""
         messages = [{"role": "assistant", "content": "The answer is 4."}]
-        system, contents = self.provider._convert_messages(messages)
+        _system, contents = self.provider._convert_messages(messages)
         self.assertEqual(len(contents), 1)
         self.assertEqual(contents[0].role, "model")
 
@@ -112,7 +109,7 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
         messages = [
             {"role": "tool", "content": '{"result": "42"}', "name": "calc", "tool_call_id": "c0"},
         ]
-        system, contents = self.provider._convert_messages(messages)
+        _system, contents = self.provider._convert_messages(messages)
         self.assertEqual(len(contents), 1)
         # Tool results go as user role in Gemini
         self.assertEqual(contents[0].role, "user")
@@ -129,7 +126,7 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
                 ],
             }
         ]
-        system, contents = self.provider._convert_messages(messages)
+        _system, contents = self.provider._convert_messages(messages)
         self.assertEqual(len(contents), 1)
         self.assertEqual(contents[0].role, "model")
         # Should have function_call part
@@ -166,7 +163,7 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
     def test_empty_assistant_no_content(self, mock_client):
         """Test assistant with empty content and no tool_calls is skipped."""
         messages = [{"role": "assistant", "content": ""}]
-        system, contents = self.provider._convert_messages(messages)
+        _system, contents = self.provider._convert_messages(messages)
         # No parts → not added
         self.assertEqual(len(contents), 0)
 
@@ -443,17 +440,19 @@ class TestGeminiLLMProviderToolCalling(unittest.TestCase):
         result = self.provider.generate(
             [{"role": "user", "content": "Search for news"}],
             model="gemini-2.5-flash",
-            tools=[{
-                "type": "function",
-                "function": {
-                    "name": "search",
-                    "description": "Search the web",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"query": {"type": "string"}},
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search",
+                        "description": "Search the web",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"query": {"type": "string"}},
+                        },
                     },
-                },
-            }],
+                }
+            ],
         )
 
         self.assertTrue(hasattr(result, "tool_calls"))
@@ -533,17 +532,16 @@ class TestGeminiLLMProviderRegistration(unittest.TestCase):
 
     def test_registered_in_registry(self):
         """Test GeminiLLMProvider is registered as chat:gemini."""
-        from openbench.core.registry import LLMProviderRegistry
-
         # Import triggers registration
         import openbench.intelligence.llm_providers  # noqa: F401
+        from openbench.core.registry import LLMProviderRegistry
 
         self.assertTrue(LLMProviderRegistry.is_registered("chat", "gemini"))
 
     def test_can_create_from_registry(self):
         """Test creating GeminiLLMProvider via registry."""
-        from openbench.core.registry import LLMProviderRegistry
         import openbench.intelligence.llm_providers  # noqa: F401
+        from openbench.core.registry import LLMProviderRegistry
 
         provider = LLMProviderRegistry.create("chat", "gemini", api_key="test")
         self.assertEqual(provider.provider_name, "gemini")
@@ -551,8 +549,8 @@ class TestGeminiLLMProviderRegistration(unittest.TestCase):
 
     def test_registry_lists_gemini(self):
         """Test gemini appears in registry plugin list."""
-        from openbench.core.registry import LLMProviderRegistry
         import openbench.intelligence.llm_providers  # noqa: F401
+        from openbench.core.registry import LLMProviderRegistry
 
         plugins = LLMProviderRegistry.list_plugins()
         self.assertIn("chat:gemini", plugins)
@@ -575,11 +573,13 @@ class TestGeminiLLMProviderClientInit(unittest.TestCase):
         provider = GeminiLLMProvider(api_key=None)
         provider.api_key = None  # Ensure no env fallback
 
-        with patch.dict("os.environ", {}, clear=True):
+        with (
+            patch.dict("os.environ", {}, clear=True),
             # Mock the import so we don't need google-genai installed
-            with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}):
-                with self.assertRaises(ValueError):
-                    provider._get_client()
+            patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}),
+            self.assertRaises(ValueError),
+        ):
+            provider._get_client()
 
 
 if __name__ == "__main__":

@@ -7,15 +7,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from openbench.core.providers import (
+    _ENCRYPTED_PREFIX,
     CredentialEncryption,
     ProviderConfig,
     ProviderService,
     ProviderType,
-    configure_provider,
-    get_provider_service,
     get_credential_encryption,
+    get_provider_service,
     reset_provider_service,
-    _ENCRYPTED_PREFIX,
 )
 
 
@@ -69,9 +68,7 @@ class TestCredentialEncryption(unittest.TestCase):
             "api_key": "sk-12345",
             "secret": "my-secret",
             "count": 42,
-            "nested": {
-                "token": "nested-token"
-            }
+            "nested": {"token": "nested-token"},
         }
 
         encrypted = encryption.encrypt_dict(original)
@@ -121,7 +118,7 @@ class TestCredentialEncryption(unittest.TestCase):
 
     def test_fallback_when_crypto_unavailable(self):
         """Test graceful fallback when cryptography not available."""
-        with patch.dict('sys.modules', {'cryptography': None, 'cryptography.fernet': None}):
+        with patch.dict("sys.modules", {"cryptography": None, "cryptography.fernet": None}):
             # Force re-initialization without cryptography
             encryption = CredentialEncryption(key_path=self.key_path)
             encryption._available = False
@@ -428,10 +425,7 @@ class TestProviderService(unittest.TestCase):
 
     def test_encryption_disabled_option(self):
         """Test creating service with encryption disabled."""
-        service = ProviderService(
-            config_path=str(self.config_path),
-            encrypt_credentials=False
-        )
+        service = ProviderService(config_path=str(self.config_path), encrypt_credentials=False)
 
         self.assertFalse(service.is_encryption_enabled())
 
@@ -447,10 +441,7 @@ class TestProviderServiceEncryption(unittest.TestCase):
 
     def test_credentials_encrypted_on_save(self):
         """Test that credentials are encrypted when saved to disk."""
-        service = ProviderService(
-            config_path=str(self.config_path),
-            encrypt_credentials=True
-        )
+        service = ProviderService(config_path=str(self.config_path), encrypt_credentials=True)
 
         config = ProviderConfig(
             name="test-provider",
@@ -478,10 +469,7 @@ class TestProviderServiceEncryption(unittest.TestCase):
     def test_credentials_decrypted_on_load(self):
         """Test that credentials are decrypted when loaded from disk."""
         # First, save with encryption
-        service1 = ProviderService(
-            config_path=str(self.config_path),
-            encrypt_credentials=True
-        )
+        service1 = ProviderService(config_path=str(self.config_path), encrypt_credentials=True)
 
         config = ProviderConfig(
             name="test-provider",
@@ -493,10 +481,7 @@ class TestProviderServiceEncryption(unittest.TestCase):
         service1.configure(config)
 
         # Create new service and load
-        service2 = ProviderService(
-            config_path=str(self.config_path),
-            encrypt_credentials=True
-        )
+        service2 = ProviderService(config_path=str(self.config_path), encrypt_credentials=True)
 
         loaded_config = service2.get("test-provider")
 
@@ -505,10 +490,7 @@ class TestProviderServiceEncryption(unittest.TestCase):
 
     def test_no_encryption_when_disabled(self):
         """Test that credentials are stored as plaintext when encryption disabled."""
-        service = ProviderService(
-            config_path=str(self.config_path),
-            encrypt_credentials=False
-        )
+        service = ProviderService(config_path=str(self.config_path), encrypt_credentials=False)
 
         config = ProviderConfig(
             name="test-provider",

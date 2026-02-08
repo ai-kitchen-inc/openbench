@@ -1,79 +1,32 @@
 """Core abstractions and interfaces for OpenBench."""
 
 from openbench.core.abstractions import (
+    Agent,
     DataSource,
     DataStore,
-    Agent,
-    FrameworkAdapter,
-    LLMProvider,
-    Tool,
-    OutputGenerator,
-    RawData,
-    Query,
-    SearchResult,
     ExecutionContext,
     ExecutionResult,
-    LLMResponse,
+    FrameworkAdapter,
     GeneratedOutput,
+    LLMProvider,
+    LLMResponse,
+    OutputGenerator,
+    Query,
+    RawData,
+    SearchResult,
+    Tool,
 )
-
-from openbench.core.registry import (
-    # Core registry class
-    PluginRegistry,
-    PluginMetadata,
-    PluginEntry,
-    # Pre-defined registries
-    DataSourceRegistry,
-    DataStoreRegistry,
-    AgentRegistry,
-    LLMProviderRegistry,
-    ToolRegistry,
-    OutputGeneratorRegistry,
-    # Utility functions
-    register_all,
-    discover_plugins,
-    get_plugin_info,
-)
-
 from openbench.core.chainable import (
-    Chainable,
     Chain,
-    Parallel,
+    Chainable,
+    ChainExecutionError,
     Conditional,
-    Router,
     Lambda,
+    Parallel,
     Passthrough,
+    Router,
     RunnableConfig,
 )
-
-from openbench.core.state import (
-    WorkflowState,
-    WorkflowStatus,
-    StateStore,
-    LocalStateStore,
-    StatefulChainable,
-    StepRecord,
-)
-
-from openbench.core.layers import (
-    DataLayer,
-    IntelligenceLayer,
-    OutputLayer,
-    create_workflow,
-)
-
-from openbench.core.providers import (
-    ProviderType,
-    ProviderConfig,
-    ProviderService,
-    CredentialEncryption,
-    get_provider_service,
-    get_credential_encryption,
-    reset_provider_service,
-    configure_provider,
-    resolve_provider,
-)
-
 from openbench.core.config import (
     Config,
     ModelInfo,
@@ -81,13 +34,54 @@ from openbench.core.config import (
     get_default_model,
     reset_config,
 )
-
 from openbench.core.context import (
     ProjectContext,
     ProjectRegistry,
     generate_project_id,
     get_project_registry,
     reset_project_registry,
+)
+from openbench.core.layers import (
+    DataLayer,
+    IntelligenceLayer,
+    OutputLayer,
+    create_workflow,
+)
+from openbench.core.providers import (
+    CredentialEncryption,
+    ProviderConfig,
+    ProviderService,
+    ProviderType,
+    configure_provider,
+    get_credential_encryption,
+    get_provider_service,
+    reset_provider_service,
+    resolve_provider,
+)
+from openbench.core.registry import (
+    AgentRegistry,
+    # Pre-defined registries
+    DataSourceRegistry,
+    DataStoreRegistry,
+    LLMProviderRegistry,
+    OutputGeneratorRegistry,
+    PluginEntry,
+    PluginMetadata,
+    # Core registry class
+    PluginRegistry,
+    ToolRegistry,
+    discover_plugins,
+    get_plugin_info,
+    # Utility functions
+    register_all,
+)
+from openbench.core.state import (
+    LocalStateStore,
+    StatefulChainable,
+    StateStore,
+    StepRecord,
+    WorkflowState,
+    WorkflowStatus,
 )
 
 __all__ = [
@@ -122,6 +116,7 @@ __all__ = [
     # Chainable
     "Chainable",
     "Chain",
+    "ChainExecutionError",
     "Parallel",
     "Conditional",
     "Router",

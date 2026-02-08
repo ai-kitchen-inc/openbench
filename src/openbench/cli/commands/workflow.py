@@ -1,13 +1,12 @@
 """Workflow orchestration CLI commands."""
 
 import time
-from typing import Optional, Tuple
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+from rich.table import Table
 
 console = Console()
 
@@ -15,7 +14,6 @@ console = Console()
 @click.group()
 def workflow() -> None:
     """Create and manage agentic workflows."""
-    pass
 
 
 @workflow.command()
@@ -27,7 +25,7 @@ def workflow() -> None:
     default="custom",
     help="Workflow template",
 )
-def create(name: str, agents: Tuple[str, ...], template: str) -> None:
+def create(name: str, agents: tuple[str, ...], template: str) -> None:
     """Create a new workflow."""
 
     console.print(f"\n[bold cyan]Creating Workflow: {name}[/bold cyan]\n")
@@ -78,7 +76,7 @@ def list_workflows() -> None:
 @click.argument("name", required=False)
 @click.option("--async", "async_mode", is_flag=True, help="Run asynchronously")
 @click.option("--checkpoint/--no-checkpoint", default=True, help="Enable checkpoints")
-def run(name: Optional[str], async_mode: bool, checkpoint: bool) -> None:
+def run(name: str | None, async_mode: bool, checkpoint: bool) -> None:
     """Run a workflow."""
 
     if not name:
@@ -101,11 +99,10 @@ def run(name: Optional[str], async_mode: bool, checkpoint: bool) -> None:
         BarColumn(),
         console=console,
     ) as progress:
-
         for step_name, duration in steps:
             task = progress.add_task(f"[cyan]{step_name}", total=duration)
 
-            for i in range(duration):
+            for _i in range(duration):
                 time.sleep(0.5)
                 progress.update(task, advance=1)
 
@@ -177,7 +174,7 @@ def show(name: str) -> None:
 @workflow.command()
 @click.argument("name")
 @click.option("--step", help="Restart from specific step")
-def restart(name: str, step: Optional[str]) -> None:
+def restart(name: str, step: str | None) -> None:
     """Restart a failed workflow."""
 
     console.print(f"\n[bold yellow]Restarting Workflow: {name}[/bold yellow]\n")
@@ -185,7 +182,7 @@ def restart(name: str, step: Optional[str]) -> None:
     if step:
         console.print(f"[dim]Restarting from step: {step}[/dim]\n")
     else:
-        console.print(f"[dim]Restarting from last checkpoint[/dim]\n")
+        console.print("[dim]Restarting from last checkpoint[/dim]\n")
 
     with console.status("[bold green]Resuming workflow..."):
         time.sleep(1)

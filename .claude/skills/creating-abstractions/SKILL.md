@@ -174,6 +174,26 @@ source = DataSourceRegistry.create('custom', 'my-impl', config="value")
 agent = AgentRegistry.create('custom', 'my-impl', goal="analyze")
 ```
 
+## Anti-Patterns
+
+**DO NOT:**
+- Skip abstract properties (`source_type`, `agent_type`, `output_format`, `framework_name`) - they're required
+- Return raw strings from `extract()` - always return `RawData` dataclass
+- Return raw dicts from `execute()` - always return `ExecutionResult` dataclass
+- Return raw paths from `generate()` - always return `GeneratedOutput` dataclass
+- Forget `validate()` - it's called before processing in the pipeline
+- Import external SDKs at module level - use lazy imports with helpful error messages
+- Guess method signatures - read `src/openbench/core/abstractions.py` first
+
+## Cross-References
+
+- **Composing Workflows**: All abstractions are `Chainable` → see `composing-workflows` skill
+- **Data Layer**: `DataSource` and `DataStore` implementations → see `data-layer` skill
+- **Intelligence Layer**: `Agent` and `LLMProvider` implementations → see `intelligence-layer` skill
+- **Output Layer**: `OutputGenerator` implementations → see `output-layer` skill
+- **Adapters**: `FrameworkAdapter` implementations → see `adapters` skill
+- **Testing**: Test patterns for abstractions → see `testing-openbench` skill
+
 ## Requirements
 
 1. Always implement required abstract properties

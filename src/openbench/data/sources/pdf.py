@@ -1,9 +1,8 @@
 """PDF data source for extracting text from PDF files."""
 
 import hashlib
-import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 from openbench.core.abstractions import DataSource, RawData
 from openbench.core.context import ProjectContext
@@ -40,8 +39,8 @@ class PDFSource(DataSource):
 
     def __init__(
         self,
-        path: Union[str, Path],
-        project: Optional[ProjectContext] = None,
+        path: str | Path,
+        project: ProjectContext | None = None,
         store: Optional["DataStore"] = None,
         recursive: bool = True,
         encoding: str = "utf-8",
@@ -63,8 +62,8 @@ class PDFSource(DataSource):
         self.recursive = recursive
         self.encoding = encoding
         self.auto_index = auto_index
-        self._files: Optional[List[Path]] = None
-        self._metadata: Optional[Dict[str, Any]] = None
+        self._files: list[Path] | None = None
+        self._metadata: dict[str, Any] | None = None
 
     @property
     def source_type(self) -> str:
@@ -78,7 +77,7 @@ class PDFSource(DataSource):
         hash_suffix = hashlib.md5(path_str.encode()).hexdigest()[:8]
         return f"pdf_{hash_suffix}"
 
-    def _get_pdf_files(self) -> List[Path]:
+    def _get_pdf_files(self) -> list[Path]:
         """Get list of PDF files to process."""
         if self._files is not None:
             return self._files
@@ -113,9 +112,9 @@ class PDFSource(DataSource):
                 raise ValidationError(f"No PDF files found in: {self.path}")
             return True
         except (FileNotFoundError, UnsupportedFormatError) as e:
-            raise ValidationError(str(e))
+            raise ValidationError(str(e)) from e
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         """Get metadata about the PDF source.
 
         Returns:
@@ -141,7 +140,7 @@ class PDFSource(DataSource):
 
         return self._metadata
 
-    def _extract_text_from_pdf(self, pdf_path: Path) -> Dict[str, Any]:
+    def _extract_text_from_pdf(self, pdf_path: Path) -> dict[str, Any]:
         """Extract text from a single PDF file.
 
         Args:
@@ -154,16 +153,15 @@ class PDFSource(DataSource):
             import pypdf
         except ImportError:
             raise ExtractionError(
-                "pypdf is required for PDF extraction. "
-                "Install with: pip install pypdf"
-            )
+                "pypdf is required for PDF extraction. Install with: pip install pypdf"
+            ) from None
 
         try:
             with open(pdf_path, "rb") as f:
                 reader = pypdf.PdfReader(f)
                 text_parts = []
 
-                for page_num, page in enumerate(reader.pages):
+                for _page_num, page in enumerate(reader.pages):
                     page_text = page.extract_text() or ""
                     text_parts.append(page_text)
 
@@ -175,7 +173,7 @@ class PDFSource(DataSource):
                     "pdf_metadata": dict(reader.metadata) if reader.metadata else {},
                 }
         except Exception as e:
-            raise ExtractionError(f"Failed to extract text from {pdf_path}: {e}")
+            raise ExtractionError(f"Failed to extract text from {pdf_path}: {e}") from e
 
     def extract(self) -> RawData:
         """Extract text from PDF file(s).
@@ -204,17 +202,13 @@ class PDFSource(DataSource):
                 errors.append(str(e))
 
         if not extracted:
-            raise ExtractionError(
-                f"Failed to extract any PDFs. Errors: {'; '.join(errors)}"
-            )
+            raise ExtractionError(f"Failed to extract any PDFs. Errors: {'; '.join(errors)}")
 
         # Combine content from all files
         if len(extracted) == 1:
             content = extracted[0]["text"]
         else:
-            content = "\n\n---\n\n".join(
-                f"# {e['file_name']}\n\n{e['text']}" for e in extracted
-            )
+            content = "\n\n---\n\n".join(f"# {e['file_name']}\n\n{e['text']}" for e in extracted)
 
         metadata = {
             **self.get_metadata(),
@@ -248,7 +242,8 @@ class PDFSource(DataSource):
             except Exception as e:
                 # Log but don't fail extraction
                 import warnings
-                warnings.warn(f"Failed to index to store: {e}")
+
+                warnings.warn(f"Failed to index to store: {e}", stacklevel=2)
 
         return raw_data
 

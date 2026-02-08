@@ -4,7 +4,8 @@ LangChain framework adapter for OpenBench.
 Allows using any LangChain Runnable (agents, chains, LCEL) in OpenBench workflows.
 """
 
-from typing import Any, Optional
+from typing import Any
+
 from openbench.core import FrameworkAdapter
 
 
@@ -55,7 +56,7 @@ class LangChainAdapter(FrameworkAdapter):
         """
         self.runnable = runnable
 
-    def invoke(self, input: Any, config: Optional[Any] = None) -> Any:
+    def invoke(self, input: Any, config: Any | None = None) -> Any:
         """
         Execute the LangChain runnable.
 
@@ -68,7 +69,7 @@ class LangChainAdapter(FrameworkAdapter):
         """
         return self.runnable.invoke(input, config=config)
 
-    async def ainvoke(self, input: Any, config: Optional[Any] = None) -> Any:
+    async def ainvoke(self, input: Any, config: Any | None = None) -> Any:
         """
         Async execution of the LangChain runnable.
 
