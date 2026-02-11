@@ -49,10 +49,11 @@ def create_store(
     namespace: str = "knowledge-base",
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
+    dimension: int | None = None,
 ) -> PineconeStore:
     """Create PineconeStore with Google embeddings."""
 
-    embedding_provider = GoogleEmbeddingProvider(model="text-embedding-004")
+    embedding_provider = GoogleEmbeddingProvider(model="gemini-embedding-001", dimension=dimension)
 
     chunking_config = ChunkingConfig(
         chunk_size=chunk_size,
@@ -157,6 +158,12 @@ def main():
     parser.add_argument("--chunk-size", type=int, default=1000, help="Chunk size for splitting")
     parser.add_argument("--chunk-overlap", type=int, default=200, help="Overlap between chunks")
     parser.add_argument("--tag", help="Tag to add to all documents")
+    parser.add_argument(
+        "--dimension",
+        type=int,
+        default=None,
+        help="Embedding dimension override (default: provider native, e.g. 3072 for gemini-embedding-001)",
+    )
     parser.add_argument("--batch", action="store_true", help="Process as batch (glob patterns)")
     args = parser.parse_args()
 
@@ -191,6 +198,7 @@ def main():
         namespace=args.namespace,
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
+        dimension=args.dimension,
     )
 
     # Prepare metadata

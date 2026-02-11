@@ -26,7 +26,7 @@ pip install -e ".[security]"     # Credential encryption
 
 ```bash
 python -m unittest discover tests -v
-# Expected: Ran 510 tests ... OK
+# Expected: Ran 508 tests ... OK
 ```
 
 ---
@@ -176,7 +176,7 @@ python -m unittest discover tests -v
 python -m unittest tests.test_abstractions -v  # Specific file
 ```
 
-**Test coverage (510 tests):**
+**Test coverage (508 tests):**
 - Core abstractions (16), Registry (45), Chainable (18)
 - L2 layers (17), Workflow (15), Provider service (32)
 - Config (20), Intelligence base (31)
@@ -185,7 +185,7 @@ python -m unittest tests.test_abstractions -v  # Specific file
 
 ## Status
 
-**Phase 1 & 2 Complete:** Core abstractions, plugin registry, chainable composition, L2 layers, workflows, Provider Service, Config system, Agent interface, 510 tests.
+**Phase 1 & 2 Complete:** Core abstractions, plugin registry, chainable composition, L2 layers, workflows, Provider Service, Config system, Agent interface, 508 tests.
 
 **Phase 3 In Progress:** Provider implementations (OpenAI, Anthropic, ChromaDB, Pinecone, ReportLab, python-pptx).
 

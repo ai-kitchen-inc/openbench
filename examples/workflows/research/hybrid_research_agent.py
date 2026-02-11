@@ -61,7 +61,7 @@ def detect_namespace(query: str, default: str = "knowledge-base") -> str:
     return default
 
 
-def list_namespaces(index_name: str = "openbench") -> dict[str, int]:
+def list_namespaces(index_name: str = "openbench", dimension: int | None = None) -> dict[str, int]:
     """List available namespaces in Pinecone index.
 
     Returns:
@@ -71,7 +71,9 @@ def list_namespaces(index_name: str = "openbench") -> dict[str, int]:
         from openbench.data.stores import PineconeStore
         from openbench.intelligence import GoogleEmbeddingProvider
 
-        embedding_provider = GoogleEmbeddingProvider(model="text-embedding-004")
+        embedding_provider = GoogleEmbeddingProvider(
+            model="gemini-embedding-001", dimension=dimension
+        )
         store = PineconeStore(
             index_name=index_name,
             namespace="",  # Empty to get index stats
@@ -121,6 +123,7 @@ class HybridResearchAgent:
         top_k: int = 5,
         max_results: int = 5,
         quiet: bool = False,
+        dimension: int | None = None,
     ):
         """Initialize agent.
 
@@ -134,6 +137,7 @@ class HybridResearchAgent:
             top_k: RAG results count.
             max_results: Web results count.
             quiet: Suppress debug output for chatbot integration.
+            dimension: Embedding dimension override (default: provider native).
         """
         self.mode = mode
         self.index_name = index_name
@@ -144,6 +148,7 @@ class HybridResearchAgent:
         self.top_k = top_k
         self.max_results = max_results
         self.quiet = quiet
+        self.dimension = dimension
 
         self._init_components()
         self.history: list[dict] = []
@@ -166,7 +171,9 @@ class HybridResearchAgent:
                 self._log(f"   Index: {self.index_name}")
                 self._log(f"   Namespace: {self.namespace}")
 
-                self.embedding_provider = GoogleEmbeddingProvider(model="text-embedding-004")
+                self.embedding_provider = GoogleEmbeddingProvider(
+                    model="gemini-embedding-001", dimension=self.dimension
+                )
                 self.store = PineconeStore(
                     index_name=self.index_name,
                     namespace=self.namespace,
@@ -415,6 +422,12 @@ Examples:
         help="Quiet mode - minimal output for chatbot integration",
     )
     parser.add_argument(
+        "--dimension",
+        type=int,
+        default=None,
+        help="Embedding dimension override (default: provider native, e.g. 3072 for gemini-embedding-001)",
+    )
+    parser.add_argument(
         "--list-namespaces", "-l", action="store_true", help="List available namespaces in Pinecone"
     )
     parser.add_argument("--interactive", "-i", action="store_true")
@@ -431,7 +444,7 @@ Examples:
 
         print(f"\n📚 Namespaces in index '{args.index}':")
         print("-" * 40)
-        namespaces = list_namespaces(args.index)
+        namespaces = list_namespaces(args.index, dimension=args.dimension)
         if namespaces:
             for ns, count in sorted(namespaces.items()):
                 keywords = KNOWN_NAMESPACES.get(ns, [])
@@ -454,6 +467,7 @@ Examples:
         grounded_provider=args.grounded_provider,
         model=args.model,
         quiet=args.quiet,
+        dimension=args.dimension,
     )
 
     if args.interactive:

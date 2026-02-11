@@ -15,7 +15,8 @@ examples/
 ├── data/                        # Data source examples
 │   └── langextract_demo.py
 ├── embeddings/                  # Embedding provider demos
-│   └── embedding_providers_demo.py
+│   ├── embedding_providers_demo.py
+│   └── dynamic_registration_demo.py
 ├── intelligence/                # Agent and LLM provider demos
 │   ├── gemini_agent_demo.py
 │   └── agentic_research_demo.py
@@ -157,6 +158,20 @@ Vector embedding generation with GoogleEmbeddingProvider:
 python examples/embeddings/embedding_providers_demo.py
 ```
 
+### 6b. Dynamic Registration Demo (`embeddings/dynamic_registration_demo.py`)
+
+Runtime registration of new embedding models and providers:
+- Register new model to existing provider (`register_model`)
+- Register completely new provider (`register_provider`)
+- Auto-resolve provider from model name (`resolve_embedding_provider`)
+- Error handling for invalid registrations
+
+**Requires:** None (uses mock provider)
+
+```bash
+python examples/embeddings/dynamic_registration_demo.py
+```
+
 ---
 
 ## Intelligence Examples (`intelligence/`)
@@ -259,7 +274,7 @@ python examples/workflows/pdf/pdf_google_adk_workflow.py input.pdf output.md --f
 
 Data ingestion: PDF → chunking → embeddings → PineconeStore:
 - PDF text extraction and chunking
-- Embedding generation with Google text-embedding-004
+- Embedding generation with Google gemini-embedding-001
 - Batch indexing to Pinecone
 - Configurable chunk size and overlap
 
@@ -404,7 +419,8 @@ python examples/workflows/reports/knowledge_base_workflow.py pipeline doc.pdf "S
 | 3 | `core/agent_registry_demo.py` | None | AgentFactory, dynamic registration |
 | 4 | `adapters/framework_adapters_demo.py` | None | Multi-framework orchestration |
 | 5 | `data/langextract_demo.py` | Google | Structured entity extraction |
-| 6 | `embeddings/embedding_providers_demo.py` | Google | Vector embeddings |
+| 6a | `embeddings/embedding_providers_demo.py` | Google | Vector embeddings |
+| 6b | `embeddings/dynamic_registration_demo.py` | None | Dynamic model/provider registration |
 | 7 | `intelligence/gemini_agent_demo.py` | Google | BaseAgent reasoning loop + tools |
 | 8 | `intelligence/agentic_research_demo.py` | Google (+Pinecone) | BaseAgent + RAG + web search |
 | 9 | `intelligence/agentic_analysis_demo.py` | Google (+Pinecone) | AnalysisAgent + StructuredOutputAgent |
