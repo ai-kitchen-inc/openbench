@@ -114,9 +114,6 @@ class MockLLMProvider(LLMProvider):
     def generate(self, prompt: str, model: str, **params) -> LLMResponse:
         return LLMResponse(text=f"Response to: {prompt}", model=model, tokens_used=10, cost=0.0)
 
-    def embed(self, text: str, model: str | None = None) -> list[float]:
-        return [0.1, 0.2, 0.3]
-
 
 class MockTool(Tool):
     """Mock tool for testing."""
@@ -303,10 +300,6 @@ class TestAbstractions(unittest.TestCase):
         response = provider.generate("test prompt", "gpt-4")
         self.assertIsInstance(response, LLMResponse)
         self.assertIn("test prompt", response.text)
-
-        embedding = provider.embed("test text")
-        self.assertIsInstance(embedding, list)
-        self.assertTrue(all(isinstance(x, float) for x in embedding))
 
     def test_llm_response(self):
         """Test LLMResponse."""

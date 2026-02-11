@@ -121,9 +121,6 @@ class TestLLMProvider(LLMProvider):
     def generate(self, prompt: str, model: str, **params) -> LLMResponse:
         return LLMResponse("response", model, 10, 0.0)
 
-    def embed(self, text: str, model: str | None = None) -> list[float]:
-        return [0.1, 0.2, 0.3]
-
 
 class TestTool(Tool):
     """Test tool implementation."""
@@ -378,9 +375,6 @@ class TestPluginRegistrySingleton(unittest.TestCase):
 
             def generate(self, prompt: str, model: str, **params) -> LLMResponse:
                 return LLMResponse("response", model, 10, 0.0)
-
-            def embed(self, text: str, model: str | None = None) -> list[float]:
-                return [0.1]
 
         # Create twice
         instance1 = LLMProviderRegistry.create("llm", "singleton_test", api_key="key1")

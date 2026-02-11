@@ -593,6 +593,12 @@ def get_default_model() -> str:
     return get_config().get("llm.default_model", "gpt-4o")
 
 
+def invalidate_embedding_cache() -> None:
+    """Invalidate the embedding models cache so it rebuilds on next access."""
+    global _EMBEDDING_MODELS_CACHE
+    _EMBEDDING_MODELS_CACHE = None
+
+
 def reset_config() -> None:
     """Reset global config (useful for testing)."""
     global _config, _EMBEDDING_MODELS_CACHE

@@ -8,7 +8,7 @@ of dimensions and model capabilities.
 import os
 
 from openbench.core.abstractions import EmbeddingProvider
-from openbench.core.config import EMBEDDING_MODELS
+from openbench.core.config import EMBEDDING_MODELS, invalidate_embedding_cache
 
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
@@ -116,10 +116,12 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         model = model or self._model
         client = self._get_client()
 
-        response = client.embeddings.create(
-            input=text,
-            model=model,
-        )
+        kwargs = {"input": text, "model": model}
+        # Dimension shortening (text-embedding-3-small/large support this)
+        if self._custom_dimension is not None:
+            kwargs["dimensions"] = int(self._custom_dimension)
+
+        response = client.embeddings.create(**kwargs)
 
         return response.data[0].embedding
 
@@ -132,10 +134,11 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         embeddings = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            response = client.embeddings.create(
-                input=batch,
-                model=model,
-            )
+            kwargs = {"input": batch, "model": model}
+            if self._custom_dimension is not None:
+                kwargs["dimensions"] = int(self._custom_dimension)
+
+            response = client.embeddings.create(**kwargs)
             # Sort by index to maintain order
             sorted_data = sorted(response.data, key=lambda x: x.index)
             embeddings.extend([d.embedding for d in sorted_data])
@@ -151,34 +154,37 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
     Google embedding provider using Generative AI API.
 
     Official supported models (community contributions welcome!):
-    - text-embedding-004 (768 dimensions)
-    - textembedding-gecko@003 (768 dimensions)
-    - textembedding-gecko-multilingual@001 (768 dimensions)
+    - gemini-embedding-001 (3072 dimensions, default — supports MRL dimension scaling)
+    - textembedding-gecko@003 (768 dimensions, legacy)
+    - textembedding-gecko-multilingual@001 (768 dimensions, legacy)
 
     Custom models also supported - specify dimension manually.
+
+    Note: text-embedding-004 was shut down January 14, 2026.
+    Use gemini-embedding-001 instead.
 
     Example:
         >>> provider = GoogleEmbeddingProvider()
         >>> embedding = provider.embed("Hello, world!")
         >>> len(embedding)
-        768
+        3072
 
-        >>> # Use custom/new model with explicit dimension
+        >>> # Use with custom dimension (MRL scaling)
         >>> provider = GoogleEmbeddingProvider(
-        ...     model="text-embedding-005",
-        ...     dimension=1024
+        ...     model="gemini-embedding-001",
+        ...     dimension=768
         ... )
     """
 
     MODELS = {
-        "text-embedding-004": 768,
+        "gemini-embedding-001": 3072,
         "textembedding-gecko@003": 768,
         "textembedding-gecko-multilingual@001": 768,
     }
 
     def __init__(
         self,
-        model: str = "text-embedding-004",
+        model: str = "gemini-embedding-001",
         api_key: str | None = None,
         dimension: int | None = None,
     ):
@@ -250,11 +256,16 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
 
         model = model or self._model
 
-        result = genai.embed_content(
-            model=f"models/{model}",
-            content=text,
-            task_type="retrieval_document",
-        )
+        kwargs = {
+            "model": f"models/{model}",
+            "content": text,
+            "task_type": "retrieval_document",
+        }
+        # MRL dimension scaling (gemini-embedding-001 supports this)
+        if self._custom_dimension is not None:
+            kwargs["output_dimensionality"] = int(self._custom_dimension)
+
+        result = genai.embed_content(**kwargs)
 
         return result["embedding"]
 
@@ -269,12 +280,15 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
 
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            # Google API supports batch embedding
-            result = genai.embed_content(
-                model=f"models/{model}",
-                content=batch,
-                task_type="retrieval_document",
-            )
+            kwargs = {
+                "model": f"models/{model}",
+                "content": batch,
+                "task_type": "retrieval_document",
+            }
+            if self._custom_dimension is not None:
+                kwargs["output_dimensionality"] = int(self._custom_dimension)
+
+            result = genai.embed_content(**kwargs)
             embeddings.extend(result["embedding"])
 
         return embeddings
@@ -284,10 +298,71 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
 
 
 # Provider registry for dynamic resolution
-EMBEDDING_PROVIDERS = {
+EMBEDDING_PROVIDERS: dict[str, type[EmbeddingProvider]] = {
     "openai": OpenAIEmbeddingProvider,
     "google": GoogleEmbeddingProvider,
 }
+
+
+def register_model(provider: str, model: str, dimension: int) -> None:
+    """Register a new embedding model at runtime.
+
+    Adds the model to the provider's MODELS dict and invalidates
+    the global EMBEDDING_MODELS cache so it picks up the change.
+
+    Args:
+        provider: Provider name ('openai', 'google', or custom).
+        model: Model name (e.g., 'gemini-embedding-002').
+        dimension: Vector dimension for this model.
+
+    Raises:
+        ValueError: If provider is not registered.
+
+    Example:
+        >>> register_model("google", "gemini-embedding-002", 3072)
+        >>> provider = GoogleEmbeddingProvider(model="gemini-embedding-002")
+        >>> provider.get_dimension()
+        3072
+    """
+    if provider not in EMBEDDING_PROVIDERS:
+        raise ValueError(
+            f"Unknown provider '{provider}'. "
+            f"Register it first with register_provider(). "
+            f"Available: {list(EMBEDDING_PROVIDERS.keys())}"
+        )
+
+    provider_class = EMBEDDING_PROVIDERS[provider]
+    if not hasattr(provider_class, "MODELS"):
+        provider_class.MODELS = {}
+
+    provider_class.MODELS[model] = dimension
+    invalidate_embedding_cache()
+
+
+def register_provider(name: str, provider_class: type[EmbeddingProvider]) -> None:
+    """Register a new embedding provider at runtime.
+
+    Args:
+        name: Provider name (e.g., 'cohere', 'voyage').
+        provider_class: Provider class (must inherit EmbeddingProvider).
+
+    Raises:
+        TypeError: If provider_class is not an EmbeddingProvider subclass.
+
+    Example:
+        >>> class CohereEmbeddingProvider(EmbeddingProvider):
+        ...     MODELS = {"embed-v4": 1024}
+        ...     ...
+        >>> register_provider("cohere", CohereEmbeddingProvider)
+        >>> provider = get_embedding_provider("cohere")
+    """
+    if not (isinstance(provider_class, type) and issubclass(provider_class, EmbeddingProvider)):
+        raise TypeError(
+            f"provider_class must be an EmbeddingProvider subclass, got {type(provider_class)}"
+        )
+
+    EMBEDDING_PROVIDERS[name] = provider_class
+    invalidate_embedding_cache()
 
 
 def get_embedding_provider(provider: str, model: str | None = None, **kwargs) -> EmbeddingProvider:

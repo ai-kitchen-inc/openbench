@@ -66,7 +66,7 @@ class StepRecord:
             return [StepRecord._serialize_data(item) for item in data]
         elif isinstance(data, dict):
             return {k: StepRecord._serialize_data(v) for k, v in data.items()}
-        elif isinstance(data, (str, int, float, bool, type(None))):
+        elif isinstance(data, str | int | float | bool | type(None)):
             return data
         else:
             # For complex objects without to_dict, store type info

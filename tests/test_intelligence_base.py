@@ -275,9 +275,6 @@ class MockLLMProvider(LLMProvider):
             cost=0.001,
         )
 
-    def embed(self, text: str, model: str | None = None) -> list[float]:
-        return [0.1] * 1536
-
 
 class TestBaseAgent(unittest.TestCase):
     """Test BaseAgent."""

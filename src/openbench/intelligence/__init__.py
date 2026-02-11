@@ -30,6 +30,8 @@ from openbench.intelligence.embeddings import (
     GoogleEmbeddingProvider,
     OpenAIEmbeddingProvider,
     get_embedding_provider,
+    register_model,
+    register_provider,
     resolve_embedding_provider,
 )
 
@@ -67,5 +69,7 @@ __all__ = [
     "GoogleEmbeddingProvider",
     "get_embedding_provider",
     "resolve_embedding_provider",
+    "register_model",
+    "register_provider",
     "EMBEDDING_PROVIDERS",
 ]

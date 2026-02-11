@@ -57,6 +57,7 @@ def create_workflow(
     goal: str,
     index_name: str = "openbench",
     namespace: str = "pdf-rag",
+    dimension: int | None = None,
 ) -> Workflow:
     """
     Create PDF RAG workflow using OpenBench pattern.
@@ -66,7 +67,7 @@ def create_workflow(
     # Components
     pdf_source = PDFSource(path=pdf_path)
 
-    embedding_provider = GoogleEmbeddingProvider(model="text-embedding-004")
+    embedding_provider = GoogleEmbeddingProvider(model="gemini-embedding-001", dimension=dimension)
 
     vector_store = PineconeStore(
         index_name=index_name,
@@ -106,6 +107,12 @@ def main():
     parser.add_argument("-q", "--question", default="Analyze and summarize this document")
     parser.add_argument("--index", default="openbench", help="Pinecone index name")
     parser.add_argument("--namespace", default="pdf-rag", help="Pinecone namespace")
+    parser.add_argument(
+        "--dimension",
+        type=int,
+        default=None,
+        help="Embedding dimension override (default: provider native, e.g. 3072 for gemini-embedding-001)",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -133,6 +140,7 @@ def main():
             goal=args.question,
             index_name=args.index,
             namespace=args.namespace,
+            dimension=args.dimension,
         )
         print(f"  Workflow: {workflow.name}")
 

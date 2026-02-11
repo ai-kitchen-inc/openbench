@@ -11,6 +11,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
+from openbench.core.chainable import Chainable
+
 # ============================================================================
 # Data Layer Abstractions
 # ============================================================================
@@ -293,7 +295,7 @@ class Agent(ABC):
         return self.execute(context)
 
 
-class FrameworkAdapter(ABC):
+class FrameworkAdapter(Chainable):
     """
     Abstract interface for external agentic framework adapters.
 
@@ -418,10 +420,6 @@ class LLMProvider(ABC):
         Returns:
             LLMResponse with generated text
         """
-
-    @abstractmethod
-    def embed(self, text: str, model: str | None = None) -> list[float]:
-        """Generate embedding vector for text."""
 
 
 class EmbeddingProvider(ABC):
