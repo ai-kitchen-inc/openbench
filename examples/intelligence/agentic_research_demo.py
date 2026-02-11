@@ -89,7 +89,7 @@ SEARCH_KB_SCHEMA: dict[str, Any] = {
 # --- Helpers ---
 
 
-def create_pinecone_store(namespace: str = DEFAULT_NAMESPACE):
+def create_pinecone_store(namespace: str = DEFAULT_NAMESPACE, dimension: int | None = None):
     """Create PineconeStore if PINECONE_API_KEY is available, else None."""
     if not os.getenv("PINECONE_API_KEY"):
         return None
@@ -101,7 +101,9 @@ def create_pinecone_store(namespace: str = DEFAULT_NAMESPACE):
         return PineconeStore(
             index_name="openbench",
             namespace=namespace,
-            embedding_provider=GoogleEmbeddingProvider(),
+            embedding_provider=GoogleEmbeddingProvider(
+                model="gemini-embedding-001", dimension=dimension
+            ),
             create_if_missing=False,
         )
     except Exception as e:
@@ -187,7 +189,9 @@ def print_result(result):
 # --- Demo Functions ---
 
 
-def demo_builtin_store(model: str, query: str, namespace: str = DEFAULT_NAMESPACE):
+def demo_builtin_store(
+    model: str, query: str, namespace: str = DEFAULT_NAMESPACE, dimension: int | None = None
+):
     """Demo 1: Built-in Store + Web Tool.
 
     BaseAgent(store=PineconeStore) auto-retrieves RAG context before execute().
@@ -196,7 +200,7 @@ def demo_builtin_store(model: str, query: str, namespace: str = DEFAULT_NAMESPAC
     """
     print_header("Demo 1: Built-in Store + Web Search Tool")
 
-    store = create_pinecone_store(namespace)
+    store = create_pinecone_store(namespace, dimension=dimension)
     if not store:
         print("\n  Skipped: PINECONE_API_KEY not set.")
         print("  Set it with: export PINECONE_API_KEY=your-key")
@@ -266,7 +270,9 @@ def demo_tool_based(model: str, query: str):
     print_result(result)
 
 
-def demo_combined(model: str, query: str, namespace: str = DEFAULT_NAMESPACE):
+def demo_combined(
+    model: str, query: str, namespace: str = DEFAULT_NAMESPACE, dimension: int | None = None
+):
     """Demo 3: Combined -- built-in store + both search tools.
 
     BaseAgent(store=...) for automatic RAG context, plus search_web and
@@ -275,7 +281,7 @@ def demo_combined(model: str, query: str, namespace: str = DEFAULT_NAMESPACE):
     """
     print_header("Demo 3: Combined (Auto-RAG + Both Search Tools)")
 
-    store = create_pinecone_store(namespace)
+    store = create_pinecone_store(namespace, dimension=dimension)
     if not store:
         print("\n  Skipped: PINECONE_API_KEY not set.")
         print("  Set it with: export PINECONE_API_KEY=your-key")
@@ -348,6 +354,12 @@ def main():
         default=DEFAULT_NAMESPACE,
         help=f"Pinecone namespace (default: {DEFAULT_NAMESPACE})",
     )
+    parser.add_argument(
+        "--dimension",
+        type=int,
+        default=None,
+        help="Embedding dimension override (default: provider native, e.g. 3072 for gemini-embedding-001)",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -363,13 +375,17 @@ def main():
 
     try:
         if args.demo in ("1", "all"):
-            demo_builtin_store(args.model, args.query or DEFAULT_QUERIES["1"], args.namespace)
+            demo_builtin_store(
+                args.model, args.query or DEFAULT_QUERIES["1"], args.namespace, args.dimension
+            )
 
         if args.demo in ("2", "all"):
             demo_tool_based(args.model, args.query or DEFAULT_QUERIES["2"])
 
         if args.demo in ("3", "all"):
-            demo_combined(args.model, args.query or DEFAULT_QUERIES["3"], args.namespace)
+            demo_combined(
+                args.model, args.query or DEFAULT_QUERIES["3"], args.namespace, args.dimension
+            )
 
         print(f"\n{'=' * 60}")
         print("  Done!")

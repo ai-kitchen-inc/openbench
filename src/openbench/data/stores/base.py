@@ -181,19 +181,15 @@ def chunk_raw_data(data: "RawData", config: ChunkingConfig | None = None) -> lis
 class EmbeddingMixin:
     """Mixin providing embedding generation capabilities with auto-detection.
 
-    Supports:
-    - EmbeddingProvider (new, recommended)
-    - LLMProvider (legacy, for backwards compatibility)
-
     Auto-detects dimension from provider if not explicitly set.
 
     Attributes:
-        _embedding_provider: EmbeddingProvider or LLMProvider instance.
+        _embedding_provider: EmbeddingProvider instance.
         _embedding_model: Model name for embedding.
         _dimension: Vector dimension (auto-detected if None).
     """
 
-    _embedding_provider: Any | None = None  # EmbeddingProvider or LLMProvider
+    _embedding_provider: Any | None = None
     _embedding_model: str | None = None
     _dimension: int | None = None
     _resolved_dimension: int | None = None
@@ -202,7 +198,7 @@ class EmbeddingMixin:
         """Get the embedding provider, resolving from config if not set.
 
         Returns:
-            EmbeddingProvider or LLMProvider instance.
+            EmbeddingProvider instance.
 
         Raises:
             ValueError: If no embedding provider is available.
@@ -287,7 +283,6 @@ class EmbeddingMixin:
         """
         provider = self._get_embedding_provider()
 
-        # Use batch method if available (EmbeddingProvider)
         if hasattr(provider, "embed_batch"):
             return provider.embed_batch(texts, model=self._embedding_model, batch_size=batch_size)
 

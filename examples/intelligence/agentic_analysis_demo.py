@@ -117,7 +117,7 @@ SEARCH_WEB_SCHEMA: dict[str, Any] = {
 # --- Helpers ---
 
 
-def create_pinecone_store(namespace: str = DEFAULT_NAMESPACE):
+def create_pinecone_store(namespace: str = DEFAULT_NAMESPACE, dimension: int | None = None):
     """Create PineconeStore if PINECONE_API_KEY is available, else None."""
     if not os.getenv("PINECONE_API_KEY"):
         return None
@@ -129,7 +129,9 @@ def create_pinecone_store(namespace: str = DEFAULT_NAMESPACE):
         return PineconeStore(
             index_name="openbench",
             namespace=namespace,
-            embedding_provider=GoogleEmbeddingProvider(),
+            embedding_provider=GoogleEmbeddingProvider(
+                model="gemini-embedding-001", dimension=dimension
+            ),
             create_if_missing=False,
         )
     except Exception as e:
@@ -264,7 +266,9 @@ def demo_analysis_tools(model: str, query: str):
     print_result(result)
 
 
-def demo_document_analysis(model: str, query: str, namespace: str = DEFAULT_NAMESPACE):
+def demo_document_analysis(
+    model: str, query: str, namespace: str = DEFAULT_NAMESPACE, dimension: int | None = None
+):
     """Demo 2: AnalysisAgent + RAG (Document Analysis).
 
     AnalysisAgent(store=PineconeStore) auto-retrieves documents for analysis.
@@ -273,7 +277,7 @@ def demo_document_analysis(model: str, query: str, namespace: str = DEFAULT_NAME
     """
     print_header("Demo 2: AnalysisAgent + RAG (Document Analysis)")
 
-    store = create_pinecone_store(namespace)
+    store = create_pinecone_store(namespace, dimension=dimension)
     if not store:
         print("\n  Skipped: PINECONE_API_KEY not set.")
         print("  Set it with: export PINECONE_API_KEY=your-key")
@@ -398,6 +402,12 @@ def main():
         default=DEFAULT_NAMESPACE,
         help=f"Pinecone namespace (default: {DEFAULT_NAMESPACE})",
     )
+    parser.add_argument(
+        "--dimension",
+        type=int,
+        default=None,
+        help="Embedding dimension override (default: provider native, e.g. 3072 for gemini-embedding-001)",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -416,7 +426,9 @@ def main():
             demo_analysis_tools(args.model, args.query or DEFAULT_QUERIES["1"])
 
         if args.demo in ("2", "all"):
-            demo_document_analysis(args.model, args.query or DEFAULT_QUERIES["2"], args.namespace)
+            demo_document_analysis(
+                args.model, args.query or DEFAULT_QUERIES["2"], args.namespace, args.dimension
+            )
 
         if args.demo in ("3", "all"):
             demo_structured_output(args.model, args.query or DEFAULT_QUERIES["3"])

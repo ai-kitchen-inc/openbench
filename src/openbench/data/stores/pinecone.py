@@ -27,7 +27,7 @@ def _sanitize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     for key, value in metadata.items():
         if value is None:
             continue
-        if isinstance(value, (str, int, float, bool)) or (
+        if isinstance(value, str | int | float | bool) or (
             isinstance(value, list) and all(isinstance(i, str) for i in value)
         ):
             result[key] = value
@@ -211,8 +211,42 @@ class PineconeStore(DataStore, EmbeddingMixin):
 
             # Wait for index to be ready
             self._wait_for_index_ready()
+        else:
+            # Validate provider dimension matches existing index
+            self._validate_index_dimension()
 
         return self._client.Index(self._index_name)
+
+    def _validate_index_dimension(self) -> None:
+        """Validate that embedding provider dimension matches existing index.
+
+        Raises DimensionMismatchError with actionable guidance if they differ.
+        """
+        if not self._embedding_provider:
+            return
+
+        try:
+            desc = self._client.describe_index(self._index_name)
+            index_dim = int(desc.dimension)
+        except Exception:
+            return
+
+        try:
+            provider_dim = self._embedding_provider.get_dimension()
+        except (ValueError, AttributeError):
+            return
+
+        if provider_dim != index_dim:
+            provider_class = type(self._embedding_provider).__name__
+            raise DimensionMismatchError(
+                expected=index_dim,
+                got=provider_dim,
+                message=(
+                    f"Embedding provider {provider_class} outputs {provider_dim}-dim vectors "
+                    f"but index '{self._index_name}' has dimension {index_dim}. "
+                    f"Fix: {provider_class}(dimension={index_dim})"
+                ),
+            )
 
     def _wait_for_index_ready(self, timeout: int = 60) -> None:
         """Wait for index to be ready for operations."""

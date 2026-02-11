@@ -31,7 +31,7 @@ def demo_single_embedding():
     print("Demo 1: Single Text Embedding")
     print("=" * 60)
 
-    provider = GoogleEmbeddingProvider(model="text-embedding-004")
+    provider = GoogleEmbeddingProvider(model="gemini-embedding-001")
 
     text = "OpenBench is a workflow orchestrator for AI agents."
     print(f"\nText: {text}")
@@ -49,7 +49,7 @@ def demo_batch_embedding():
     print("Demo 2: Batch Embedding")
     print("=" * 60)
 
-    provider = GoogleEmbeddingProvider(model="text-embedding-004")
+    provider = GoogleEmbeddingProvider(model="gemini-embedding-001")
 
     texts = [
         "Machine learning automates analytical model building.",
@@ -73,7 +73,7 @@ def demo_semantic_similarity():
     print("Demo 3: Semantic Similarity")
     print("=" * 60)
 
-    provider = GoogleEmbeddingProvider(model="text-embedding-004")
+    provider = GoogleEmbeddingProvider(model="gemini-embedding-001")
 
     # Reference text
     query = "How to train a machine learning model?"

@@ -368,26 +368,6 @@ class GeminiLLMProvider(LLMProvider):
 
         return llm_response
 
-    def embed(self, text: str, model: str | None = None) -> list[float]:
-        """Generate embedding vector for text using Gemini.
-
-        Args:
-            text: Text to embed.
-            model: Embedding model (default: "text-embedding-004").
-
-        Returns:
-            Embedding vector as list of floats.
-        """
-        client = self._get_client()
-        embed_model = model or "text-embedding-004"
-
-        result = client.models.embed_content(
-            model=embed_model,
-            contents=text,
-        )
-
-        return list(result.embeddings[0].values)
-
 
 # ============================================================================
 # TODO: OpenAI LLM Provider
@@ -399,7 +379,6 @@ class GeminiLLMProvider(LLMProvider):
 # - Tool schema pass-through (BaseAgent already uses OpenAI format)
 # - Tool call response parsing
 # - Token usage tracking and cost estimation
-# - Embedding via text-embedding-3-small
 #
 # Models: gpt-4o, gpt-4o-mini, gpt-4.1, gpt-4.1-mini, gpt-4.1-nano, o3-mini
 # SDK: pip install openai
@@ -416,7 +395,6 @@ class GeminiLLMProvider(LLMProvider):
 # - Tool schema conversion (OpenAI function format → Anthropic tool format)
 # - Tool call response parsing
 # - Token usage tracking and cost estimation
-# - Note: Anthropic does not offer an embeddings API
 #
 # Models: claude-sonnet-4-5, claude-haiku-4-5, claude-opus-4-6
 # SDK: pip install anthropic

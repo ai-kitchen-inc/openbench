@@ -103,7 +103,7 @@ class PDFGenerator(OutputGenerator):
         if content is None:
             return False
         # Accept strings, dicts, lists, or objects with __str__
-        return isinstance(content, (str, dict, list)) or hasattr(content, "__str__")
+        return isinstance(content, str | dict | list) or hasattr(content, "__str__")
 
     def _extract_content(self, content: Any) -> str:
         """
@@ -496,7 +496,7 @@ class MarkdownGenerator(OutputGenerator):
         """Validate content can be rendered as Markdown."""
         if content is None:
             return False
-        return isinstance(content, (str, dict, list)) or hasattr(content, "__str__")
+        return isinstance(content, str | dict | list) or hasattr(content, "__str__")
 
     def _extract_content(self, content: Any) -> str:
         """Extract text content from various input formats."""
@@ -777,7 +777,7 @@ class DashboardGenerator(OutputGenerator):
         if content is None:
             return False
         # Accept dicts, lists, or dataframe-like objects
-        return isinstance(content, (dict, list)) or hasattr(content, "to_dict")
+        return isinstance(content, dict | list) or hasattr(content, "to_dict")
 
     def generate(
         self,

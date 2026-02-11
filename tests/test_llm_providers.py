@@ -484,49 +484,6 @@ class TestGeminiLLMProviderToolCalling(unittest.TestCase):
         self.assertEqual(result.text, "Here is the answer.")
 
 
-class TestGeminiLLMProviderEmbed(unittest.TestCase):
-    """Tests for embed() method."""
-
-    def setUp(self):
-        from openbench.intelligence.llm_providers import GeminiLLMProvider
-
-        self.provider = GeminiLLMProvider(api_key="test-key")
-
-    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
-    def test_embed_returns_vector(self, mock_get_client):
-        """Test embed returns list of floats."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-
-        mock_embedding = MagicMock()
-        mock_embedding.values = [0.1, 0.2, 0.3, 0.4]
-        mock_result = MagicMock()
-        mock_result.embeddings = [mock_embedding]
-        mock_client.models.embed_content.return_value = mock_result
-
-        vector = self.provider.embed("Hello world")
-
-        self.assertEqual(vector, [0.1, 0.2, 0.3, 0.4])
-        mock_client.models.embed_content.assert_called_once()
-
-    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
-    def test_embed_uses_default_model(self, mock_get_client):
-        """Test embed defaults to text-embedding-004."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-
-        mock_embedding = MagicMock()
-        mock_embedding.values = [0.1]
-        mock_result = MagicMock()
-        mock_result.embeddings = [mock_embedding]
-        mock_client.models.embed_content.return_value = mock_result
-
-        self.provider.embed("test")
-
-        call_kwargs = mock_client.models.embed_content.call_args
-        self.assertEqual(call_kwargs.kwargs.get("model"), "text-embedding-004")
-
-
 class TestGeminiLLMProviderRegistration(unittest.TestCase):
     """Tests for LLMProviderRegistry registration."""
 

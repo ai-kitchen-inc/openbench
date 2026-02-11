@@ -55,6 +55,7 @@ class ResearchAgent:
         model: str = "gemini-2.5-flash",
         top_k: int = 5,
         min_score: float = 0.7,
+        dimension: int | None = None,
     ):
         """Initialize Research Agent.
 
@@ -64,12 +65,14 @@ class ResearchAgent:
             model: LLM model for synthesis
             top_k: Number of results to retrieve
             min_score: Minimum similarity score
+            dimension: Embedding dimension override (default: provider native)
         """
         self.index_name = index_name
         self.namespace = namespace
         self.model = model
         self.top_k = top_k
         self.min_score = min_score
+        self.dimension = dimension
 
         # Initialize components
         self._init_components()
@@ -80,7 +83,9 @@ class ResearchAgent:
     def _init_components(self):
         """Initialize store and LLM."""
         # Embedding provider
-        self.embedding_provider = GoogleEmbeddingProvider(model="text-embedding-004")
+        self.embedding_provider = GoogleEmbeddingProvider(
+            model="gemini-embedding-001", dimension=self.dimension
+        )
 
         # Vector store
         self.store = PineconeStore(
@@ -358,6 +363,12 @@ def main():
     parser.add_argument("--model", default="gemini-2.5-flash", help="LLM model")
     parser.add_argument("--top-k", type=int, default=5, help="Number of results to retrieve")
     parser.add_argument("--min-score", type=float, default=0.7, help="Minimum similarity score")
+    parser.add_argument(
+        "--dimension",
+        type=int,
+        default=None,
+        help="Embedding dimension override (default: provider native, e.g. 3072 for gemini-embedding-001)",
+    )
     parser.add_argument("--interactive", "-i", action="store_true", help="Interactive mode")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     args = parser.parse_args()
@@ -371,6 +382,7 @@ def main():
         model=args.model,
         top_k=args.top_k,
         min_score=args.min_score,
+        dimension=args.dimension,
     )
 
     if args.interactive:

@@ -17,6 +17,8 @@ from openbench.intelligence.embeddings import (
     GoogleEmbeddingProvider,
     OpenAIEmbeddingProvider,
     get_embedding_provider,
+    register_model,
+    register_provider,
     resolve_embedding_provider,
 )
 
@@ -67,7 +69,7 @@ class TestEmbeddingModelsRegistry(unittest.TestCase):
 
     def test_google_models_registered(self):
         """Test Google embedding models are in registry."""
-        self.assertIn("text-embedding-004", EMBEDDING_MODELS)
+        self.assertIn("gemini-embedding-001", EMBEDDING_MODELS)
         self.assertIn("textembedding-gecko@003", EMBEDDING_MODELS)
 
     def test_model_has_dimension(self):
@@ -87,7 +89,7 @@ class TestEmbeddingModelsRegistry(unittest.TestCase):
         """Test get_embedding_dimension function."""
         self.assertEqual(get_embedding_dimension("text-embedding-3-small"), 1536)
         self.assertEqual(get_embedding_dimension("text-embedding-3-large"), 3072)
-        self.assertEqual(get_embedding_dimension("text-embedding-004"), 768)
+        self.assertEqual(get_embedding_dimension("gemini-embedding-001"), 3072)
 
     def test_get_embedding_dimension_unknown_model(self):
         """Test get_embedding_dimension raises for unknown model."""
@@ -98,7 +100,7 @@ class TestEmbeddingModelsRegistry(unittest.TestCase):
     def test_get_embedding_provider_name(self):
         """Test get_embedding_provider function from config."""
         self.assertEqual(get_provider_name("text-embedding-3-small"), "openai")
-        self.assertEqual(get_provider_name("text-embedding-004"), "google")
+        self.assertEqual(get_provider_name("gemini-embedding-001"), "google")
 
     def test_list_embedding_models(self):
         """Test list_embedding_models function."""
@@ -111,7 +113,7 @@ class TestEmbeddingModelsRegistry(unittest.TestCase):
         openai_models = list_embedding_models(provider="openai")
         self.assertIn("text-embedding-3-small", openai_models)
         self.assertIn("text-embedding-3-large", openai_models)
-        self.assertNotIn("text-embedding-004", openai_models)  # Google model
+        self.assertNotIn("gemini-embedding-001", openai_models)  # Google model
 
 
 class TestOpenAIEmbeddingProvider(unittest.TestCase):
@@ -189,9 +191,9 @@ class TestGoogleEmbeddingProvider(unittest.TestCase):
 
     def test_init_with_valid_model(self):
         """Test initialization with valid model."""
-        provider = GoogleEmbeddingProvider(model="text-embedding-004")
+        provider = GoogleEmbeddingProvider(model="gemini-embedding-001")
         self.assertEqual(provider.provider_name, "google")
-        self.assertEqual(provider.default_model, "text-embedding-004")
+        self.assertEqual(provider.default_model, "gemini-embedding-001")
 
     def test_init_with_unknown_model_allowed(self):
         """Test initialization with unknown model is allowed (hybrid approach)."""
@@ -215,15 +217,15 @@ class TestGoogleEmbeddingProvider(unittest.TestCase):
 
     def test_get_dimension(self):
         """Test dimension retrieval for official models."""
-        provider = GoogleEmbeddingProvider(model="text-embedding-004")
-        self.assertEqual(provider.get_dimension(), 768)
+        provider = GoogleEmbeddingProvider(model="gemini-embedding-001")
+        self.assertEqual(provider.get_dimension(), 3072)
 
     def test_list_models(self):
         """Test list_models returns available models."""
         provider = GoogleEmbeddingProvider()
         models = provider.list_models()
-        self.assertIn("text-embedding-004", models)
-        self.assertEqual(models["text-embedding-004"], 768)
+        self.assertIn("gemini-embedding-001", models)
+        self.assertEqual(models["gemini-embedding-001"], 3072)
 
 
 class TestEmbeddingProviderRegistry(unittest.TestCase):
@@ -270,7 +272,7 @@ class TestResolveEmbeddingProvider(unittest.TestCase):
         self.assertIsInstance(provider, OpenAIEmbeddingProvider)
         self.assertEqual(provider.default_model, "text-embedding-3-large")
 
-        provider = resolve_embedding_provider(model="text-embedding-004")
+        provider = resolve_embedding_provider(model="gemini-embedding-001")
         self.assertIsInstance(provider, GoogleEmbeddingProvider)
 
     def test_resolve_default(self):
@@ -337,6 +339,182 @@ class TestEmbeddingMixinAutoDetection(unittest.TestCase):
         obj._embedding_provider = mock_provider
 
         self.assertEqual(obj._get_dimension(), 1536)
+
+
+class TestRegisterModel(unittest.TestCase):
+    """Tests for register_model function."""
+
+    def setUp(self):
+        """Save original MODELS to restore after each test."""
+        self._orig_google = dict(GoogleEmbeddingProvider.MODELS)
+        self._orig_openai = dict(OpenAIEmbeddingProvider.MODELS)
+
+    def tearDown(self):
+        """Restore original MODELS."""
+        GoogleEmbeddingProvider.MODELS = self._orig_google
+        OpenAIEmbeddingProvider.MODELS = self._orig_openai
+        # Invalidate cache so other tests are not affected
+        from openbench.core.config import invalidate_embedding_cache
+
+        invalidate_embedding_cache()
+
+    def test_register_model_to_google(self):
+        """Test registering a new model to Google provider."""
+        register_model("google", "gemini-embedding-002", 2048)
+
+        self.assertIn("gemini-embedding-002", GoogleEmbeddingProvider.MODELS)
+        self.assertEqual(GoogleEmbeddingProvider.MODELS["gemini-embedding-002"], 2048)
+
+    def test_register_model_to_openai(self):
+        """Test registering a new model to OpenAI provider."""
+        register_model("openai", "text-embedding-4", 4096)
+
+        self.assertIn("text-embedding-4", OpenAIEmbeddingProvider.MODELS)
+        self.assertEqual(OpenAIEmbeddingProvider.MODELS["text-embedding-4"], 4096)
+
+    def test_registered_model_visible_in_global_registry(self):
+        """Test that dynamically registered model appears in EMBEDDING_MODELS."""
+        register_model("google", "gemini-embedding-002", 2048)
+
+        self.assertIn("gemini-embedding-002", EMBEDDING_MODELS)
+        self.assertEqual(EMBEDDING_MODELS["gemini-embedding-002"]["dimension"], 2048)
+        self.assertEqual(EMBEDDING_MODELS["gemini-embedding-002"]["provider"], "google")
+
+    def test_registered_model_usable_in_provider(self):
+        """Test that provider can use dynamically registered model."""
+        register_model("google", "gemini-embedding-002", 2048)
+
+        provider = GoogleEmbeddingProvider(model="gemini-embedding-002")
+        self.assertEqual(provider.get_dimension(), 2048)
+
+    def test_register_model_unknown_provider_raises(self):
+        """Test registering model to unknown provider raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            register_model("cohere", "embed-v4", 1024)
+
+        self.assertIn("Unknown provider", str(ctx.exception))
+        self.assertIn("register_provider", str(ctx.exception))
+
+    def test_registered_model_resolvable(self):
+        """Test that resolve_embedding_provider finds dynamically registered model."""
+        register_model("google", "gemini-embedding-002", 2048)
+
+        provider = resolve_embedding_provider(model="gemini-embedding-002")
+        self.assertIsInstance(provider, GoogleEmbeddingProvider)
+        self.assertEqual(provider.default_model, "gemini-embedding-002")
+
+
+class TestRegisterProvider(unittest.TestCase):
+    """Tests for register_provider function."""
+
+    def setUp(self):
+        """Save original providers."""
+        self._orig_providers = dict(EMBEDDING_PROVIDERS)
+
+    def tearDown(self):
+        """Restore original providers."""
+        EMBEDDING_PROVIDERS.clear()
+        EMBEDDING_PROVIDERS.update(self._orig_providers)
+        from openbench.core.config import invalidate_embedding_cache
+
+        invalidate_embedding_cache()
+
+    def test_register_new_provider(self):
+        """Test registering a new provider."""
+
+        class MockProvider(EmbeddingProvider):
+            MODELS = {"mock-embed-v1": 512}
+
+            @property
+            def provider_name(self) -> str:
+                return "mock"
+
+            @property
+            def default_model(self) -> str:
+                return "mock-embed-v1"
+
+            def get_dimension(self, model=None) -> int:
+                return self.MODELS.get(model or self._model, 512)
+
+            def embed(self, text, model=None):
+                return [0.0] * 512
+
+            def embed_batch(self, texts, model=None, batch_size=100):
+                return [[0.0] * 512 for _ in texts]
+
+        register_provider("mock", MockProvider)
+
+        self.assertIn("mock", EMBEDDING_PROVIDERS)
+
+    def test_registered_provider_models_in_global_registry(self):
+        """Test that new provider's models appear in EMBEDDING_MODELS."""
+
+        class VoyageProvider(EmbeddingProvider):
+            MODELS = {"voyage-3": 1024}
+
+            @property
+            def provider_name(self) -> str:
+                return "voyage"
+
+            @property
+            def default_model(self) -> str:
+                return "voyage-3"
+
+            def get_dimension(self, model=None) -> int:
+                return 1024
+
+            def embed(self, text, model=None):
+                return [0.0] * 1024
+
+            def embed_batch(self, texts, model=None, batch_size=100):
+                return [[0.0] * 1024 for _ in texts]
+
+        register_provider("voyage", VoyageProvider)
+
+        self.assertIn("voyage-3", EMBEDDING_MODELS)
+        self.assertEqual(EMBEDDING_MODELS["voyage-3"]["provider"], "voyage")
+
+    def test_registered_provider_usable_via_get(self):
+        """Test get_embedding_provider works with dynamically registered provider."""
+
+        class TestProvider(EmbeddingProvider):
+            MODELS = {"test-v1": 256}
+
+            def __init__(self, model="test-v1", **kwargs):
+                self._model = model
+
+            @property
+            def provider_name(self) -> str:
+                return "test"
+
+            @property
+            def default_model(self) -> str:
+                return self._model
+
+            def get_dimension(self, model=None) -> int:
+                return 256
+
+            def embed(self, text, model=None):
+                return [0.0] * 256
+
+            def embed_batch(self, texts, model=None, batch_size=100):
+                return [[0.0] * 256 for _ in texts]
+
+        register_provider("test", TestProvider)
+
+        provider = get_embedding_provider("test")
+        self.assertIsInstance(provider, TestProvider)
+
+    def test_register_non_provider_raises_type_error(self):
+        """Test registering non-EmbeddingProvider raises TypeError."""
+        with self.assertRaises(TypeError):
+            register_provider("bad", dict)
+
+    def test_register_instance_raises_type_error(self):
+        """Test registering an instance instead of class raises TypeError."""
+        provider = OpenAIEmbeddingProvider()
+        with self.assertRaises(TypeError):
+            register_provider("bad", provider)
 
 
 if __name__ == "__main__":
