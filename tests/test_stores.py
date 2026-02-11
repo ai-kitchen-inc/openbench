@@ -549,5 +549,209 @@ class TestPineconeStore(unittest.TestCase):
         self.assertEqual(result.scores[0], 0.9)
 
 
+class TestPineconeStoreDimensionValidation(unittest.TestCase):
+    """Tests for PineconeStore dimension validation on existing indexes."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.pinecone_patch = patch.dict(
+            "sys.modules",
+            {"pinecone": MagicMock()},
+        )
+        self.pinecone_patch.start()
+
+    def tearDown(self):
+        """Clean up patches."""
+        self.pinecone_patch.stop()
+
+    def test_dimension_mismatch_raises_error(self):
+        """Test that mismatched dimensions raise DimensionMismatchError."""
+        from openbench.data.stores.pinecone import PineconeStore
+
+        mock_provider = MagicMock()
+        mock_provider.get_dimension.return_value = 3072  # Provider outputs 3072
+
+        store = PineconeStore(
+            index_name="test-index",
+            api_key="test-key",
+            embedding_provider=mock_provider,
+        )
+
+        # Mock client that returns existing index with dim=768
+        mock_client = MagicMock()
+        mock_idx_info = MagicMock()
+        mock_idx_info.name = "test-index"
+        mock_client.list_indexes.return_value = [mock_idx_info]
+        mock_desc = MagicMock()
+        mock_desc.dimension = 768
+        mock_client.describe_index.return_value = mock_desc
+        store._client = mock_client
+
+        with self.assertRaises(DimensionMismatchError) as ctx:
+            store._get_or_create_index()
+
+        self.assertEqual(ctx.exception.expected, 768)
+        self.assertEqual(ctx.exception.got, 3072)
+        self.assertIn("dimension=768", str(ctx.exception))
+
+    def test_matching_dimensions_no_error(self):
+        """Test that matching dimensions don't raise an error."""
+        from openbench.data.stores.pinecone import PineconeStore
+
+        mock_provider = MagicMock()
+        mock_provider.get_dimension.return_value = 768
+
+        store = PineconeStore(
+            index_name="test-index",
+            api_key="test-key",
+            embedding_provider=mock_provider,
+        )
+
+        mock_client = MagicMock()
+        mock_idx_info = MagicMock()
+        mock_idx_info.name = "test-index"
+        mock_client.list_indexes.return_value = [mock_idx_info]
+        mock_desc = MagicMock()
+        mock_desc.dimension = 768
+        mock_client.describe_index.return_value = mock_desc
+        store._client = mock_client
+
+        # Should not raise
+        store._get_or_create_index()
+
+    def test_no_provider_skips_validation(self):
+        """Test that missing provider skips dimension validation."""
+        from openbench.data.stores.pinecone import PineconeStore
+
+        store = PineconeStore(
+            index_name="test-index",
+            api_key="test-key",
+        )
+
+        mock_client = MagicMock()
+        mock_idx_info = MagicMock()
+        mock_idx_info.name = "test-index"
+        mock_client.list_indexes.return_value = [mock_idx_info]
+        store._client = mock_client
+
+        # Should not raise (no provider to validate)
+        store._get_or_create_index()
+
+    def test_error_message_includes_fix(self):
+        """Test that error message includes actionable fix."""
+        from openbench.data.stores.pinecone import PineconeStore
+
+        mock_provider = MagicMock()
+        mock_provider.get_dimension.return_value = 3072
+        type(mock_provider).__name__ = "GoogleEmbeddingProvider"
+
+        store = PineconeStore(
+            index_name="my-index",
+            api_key="test-key",
+            embedding_provider=mock_provider,
+        )
+
+        mock_client = MagicMock()
+        mock_idx_info = MagicMock()
+        mock_idx_info.name = "my-index"
+        mock_client.list_indexes.return_value = [mock_idx_info]
+        mock_desc = MagicMock()
+        mock_desc.dimension = 768
+        mock_client.describe_index.return_value = mock_desc
+        store._client = mock_client
+
+        with self.assertRaises(DimensionMismatchError) as ctx:
+            store._get_or_create_index()
+
+        msg = str(ctx.exception)
+        self.assertIn("GoogleEmbeddingProvider", msg)
+        self.assertIn("3072", msg)
+        self.assertIn("768", msg)
+        self.assertIn("dimension=768", msg)
+
+
+class TestEmbeddingProviderDimensionScaling(unittest.TestCase):
+    """Tests for embedding provider dimension scaling (MRL/shortening)."""
+
+    @patch("google.generativeai.embed_content")
+    def test_google_provider_passes_output_dimensionality(self, mock_embed):
+        """Test GoogleEmbeddingProvider passes output_dimensionality to API."""
+        from openbench.intelligence.embeddings import GoogleEmbeddingProvider
+
+        mock_embed.return_value = {"embedding": [0.1] * 768}
+
+        provider = GoogleEmbeddingProvider(
+            model="gemini-embedding-001",
+            api_key="test-key",
+            dimension=768,
+        )
+        provider._configured = True
+
+        provider.embed("test text")
+
+        mock_embed.assert_called_once()
+        call_kwargs = mock_embed.call_args
+        self.assertEqual(call_kwargs[1].get("output_dimensionality"), 768)
+
+    @patch("google.generativeai.embed_content")
+    def test_google_provider_no_dimension_no_param(self, mock_embed):
+        """Test GoogleEmbeddingProvider omits output_dimensionality when not set."""
+        from openbench.intelligence.embeddings import GoogleEmbeddingProvider
+
+        mock_embed.return_value = {"embedding": [0.1] * 3072}
+
+        provider = GoogleEmbeddingProvider(
+            model="gemini-embedding-001",
+            api_key="test-key",
+        )
+        provider._configured = True
+
+        provider.embed("test text")
+
+        call_kwargs = mock_embed.call_args
+        self.assertNotIn("output_dimensionality", call_kwargs[1])
+
+    def test_openai_provider_passes_dimensions(self):
+        """Test OpenAIEmbeddingProvider passes dimensions to API."""
+        from openbench.intelligence.embeddings import OpenAIEmbeddingProvider
+
+        provider = OpenAIEmbeddingProvider(
+            model="text-embedding-3-small",
+            api_key="test-key",
+            dimension=256,
+        )
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.data = [MagicMock(embedding=[0.1] * 256)]
+        mock_client.embeddings.create.return_value = mock_response
+        provider._client = mock_client
+
+        provider.embed("test text")
+
+        call_kwargs = mock_client.embeddings.create.call_args
+        self.assertEqual(call_kwargs[1].get("dimensions"), 256)
+
+    def test_openai_provider_no_dimension_no_param(self):
+        """Test OpenAIEmbeddingProvider omits dimensions when not set."""
+        from openbench.intelligence.embeddings import OpenAIEmbeddingProvider
+
+        provider = OpenAIEmbeddingProvider(
+            model="text-embedding-3-small",
+            api_key="test-key",
+        )
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.data = [MagicMock(embedding=[0.1] * 1536)]
+        mock_client.embeddings.create.return_value = mock_response
+        provider._client = mock_client
+
+        provider.embed("test text")
+
+        call_kwargs = mock_client.embeddings.create.call_args
+        self.assertNotIn("dimensions", call_kwargs[1])
+
+
 if __name__ == "__main__":
     unittest.main()

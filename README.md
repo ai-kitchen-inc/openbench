@@ -29,9 +29,9 @@ OpenBench is the **open source workbench for the agentic AI era**. It's not just
 
 Think of it as your **AI-native operating system** for knowledge work:
 
-- **Ingest anything**: PDFs, databases, videos, APIs—if it contains information, OpenBench can work with it
+- **Ingest anything**: PDFs, APIs, web search—if it contains information, OpenBench can work with it
 - **Agent-powered workflows**: Author sophisticated agentic flows that actually get work done
-- **Export everywhere**: Turn insights into presentations, videos, reports, infographics, or raw data
+- **Export everywhere**: Turn insights into presentations, reports, markdown, or raw data
 
 Built for developers, data scientists, and organizations that refuse to compromise on flexibility, privacy, or control.
 
@@ -59,7 +59,6 @@ Bring your own agents from ANY framework:
 - **CrewAI** - Integrate role-based agent crews
 - **Google ADK** - Connect Google's agent framework
 - **E2B** - Run custom code in sandboxed environments
-- **Mastra** - TypeScript agent orchestration
 
 ```python
 from openbench.adapters.langchain import LangChainAdapter
@@ -93,11 +92,11 @@ result = workflow.run()
 | Phase | Status |
 |-------|--------|
 | **Phase 1: Core Abstractions** | Complete - Interfaces, plugin registry, DAG workflows, state management |
-| **Phase 2: Infrastructure** | Complete - Provider Service, Config, Agent interface, L2 layers, 510 tests |
+| **Phase 2: Infrastructure** | Complete - Provider Service, Config, Agent interface, L2 layers, 508 tests |
 | **Phase 3: Providers** | In Progress - LLM (OpenAI, Anthropic), Vector (ChromaDB, Pinecone), Output (ReportLab, python-pptx) |
 
 ```bash
-pip install -e ".[all]" && python examples/sustainability_report.py
+pip install -e ".[all]" && python examples/workflows/reports/sustainability_report.py
 ```
 
 ---
@@ -130,7 +129,7 @@ All open source. All extensible. All yours.
 ```bash
 git clone https://github.com/ai-kitchen-inc/openbench.git && cd openbench
 pip install -e ".[all]"
-python examples/sustainability_report.py
+python examples/workflows/reports/sustainability_report.py
 ```
 
 ```python
@@ -156,7 +155,7 @@ Three layers working in harmony:
 
 **Intelligence Layer** - Build AI agents: Research, Analysis, Content, Action. Multi-agent coordination with human-in-the-loop support.
 
-**Output Layer** - Export anywhere: PDF, PowerPoint, Audio, Video, Dashboards, API endpoints.
+**Output Layer** - Export anywhere: PDF, PowerPoint, Markdown, Audio, Dashboards.
 
 ```python
 from openbench import Workflow
@@ -208,7 +207,7 @@ Research data + Brand guidelines → Multi-agent workflow → Blog + Video + Soc
 
 ## Tech Stack
 
-Python, Click, Pydantic, Google GenAI, OpenAI, Anthropic, LangChain, CrewAI, AG2, Pandas, ChromaDB/Pinecone, ReportLab, python-pptx.
+Python, Click, Pydantic, Google GenAI, LangChain, CrewAI, AG2, Pinecone, ReportLab, python-pptx.
 
 ## Features
 
@@ -217,7 +216,7 @@ Python, Click, Pydantic, Google GenAI, OpenAI, Anthropic, LangChain, CrewAI, AG2
 - **Enterprise Ready**: Centralized config, encryption, audit ready
 - **Extensible**: Plugin registry with decorators and auto-discovery
 - **Composable**: DAG workflows with `|` and `&` operators
-- **Well-Tested**: 510 tests
+- **Well-Tested**: 508 tests
 
 ## 🗺️ Roadmap
 

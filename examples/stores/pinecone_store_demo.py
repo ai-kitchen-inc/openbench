@@ -112,7 +112,7 @@ def demo_initialize_store():
     print("=" * 60)
 
     # Create embedding provider
-    embedding_provider = GoogleEmbeddingProvider(model="text-embedding-004")
+    embedding_provider = GoogleEmbeddingProvider(model="gemini-embedding-001")
     print(f"\nEmbedding Provider: {embedding_provider.provider_name}")
     print(f"Model: {embedding_provider.default_model}")
     print(f"Dimension: {embedding_provider.get_dimension()}")
@@ -293,7 +293,7 @@ def demo_chunking_config(store):
     # Create a longer document
 
     # Create store with custom chunking
-    GoogleEmbeddingProvider(model="text-embedding-004")
+    GoogleEmbeddingProvider(model="gemini-embedding-001")
 
     custom_config = ChunkingConfig(
         strategy="sentence",
