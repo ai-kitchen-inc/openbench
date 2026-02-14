@@ -135,6 +135,13 @@ class GeminiLLMProvider(LLMProvider):
                 )
 
             elif role == "assistant":
+                # Use raw content if available (preserves thought_signature)
+                raw_content = msg.get("raw_content")
+                if raw_content is not None:
+                    contents.append(raw_content)
+                    continue
+
+                # Reconstruct from extracted data (fallback)
                 parts = []
                 if content:
                     parts.append(types.Part.from_text(text=content))
@@ -365,6 +372,12 @@ class GeminiLLMProvider(LLMProvider):
         # Attach tool_calls for BaseAgent._parse_tool_calls()
         if tool_calls:
             llm_response.tool_calls = tool_calls
+
+        # Store raw content for replay (preserves thought_signature for Gemini 2.5+)
+        if hasattr(response, "candidates") and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, "content") and candidate.content:
+                llm_response.raw_content = candidate.content
 
         return llm_response
 

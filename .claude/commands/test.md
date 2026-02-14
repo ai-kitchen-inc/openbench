@@ -25,6 +25,8 @@ Run the OpenBench test suite.
 - `google_adk` - Run Google ADK adapter tests only
 - `pdf_generator` - Run PDF generator tests only
 - `e2e` - Run E2E workflow tests only
+- `chat` - Run chat layer tests only
+- `chat-ui` - Run chat UI TypeScript tests
 - `coverage` - Run with coverage report
 
 ## Instructions
@@ -44,6 +46,16 @@ python -m unittest tests.test_workflow -v
 python -m unittest tests.test_google_adk_adapter -v
 python -m unittest tests.test_pdf_generator -v
 python -m unittest tests.test_pdf_workflow_e2e -v
+
+# Chat layer tests
+python -m unittest tests.test_chat_session -v
+python -m unittest tests.test_a2ui_builder -v
+python -m unittest tests.test_content_renderers -v
+python -m unittest tests.test_chat_engine -v
+python -m unittest tests.test_chat_layer -v
+
+# Chat UI TypeScript tests
+cd packages/chat-ui && pnpm vitest --run
 
 # With coverage (requires pytest-cov)
 pytest tests/ --cov=openbench --cov-report=term-missing

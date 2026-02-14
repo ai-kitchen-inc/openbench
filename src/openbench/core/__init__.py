@@ -47,6 +47,7 @@ from openbench.core.layers import (
     OutputLayer,
     create_workflow,
 )
+from openbench.chat.layer import ChatLayer
 from openbench.core.providers import (
     CredentialEncryption,
     ProviderConfig,
@@ -134,6 +135,7 @@ __all__ = [
     "DataLayer",
     "IntelligenceLayer",
     "OutputLayer",
+    "ChatLayer",
     "create_workflow",
     # Providers
     "ProviderType",

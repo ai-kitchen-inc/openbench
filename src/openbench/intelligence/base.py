@@ -54,6 +54,7 @@ class Message:
     name: str | None = None
     tool_call_id: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
+    raw_content: Any = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to LLM-compatible format."""
@@ -64,6 +65,8 @@ class Message:
             result["tool_call_id"] = self.tool_call_id
         if self.tool_calls:
             result["tool_calls"] = self.tool_calls
+        if self.raw_content is not None:
+            result["raw_content"] = self.raw_content
         return result
 
 
@@ -114,9 +117,11 @@ class AgentMemory:
         """Add user message."""
         self.add(MessageRole.USER, content)
 
-    def add_assistant(self, content: str, tool_calls: list[dict] | None = None) -> None:
+    def add_assistant(
+        self, content: str, tool_calls: list[dict] | None = None, raw_content: Any = None
+    ) -> None:
         """Add assistant message."""
-        self.add(MessageRole.ASSISTANT, content, tool_calls=tool_calls)
+        self.add(MessageRole.ASSISTANT, content, tool_calls=tool_calls, raw_content=raw_content)
 
     def add_tool_result(self, tool_call_id: str, name: str, result: str) -> None:
         """Add tool result message."""
@@ -578,14 +583,19 @@ Provide clear, actionable responses."""
                 }
                 iteration_stats.append(iter_stat)
 
+                # Get raw content for replaying (preserves thought_signature)
+                raw_content = getattr(response, "raw_content", None)
+
                 if not tool_calls:
                     # No tool calls - we're done
-                    self.memory.add_assistant(response.text)
+                    self.memory.add_assistant(response.text, raw_content=raw_content)
                     break
 
                 # Execute tool calls
                 all_tools_used.extend(tc["name"] for tc in tool_calls)
-                self.memory.add_assistant(response.text, tool_calls=tool_calls)
+                self.memory.add_assistant(
+                    response.text, tool_calls=tool_calls, raw_content=raw_content
+                )
 
                 for tc in tool_calls:
                     try:
