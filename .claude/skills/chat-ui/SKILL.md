@@ -18,6 +18,21 @@ description: Building and extending the @openbench/chat-ui TypeScript/React SDK.
 - 14 standard functions for validation and formatting
 - `checks` system for input validation
 
+## AG-UI Streaming Events
+
+The frontend receives AG-UI events via SSE, including progressive text streaming:
+
+| Event | Purpose |
+|-------|---------|
+| `TEXT_MESSAGE_START` | Begin accumulating message content |
+| `TEXT_MESSAGE_CONTENT` | Append text delta to message buffer (token-by-token) |
+| `TEXT_MESSAGE_END` | Finalize text message |
+| `STEP_STARTED` / `STEP_FINISHED` | Track processing steps |
+| `CUSTOM(name="a2ui")` | A2UI rendering messages (surfaces, components) |
+| `RUN_STARTED` / `RUN_FINISHED` | Run lifecycle |
+
+The `useChat` hook handles all events automatically. Text appears progressively via `TEXT_MESSAGE_CONTENT` deltas, then rich content (charts, files) renders via A2UI `CUSTOM` events.
+
 ## Package Location
 
 ```
@@ -55,7 +70,7 @@ import '@openbench/chat-ui/styles/chat-ui.css';
 
 function ChatPage() {
   return (
-    <ChatProvider config={{ streamUrl: '/chat/stream' }}>
+    <ChatProvider config={{ streamUrl: '/awp' }}>
       <div className="flex h-screen">
         <SessionSidebar />
         <ChatPanel className="flex-1" />
@@ -72,7 +87,7 @@ import { useChat } from '@openbench/chat-ui';
 
 function MyChat() {
   const { messages, sendMessage, isStreaming } = useChat({
-    streamUrl: '/chat/stream',
+    streamUrl: '/awp',
   });
   return (
     <div>

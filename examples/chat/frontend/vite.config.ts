@@ -8,7 +8,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/chat/stream": {
+      "/awp": {
         target: "http://localhost:8000",
         changeOrigin: true,
       },

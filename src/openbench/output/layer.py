@@ -4,8 +4,8 @@ Output Layer - Factory and Helpers.
 NOTE: For L2 workflow orchestration, use OutputLayer from openbench.core.layers.
 This module provides factory functions for creating output generators.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
@@ -153,7 +153,12 @@ class OutputFactory:
             GeneratedOutput with file path and metadata
         """
         return cls.export(
-            data, format="pdf", template=template, output=output, page_size=page_size, **kwargs
+            data,
+            format="pdf",
+            template=template,
+            output=output,
+            page_size=page_size,
+            **kwargs,
         )
 
     @classmethod
@@ -223,7 +228,12 @@ class OutputFactory:
             GeneratedOutput with audio file path and metadata
         """
         return cls.export(
-            text, format="audio", provider=provider, voice=voice, output=output, **kwargs
+            text,
+            format="audio",
+            provider=provider,
+            voice=voice,
+            output=output,
+            **kwargs,
         )
 
     @classmethod

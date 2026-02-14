@@ -11,8 +11,8 @@ Provides:
 This decouples agents from specific frameworks (Mastra, LangChain, etc.)
 while maintaining compatibility with any LLM provider.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import inspect
 import json
@@ -29,6 +29,7 @@ from openbench.core.abstractions import (
     ExecutionContext,
     ExecutionResult,
     LLMProvider,
+    LLMResponse,
     Query,
     Tool,
 )
@@ -120,10 +121,18 @@ class AgentMemory:
         self.add(MessageRole.USER, content)
 
     def add_assistant(
-        self, content: str, tool_calls: list[dict] | None = None, raw_content: Any = None
+        self,
+        content: str,
+        tool_calls: list[dict] | None = None,
+        raw_content: Any = None,
     ) -> None:
         """Add assistant message."""
-        self.add(MessageRole.ASSISTANT, content, tool_calls=tool_calls, raw_content=raw_content)
+        self.add(
+            MessageRole.ASSISTANT,
+            content,
+            tool_calls=tool_calls,
+            raw_content=raw_content,
+        )
 
     def add_tool_result(self, tool_call_id: str, name: str, result: str) -> None:
         """Add tool result message."""
@@ -182,7 +191,12 @@ class ToolExecutor:
             properties = {}
             required = []
             if callable(tool):
-                type_map = {str: "string", int: "integer", float: "number", bool: "boolean"}
+                type_map = {
+                    str: "string",
+                    int: "integer",
+                    float: "number",
+                    bool: "boolean",
+                }
                 try:
                     sig = inspect.signature(tool)
                     for param_name, param in sig.parameters.items():
@@ -497,7 +511,11 @@ Provide clear, actionable responses."""
 
         return parsed
 
-    def execute(self, context: ExecutionContext) -> ExecutionResult:
+    def execute(
+        self,
+        context: ExecutionContext,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> ExecutionResult:
         """
         Execute the agent's task.
 
@@ -509,6 +527,9 @@ Provide clear, actionable responses."""
 
         Args:
             context: Execution context with data and configuration
+            on_chunk: Optional callback invoked with each text delta during
+                streaming. When provided and the LLM provider supports
+                generate_stream(), tokens are streamed progressively.
 
         Returns:
             ExecutionResult with agent's output
@@ -548,6 +569,9 @@ Provide clear, actionable responses."""
         response = None
         start_time = time.monotonic()
 
+        # Determine if we can stream
+        use_stream = on_chunk is not None
+
         try:
             llm = self._get_llm()
 
@@ -555,13 +579,33 @@ Provide clear, actionable responses."""
                 iterations += 1
                 iter_start = time.monotonic()
 
-                # Generate response
-                response = llm.generate(
-                    prompt=self.memory.get_messages(),
-                    model=self.model,
-                    tools=self.tools.get_schemas() if len(self.tools) > 0 else None,
-                    temperature=self.temperature,
-                )
+                gen_kwargs: dict[str, Any] = {
+                    "prompt": self.memory.get_messages(),
+                    "model": self.model,
+                    "tools": self.tools.get_schemas() if len(self.tools) > 0 else None,
+                    "temperature": self.temperature,
+                }
+
+                if use_stream:
+                    # Streaming path: yield deltas via on_chunk
+                    full_text = ""
+                    final_response = None
+                    for chunk in llm.generate_stream(**gen_kwargs):
+                        if chunk.text:
+                            on_chunk(chunk.text)
+                            full_text += chunk.text
+                        final_response = chunk
+
+                    if final_response is None:
+                        response = LLMResponse(text="", model=self.model, tokens_used=0, cost=0.0)
+                    else:
+                        response = final_response
+                        # Ensure full accumulated text (stream yields deltas)
+                        if full_text and not getattr(response, "tool_calls", None):
+                            response.text = full_text
+                else:
+                    # Non-streaming path (backward compatible)
+                    response = llm.generate(**gen_kwargs)
 
                 total_tokens += response.tokens_used
                 total_cost += response.cost
@@ -689,8 +733,17 @@ class SimpleAgent(BaseAgent):
     def agent_type(self) -> str:
         return "simple"
 
-    def execute(self, context: ExecutionContext) -> ExecutionResult:
-        """Execute without tool loop."""
+    def execute(
+        self,
+        context: ExecutionContext,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> ExecutionResult:
+        """Execute without tool loop.
+
+        Args:
+            context: Execution context with data and configuration.
+            on_chunk: Optional callback invoked with each text delta during streaming.
+        """
         user_message = f"Goal: {context.goal}"
         if context.data:
             user_message += f"\n\nContext data:\n{json.dumps(context.data, indent=2, default=str)}"
@@ -698,11 +751,28 @@ class SimpleAgent(BaseAgent):
 
         try:
             llm = self._get_llm()
-            response = llm.generate(
-                prompt=self.memory.get_messages(),
-                model=self.model,
-                temperature=self.temperature,
-            )
+            gen_kwargs: dict[str, Any] = {
+                "prompt": self.memory.get_messages(),
+                "model": self.model,
+                "temperature": self.temperature,
+            }
+
+            if on_chunk is not None:
+                full_text = ""
+                final_response = None
+                for chunk in llm.generate_stream(**gen_kwargs):
+                    if chunk.text:
+                        on_chunk(chunk.text)
+                        full_text += chunk.text
+                    final_response = chunk
+
+                if final_response is None:
+                    response = LLMResponse(text="", model=self.model, tokens_used=0, cost=0.0)
+                else:
+                    response = final_response
+                    response.text = full_text
+            else:
+                response = llm.generate(**gen_kwargs)
 
             self.memory.add_assistant(response.text)
 

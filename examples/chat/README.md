@@ -1,6 +1,6 @@
 # OpenBench Chat Demo
 
-End-to-end demo: Python SSE backend + React frontend using `@openbench/chat-ui`.
+End-to-end demo: Python AG-UI backend + React frontend using `@openbench/chat-ui`.
 
 ## Features
 
@@ -50,7 +50,7 @@ Navigate to http://localhost:5173
 ```
 examples/chat/
 ├── gemini_agent.py         # Gemini agent (BaseAgent + 5 tools)
-├── server.py               # FastAPI server (SSE + REST + upload)
+├── server.py               # FastAPI server (AG-UI + REST + upload)
 ├── frontend/
 │   ├── package.json        # Vite + React + @openbench/chat-ui
 │   ├── tsconfig.json       # TypeScript config
@@ -75,7 +75,7 @@ Uses `ChatProvider` + `SessionSidebar` + `ChatPanel`. Minimal code, full feature
 Browser (React)              Server (Python)
 ┌──────────────┐             ┌──────────────────┐
 │ ChatProvider  │── SSE ────>│ FastAPI           │
-│  └─ ChatPanel│<────────────│  └─ SSE Handler   │
+│  └─ ChatPanel│<────────────│  └─ AGUIHandler   │
 │     └─ A2UI  │             │     └─ ChatEngine  │
 │       render  │── REST ───>│       └─ Agent     │
 │              │<────────────│          ├─ Gemini │

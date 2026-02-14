@@ -2,12 +2,11 @@
 name: check
 description: Run all quality checks (lint + type check + tests)
 argument-hint: "[options]"
-disable-model-invocation: true
 ---
 
 # /check
 
-Run all quality checks: formatting, linting, type checking, and tests.
+Run all quality checks: formatting, linting, type checking, and tests for both Python and TypeScript.
 
 ## Usage
 
@@ -17,14 +16,18 @@ Run all quality checks: formatting, linting, type checking, and tests.
 
 ## Options
 
-- `all` - Run everything: black, ruff, mypy, tests (default)
-- `quick` - Run black + ruff only (skip mypy and tests)
+- `all` - Run everything (default)
+- `quick` - Run lint only (skip type check and tests)
 - `ci` - Run everything with coverage report
+- `python` - Python checks only
+- `ts` - TypeScript checks only
 
 ## Instructions
 
 1. Parse the option provided (default: `all`)
 2. Run checks sequentially, stopping on first failure:
+
+### Python
 
 ```bash
 # Step 1: Formatting check
@@ -37,13 +40,27 @@ ruff check src/ tests/
 mypy src/openbench/
 
 # Step 4: Tests (skip for 'quick')
-python -m unittest discover tests -v
+python -m pytest tests/ -q
 
 # For 'ci' option, use pytest with coverage instead:
 pytest tests/ --cov=openbench --cov-report=term-missing
 ```
 
-3. Report results summary:
-   - List which checks passed/failed
+### TypeScript (packages/chat-ui/)
+
+```bash
+# Step 1: Lint + formatting check (biome via npx)
+cd packages/chat-ui && npx @biomejs/biome check src/ tests/
+
+# Step 2: Type checking (skip for 'quick')
+cd packages/chat-ui && pnpm tsc --noEmit
+
+# Step 3: Tests (skip for 'quick')
+cd packages/chat-ui && pnpm vitest run
+```
+
+3. Run Python and TypeScript checks in parallel when both are selected
+4. Report results summary:
+   - List which checks passed/failed per language
    - For failures, show the relevant output
    - Suggest fixes for any issues found

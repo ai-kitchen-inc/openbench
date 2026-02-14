@@ -117,7 +117,7 @@ class TestWithMocks(unittest.TestCase):
 
 ## Cross-References
 
-- **Intelligence Layer**: Mock `LLMProvider.generate()` and `ToolExecutor` → see `intelligence-layer` skill
+- **Intelligence Layer**: Mock `LLMProvider.generate()` / `generate_stream()` and `ToolExecutor` → see `intelligence-layer` skill
 - **Data Layer**: Mock store operations and embedding calls → see `data-layer` skill
 - **Adapters**: Mock external framework imports with lazy import pattern → see `adapters` skill
 - **Output Layer**: Mock file I/O for generator tests → see `output-layer` skill

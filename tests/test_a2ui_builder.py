@@ -29,7 +29,8 @@ class TestA2UIMessageBuilder(unittest.TestCase):
 
     def test_build_create_surface_with_theme(self):
         msg = self.builder.build_create_surface(
-            "s1", theme={"primaryColor": "#FF0000"},
+            "s1",
+            theme={"primaryColor": "#FF0000"},
         )
         self.assertEqual(msg["createSurface"]["theme"]["primaryColor"], "#FF0000")
 
@@ -109,8 +110,14 @@ class TestA2UIMessageBuilder(unittest.TestCase):
 
     def test_to_jsonl(self):
         messages = [
-            {"version": "v0.10", "createSurface": {"surfaceId": "s1", "catalogId": "cat"}},
-            {"version": "v0.10", "updateComponents": {"surfaceId": "s1", "components": []}},
+            {
+                "version": "v0.10",
+                "createSurface": {"surfaceId": "s1", "catalogId": "cat"},
+            },
+            {
+                "version": "v0.10",
+                "updateComponents": {"surfaceId": "s1", "components": []},
+            },
         ]
         jsonl = self.builder.to_jsonl(messages)
         lines = jsonl.strip().split("\n")
@@ -129,7 +136,9 @@ class TestA2UIMessageBuilder(unittest.TestCase):
         """Every A2UI message must have version: v0.10."""
         components = [A2UIComponent(id="root", component="Text", properties={"text": "Hi"})]
         messages = self.builder.build_surface(
-            "s1", components, data_model={"/x": 1},
+            "s1",
+            components,
+            data_model={"/x": 1},
         )
         messages.append(self.builder.build_delete_surface("s1"))
 

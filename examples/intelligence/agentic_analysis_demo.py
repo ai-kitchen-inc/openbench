@@ -42,7 +42,10 @@ DEFAULT_NAMESPACE = "knowledge-base"
 ANALYSIS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "summary": {"type": "string", "description": "Executive summary of the analysis"},
+        "summary": {
+            "type": "string",
+            "description": "Executive summary of the analysis",
+        },
         "key_findings": {
             "type": "array",
             "items": {"type": "string"},
@@ -267,7 +270,10 @@ def demo_analysis_tools(model: str, query: str):
 
 
 def demo_document_analysis(
-    model: str, query: str, namespace: str = DEFAULT_NAMESPACE, dimension: int | None = None
+    model: str,
+    query: str,
+    namespace: str = DEFAULT_NAMESPACE,
+    dimension: int | None = None,
 ):
     """Demo 2: AnalysisAgent + RAG (Document Analysis).
 
@@ -427,7 +433,10 @@ def main():
 
         if args.demo in ("2", "all"):
             demo_document_analysis(
-                args.model, args.query or DEFAULT_QUERIES["2"], args.namespace, args.dimension
+                args.model,
+                args.query or DEFAULT_QUERIES["2"],
+                args.namespace,
+                args.dimension,
             )
 
         if args.demo in ("3", "all"):

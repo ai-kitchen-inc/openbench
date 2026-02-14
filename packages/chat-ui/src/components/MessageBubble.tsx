@@ -83,8 +83,8 @@ export function MessageBubble({ message, onAction }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Text content — hidden when A2UI surfaces render the same content */}
-        {message.content && !message.surfaces?.length && (
+        {/* Text content — always shown, surfaces now only contain rich content */}
+        {message.content && (
           <div className="chat-message__text ob-markdown">
             <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
               {message.content}

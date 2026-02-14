@@ -83,7 +83,11 @@ def get(key):
 
 @config.command()
 @click.option(
-    "--format", "fmt", type=click.Choice(["yaml", "json"]), default="yaml", help="Output format"
+    "--format",
+    "fmt",
+    type=click.Choice(["yaml", "json"]),
+    default="yaml",
+    help="Output format",
 )
 def show(fmt):
     """Show full configuration."""
@@ -111,7 +115,10 @@ def show(fmt):
 
 @config.command()
 @click.option(
-    "--path", type=click.Path(), default="openbench.yaml", help="Path to create config file"
+    "--path",
+    type=click.Path(),
+    default="openbench.yaml",
+    help="Path to create config file",
 )
 def init(path):
     """Initialize configuration with defaults."""

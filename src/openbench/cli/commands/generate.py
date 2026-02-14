@@ -143,7 +143,10 @@ def dashboard(source, dashboard_type, port, deploy):
 @click.option("--from", "source", help="Source content")
 @click.option("--voice", default="professional_male", help="Voice ID")
 @click.option(
-    "--format", type=click.Choice(["mp3", "wav", "podcast"]), default="mp3", help="Audio format"
+    "--format",
+    type=click.Choice(["mp3", "wav", "podcast"]),
+    default="mp3",
+    help="Audio format",
 )
 @click.option("--output", default="outputs/audio.mp3", help="Output file path")
 def audio(source, voice, format, output):
@@ -178,7 +181,10 @@ def audio(source, voice, format, output):
 @click.option("--from", "source", help="Source content")
 @click.option("--style", default="professional", help="Infographic style")
 @click.option(
-    "--size", type=click.Choice(["letter", "a4", "social"]), default="letter", help="Output size"
+    "--size",
+    type=click.Choice(["letter", "a4", "social"]),
+    default="letter",
+    help="Output size",
 )
 @click.option("--output", default="outputs/infographic.pdf", help="Output file path")
 def infographic(source, style, size, output):

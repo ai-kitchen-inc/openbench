@@ -36,10 +36,16 @@ def provider():
     help="Provider type (llm, embedding, vector, storage, voice)",
 )
 @click.option(
-    "--provider", "provider_name", required=True, help="Provider name (e.g., openai, pinecone)"
+    "--provider",
+    "provider_name",
+    required=True,
+    help="Provider name (e.g., openai, pinecone)",
 )
 @click.option(
-    "--plugin", "plugin_type", required=True, help="Plugin type (e.g., chat, vector, blob)"
+    "--plugin",
+    "plugin_type",
+    required=True,
+    help="Plugin type (e.g., chat, vector, blob)",
 )
 @click.option("--api-key", help="API key for the provider")
 @click.option("--default", is_flag=True, help="Set as default for this type")

@@ -2,8 +2,8 @@
 FastAPI chat server for the demo.
 
 Provides three endpoints:
-  - POST /chat/stream  -> SSE (progressive message streaming)
-  - POST /chat/action  -> JSON (button clicks, form submits)
+  - POST /awp          -> SSE (AG-UI protocol event stream)
+  - POST /chat/action  -> JSON (A2UI button clicks, form submits)
   - POST /chat/upload  -> JSON (file upload, returns attachment metadata)
 
 Requires GOOGLE_API_KEY for the Gemini agent.
@@ -19,12 +19,11 @@ import sys
 
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from openbench.chat import ChatEngine
 from openbench.chat.files import FileContentExtractor, FileStore
-from openbench.chat.transport.sse import ChatSSEHandler
+from openbench.chat.transport import AGUIActionHandler, AGUIHandler
 
 # ── Agent: Gemini (required) ──
 
@@ -33,13 +32,19 @@ if not os.getenv("GOOGLE_API_KEY"):
     print("  Set it with: export GOOGLE_API_KEY=your-key-here\n")
     sys.exit(1)
 
-from gemini_agent import clear_render_items, create_gemini_agent, get_render_items, set_attachments
+from gemini_agent import (
+    clear_render_items,
+    create_gemini_agent,
+    get_render_items,
+    set_attachments,
+)
 
 agent = create_gemini_agent()
 
-# Wire: Agent -> ChatEngine -> Transport (with render items from visualization tools)
+# Wire: Agent -> ChatEngine -> AG-UI Transport (with render items from visualization tools)
 engine = ChatEngine(agent=agent, render_items_fn=get_render_items)
-sse_handler = ChatSSEHandler(engine=engine)
+agui_handler = AGUIHandler(engine=engine)
+action_handler = AGUIActionHandler(engine=engine)
 
 # File upload
 file_store = FileStore(upload_dir="./uploads")
@@ -59,7 +64,7 @@ app.add_middleware(
 async def startup():
     print("\n  OpenBench Chat Demo")
     print(f"  Agent: Gemini ({agent.model})")
-    print("  SSE:    POST http://localhost:8000/chat/stream")
+    print("  AG-UI: POST http://localhost:8000/awp")
     print("  Action: POST http://localhost:8000/chat/action")
     print("  Upload: POST http://localhost:8000/chat/upload\n")
 
@@ -86,43 +91,41 @@ async def upload_file(file: UploadFile = File(...)):
     return result
 
 
-@app.post("/chat/stream")
-async def chat_stream(request: Request):
-    """SSE endpoint for progressive message streaming.
+@app.post("/awp")
+async def agent_endpoint(request: Request):
+    """AG-UI protocol endpoint for progressive message streaming.
 
-    Streams step-by-step progress and A2UI messages as SSE events.
-    Each event is delivered immediately via HTTP chunked transfer encoding.
+    Streams AG-UI events (RunStarted, StepStarted, CustomEvent(a2ui), etc.)
+    as SSE. Compatible with AG-UI client SDKs and @openbench/chat-ui.
     """
-    body = await request.json()
-
     # Clear render items from previous request before agent executes
     clear_render_items()
 
+    body = await request.json()
+
     # Resolve uploaded file paths so agent tools can read full content from disk
+    # Attachments can come from forwardedProps (AG-UI format) or top-level (OpenBench format)
+    forwarded = body.get("forwardedProps") or {}
+    attachments_list = forwarded.get("attachments") or body.get("attachments") or []
+
     file_metas = []
-    for att in body.get("attachments", []):
+    for att in attachments_list:
         file_id = att.get("id")
         if not file_id:
             continue
         stored = file_store.get(file_id)
         if not stored:
             continue
-        file_metas.append({
-            "name": stored.name,
-            "path": stored.path,
-            "mime_type": stored.mime_type,
-        })
+        file_metas.append(
+            {
+                "name": stored.name,
+                "path": stored.path,
+                "mime_type": stored.mime_type,
+            }
+        )
     set_attachments(file_metas or None)
 
-    return StreamingResponse(
-        sse_handler.stream(body),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return await agui_handler.handle(request)
 
 
 @app.post("/chat/action")
@@ -131,20 +134,7 @@ async def chat_action(request: Request):
 
     Returns response messages as a JSON array.
     """
-    body = await request.json()
-    result = await asyncio.to_thread(
-        engine.invoke,
-        {
-            "content": f"[Action: {body.get('name')}]",
-            "action": {
-                "name": body.get("name"),
-                "surfaceId": body.get("surfaceId"),
-                "sourceComponentId": body.get("sourceComponentId"),
-                "context": body.get("context", {}),
-            },
-        },
-    )
-    return result.get("messages", [])
+    return await action_handler.handle(request)
 
 
 @app.get("/")
@@ -153,8 +143,9 @@ async def root():
         "status": "ok",
         "agent": "gemini",
         "model": agent.model,
+        "protocol": "ag-ui",
         "endpoints": {
-            "sse": "POST /chat/stream",
+            "agui": "POST /awp",
             "action": "POST /chat/action",
             "upload": "POST /chat/upload",
         },

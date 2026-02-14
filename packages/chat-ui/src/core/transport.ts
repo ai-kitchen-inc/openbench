@@ -1,29 +1,28 @@
 /**
- * SSE + REST transport for @openbench/chat-ui.
+ * AG-UI protocol transport for @openbench/chat-ui.
  *
- * - stream(): POST → SSE (progressive message streaming)
- * - sendAction(): POST → JSON (button clicks, form submits)
+ * Uses HttpAgent from @ag-ui/client for SSE streaming with AG-UI events.
+ * A2UI messages are wrapped inside CustomEvent(name="a2ui") payloads.
  *
- * No persistent connection. No reconnect logic.
+ * - run(): POST → SSE (AG-UI event stream)
+ * - sendAction(): POST → JSON (A2UI button clicks, form submits)
+ * - upload(): POST → multipart (file uploads)
  */
 
-import type {
-  Attachment,
-  ChatConfig,
-  ClientAction,
-  ClientMessage,
-  TransportStatus,
-} from "../types";
+import { HttpAgent } from "@ag-ui/client";
+import type { BaseEvent } from "@ag-ui/core";
+import type { Attachment, ChatConfig, TransportStatus } from "../types";
+import { generateId } from "./utils";
 
-export type TransportListener = (data: Record<string, unknown>) => void;
+export type AGUIEventListener = (event: BaseEvent) => void;
 export type StatusListener = (status: TransportStatus) => void;
 
-export class ChatTransport {
+export class AGUITransport {
   private config: ChatConfig;
-  private messageListeners: Set<TransportListener> = new Set();
+  private eventListeners: Set<AGUIEventListener> = new Set();
   private statusListeners: Set<StatusListener> = new Set();
   private _status: TransportStatus = "disconnected";
-  private abortController: AbortController | null = null;
+  private activeSub: { unsubscribe: () => void } | null = null;
 
   constructor(config: ChatConfig) {
     this.config = config;
@@ -35,77 +34,67 @@ export class ChatTransport {
   }
 
   /**
-   * Send a message via SSE (POST + read event stream).
+   * Send a message via AG-UI SSE stream.
    *
-   * Each SSE event is dispatched to message listeners progressively,
-   * enabling real-time step indicators and surface rendering.
+   * Creates an HttpAgent, constructs a RunAgentInput, and subscribes
+   * to the Observable for AG-UI events. Events are dispatched to
+   * registered listeners progressively.
    */
-  async stream(payload: ClientMessage): Promise<void> {
-    // Abort any in-flight stream
-    this.abortController?.abort();
+  async run(content: string, sessionId?: string, attachments?: Attachment[]): Promise<void> {
+    // Cancel any in-flight stream
+    this.cancel();
 
-    const controller = new AbortController();
-    this.abortController = controller;
+    // Create a fresh HttpAgent per request to avoid state accumulation
+    const agent = new HttpAgent({ url: this.config.streamUrl });
 
-    try {
-      const response = await fetch(this.config.streamUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
+    const input = {
+      threadId: sessionId || generateId(),
+      runId: generateId(),
+      state: {},
+      messages: [{ id: generateId(), role: "user" as const, content }],
+      tools: [],
+      context: [],
+      forwardedProps: { sessionId, attachments },
+    };
 
-      if (!response.ok || !response.body) {
-        throw new Error(`SSE request failed: ${response.status}`);
-      }
+    return new Promise<void>((resolve, reject) => {
+      const events$ = agent.run(input);
 
-      this.setStatus("connected");
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split("\n\n");
-        buffer = events.pop() ?? ""; // Keep incomplete last chunk
-
-        for (const event of events) {
-          const line = event.trim();
-          if (!line.startsWith("data: ")) continue;
-
-          const json = line.slice(6);
-          try {
-            const data = JSON.parse(json) as Record<string, unknown>;
-            for (const listener of this.messageListeners) {
-              listener(data);
-            }
-          } catch {
-            // Skip malformed JSON
+      this.activeSub = events$.subscribe({
+        next: (event: BaseEvent) => {
+          this.setStatus("connected");
+          for (const listener of this.eventListeners) {
+            listener(event);
           }
-        }
-      }
-    } catch (err) {
-      if ((err as Error).name === "AbortError") return; // Intentional abort
-      console.error("[ChatTransport] SSE stream error:", err);
-      this.setStatus("error");
-    } finally {
-      if (this.abortController === controller) {
-        this.abortController = null;
-      }
-    }
+        },
+        error: (err: unknown) => {
+          console.error("[AGUITransport] Stream error:", err);
+          this.setStatus("error");
+          this.activeSub = null;
+          reject(err);
+        },
+        complete: () => {
+          this.activeSub = null;
+          resolve();
+        },
+      });
+    });
   }
 
   /**
-   * Send an action via REST (POST → JSON).
+   * Send an A2UI action via REST (POST → JSON).
    *
-   * Response messages are dispatched through the same messageListeners
-   * as SSE events for consistent processing.
+   * AG-UI does not define an action mechanism, so this remains
+   * a standard REST POST. Response messages are dispatched through
+   * the same event listeners.
    */
-  async sendAction(payload: ClientAction): Promise<void> {
+  async sendAction(payload: {
+    name: string;
+    surfaceId: string;
+    sourceComponentId: string;
+    timestamp: string;
+    context: Record<string, unknown>;
+  }): Promise<void> {
     const url = this.config.actionUrl ?? "/chat/action";
 
     try {
@@ -121,14 +110,16 @@ export class ChatTransport {
 
       this.setStatus("connected");
 
+      // Response is A2UI messages array — wrap each as a CustomEvent-like object
       const messages = (await response.json()) as Record<string, unknown>[];
       for (const msg of messages) {
-        for (const listener of this.messageListeners) {
-          listener(msg);
+        const event = { type: "CUSTOM", name: "a2ui", value: msg } as unknown as BaseEvent;
+        for (const listener of this.eventListeners) {
+          listener(event);
         }
       }
     } catch (err) {
-      console.error("[ChatTransport] Action error:", err);
+      console.error("[AGUITransport] Action error:", err);
       this.setStatus("error");
     }
   }
@@ -137,7 +128,7 @@ export class ChatTransport {
    * Upload a file to the server.
    *
    * Posts the file as multipart/form-data and returns
-   * the server's Attachment response (with server URL and extracted text).
+   * the server's Attachment response.
    */
   async upload(file: File): Promise<Attachment> {
     const url = this.config.uploadUrl ?? "/chat/upload";
@@ -156,17 +147,17 @@ export class ChatTransport {
     return (await response.json()) as Attachment;
   }
 
-  /** Abort any in-flight SSE stream. */
-  abort(): void {
-    this.abortController?.abort();
-    this.abortController = null;
+  /** Cancel any in-flight AG-UI stream. */
+  cancel(): void {
+    this.activeSub?.unsubscribe();
+    this.activeSub = null;
   }
 
-  /** Register a listener for incoming messages. */
-  onMessage(listener: TransportListener): () => void {
-    this.messageListeners.add(listener);
+  /** Register a listener for incoming AG-UI events. */
+  onEvent(listener: AGUIEventListener): () => void {
+    this.eventListeners.add(listener);
     return () => {
-      this.messageListeners.delete(listener);
+      this.eventListeners.delete(listener);
     };
   }
 
@@ -178,11 +169,11 @@ export class ChatTransport {
     };
   }
 
-  /** Remove all listeners and abort in-flight requests. */
+  /** Remove all listeners and cancel in-flight streams. */
   dispose(): void {
-    this.abort();
+    this.cancel();
     this.setStatus("disconnected");
-    this.messageListeners.clear();
+    this.eventListeners.clear();
     this.statusListeners.clear();
   }
 

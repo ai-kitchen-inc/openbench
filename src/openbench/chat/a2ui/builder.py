@@ -4,8 +4,8 @@ A2UI v0.10 message builder.
 Takes A2UIComponent definitions from content renderers and builds
 A2UI v0.10 JSONL messages for streaming to clients.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import json
 import logging

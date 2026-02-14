@@ -113,6 +113,7 @@
 
 .chat-panel__body {
   flex: 1;
+  min-height: 0; /* allow flex item to shrink below content size → enables overflow */
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -176,7 +177,9 @@
 }
 
 .chat-message__text {
-  white-space: pre-wrap;
+  /* No pre-wrap: ReactMarkdown generates proper HTML structure (<p>, <ul>, etc.)
+     that handles paragraph spacing via margins. pre-wrap would double the spacing
+     by also preserving literal \n\n from the streamed text. */
 }
 
 .chat-message__surface {

@@ -22,7 +22,10 @@ class SimpleStep(Chainable):
     def invoke(self, input, config=None):
         # Handle list input from Parallel
         if isinstance(input, list):
-            return {self.step_name: f"completed_{self.step_name}", "parallel_results": input}
+            return {
+                self.step_name: f"completed_{self.step_name}",
+                "parallel_results": input,
+            }
         # Handle dict input
         elif isinstance(input, dict):
             return {**input, self.step_name: f"completed_{self.step_name}"}
@@ -204,7 +207,10 @@ class TestWorkflowIntegration(unittest.TestCase):
         dag = a | Parallel([b, c]) | d
 
         wf = Workflow(
-            name="dag-workflow", chain=dag, state_store=self.state_store, checkpoints=False
+            name="dag-workflow",
+            chain=dag,
+            state_store=self.state_store,
+            checkpoints=False,
         )
 
         result = wf.run({})
@@ -222,7 +228,9 @@ class TestWorkflowIntegration(unittest.TestCase):
         false_step = SimpleStep("false_path")
 
         conditional = Conditional(
-            condition=lambda x: x.get("condition"), true_branch=true_step, false_branch=false_step
+            condition=lambda x: x.get("condition"),
+            true_branch=true_step,
+            false_branch=false_step,
         )
 
         wf = Workflow(
@@ -251,11 +259,15 @@ class TestWorkflowIntegration(unittest.TestCase):
         route_c = SimpleStep("route_c")
 
         router = Router(
-            routes={"a": route_a, "b": route_b, "c": route_c}, router=lambda x: x["route"]
+            routes={"a": route_a, "b": route_b, "c": route_c},
+            router=lambda x: x["route"],
         )
 
         wf = Workflow(
-            name="router-workflow", chain=router, state_store=self.state_store, checkpoints=False
+            name="router-workflow",
+            chain=router,
+            state_store=self.state_store,
+            checkpoints=False,
         )
 
         # Test different routes

@@ -1,7 +1,6 @@
 """Tests for chat session, message, and attachment."""
 
 import unittest
-from datetime import datetime, timezone
 
 from openbench.chat.session import Attachment, ChatMessage, ChatSession, MessageRole
 
@@ -41,16 +40,22 @@ class TestAttachment(unittest.TestCase):
 
     def test_to_dict_without_size(self):
         attachment = Attachment(
-            id="att-2", type="image", name="photo.jpg",
-            url="https://example.com/photo.jpg", mime_type="image/jpeg",
+            id="att-2",
+            type="image",
+            name="photo.jpg",
+            url="https://example.com/photo.jpg",
+            mime_type="image/jpeg",
         )
         d = attachment.to_dict()
         self.assertNotIn("sizeBytes", d)
 
     def test_roundtrip(self):
         original = Attachment(
-            id="att-3", type="audio", name="clip.mp3",
-            url="https://example.com/clip.mp3", mime_type="audio/mpeg",
+            id="att-3",
+            type="audio",
+            name="clip.mp3",
+            url="https://example.com/clip.mp3",
+            mime_type="audio/mpeg",
             size_bytes=2048,
         )
         restored = Attachment.from_dict(original.to_dict())
@@ -107,8 +112,11 @@ class TestChatMessage(unittest.TestCase):
             surfaces=[{"surfaceId": "s1"}],
             attachments=[
                 Attachment(
-                    id="att-1", type="file", name="data.csv",
-                    url="https://example.com/data.csv", mime_type="text/csv",
+                    id="att-1",
+                    type="file",
+                    name="data.csv",
+                    url="https://example.com/data.csv",
+                    mime_type="text/csv",
                 )
             ],
             metadata={"tokensUsed": 100},
@@ -147,8 +155,11 @@ class TestChatSession(unittest.TestCase):
     def test_add_user_message_with_attachments(self):
         session = ChatSession()
         attachment = Attachment(
-            id="att-1", type="file", name="doc.pdf",
-            url="https://example.com/doc.pdf", mime_type="application/pdf",
+            id="att-1",
+            type="file",
+            name="doc.pdf",
+            url="https://example.com/doc.pdf",
+            mime_type="application/pdf",
         )
         msg = session.add_user_message("See attached", attachments=[attachment])
         self.assertEqual(len(msg.attachments), 1)

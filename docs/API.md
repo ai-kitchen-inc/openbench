@@ -2,7 +2,7 @@
 
 Complete technical reference for all OpenBench abstractions and APIs.
 
-**Last Updated**: 2026-01-25
+**Last Updated**: 2026-02-14
 
 ---
 
@@ -300,7 +300,13 @@ class Agent(ABC):
 
     @abstractmethod
     def execute(self, context: "ExecutionContext") -> "ExecutionResult":
-        """Execute task and return result"""
+        """Execute task and return result.
+
+        BaseAgent and SimpleAgent accept an optional on_chunk callback
+        for progressive token streaming:
+
+            result = agent.execute(context, on_chunk=lambda delta: print(delta, end=''))
+        """
         pass
 
     @abstractmethod
@@ -388,6 +394,15 @@ class LLMProvider(ABC):
     def generate(self, prompt: str, model: str, **params) -> "LLMResponse":
         """Generate text from prompt"""
         pass
+
+    def generate_stream(self, prompt: str, model: str, **params) -> "Iterator[LLMResponse]":
+        """Stream text chunks progressively (token-by-token).
+
+        Each yielded LLMResponse contains a partial text delta in .text field.
+        The final response includes complete token counts.
+        Default implementation falls back to generate() as a single chunk.
+        """
+        yield self.generate(prompt, model, **params)
 
     @abstractmethod
     def embed(self, text: str, model: Optional[str] = None) -> List[float]:

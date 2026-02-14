@@ -23,14 +23,15 @@ Usage:
     agent = BaseAgent(goal="Analyze data", model="gemini-2.5-flash")
     result = agent.execute(context)
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import json
 import logging
 import os
 import re
 import time
+from collections.abc import Iterator
 from typing import Any
 
 from openbench.core.abstractions import LLMProvider, LLMResponse
@@ -232,6 +233,43 @@ class GeminiLLMProvider(LLMProvider):
 
         return [types.Tool(function_declarations=declarations)]
 
+    @staticmethod
+    def _extract_text_from_parts(response: Any) -> str:
+        """Extract only text from response parts, ignoring function_call parts.
+
+        Avoids the Gemini SDK warning "there are non-text parts in the
+        response" that fires when accessing .text on chunks that contain
+        both text and function_call parts.
+
+        Args:
+            response: Gemini API response or stream chunk.
+
+        Returns:
+            Concatenated text from all text-only parts.
+        """
+        if not hasattr(response, "candidates") or not response.candidates:
+            return ""
+
+        candidate = response.candidates[0]
+        if not hasattr(candidate, "content") or not candidate.content:
+            return ""
+
+        parts = candidate.content.parts
+        if not parts:
+            return ""
+
+        text_parts = [
+            part.text
+            for part in parts
+            if (
+                hasattr(part, "text")
+                and part.text
+                and not (hasattr(part, "function_call") and part.function_call)
+            )
+        ]
+
+        return "".join(text_parts)
+
     def _extract_tool_calls(self, response) -> list[dict[str, Any]]:
         """Extract tool calls from Gemini response.
 
@@ -430,6 +468,108 @@ class GeminiLLMProvider(LLMProvider):
                 llm_response.raw_content = candidate.content
 
         return llm_response
+
+    def generate_stream(
+        self,
+        prompt: str | list[dict[str, Any]],
+        model: str = "",
+        **params,
+    ) -> Iterator[LLMResponse]:
+        """Stream text chunks from Gemini using generate_content_stream().
+
+        Yields partial LLMResponse objects with delta text. The final
+        yielded response includes token usage and cost. Tool calls are
+        detected on the last chunk and attached to the final response.
+
+        Args:
+            prompt: Input prompt string or message list.
+            model: Model identifier (uses instance default if empty).
+            **params: Additional parameters (tools, temperature, max_output_tokens).
+
+        Yields:
+            LLMResponse with partial text (delta per chunk).
+        """
+        from google.genai import types
+
+        client = self._get_client()
+        model = model or self.model
+        tools_param = params.pop("tools", None)
+        temperature = params.pop("temperature", self.temperature)
+        max_output_tokens = params.pop("max_output_tokens", self.max_output_tokens)
+
+        # Handle str vs List[Dict]
+        if isinstance(prompt, str):
+            system_instruction = None
+            contents = prompt
+        else:
+            system_instruction, contents = self._convert_messages(prompt)
+
+        # Build generation config
+        config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        )
+
+        if system_instruction:
+            config.system_instruction = system_instruction
+
+        if tools_param:
+            config.tools = self._convert_tools(tools_param)
+
+        # Stream from Gemini API
+        last_chunk = None
+        for chunk in client.models.generate_content_stream(
+            model=model,
+            contents=contents,
+            config=config,
+        ):
+            last_chunk = chunk
+
+            # Extract text directly from parts to avoid the SDK warning:
+            # "there are non-text parts in the response: ['function_call']"
+            # which fires when accessing chunk.text on mixed-content chunks.
+            text = self._extract_text_from_parts(chunk)
+
+            if text:
+                yield LLMResponse(text=text, model=model, tokens_used=0, cost=0.0)
+
+        # Extract token usage from last chunk
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+
+        if last_chunk and hasattr(last_chunk, "usage_metadata") and last_chunk.usage_metadata:
+            usage = last_chunk.usage_metadata
+            prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0
+            completion_tokens = getattr(usage, "candidates_token_count", 0) or 0
+            total_tokens = getattr(usage, "total_token_count", 0) or 0
+
+        cost = self._estimate_cost(model, prompt_tokens, completion_tokens)
+
+        # Check for tool calls in the last chunk
+        tool_calls = self._extract_tool_calls(last_chunk) if last_chunk else []
+
+        if tool_calls:
+            # Yield final response with tool calls (text="" for tool-only responses)
+            final = LLMResponse(
+                text="",
+                model=model,
+                tokens_used=total_tokens,
+                cost=cost,
+                metadata={
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                },
+            )
+            final.tool_calls = tool_calls
+
+            # Store raw content for replay
+            if last_chunk and hasattr(last_chunk, "candidates") and last_chunk.candidates:
+                candidate = last_chunk.candidates[0]
+                if hasattr(candidate, "content") and candidate.content:
+                    final.raw_content = candidate.content
+
+            yield final
 
 
 # ============================================================================

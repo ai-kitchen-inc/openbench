@@ -235,14 +235,16 @@ def run_workflow_composition(pdf_path: str, provider: str):
     # is not available -- use Chain(steps=[...]) for duck-typed composition)
     wf = Workflow(
         name="entity-extraction",
-        chain=Chain(steps=[
-            PDFSource(path=pdf_path),
-            LangExtractSource(
-                prompt=DEFAULT_PROMPT,
-                examples=GENERAL_EXAMPLES,
-                provider=provider,
-            ),
-        ]),
+        chain=Chain(
+            steps=[
+                PDFSource(path=pdf_path),
+                LangExtractSource(
+                    prompt=DEFAULT_PROMPT,
+                    examples=GENERAL_EXAMPLES,
+                    provider=provider,
+                ),
+            ]
+        ),
         checkpoints=False,
     )
 

@@ -131,7 +131,9 @@ def demo_multiple_providers():
 
         def __init__(self, goal: str, target_lang: str = "en", **kwargs):
             super().__init__(
-                goal=goal, system_prompt=f"Translate to {target_lang}. Goal: {goal}", **kwargs
+                goal=goal,
+                system_prompt=f"Translate to {target_lang}. Goal: {goal}",
+                **kwargs,
             )
             self.target_lang = target_lang
 
@@ -165,7 +167,10 @@ def demo_multiple_providers():
 
     # Create different implementations
     basic = AgentFactory.create(
-        goal="Translate document", agent_type="translator", provider="basic", target_lang="id"
+        goal="Translate document",
+        agent_type="translator",
+        provider="basic",
+        target_lang="id",
     )
 
     premium = AgentFactory.create(

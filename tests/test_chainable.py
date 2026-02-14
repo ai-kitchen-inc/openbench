@@ -1,6 +1,6 @@
 """Tests for Chainable composition."""
-from __future__ import annotations
 
+from __future__ import annotations
 
 import unittest
 from typing import Any
@@ -113,7 +113,9 @@ class TestChainable(unittest.TestCase):
         false_branch = SimpleChainable("false")
 
         conditional = Conditional(
-            condition=lambda x: x == "yes", true_branch=true_branch, false_branch=false_branch
+            condition=lambda x: x == "yes",
+            true_branch=true_branch,
+            false_branch=false_branch,
         )
 
         result = conditional.invoke("yes")
@@ -125,7 +127,9 @@ class TestChainable(unittest.TestCase):
         false_branch = SimpleChainable("false")
 
         conditional = Conditional(
-            condition=lambda x: x == "yes", true_branch=true_branch, false_branch=false_branch
+            condition=lambda x: x == "yes",
+            true_branch=true_branch,
+            false_branch=false_branch,
         )
 
         result = conditional.invoke("no")
@@ -150,7 +154,8 @@ class TestChainable(unittest.TestCase):
         route_c = SimpleChainable("c")
 
         router = Router(
-            routes={"a": route_a, "b": route_b, "c": route_c}, router=lambda x: x["route"]
+            routes={"a": route_a, "b": route_b, "c": route_c},
+            router=lambda x: x["route"],
         )
 
         result_a = router.invoke({"route": "a"})

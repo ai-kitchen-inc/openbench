@@ -101,7 +101,7 @@ export function ChatPanel({
             onSuggestionClick={(s) => sendMessage(s)}
           />
         ) : (
-          <MessageList messages={messages} onAction={sendAction} />
+          <MessageList messages={messages} isStreaming={isStreaming} onAction={sendAction} />
         )}
       </div>
 

@@ -252,7 +252,11 @@ class TestAdapterIntegration(unittest.TestCase):
         # DataLayer output format
         mock_raw = MagicMock()
         mock_raw.content = "PDF extracted text"
-        data_output = {"raw_data": [mock_raw], "indexed_ids": [], "metadata": {"layer": "data"}}
+        data_output = {
+            "raw_data": [mock_raw],
+            "indexed_ids": [],
+            "metadata": {"layer": "data"},
+        }
 
         result = adapter.invoke(data_output)
 
@@ -270,7 +274,10 @@ class TestAdapterIntegration(unittest.TestCase):
 
         mock_raw = MagicMock()
         mock_raw.content = "Long document text"
-        input_data = {"raw_data": [mock_raw], "goal": "Summarize this document in 3 sentences"}
+        input_data = {
+            "raw_data": [mock_raw],
+            "goal": "Summarize this document in 3 sentences",
+        }
 
         adapter.invoke(input_data)
 

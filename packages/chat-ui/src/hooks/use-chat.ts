@@ -1,16 +1,18 @@
 /**
- * Main chat hook — composes transport, store, and A2UI processor.
+ * Main chat hook — composes AG-UI transport, store, and A2UI processor.
  *
  * Provides the complete chat API: send messages, track streaming,
  * manage sessions, and render A2UI surfaces.
  */
 
+import type { BaseEvent } from "@ag-ui/core";
+import { EventType } from "@ag-ui/core";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useStore } from "zustand";
 import type { ChatStore } from "../core/chat-store";
 import { createChatStore } from "../core/chat-store";
-import { ChatTransport } from "../core/transport";
-import { nowISO } from "../core/utils";
+import { AGUITransport } from "../core/transport";
+import { generateId, nowISO } from "../core/utils";
 import type {
   A2UIAction,
   A2UISurface,
@@ -51,7 +53,7 @@ export interface UseChatReturn {
  *
  * ```tsx
  * const { messages, sendMessage, isStreaming } = useChat({
- *   streamUrl: '/chat/stream',
+ *   streamUrl: '/awp',
  * });
  * ```
  */
@@ -67,9 +69,9 @@ export function useChat(config: ChatConfig): UseChatReturn {
   const sidebarOpen = useStore(store, (s) => s.sidebarOpen);
 
   // Create stable transport instance
-  const transportRef = useRef<ChatTransport | null>(null);
+  const transportRef = useRef<AGUITransport | null>(null);
   if (!transportRef.current) {
-    transportRef.current = new ChatTransport(config);
+    transportRef.current = new AGUITransport(config);
   }
   const transport = transportRef.current;
 
@@ -79,14 +81,16 @@ export function useChat(config: ChatConfig): UseChatReturn {
   // Stable ref for streaming message ID (survives re-renders)
   const streamingMsgRef = useRef<string | null>(null);
 
-  // Handle incoming messages from transport
-  const handleMessage = useCallback(
-    (data: Record<string, unknown>) => {
+  // Handle incoming AG-UI events from transport
+  const handleEvent = useCallback(
+    (event: BaseEvent) => {
       const state = store.getState();
+      // Cast to Record for safe property access (BaseEvent is Zod-inferred)
+      const raw = event as unknown as Record<string, unknown>;
+      const eventType = raw.type as string;
 
-      // Stream envelope messages
-      if (data.type === "stream_start") {
-        const messageId = data.messageId as string;
+      if (eventType === EventType.RUN_STARTED) {
+        const messageId = generateId();
         streamingMsgRef.current = messageId;
 
         // Create placeholder assistant message
@@ -103,107 +107,124 @@ export function useChat(config: ChatConfig): UseChatReturn {
         return;
       }
 
-      if (data.type === "step_start") {
+      if (eventType === EventType.STEP_STARTED) {
         const messageId = streamingMsgRef.current;
         if (messageId) {
-          state.addStep(messageId, data.stepId as string, data.stepName as string);
+          const stepName = raw.stepName as string;
+          state.addStep(messageId, generateId(), stepName);
         }
         return;
       }
 
-      if (data.type === "step_complete") {
+      if (eventType === EventType.STEP_FINISHED) {
         const messageId = streamingMsgRef.current;
         if (messageId) {
-          state.completeStep(messageId, data.stepId as string);
+          // Complete the most recent active step
+          const msg = state.messages.find((m) => m.id === messageId);
+          const activeStep = msg?.steps?.find((s) => s.status === "active");
+          if (activeStep) {
+            state.completeStep(messageId, activeStep.stepId);
+          }
         }
         return;
       }
 
-      if (data.type === "stream_end") {
-        const messageId = data.messageId as string;
-        const rawMeta = data.metadata as Record<string, unknown> | undefined;
-        // Extract content fallback (sent by Python engine for text recovery)
-        const contentFallback = rawMeta?.content as string | undefined;
-        // Build metadata without the content field (it's not real metadata)
-        const metadata = rawMeta
-          ? (Object.fromEntries(
-              Object.entries(rawMeta).filter(([k]) => k !== "content"),
-            ) as ChatMessage["metadata"])
-          : undefined;
-        // Read fresh surfaces from processor (not stale closure)
+      if (eventType === EventType.CUSTOM) {
+        const name = raw.name as string;
+        if (name === "a2ui") {
+          // A2UI message — process through A2UI processor
+          processMessage(raw.value as Record<string, unknown>);
+
+          // Update surfaces on the streaming message
+          const currentId = streamingMsgRef.current;
+          if (currentId) {
+            const freshSurfaces = processor.getRenderableSurfaces();
+            state.updateMessage(currentId, {
+              surfaces: freshSurfaces.length > 0 ? [...freshSurfaces] : undefined,
+            });
+          }
+        }
+        return;
+      }
+
+      if (eventType === EventType.RUN_FINISHED) {
+        const messageId = streamingMsgRef.current;
+        if (!messageId) return;
+
+        const result = raw.result as
+          | { content?: string; metadata?: Record<string, unknown> }
+          | undefined;
+        const contentFallback = result?.content;
+        const metadata = result?.metadata as ChatMessage["metadata"] | undefined;
+
+        // Read fresh surfaces from processor
         const freshSurfaces = processor.getRenderableSurfaces();
         const patch: Partial<ChatMessage> = {
           status: "complete",
           metadata,
           surfaces: freshSurfaces.length > 0 ? [...freshSurfaces] : undefined,
         };
+
         // Set content fallback if message has no text yet
         const currentMsg = state.messages.find((m) => m.id === messageId);
         if (contentFallback && (!currentMsg?.content || currentMsg.content === "")) {
           patch.content = contentFallback;
         }
+
         state.updateMessage(messageId, patch);
         state.setStreaming(false);
         streamingMsgRef.current = null;
         return;
       }
 
-      if (data.type === "error") {
-        const messageId = data.messageId as string;
-        const errorMeta = data.metadata as { error?: string } | undefined;
-        state.updateMessage(messageId, {
-          status: "error",
-          content: errorMeta?.error ?? "An error occurred",
-        });
+      if (eventType === EventType.RUN_ERROR) {
+        const messageId = streamingMsgRef.current;
+        const errorMessage = (raw.message as string) ?? "An error occurred";
+
+        if (messageId) {
+          state.updateMessage(messageId, {
+            status: "error",
+            content: errorMessage,
+          });
+        }
+
         state.setStreaming(false);
         streamingMsgRef.current = null;
         return;
       }
 
-      // A2UI messages (have "version" field)
-      if (data.version === "v0.10") {
-        processMessage(data);
-
-        // Read fresh surfaces from processor (not stale closure)
+      // Text content chunks (progressive text streaming)
+      if (eventType === EventType.TEXT_MESSAGE_CONTENT) {
         const currentId = streamingMsgRef.current;
         if (currentId) {
-          const freshSurfaces = processor.getRenderableSurfaces();
-          state.updateMessage(currentId, {
-            surfaces: freshSurfaces.length > 0 ? [...freshSurfaces] : undefined,
-          });
+          const delta = (raw.delta as string) ?? "";
+          const currentMsg = state.messages.find((m) => m.id === currentId);
+          if (currentMsg) {
+            state.updateMessage(currentId, {
+              content: currentMsg.content + delta,
+            });
+          }
         }
         return;
-      }
-
-      // Text content chunks (progressive text streaming)
-      const currentId = streamingMsgRef.current;
-      if (data.type === "text_chunk" && currentId) {
-        const chunk = data.content as string;
-        const currentMsg = state.messages.find((m) => m.id === currentId);
-        if (currentMsg) {
-          state.updateMessage(currentId, {
-            content: currentMsg.content + chunk,
-          });
-        }
       }
     },
     [store, processor, processMessage, resetProcessor],
   );
 
-  // Register message listener + status sync + cleanup
+  // Register event listener + status sync + cleanup
   useEffect(() => {
-    const unsubMsg = transport.onMessage(handleMessage);
+    const unsubEvent = transport.onEvent(handleEvent);
     const unsubStatus = transport.onStatusChange((status) => {
       store.getState().setConnectionStatus(status);
     });
 
     return () => {
-      unsubMsg();
+      unsubEvent();
       unsubStatus();
       transport.dispose();
       transportRef.current = null;
     };
-  }, [transport, handleMessage, store]);
+  }, [transport, handleEvent, store]);
 
   // Create initial session if none exists
   useEffect(() => {
@@ -212,7 +233,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
     }
   }, [store]);
 
-  // Send message via SSE stream (uploads files first if needed)
+  // Send message via AG-UI stream (uploads files first if needed)
   const sendMessage = useCallback(
     (content: string, attachments?: Attachment[]) => {
       const state = store.getState();
@@ -238,14 +259,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
             );
           }
 
-          const payload = {
-            type: "message" as const,
-            sessionId: state.activeSessionId ?? undefined,
-            content,
-            attachments: serverAttachments,
-          };
-
-          await transport.stream(payload);
+          await transport.run(content, state.activeSessionId ?? undefined, serverAttachments);
         } catch (err) {
           console.error("[useChat] Upload/stream error:", err);
         }
@@ -261,7 +275,6 @@ export function useChat(config: ChatConfig): UseChatReturn {
     (action: A2UIAction) => {
       transport
         .sendAction({
-          type: "action",
           name: action.name,
           surfaceId: action.surfaceId,
           sourceComponentId: action.sourceComponentId,

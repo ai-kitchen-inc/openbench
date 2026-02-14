@@ -236,7 +236,10 @@ class PDFGenerator(OutputGenerator):
         file_path = f"outputs/report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         print(f"  📄 Generating PDF: {file_path}")
         return GeneratedOutput(
-            file_path=file_path, format="pdf", size_bytes=5120, metadata={"template": template}
+            file_path=file_path,
+            format="pdf",
+            size_bytes=5120,
+            metadata={"template": template},
         )
 
     def validate(self, content: Any) -> bool:
@@ -258,7 +261,10 @@ class PPTXGenerator(OutputGenerator):
         file_path = f"outputs/presentation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pptx"
         print(f"  📊 Generating PPTX: {file_path}")
         return GeneratedOutput(
-            file_path=file_path, format="pptx", size_bytes=10240, metadata={"template": template}
+            file_path=file_path,
+            format="pptx",
+            size_bytes=10240,
+            metadata={"template": template},
         )
 
     def validate(self, content: Any) -> bool:
