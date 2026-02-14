@@ -56,7 +56,7 @@ def check_api_keys():
 
 def create_embedding_provider():
     """Create Google embedding provider."""
-    return GoogleEmbeddingProvider(model="text-embedding-004")
+    return GoogleEmbeddingProvider(model="gemini-embedding-001")
 
 
 def create_store(
