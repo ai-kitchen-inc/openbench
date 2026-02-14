@@ -3,6 +3,8 @@ LangChain framework adapter for OpenBench.
 
 Allows using any LangChain Runnable (agents, chains, LCEL) in OpenBench workflows.
 """
+from __future__ import annotations
+
 
 from typing import Any
 

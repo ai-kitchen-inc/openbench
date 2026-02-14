@@ -1,4 +1,6 @@
 """Custom exceptions for data stores."""
+from __future__ import annotations
+
 
 
 class StoreError(Exception):

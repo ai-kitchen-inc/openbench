@@ -23,10 +23,14 @@ Usage:
     agent = BaseAgent(goal="Analyze data", model="gemini-2.5-flash")
     result = agent.execute(context)
 """
+from __future__ import annotations
+
 
 import json
 import logging
 import os
+import re
+import time
 from typing import Any
 
 from openbench.core.abstractions import LLMProvider, LLMResponse
@@ -135,6 +139,13 @@ class GeminiLLMProvider(LLMProvider):
                 )
 
             elif role == "assistant":
+                # Use raw content if available (preserves thought_signature)
+                raw_content = msg.get("raw_content")
+                if raw_content is not None:
+                    contents.append(raw_content)
+                    continue
+
+                # Reconstruct from extracted data (fallback)
                 parts = []
                 if content:
                     parts.append(types.Part.from_text(text=content))
@@ -274,6 +285,56 @@ class GeminiLLMProvider(LLMProvider):
         output_cost = (completion_tokens / 1_000_000) * costs["output"]
         return input_cost + output_cost
 
+    @staticmethod
+    def _parse_retry_delay(error: Exception) -> float | None:
+        """Extract retry delay in seconds from a 429 error message."""
+        msg = str(error)
+        match = re.search(r"retry in ([\d.]+)s", msg, re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+        return None
+
+    def _call_with_retry(
+        self,
+        client: Any,
+        model: str,
+        contents: Any,
+        config: Any,
+        max_retries: int = 3,
+    ) -> Any:
+        """Call Gemini API with retry on 429 RESOURCE_EXHAUSTED errors.
+
+        Respects the API's suggested retryDelay when available,
+        otherwise uses exponential backoff (15s, 30s, 60s).
+        """
+        fallback_delays = [15, 30, 60]
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                return client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
+            except Exception as e:
+                error_str = str(e)
+                is_rate_limit = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str
+                if not is_rate_limit or attempt >= max_retries:
+                    raise
+
+                last_error = e
+                delay = self._parse_retry_delay(e)
+                if delay is None:
+                    delay = fallback_delays[min(attempt, len(fallback_delays) - 1)]
+
+                logger.warning(
+                    f"Rate limited (429). Retry {attempt + 1}/{max_retries} in {delay:.1f}s"
+                )
+                time.sleep(delay)
+
+        raise last_error  # type: ignore[misc]  # pragma: no cover
+
     def generate(
         self,
         prompt: str | list[dict[str, Any]],
@@ -321,12 +382,8 @@ class GeminiLLMProvider(LLMProvider):
         if tools_param:
             config.tools = self._convert_tools(tools_param)
 
-        # Call Gemini API
-        response = client.models.generate_content(
-            model=model,
-            contents=contents,
-            config=config,
-        )
+        # Call Gemini API with retry on 429 rate limit
+        response = self._call_with_retry(client, model, contents, config)
 
         # Extract token usage
         prompt_tokens = 0
@@ -365,6 +422,12 @@ class GeminiLLMProvider(LLMProvider):
         # Attach tool_calls for BaseAgent._parse_tool_calls()
         if tool_calls:
             llm_response.tool_calls = tool_calls
+
+        # Store raw content for replay (preserves thought_signature for Gemini 2.5+)
+        if hasattr(response, "candidates") and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, "content") and candidate.content:
+                llm_response.raw_content = candidate.content
 
         return llm_response
 

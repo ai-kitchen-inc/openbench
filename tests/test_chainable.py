@@ -1,4 +1,6 @@
 """Tests for Chainable composition."""
+from __future__ import annotations
+
 
 import unittest
 from typing import Any

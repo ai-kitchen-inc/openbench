@@ -39,7 +39,9 @@ import sys
 from pathlib import Path
 
 from openbench.core.abstractions import RawData
+from openbench.core.chainable import Chain
 from openbench.data.sources import LangExtractSource, PDFSource
+from openbench.workflows import Workflow
 
 # --- Few-shot Examples ---
 
@@ -134,8 +136,7 @@ def check_api_keys(provider: str):
 
 def load_text_file(path: str) -> str:
     """Load text content from a file."""
-    with open(path, encoding="utf-8") as f:
-        return f.read()
+    return Path(path).read_text(encoding="utf-8")
 
 
 def extract_from_pdf(pdf_path: str) -> str:
@@ -220,7 +221,7 @@ def display_results(result: RawData):
 
 
 def run_workflow_composition(pdf_path: str, provider: str):
-    """Demonstrate workflow composition: PDFSource | LangExtractSource."""
+    """Demonstrate workflow composition: Workflow(Chain([PDFSource, LangExtractSource]))."""
     print("\n" + "=" * 60)
     print("Workflow Composition Demo")
     print("=" * 60)
@@ -230,17 +231,25 @@ def run_workflow_composition(pdf_path: str, provider: str):
     print(f"  -> LangExtractSource(provider={provider})")
     print("  -> Structured Entities")
 
-    # Compose using pipe operator
-    workflow = PDFSource(path=pdf_path) | LangExtractSource(
-        prompt=DEFAULT_PROMPT,
-        examples=GENERAL_EXAMPLES,
-        provider=provider,
+    # Compose using Workflow + Chain (DataSource is not Chainable, so | operator
+    # is not available -- use Chain(steps=[...]) for duck-typed composition)
+    wf = Workflow(
+        name="entity-extraction",
+        chain=Chain(steps=[
+            PDFSource(path=pdf_path),
+            LangExtractSource(
+                prompt=DEFAULT_PROMPT,
+                examples=GENERAL_EXAMPLES,
+                provider=provider,
+            ),
+        ]),
+        checkpoints=False,
     )
 
-    print(f"\n  Workflow type: {type(workflow).__name__}")
+    print(f"\n  Workflow: {wf}")
     print("  Running workflow...")
 
-    result = workflow.invoke({})
+    result = wf.run()
 
     total = result.content["summary"]["total"]
     classes = list(result.content["summary"]["classes"].keys())
@@ -290,7 +299,7 @@ def main():
     parser.add_argument(
         "--compose",
         action="store_true",
-        help="Use workflow composition (pipe operator) instead of step-by-step",
+        help="Use workflow composition (Workflow + Chain) instead of step-by-step",
     )
     args = parser.parse_args()
 

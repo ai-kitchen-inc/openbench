@@ -4,6 +4,8 @@ Output Layer - Factory and Helpers.
 NOTE: For L2 workflow orchestration, use OutputLayer from openbench.core.layers.
 This module provides factory functions for creating output generators.
 """
+from __future__ import annotations
+
 
 from pathlib import Path
 from typing import Any

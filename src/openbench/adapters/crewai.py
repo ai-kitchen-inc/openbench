@@ -3,6 +3,8 @@ CrewAI framework adapter for OpenBench.
 
 Allows using CrewAI crews in OpenBench workflows.
 """
+from __future__ import annotations
+
 
 from typing import Any
 
