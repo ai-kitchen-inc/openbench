@@ -147,7 +147,7 @@ Processing:
 - **Borders**: 1px solid rgba(0,0,0,0.08) -- subtle, not heavy shadows
 - **Spacing**: 4px base unit, consistent padding/margin multiples
 
-See `docs/chat-ui-design-system.md` for full design tokens.
+See `docs/DESIGN_SYSTEM.md` for full design tokens.
 
 ## Build Commands
 
@@ -181,5 +181,5 @@ pnpm vitest           # Run tests
 - **Composing Workflows**: ChatLayer L2 composition -> see `composing-workflows` skill
 - **Testing**: Component and hook tests -> see `testing-openbench` skill
 
-For architecture details, see `docs/chat-ui-architecture.md`
-For design tokens, see `docs/chat-ui-design-system.md`
+For architecture details, see `docs/CHAT_UI_ARCHITECTURE.md`
+For design tokens, see `docs/DESIGN_SYSTEM.md`

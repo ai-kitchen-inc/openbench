@@ -59,25 +59,15 @@ examples/chat/
 │   └── src/
 │       ├── main.tsx        # React entry
 │       ├── global.css      # Fullscreen reset
-│       ├── App.tsx         # Drop-in: ChatProvider + SessionSidebar + ChatPanel
-│       └── CustomApp.tsx   # Hook-based: useChat() + SurfaceRenderer
+│       └── App.tsx         # Drop-in: ChatProvider + SessionSidebar + ChatPanel
 └── README.md
 ```
 
-## Two Frontend Examples
+## Frontend
 
-### App.tsx (default) -- Drop-in
+### App.tsx -- Drop-in
 
 Uses `ChatProvider` + `SessionSidebar` + `ChatPanel`. Minimal code, full features.
-
-### CustomApp.tsx -- Custom UI
-
-Uses `useChat()` hook + `SurfaceRenderer` for a fully custom layout.
-Switch by changing the import in `main.tsx`:
-
-```tsx
-import App from './CustomApp';
-```
 
 ## Architecture
 

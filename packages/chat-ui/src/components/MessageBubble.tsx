@@ -30,11 +30,7 @@ function MessageAttachment({ attachment }: { attachment: Attachment }) {
   if (isImage) {
     return (
       <div className="chat-message__attachment chat-message__attachment--image">
-        <img
-          src={attachment.url}
-          alt={attachment.name}
-          className="chat-message__attachment-img"
-        />
+        <img src={attachment.url} alt={attachment.name} className="chat-message__attachment-img" />
         <span className="chat-message__attachment-name">{attachment.name}</span>
       </div>
     );

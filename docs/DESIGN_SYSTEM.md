@@ -1,12 +1,14 @@
-# Chat UI Design System
+# Design System
 
 Notion-inspired. Monochrome. Icon-driven. No emojis.
+
+Applies to **all UI/UX across the project** — chat interfaces, forms, dashboards, components, and any future frontend surfaces.
 
 ---
 
 ## Design Philosophy
 
-The chat UI follows Notion's visual language: content-first, distraction-free, black ink on white paper. Every element earns its place through function, not decoration.
+The UI follows Notion's visual language: content-first, distraction-free, black ink on white paper. Every element earns its place through function, not decoration.
 
 **Principles:**
 1. **Content over chrome** -- minimal UI furniture, maximum content visibility
@@ -194,7 +196,7 @@ pnpm add lucide-react
 
 ### Icon Mapping
 
-Use these specific Lucide icons throughout the chat UI:
+Use these specific Lucide icons throughout the UI:
 
 | Purpose | Icon | Lucide Name |
 |---------|------|-------------|

@@ -6,8 +6,8 @@
  */
 
 import { createContext, useContext } from "react";
-import { useChat } from "../hooks/use-chat";
 import type { UseChatReturn } from "../hooks/use-chat";
+import { useChat } from "../hooks/use-chat";
 import type { ChatConfig } from "../types";
 
 const ChatContext = createContext<UseChatReturn | null>(null);

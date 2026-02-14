@@ -256,4 +256,4 @@ Note: `AudioPlayer` and `Video` are standard A2UI components -- no custom wrappe
 5. Use `ChatLayer` for L2 composition, `ChatEngine` for direct usage
 6. Validate JSONL output against A2UI v0.10 JSON schemas
 
-For architecture details, see `docs/chat-ui-architecture.md`
+For architecture details, see `docs/CHAT_UI_ARCHITECTURE.md`
