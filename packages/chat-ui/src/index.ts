@@ -44,9 +44,9 @@ export type { ChatActions, ChatState, ChatStore } from "./core/chat-store";
 export { createChatStore } from "./core/chat-store";
 export type { SurfaceChangeListener } from "./core/message-processor";
 export { A2UIMessageProcessor } from "./core/message-processor";
-export type { StatusListener, TransportListener } from "./core/transport";
+export type { AGUIEventListener, StatusListener } from "./core/transport";
 // ── Core (headless / framework-agnostic) ──
-export { ChatTransport } from "./core/transport";
+export { AGUITransport } from "./core/transport";
 export {
   formatFileSize,
   formatRelativeTime,
@@ -79,10 +79,6 @@ export type {
   ChatMessage,
   ChatSession,
   CheckRule,
-  ClientAction,
-  // Client Messages
-  ClientMessage,
-  ClientPayload,
   ComponentCatalog,
   // A2UI Server Messages
   CreateSurfacePayload,
@@ -95,15 +91,8 @@ export type {
   DynamicValue,
   FunctionCall,
   MessageMetadata,
-  StepCompleteMessage,
   // Step Info
   StepInfo,
-  StepStartMessage,
-  StreamEndMessage,
-  StreamEnvelopeMessage,
-  StreamErrorMessage,
-  // Stream Envelope
-  StreamStartMessage,
   ToolCallInfo,
   TransportStatus,
   UpdateComponentsPayload,

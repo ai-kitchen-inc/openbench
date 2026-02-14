@@ -10,7 +10,7 @@ import "@openbench/chat-ui/styles/chat-ui.css";
 import "@openbench/chat-ui/styles/bundle.css";
 import "./global.css";
 
-const STREAM_URL = "/chat/stream";
+const STREAM_URL = "/awp";
 
 const SUGGESTIONS = [
   "Search the web for latest AI agent trends",

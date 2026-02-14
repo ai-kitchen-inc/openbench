@@ -55,7 +55,7 @@ import '@openbench/chat-ui/styles/chat-ui.css';
 
 function ChatPage() {
   return (
-    <ChatProvider config={{ streamUrl: '/chat/stream' }}>
+    <ChatProvider config={{ streamUrl: '/awp' }}>
       <div className="flex h-screen">
         <SessionSidebar />
         <ChatPanel className="flex-1" />
@@ -72,7 +72,7 @@ import { useChat } from '@openbench/chat-ui';
 
 function MyChat() {
   const { messages, sendMessage, isStreaming } = useChat({
-    streamUrl: '/chat/stream',
+    streamUrl: '/awp',
   });
   return (
     <div>

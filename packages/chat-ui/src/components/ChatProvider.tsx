@@ -22,7 +22,7 @@ export interface ChatProviderProps {
  * Provides chat state and actions to all child components.
  *
  * ```tsx
- * <ChatProvider config={{ streamUrl: '/chat/stream' }}>
+ * <ChatProvider config={{ streamUrl: '/awp' }}>
  *   <ChatPanel />
  * </ChatProvider>
  * ```

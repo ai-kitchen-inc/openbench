@@ -145,62 +145,51 @@ messages = builder.build_surface(
 jsonl = builder.to_jsonl(messages)
 ```
 
-## SSE Transport (Primary)
+## AG-UI Transport (Primary)
 
 ```python
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
 from openbench.chat import ChatEngine
-from openbench.chat.transport.sse import ChatSSEHandler
+from openbench.chat.transport import AGUIHandler, AGUIActionHandler
 
 app = FastAPI()
 engine = ChatEngine(agent=my_agent)
-sse_handler = ChatSSEHandler(engine=engine)
+agui_handler = AGUIHandler(engine=engine)
+action_handler = AGUIActionHandler(engine=engine)
 
-@app.post("/chat/stream")
+@app.post("/awp")
 async def chat_stream(request: Request):
-    body = await request.json()
-    return StreamingResponse(
-        sse_handler.stream(body),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return await agui_handler.handle(request)
 
 @app.post("/chat/action")
 async def chat_action(request: Request):
-    body = await request.json()
-    result = await asyncio.to_thread(engine.invoke, {
-        "content": f"[Action: {body.get('name')}]",
-        "action": body,
-    })
-    return result.get("messages", [])
+    return await action_handler.handle(request)
 ```
 
-## SSE Protocol
+## AG-UI Protocol
 
 ```
 Client                                Server
   |                                   |
-  |-- POST /chat/stream            -->|  User sends message
-  |    {"type":"message",             |
-  |     "sessionId":"...",            |
-  |     "content":"Show Q4 sales"}   |
+  |-- POST /awp                    -->|  AG-UI RunAgentInput
+  |    {threadId, runId,              |
+  |     messages: [...],              |
+  |     forwardedProps: {sessionId}}  |
   |                                   |
-  |<-- data: {"type":"stream_start",  |  SSE: stream begins
-  |     "messageId":"msg-123"}        |
+  |<-- data: {"type":"RUN_STARTED",   |  AG-UI: run begins
+  |     "threadId":"...",             |
+  |     "runId":"..."}                |
   |                                   |
-  |<-- data: {"version":"v0.10",      |  SSE: A2UI create surface
-  |     "createSurface":{...}}        |
+  |<-- data: {"type":"STEP_STARTED",  |  AG-UI: step begins
+  |     "stepName":"Processing"}      |
   |                                   |
-  |<-- data: {"version":"v0.10",      |  SSE: A2UI components
-  |     "updateComponents":{...}}     |
+  |<-- data: {"type":"CUSTOM",        |  AG-UI: A2UI message
+  |     "name":"a2ui",                |
+  |     "value":{"version":"v0.10",   |
+  |       "createSurface":{...}}}     |
   |                                   |
-  |<-- data: {"version":"v0.10",      |  SSE: A2UI data
-  |     "updateDataModel":{...}}      |
-  |                                   |
-  |<-- data: {"type":"stream_end",    |  SSE: stream complete
-  |     "messageId":"msg-123",        |
-  |     "metadata":{...}}             |
+  |<-- data: {"type":"RUN_FINISHED",  |  AG-UI: run complete
+  |     "result":{...}}               |
   |                                   |
   |-- POST /chat/action            -->|  User action (A2UI event)
   |    {"name":"submit_form",         |

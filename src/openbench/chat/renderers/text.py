@@ -4,8 +4,8 @@ Text content renderer.
 Converts plain text and markdown strings to A2UI Text and ObMarkdown components.
 Handles semantic variants (h1-h5, body, caption) via markdown heading detection.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import re
 import uuid
@@ -51,22 +51,23 @@ class TextRenderer(ContentRenderer):
     def _is_complex_markdown(self, text: str) -> bool:
         """Check if text contains complex markdown requiring ObMarkdown."""
         complex_patterns = [
-            r"```",           # Code fences
-            r"\|.*\|.*\|",   # Tables
-            r"!\[",          # Images
-            r"\[.*\]\(.*\)", # Links
+            r"```",  # Code fences
+            r"\|.*\|.*\|",  # Tables
+            r"!\[",  # Images
+            r"\[.*\]\(.*\)",  # Links
             r"^\s*[-*+]\s",  # Unordered lists
             r"^\s*\d+\.\s",  # Ordered lists
-            r"^\s*>",        # Blockquotes
-            r"\$\$",         # Display math ($$...$$)
+            r"^\s*>",  # Blockquotes
+            r"\*\*.+?\*\*",  # Bold (**text**)
+            r"(?<!\*)\*(?!\*).+?(?<!\*)\*(?!\*)",  # Italic (*text*), not **
+            r"~~.+?~~",  # Strikethrough (~~text~~)
+            r"(?<!`)`(?!`).+?(?<!`)`(?!`)",  # Inline code (`code`), not ```
+            r"\$\$",  # Display math ($$...$$)
             r"(?<!\$)\$(?!\$|\d).+?\$(?!\$)",  # Inline math ($...$), not $$ or currency ($digits)
-            r"\\\[",         # Display math (\[...\])
-            r"\\\(",         # Inline math (\(...\))
+            r"\\\[",  # Display math (\[...\])
+            r"\\\(",  # Inline math (\(...\))
         ]
-        for pattern in complex_patterns:
-            if re.search(pattern, text, re.MULTILINE):
-                return True
-        return False
+        return any(re.search(pattern, text, re.MULTILINE) for pattern in complex_patterns)
 
     def _render_markdown(self, text: str) -> list[A2UIComponent]:
         """Render complex markdown as ObMarkdown component."""
@@ -91,9 +92,9 @@ class TextRenderer(ContentRenderer):
             if heading_match:
                 # Flush body buffer
                 if body_buffer:
-                    components.append(self._make_text_component(
-                        "\n".join(body_buffer).strip(), "body"
-                    ))
+                    components.append(
+                        self._make_text_component("\n".join(body_buffer).strip(), "body")
+                    )
                     body_buffer = []
 
                 level = len(heading_match.group(1))

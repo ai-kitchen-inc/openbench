@@ -4,10 +4,10 @@
 
 The Chat UI system spans two packages:
 
-1. **Python Backend** (`src/openbench/chat/`) -- ChatEngine, A2UI builder, content renderers, SSE + REST transport
+1. **Python Backend** (`src/openbench/chat/`) -- ChatEngine, A2UI builder, content renderers, AG-UI transport
 2. **TypeScript Frontend** (`packages/chat-ui/`) -- `@openbench/chat-ui` React component library
 
-Both communicate via SSE (streaming) and REST (actions) using **A2UI v0.10 JSONL** as the wire format.
+Both communicate via **AG-UI protocol** (SSE event streaming) and REST (actions). A2UI v0.10 messages are wrapped inside AG-UI `CustomEvent(name="a2ui")` payloads.
 
 **A2UI Spec Reference**: [github.com/google/A2UI](https://github.com/google/A2UI) -- specification/v0_10/
 
@@ -131,7 +131,7 @@ A2UI is transport-agnostic. Supports: A2A, AG-UI, WebSocket, SSE, REST, MCP.
 |                               |                                       |
 |  +---------------------------v-----------------------------------+    |
 |  |                    Core Layer                                  |    |
-|  |  ChatTransport (SSE + REST) <-> Any backend                   |    |
+|  |  AGUITransport (AG-UI SSE + REST) <-> Any backend              |    |
 |  |  A2UIMessageProcessor (JSONL parser + surface state)          |    |
 |  |  ChatStore (Zustand -- sessions, messages, streaming)         |    |
 |  +---------------------------------------------------------------+    |
@@ -159,8 +159,8 @@ A2UI is transport-agnostic. Supports: A2A, AG-UI, WebSocket, SSE, REST, MCP.
 |  +----------------------------+----------------------------------+  |
 |                                |                                      |
 |  +----------------------------v----------------------------------+  |
-|  |  SSE + REST Transport (FastAPI)                                |  |
-|  |  Streams A2UI v0.10 JSONL via SSE events                       |  |
+|  |  AG-UI Transport (FastAPI)                                     |  |
+|  |  Streams AG-UI events via SSE (A2UI in CustomEvent)             |  |
 |  +---------------------------------------------------------------+  |
 +---------------------------------------------------------------------+
 ```
@@ -188,11 +188,10 @@ src/openbench/chat/
 │   ├── chart.py                # ChartRenderer (bar, line, pie, scatter)
 │   ├── form.py                 # FormRenderer (dynamic form generation)
 │   └── file.py                 # FileRenderer (file preview/download)
-├── transport/
+├── transport/                    # AG-UI protocol transport
 │   ├── __init__.py
-│   ├── base.py                 # Transport abstract base
-│   ├── sse.py                  # SSE transport (FastAPI, primary)
-│   └── websocket.py            # WebSocket transport (FastAPI, optional)
+│   ├── agui.py                 # AGUIHandler -- AG-UI SSE event streaming
+│   └── agui_actions.py         # AGUIActionHandler -- REST for A2UI actions
 └── layer.py                    # ChatLayer (L2 orchestrator) + ChatFactory
 ```
 
@@ -586,74 +585,62 @@ class ChatLayer(Chainable[Any, dict[str, Any]]):
         """
 ```
 
-#### SSE Transport (transport/sse.py) — Primary
+#### AG-UI Transport (transport/agui.py)
 
-FastAPI SSE handler that streams A2UI v0.10 JSONL via HTTP chunked transfer encoding:
+AG-UI protocol handler that streams standardized events via SSE. A2UI v0.10 messages
+are wrapped inside `CustomEvent(name="a2ui")` payloads:
 
 ```python
-class ChatSSEHandler:
-    """FastAPI-compatible SSE handler for chat.
+class AGUIHandler:
+    """AG-UI protocol handler for chat.
 
     Usage with FastAPI:
         app = FastAPI()
-        sse_handler = ChatSSEHandler(engine=ChatEngine(agent=my_agent))
+        handler = AGUIHandler(engine=ChatEngine(agent=my_agent))
 
-        @app.post("/chat/stream")
-        async def chat_stream(request: Request):
-            body = await request.json()
-            return StreamingResponse(
-                sse_handler.stream(body),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
-
-        @app.post("/chat/action")
-        async def chat_action(request: Request):
-            body = await request.json()
-            result = await asyncio.to_thread(engine.invoke, {"content": f"[Action: {body.get('name')}]", "action": body})
-            return result.get("messages", [])
+        @app.post("/awp")
+        async def agent_endpoint(request: Request):
+            return await handler.handle(request)
     """
 
     def __init__(self, engine: ChatEngine): ...
-
-    async def stream(self, payload: dict) -> AsyncIterator[str]:
-        """Stream A2UI v0.10 response as SSE events."""
+    async def handle(self, request: Request) -> StreamingResponse: ...
 ```
 
-Note: `transport/websocket.py` (`ChatWebSocketServer`) is kept as an optional alternative transport.
+The `AGUIActionHandler` (transport/agui_actions.py) handles REST actions (button clicks, form submits).
 
-### SSE + REST Protocol
+### AG-UI + REST Protocol
 
 ```
 Client (@openbench/chat-ui)              Server (Python)
   |                                          |
-  |-- POST /chat/stream ------------------>|  User sends message
-  |   { "type": "message",                 |
-  |     "sessionId": "...",                 |
-  |     "content": "Show Q4 sales" }       |
+  |-- POST /awp --------------------------->|  User sends message
+  |   { "threadId": "...",                  |  (AG-UI RunAgentInput format)
+  |     "messages": [{ "role": "user",      |
+  |       "content": "Show Q4 sales" }],    |
+  |     "forwardedProps": { ... } }         |
   |                                          |
-  |<-- data: { "type": "stream_start",     |  SSE: begin streaming
-  |     "messageId": "msg-123" }            |
+  |<-- data: {"type":"RUN_STARTED",         |  AG-UI: run started
+  |     "threadId":"t1","runId":"r1"}       |
   |                                          |
-  |<-- data: { "version": "v0.10",         |  SSE: A2UI create surface
-  |     "createSurface": {                  |
-  |       "surfaceId": "s1",               |
-  |       "catalogId": "https://..." }}     |
+  |<-- data: {"type":"STEP_STARTED",        |  AG-UI: step progress
+  |     "stepName":"Processing input"}      |
+  |<-- data: {"type":"STEP_FINISHED",       |
+  |     "stepName":"Processing input"}      |
   |                                          |
-  |<-- data: { "version": "v0.10",         |  SSE: A2UI components
-  |     "updateComponents": {               |
-  |       "surfaceId": "s1",               |
-  |       "components": [...] }}            |
+  |<-- data: {"type":"CUSTOM",              |  AG-UI: A2UI create surface
+  |     "name":"a2ui","value":{             |
+  |       "version":"v0.10",                |
+  |       "createSurface":{...}}}           |
   |                                          |
-  |<-- data: { "version": "v0.10",         |  SSE: A2UI data
-  |     "updateDataModel": {                |
-  |       "surfaceId": "s1",               |
-  |       "path": "/chart/data",           |
-  |       "value": [...] }}                 |
+  |<-- data: {"type":"CUSTOM",              |  AG-UI: A2UI components
+  |     "name":"a2ui","value":{             |
+  |       "version":"v0.10",                |
+  |       "updateComponents":{...}}}        |
   |                                          |
-  |<-- data: { "type": "stream_end",       |  SSE: stream complete
-  |     "messageId": "msg-123",             |
-  |     "metadata": { ... } }              |
+  |<-- data: {"type":"RUN_FINISHED",        |  AG-UI: run complete
+  |     "threadId":"t1","runId":"r1",       |
+  |     "result":{"content":"...","metadata":{...}}}  |
   |                                          |
   |-- POST /chat/action ------------------>|  User action (A2UI event)
   |   { "name": "submit_form",             |
@@ -698,7 +685,7 @@ packages/chat-ui/
 │   ├── types.ts                    # All TypeScript interfaces
 │   │
 │   ├── core/                       # No React dependency
-│   │   ├── transport.ts            # SSE + REST client (stream, sendAction)
+│   │   ├── transport.ts            # AG-UI transport (HttpAgent, sendAction)
 │   │   ├── message-processor.ts    # A2UI v0.10 JSONL parser + surface state
 │   │   ├── chat-store.ts           # Zustand store (sessions, messages, streaming)
 │   │   └── utils.ts                # Helpers (formatTime, formatFileSize, generateId)
@@ -778,7 +765,7 @@ packages/chat-ui/
 |  Functions, Checks                          |
 +---------------------------------------------+
 |              Core Layer                      |  No React dependency
-|  ChatTransport, MessageProcessor, ChatStore |  (headless usage)
+|  AGUITransport, MessageProcessor, ChatStore |  (headless usage)
 +---------------------------------------------+
 ```
 
@@ -881,7 +868,7 @@ interface FunctionCall {
 
 // -- Configuration --
 interface ChatConfig {
-  streamUrl: string;                   // POST → SSE (e.g., "/chat/stream")
+  streamUrl: string;                   // POST → SSE AG-UI endpoint (e.g., "/awp")
   actionUrl?: string;                  // POST → JSON (defaults to "/chat/action")
   theme?: 'light' | 'dark' | 'auto';
 }
@@ -976,7 +963,7 @@ export { useChat, useA2UIProcessor };
 export { SurfaceRenderer, registerCustomComponent, getComponentCatalog };
 
 // Core (headless)
-export { ChatTransport, A2UIMessageProcessor, useChatStore };
+export { AGUITransport, A2UIMessageProcessor, useChatStore };
 
 // Types
 export type { ChatMessage, ChatSession, Attachment, A2UISurface,
@@ -993,7 +980,7 @@ import '@openbench/chat-ui/styles/chat-ui.css';
 
 function ChatPage() {
   return (
-    <ChatProvider config={{ streamUrl: '/chat/stream' }}>
+    <ChatProvider config={{ streamUrl: '/awp' }}>
       <div className="flex h-screen">
         <SessionSidebar />
         <ChatPanel className="flex-1" />
@@ -1007,7 +994,7 @@ import { useChat } from '@openbench/chat-ui';
 
 function MyChat() {
   const { messages, sendMessage, isStreaming } = useChat({
-    streamUrl: '/chat/stream',
+    streamUrl: '/awp',
   });
   // ... render custom UI
 }
@@ -1028,10 +1015,10 @@ User types "Show Q4 sales by region" -> clicks Send
 ChatInput.onSend()
   |-- chatStore.addMessage({ role: "user", content: "...", status: "complete" })
   |-- chatStore.addMessage({ role: "assistant", content: "", status: "streaming" })
-  +-- transport.stream({ type: "message", sessionId, content: "..." })
+  +-- transport.run(content, sessionId, attachments)
         |
         v
-POST /chat/stream -> Python ChatEngine.invoke()
+POST /awp -> Python AGUIHandler._event_stream()
   |-- session.add_user_message(content)
   |-- agent.execute(context)  -> agent output (text + structured data)
   |-- ContentRenderers detect and render:
@@ -1042,22 +1029,25 @@ POST /chat/stream -> Python ChatEngine.invoke()
   |     1. {"version":"v0.10","createSurface":{"surfaceId":"s1","catalogId":"..."}}
   |     2. {"version":"v0.10","updateComponents":{"surfaceId":"s1","components":[...]}}
   |     3. {"version":"v0.10","updateDataModel":{"surfaceId":"s1","path":"/chart","value":{...}}}
-  +-- Stream JSONL back via SSE events
+  +-- Stream AG-UI events via SSE
         |
         v
-transport.onMessage() -> for each JSONL line:
-  |-- { type: "stream_start" }          -> chatStore.setStreaming(true)
-  |-- { createSurface: {...} }          -> messageProcessor: create surface entry
-  |-- { updateComponents: {...} }       -> messageProcessor: merge components
-  |                                        if root exists -> surface renderable
-  |                                        -> chatStore.appendSurface(msgId, surface)
-  |                                        -> SurfaceRenderer builds React tree:
-  |                                           Text -> <A2UIText text="..." variant="h2" />
-  |                                           ObChart -> <ObChart chartType="bar" data={...} />
-  |                                           ObFileCard -> <ObFileCard fileName="Q4-Report.pdf" />
-  |-- { updateDataModel: {...} }        -> messageProcessor: update data at path
+transport.onEvent() -> for each AG-UI event:
+  |-- { type: "RUN_STARTED" }           -> chatStore.setStreaming(true), create msg
+  |-- { type: "STEP_STARTED" }          -> addStep(msgId, stepName)
+  |-- { type: "CUSTOM", name: "a2ui" }  -> A2UI message processing:
+  |     |-- { createSurface: {...} }    -> messageProcessor: create surface entry
+  |     |-- { updateComponents: {...} } -> messageProcessor: merge components
+  |     |                                  if root exists -> surface renderable
+  |     |                                  -> chatStore.appendSurface(msgId, surface)
+  |     |                                  -> SurfaceRenderer builds React tree:
+  |     |                                     Text -> <A2UIText text="..." variant="h2" />
+  |     |                                     ObChart -> <ObChart chartType="bar" data={...} />
+  |     |                                     ObFileCard -> <ObFileCard fileName="Q4-Report.pdf" />
+  |     +-- { updateDataModel: {...} }  -> messageProcessor: update data at path
   |                                        -> re-render components bound to updated data
-  +-- { type: "stream_end" }            -> chatStore.setStreaming(false)
+  |-- { type: "STEP_FINISHED" }         -> completeStep(msgId, stepName)
+  +-- { type: "RUN_FINISHED" }          -> chatStore.setStreaming(false)
                                            -> updateMessage(msgId, { status: "complete" })
 ```
 
@@ -1207,4 +1197,4 @@ chat = [
 - `pnpm build` -> `dist/` with ESM + `.d.ts`
 - `pnpm tsc --noEmit` -- type check
 - `pnpm vitest` -- message processor, data binding, functions, store, transport
-- E2E: Python SSE server + React app consuming `@openbench/chat-ui`
+- E2E: Python AG-UI server + React app consuming `@openbench/chat-ui`

@@ -98,8 +98,8 @@ extraction = [
 
 chat = [
     "fastapi>=0.100.0",
-    "websockets>=12.0",
     "uvicorn>=0.25.0",
+    "ag-ui-protocol>=0.1.0",
 ]
 
 all = [
