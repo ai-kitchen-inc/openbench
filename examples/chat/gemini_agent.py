@@ -11,6 +11,7 @@ Uses BaseAgent with GeminiLLMProvider + tools:
   - create_chart: Generate bar/line/pie/scatter/area charts (A2UI ObChart)
   - create_form: Generate interactive forms (A2UI TextField/CheckBox/etc.)
   - show_file: Display file cards (A2UI ObFileCard)
+  - generate_file: Generate downloadable files (text, markdown, CSV, JSON, HTML)
 
 Supports multi-turn conversation with memory.
 
@@ -21,9 +22,24 @@ Requires:
 
 import math
 import os
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from prompt import SYSTEM_PROMPT
+from schemas import (
+    ANALYZE_FILE_SCHEMA,
+    CALCULATE_SCHEMA,
+    CREATE_CHART_SCHEMA,
+    CREATE_FORM_SCHEMA,
+    EXTRACT_ENTITIES_SCHEMA,
+    GENERATE_FILE_SCHEMA,
+    GET_DATETIME_SCHEMA,
+    KNOWLEDGE_LOOKUP_SCHEMA,
+    SEARCH_WEB_SCHEMA,
+    SHOW_FILE_SCHEMA,
+)
 
 from openbench.core.chainable import Chain
 from openbench.core.providers import ProviderType, configure_provider
@@ -116,295 +132,6 @@ KNOWLEDGE_BASE: dict[str, dict[str, str]] = {
     },
 }
 
-
-# ── Tool schemas ──
-
-SEARCH_WEB_SCHEMA: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "search_web",
-        "description": (
-            "Search the web for current, up-to-date information on any topic. "
-            "Uses Google Search grounding for real-time results with citations. "
-            "Use this for news, recent events, or anything not in the knowledge base."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query, e.g. 'latest AI agent trends 2026'",
-                },
-            },
-            "required": ["query"],
-        },
-    },
-}
-
-ANALYZE_FILE_SCHEMA: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "analyze_file",
-        "description": (
-            "Read and analyze the full content of uploaded files. "
-            "Supports PDF (full text extraction) and text files. "
-            "Call without arguments to see all uploaded files, "
-            "or specify a filename to read a specific file."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "Name of a specific file to read (optional, reads all if omitted)",
-                },
-            },
-            "required": [],
-        },
-    },
-}
-
-CALCULATE_SCHEMA: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "calculate",
-        "description": (
-            "Evaluate a mathematical expression. "
-            "Supports: +, -, *, /, **, sqrt, log, sin, cos, pi, e."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "expression": {
-                    "type": "string",
-                    "description": "Math expression, e.g. '2 * 3 + 1' or 'sqrt(144)'",
-                },
-            },
-            "required": ["expression"],
-        },
-    },
-}
-
-KNOWLEDGE_LOOKUP_SCHEMA: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "knowledge_lookup",
-        "description": (
-            "Look up information from the built-in knowledge base. "
-            "Topics: renewable_energy (solar, wind, storage), "
-            "ai_trends (models, agents, regulation), "
-            "market_data (tech_stocks, venture_capital)."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "topic": {
-                    "type": "string",
-                    "description": "One of: renewable_energy, ai_trends, market_data",
-                },
-                "subtopic": {
-                    "type": "string",
-                    "description": "Subtopic within the topic (optional)",
-                },
-            },
-            "required": ["topic"],
-        },
-    },
-}
-
-EXTRACT_ENTITIES_SCHEMA: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "extract_entities",
-        "description": (
-            "Extract structured entities from text using AI-powered extraction (LangExtract). "
-            "Provide text directly OR specify a filename to extract from an uploaded file. "
-            "Returns structured results grouped by entity class. "
-            "Example prompt: 'Extract people, organizations, and dates'."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": (
-                        "Description of what to extract, "
-                        "e.g. 'Extract people, organizations, and locations'"
-                    ),
-                },
-                "text": {
-                    "type": "string",
-                    "description": "The text to extract entities from (optional if filename given)",
-                },
-                "filename": {
-                    "type": "string",
-                    "description": "Name of an uploaded file to extract entities from (optional if text given)",
-                },
-            },
-            "required": ["prompt"],
-        },
-    },
-}
-
-GET_DATETIME_SCHEMA: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "get_datetime",
-        "description": "Get the current date and time.",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-    },
-}
-
-CREATE_CHART_SCHEMA: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "create_chart",
-        "description": (
-            "Create a visual chart for the user. Use this when comparing data with "
-            "numbers, showing trends, or visualizing distributions. "
-            "Data must be an array of objects in Recharts format: "
-            '[{"name": "Solar", "cost": 0.03}, {"name": "Wind", "cost": 0.034}]. '
-            "The first key is used as X-axis, remaining keys as data series."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "chart_type": {
-                    "type": "string",
-                    "enum": ["bar", "line", "pie", "scatter", "area"],
-                    "description": "Type of chart to create",
-                },
-                "title": {
-                    "type": "string",
-                    "description": "Chart title displayed above the chart",
-                },
-                "data": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                    "description": (
-                        "Array of data objects in Recharts format. "
-                        'Example: [{"name": "Q1", "revenue": 100, "profit": 30}]'
-                    ),
-                },
-                "options": {
-                    "type": "object",
-                    "description": (
-                        "Optional chart configuration: "
-                        "xKey (string, X-axis field name), "
-                        "series (array of strings, Y-axis field names), "
-                        "width (string, default '100%'), "
-                        "height (string, default '300px')"
-                    ),
-                },
-            },
-            "required": ["chart_type", "title", "data"],
-        },
-    },
-}
-
-CREATE_FORM_SCHEMA: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "create_form",
-        "description": (
-            "Create an interactive form for the user. Use this when you need to "
-            "collect structured input from the user (e.g. feedback, registration, "
-            "settings). Each field becomes an input component."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "title": {
-                    "type": "string",
-                    "description": "Form title displayed above the form fields",
-                },
-                "fields": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "Field identifier",
-                            },
-                            "type": {
-                                "type": "string",
-                                "enum": [
-                                    "text",
-                                    "email",
-                                    "password",
-                                    "number",
-                                    "textarea",
-                                    "date",
-                                    "datetime",
-                                    "time",
-                                    "checkbox",
-                                    "select",
-                                    "slider",
-                                ],
-                                "description": "Input field type",
-                            },
-                            "label": {"type": "string", "description": "Display label"},
-                            "required": {
-                                "type": "boolean",
-                                "description": "Whether field is required",
-                            },
-                            "options": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Options for select/choice fields",
-                            },
-                        },
-                        "required": ["name", "type", "label"],
-                    },
-                    "description": "List of form fields",
-                },
-                "submit_label": {
-                    "type": "string",
-                    "description": "Submit button label (default: 'Submit')",
-                },
-            },
-            "required": ["title", "fields"],
-        },
-    },
-}
-
-SHOW_FILE_SCHEMA: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "show_file",
-        "description": (
-            "Display a file card for the user. Use this when referencing "
-            "downloadable files, reports, or documents."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "File name (e.g. 'report.pdf')",
-                },
-                "url": {
-                    "type": "string",
-                    "description": "URL to download/view the file",
-                },
-                "mime_type": {
-                    "type": "string",
-                    "description": "MIME type (e.g. 'application/pdf')",
-                },
-                "size": {
-                    "type": "integer",
-                    "description": "File size in bytes (optional)",
-                },
-            },
-            "required": ["name", "url"],
-        },
-    },
-}
 
 
 # ── Tool functions ──
@@ -639,37 +366,61 @@ def show_file(name: str, url: str, mime_type: str = "", size: int = 0) -> str:
     return f"File card displayed: {name}."
 
 
+# Extension-to-MIME mapping for generate_file
+_MIME_TYPES: dict[str, str] = {
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".csv": "text/csv",
+    ".json": "application/json",
+    ".html": "text/html",
+    ".xml": "application/xml",
+    ".yaml": "application/yaml",
+    ".yml": "application/yaml",
+    ".py": "text/x-python",
+    ".js": "text/javascript",
+    ".ts": "text/typescript",
+    ".css": "text/css",
+    ".sql": "text/x-sql",
+    ".sh": "text/x-shellscript",
+    ".log": "text/plain",
+}
+
+
+def generate_file(filename: str, content: str, mime_type: str = "") -> str:
+    """Generate a downloadable file by writing content to disk.
+
+    Saves to ./uploads/<file-id>/<filename> (same directory served by StaticFiles),
+    then pushes a file card to the render queue for display.
+    """
+    # Auto-detect MIME type from extension
+    if not mime_type:
+        ext = Path(filename).suffix.lower()
+        mime_type = _MIME_TYPES.get(ext, "application/octet-stream")
+
+    # Create unique directory under ./uploads/
+    file_id = f"file-{uuid.uuid4().hex[:8]}"
+    upload_dir = Path("./uploads") / file_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write content to file
+    file_path = upload_dir / filename
+    file_path.write_text(content, encoding="utf-8")
+    size = file_path.stat().st_size
+
+    # Build download URL (matches StaticFiles mount in server.py)
+    url = f"/uploads/{file_id}/{filename}"
+
+    # Push file card to render queue (same pattern as show_file)
+    item: dict[str, Any] = {"name": filename, "url": url, "mimeType": mime_type, "size": size}
+    _render_items[:] = [
+        i for i in _render_items if not (i.get("name") == filename and "url" in i and "fields" not in i)
+    ]
+    _render_items.append(item)
+
+    return f"File generated: {filename} ({size} bytes)"
+
+
 # ── Agent factory ──
-
-_SYSTEM_PROMPT = """\
-You are a helpful AI assistant powered by OpenBench with multi-turn memory.
-
-You have access to these tools:
-- **search_web**: Search the internet for current information, news, and real-time data.
-- **extract_entities**: Extract structured entities (people, orgs, dates, etc.) from text.
-- **knowledge_lookup**: Look up curated data on renewable energy, AI trends, and market data.
-- **calculate**: Evaluate mathematical expressions.
-- **get_datetime**: Get the current date and time.
-- **analyze_file**: Read and analyze uploaded file content.
-- **create_chart**: Create visual charts (bar, line, pie, scatter, area).
-- **create_form**: Create interactive forms to collect user input.
-- **show_file**: Display file download cards.
-
-Guidelines:
-- When a user uploads files, ALWAYS use the analyze_file tool to read their content \
-before answering questions about them.
-- Use extract_entities when users want structured extraction from text \
-(e.g. "extract people and companies from this article").
-- For current events or recent information, use search_web.
-- For renewable energy, AI trends, or market data, try knowledge_lookup first.
-- When comparing data with numbers, use create_chart for visual charts.
-- When asking user for structured input, use create_form.
-- When referencing downloadable files, use show_file.
-- Always provide text explanation alongside visualizations.
-- Respond in clear, well-formatted markdown.
-- Be concise but thorough.\
-"""
-
 
 def create_gemini_agent(
     # model: str = "gemini-3-flash-preview",
@@ -703,7 +454,7 @@ def create_gemini_agent(
         model=model,
         temperature=temperature,
         max_iterations=8,
-        system_prompt=_SYSTEM_PROMPT,
+        system_prompt=SYSTEM_PROMPT,
     )
 
     agent.tools.register("search_web", search_web, schema=SEARCH_WEB_SCHEMA)
@@ -715,5 +466,6 @@ def create_gemini_agent(
     agent.tools.register("create_chart", create_chart, schema=CREATE_CHART_SCHEMA)
     agent.tools.register("create_form", create_form, schema=CREATE_FORM_SCHEMA)
     agent.tools.register("show_file", show_file, schema=SHOW_FILE_SCHEMA)
+    agent.tools.register("generate_file", generate_file, schema=GENERATE_FILE_SCHEMA)
 
     return agent
