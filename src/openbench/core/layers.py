@@ -4,8 +4,8 @@ L2 System-Level Layer Orchestrators.
 DataLayer, IntelligenceLayer, and OutputLayer are Chainable,
 enabling E2E system composition: DataLayer | IntelligenceLayer | OutputLayer
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 from typing import Any
 
@@ -13,7 +13,13 @@ try:
     from typing import NotRequired, TypedDict  # Python 3.12+
 except ImportError:
     from typing_extensions import NotRequired, TypedDict
-from openbench.core.abstractions import Agent, DataSource, DataStore, OutputGenerator, RawData
+from openbench.core.abstractions import (
+    Agent,
+    DataSource,
+    DataStore,
+    OutputGenerator,
+    RawData,
+)
 from openbench.core.chainable import Chainable, RunnableConfig
 
 # Keys to preserve across layer boundaries
@@ -82,7 +88,9 @@ class DataLayer(Chainable[Any, dict[str, Any]]):
     """
 
     def __init__(
-        self, sources: DataSource | Chainable | None = None, stores: list[DataStore] | None = None
+        self,
+        sources: DataSource | Chainable | None = None,
+        stores: list[DataStore] | None = None,
     ):
         """
         Initialize Data Layer.

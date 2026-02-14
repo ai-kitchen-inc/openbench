@@ -1,6 +1,6 @@
 """Intelligence Layer - Agent CLI commands."""
-from __future__ import annotations
 
+from __future__ import annotations
 
 import time
 

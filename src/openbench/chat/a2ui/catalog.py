@@ -63,7 +63,10 @@ OPENBENCH_CATALOG: dict = {
         "ObChart": {
             "description": "Recharts-based chart rendering",
             "properties": {
-                "chartType": {"type": "string", "enum": ["bar", "line", "pie", "scatter", "area"]},
+                "chartType": {
+                    "type": "string",
+                    "enum": ["bar", "line", "pie", "scatter", "area"],
+                },
                 "data": {"type": "object"},
                 "options": {"type": "object"},
                 "width": {"type": "string"},

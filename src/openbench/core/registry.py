@@ -8,8 +8,8 @@ Provides a dynamic, decorator-based plugin system with:
 - Plugin metadata (version, description, author)
 - Singleton pattern support
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import importlib
 import importlib.util
@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import (
     Any,
     Generic,
-    Optional,
     TypeVar,
 )
 
@@ -110,7 +109,7 @@ class PluginRegistry(Generic[T]):
     """
 
     # Class-level storage for all registry instances
-    _all_registries: dict[str, "PluginRegistry"] = {}
+    _all_registries: dict[str, PluginRegistry] = {}
 
     def __init__(self, name: str, base_class: type[T] | None = None):
         """
@@ -516,7 +515,7 @@ class PluginRegistry(Generic[T]):
         return key in self._plugins
 
     @classmethod
-    def get_registry(cls, name: str) -> Optional["PluginRegistry"]:
+    def get_registry(cls, name: str) -> PluginRegistry | None:
         """Get a registry by name."""
         return cls._all_registries.get(name)
 

@@ -6,10 +6,11 @@ This ensures implementation independence and pluggability.
 
 All core abstractions are Chainable, enabling L1 component-level composition.
 """
+
 from __future__ import annotations
 
-
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
 
@@ -49,7 +50,7 @@ class DataSource(ABC):
         """
 
     @abstractmethod
-    def extract(self) -> "RawData":
+    def extract(self) -> RawData:
         """
         Extract raw data from the source.
 
@@ -61,7 +62,7 @@ class DataSource(ABC):
     def validate(self) -> bool:
         """Validate that the data source is accessible and valid."""
 
-    def invoke(self, input: Any = None, config: Any | None = None) -> "RawData":
+    def invoke(self, input: Any = None, config: Any | None = None) -> RawData:
         """
         Chainable invoke method.
 
@@ -203,7 +204,7 @@ class ExecutionContext:
         self,
         goal: str,
         data: Any | None = None,
-        tools: list["Tool"] | None = None,
+        tools: list[Tool] | None = None,
         memory: Any | None = None,
         constraints: dict[str, Any] | None = None,
     ):
@@ -291,7 +292,8 @@ class Agent(ABC):
         # Otherwise, wrap input as data
         else:
             context = ExecutionContext(
-                goal=getattr(self, "goal", f"Execute {self.agent_type} task"), data=input
+                goal=getattr(self, "goal", f"Execute {self.agent_type} task"),
+                data=input,
             )
 
         return self.execute(context)
@@ -422,6 +424,23 @@ class LLMProvider(ABC):
         Returns:
             LLMResponse with generated text
         """
+
+    def generate_stream(self, prompt: str, model: str, **params) -> Iterator[LLMResponse]:
+        """Stream text chunks from prompt.
+
+        Each yielded LLMResponse has partial text in .text field.
+        The final response has complete token counts.
+        Default: falls back to generate() as a single chunk.
+
+        Args:
+            prompt: Input prompt
+            model: Model identifier
+            **params: Model-specific parameters
+
+        Yields:
+            LLMResponse with partial text chunks.
+        """
+        yield self.generate(prompt, model, **params)
 
 
 class EmbeddingProvider(ABC):
@@ -556,7 +575,7 @@ class GeneratedOutput:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "GeneratedOutput":
+    def from_dict(cls, data: dict[str, Any]) -> GeneratedOutput:
         """Create from dictionary."""
         obj = cls(
             file_path=data["file_path"],

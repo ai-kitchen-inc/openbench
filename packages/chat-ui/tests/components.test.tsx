@@ -259,4 +259,49 @@ describe("MessageList", () => {
     const { container } = render(<MessageList messages={messages} />);
     expect(container.querySelector(".chat-message-list")).not.toBeNull();
   });
+
+  it("accepts isStreaming prop", () => {
+    const { container } = render(<MessageList messages={messages} isStreaming={true} />);
+    expect(container.querySelector(".chat-message-list")).not.toBeNull();
+  });
+
+  it("does not render sentinel div (uses scrollTop instead)", () => {
+    const { container } = render(<MessageList messages={messages} />);
+    // No sentinel div — component uses direct scrollTop on scrollable parent
+    const listEl = container.querySelector(".chat-message-list");
+    expect(listEl).not.toBeNull();
+    // Only message bubbles, no extra sentinel div
+    const directChildren = listEl?.children ?? [];
+    expect(directChildren.length).toBe(messages.length);
+  });
+
+  it("re-renders when streaming content grows", () => {
+    const streamingMessages: ChatMessage[] = [
+      {
+        id: "msg-1",
+        role: "user",
+        content: "Hi",
+        timestamp: new Date().toISOString(),
+        status: "complete",
+      },
+      {
+        id: "msg-2",
+        role: "assistant",
+        content: "Hello",
+        timestamp: new Date().toISOString(),
+        status: "streaming",
+      },
+    ];
+
+    const { rerender } = render(<MessageList messages={streamingMessages} isStreaming={true} />);
+    expect(screen.getByText("Hello")).toBeDefined();
+
+    // Simulate streaming update: content grows
+    const updatedMessages = [
+      streamingMessages[0],
+      { ...streamingMessages[1], content: "Hello World" },
+    ];
+    rerender(<MessageList messages={updatedMessages} isStreaming={true} />);
+    expect(screen.getByText("Hello World")).toBeDefined();
+  });
 });

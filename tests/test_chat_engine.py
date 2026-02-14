@@ -1,6 +1,6 @@
 """Tests for ChatEngine."""
-from __future__ import annotations
 
+from __future__ import annotations
 
 import asyncio
 import json
@@ -157,7 +157,9 @@ class TestChatEngineInvoke(unittest.TestCase):
         chart_data = {"type": "bar", "data": [{"name": "Q1", "value": 100}]}
         agent = MockAgent()
         agent.execute = lambda ctx: ExecutionResult(
-            output=chart_data, status="success", metadata={},
+            output=chart_data,
+            status="success",
+            metadata={},
         )
         engine = ChatEngine(agent=agent)
         result = engine.invoke("Show chart")
@@ -171,7 +173,9 @@ class TestChatEngineInvoke(unittest.TestCase):
         file_data = {"name": "report.pdf", "url": "https://example.com/report.pdf"}
         agent = MockAgent()
         agent.execute = lambda ctx: ExecutionResult(
-            output=file_data, status="success", metadata={},
+            output=file_data,
+            status="success",
+            metadata={},
         )
         engine = ChatEngine(agent=agent)
         result = engine.invoke("Show file")
@@ -185,7 +189,9 @@ class TestChatEngineInvoke(unittest.TestCase):
         form_data = {"fields": [{"name": "email", "type": "email", "label": "Email"}]}
         agent = MockAgent()
         agent.execute = lambda ctx: ExecutionResult(
-            output=form_data, status="success", metadata={},
+            output=form_data,
+            status="success",
+            metadata={},
         )
         engine = ChatEngine(agent=agent)
         result = engine.invoke("Show form")
@@ -199,7 +205,9 @@ class TestChatEngineInvoke(unittest.TestCase):
         """Unknown content types should fall back to Text."""
         agent = MockAgent()
         agent.execute = lambda ctx: ExecutionResult(
-            output=12345, status="success", metadata={},
+            output=12345,
+            status="success",
+            metadata={},
         )
         engine = ChatEngine(agent=agent)
         result = engine.invoke("Show number")
@@ -304,17 +312,18 @@ class TestChatEngineStream(unittest.TestCase):
         lines = list(engine.stream("Hello"))
         parsed = [json.loads(line) for line in lines]
 
-        # Find indices
-        types = [m.get("type", "a2ui") if "version" not in m else "a2ui" for m in parsed]
-
         rendering_start_idx = None
         rendering_complete_idx = None
         for i, m in enumerate(parsed):
             if m.get("type") == "step_start" and m.get("stepName") == "Rendering response":
                 rendering_start_idx = i
-            if rendering_start_idx is not None and m.get("type") == "step_complete":
-                if rendering_complete_idx is None and i > rendering_start_idx:
-                    rendering_complete_idx = i
+            if (
+                rendering_start_idx is not None
+                and m.get("type") == "step_complete"
+                and rendering_complete_idx is None
+                and i > rendering_start_idx
+            ):
+                rendering_complete_idx = i
 
         self.assertIsNotNone(rendering_start_idx)
         self.assertIsNotNone(rendering_complete_idx)
@@ -335,10 +344,7 @@ class TestChatEngineAsyncStream(unittest.TestCase):
 
     async def _collect_async_stream(self, engine, input_data):
         """Collect all lines from async_stream."""
-        lines = []
-        async for line in engine.async_stream(input_data):
-            lines.append(line)
-        return lines
+        return [line async for line in engine.async_stream(input_data)]
 
     def test_async_stream_produces_same_output_as_sync(self):
         """async_stream should produce identical messages to sync stream."""
@@ -352,8 +358,8 @@ class TestChatEngineAsyncStream(unittest.TestCase):
         self.assertEqual(len(sync_lines), len(async_lines))
 
         # Same message types in same order
-        sync_types = [json.loads(l).get("type", "a2ui") for l in sync_lines]
-        async_types = [json.loads(l).get("type", "a2ui") for l in async_lines]
+        sync_types = [json.loads(line).get("type", "a2ui") for line in sync_lines]
+        async_types = [json.loads(line).get("type", "a2ui") for line in async_lines]
         self.assertEqual(sync_types, async_types)
 
     def test_async_stream_has_three_steps(self):
@@ -407,19 +413,23 @@ class TestChatEngineComposition(unittest.TestCase):
     def test_invoke_from_intelligence_layer_output(self):
         """ChatEngine should handle IntelligenceLayer output format."""
         engine = ChatEngine(agent=MockAgent())
-        result = engine.invoke({
-            "intelligence_output": "Processed data from agent",
-            "metadata": {"layer": "intelligence"},
-        })
+        result = engine.invoke(
+            {
+                "intelligence_output": "Processed data from agent",
+                "metadata": {"layer": "intelligence"},
+            }
+        )
         self.assertIn("messages", result)
 
     def test_invoke_from_data_layer_output(self):
         """ChatEngine should handle DataLayer output format."""
         engine = ChatEngine(agent=MockAgent())
-        result = engine.invoke({
-            "raw_data": ["Document 1 content", "Document 2 content"],
-            "metadata": {"layer": "data"},
-        })
+        result = engine.invoke(
+            {
+                "raw_data": ["Document 1 content", "Document 2 content"],
+                "metadata": {"layer": "data"},
+            }
+        )
         self.assertIn("messages", result)
 
 
@@ -449,7 +459,12 @@ class TestChatEngineAttachments(unittest.TestCase):
                 extracted_text="This is the PDF content.",
             )
         ]
-        engine.invoke({"content": "Summarize this", "attachments": [a.to_dict() for a in attachments]})
+        engine.invoke(
+            {
+                "content": "Summarize this",
+                "attachments": [a.to_dict() for a in attachments],
+            }
+        )
 
         self.assertEqual(len(captured_contexts), 1)
         ctx = captured_contexts[0]
@@ -497,7 +512,12 @@ class TestChatEngineAttachments(unittest.TestCase):
                 mime_type="image/png",
             )
         ]
-        engine.invoke({"content": "What's this?", "attachments": [a.to_dict() for a in attachments]})
+        engine.invoke(
+            {
+                "content": "What's this?",
+                "attachments": [a.to_dict() for a in attachments],
+            }
+        )
 
         self.assertEqual(len(captured_contexts), 1)
         # No attachments key since none had extracted_text
@@ -509,7 +529,11 @@ class TestChatEngineRenderItems(unittest.TestCase):
 
     def test_invoke_with_chart_render_item(self):
         """render_items_fn returning chart dict should produce ObChart component."""
-        chart_item = {"type": "bar", "title": "Sales", "data": [{"name": "Q1", "value": 100}]}
+        chart_item = {
+            "type": "bar",
+            "title": "Sales",
+            "data": [{"name": "Q1", "value": 100}],
+        }
         engine = ChatEngine(
             agent=MockAgent("Here's the chart:"),
             render_items_fn=lambda: [chart_item],
@@ -560,7 +584,7 @@ class TestChatEngineRenderItems(unittest.TestCase):
         """Engine with render_items_fn returning empty list should render normally."""
         engine = ChatEngine(
             agent=MockAgent("Just text"),
-            render_items_fn=lambda: [],
+            render_items_fn=list,
         )
         result = engine.invoke("Hello")
 
@@ -642,8 +666,14 @@ class TestChatEngineRenderItems(unittest.TestCase):
     def test_duplicate_forms_deduped_to_last(self):
         """If render_items_fn returns duplicate forms, only the last one is rendered."""
         forms = [
-            {"fields": [{"name": "a", "type": "text", "label": "A"}], "title": "Form v1"},
-            {"fields": [{"name": "b", "type": "text", "label": "B"}], "title": "Form v2"},
+            {
+                "fields": [{"name": "a", "type": "text", "label": "A"}],
+                "title": "Form v1",
+            },
+            {
+                "fields": [{"name": "b", "type": "text", "label": "B"}],
+                "title": "Form v2",
+            },
         ]
         engine = ChatEngine(
             agent=MockAgent("Here's the form:"),

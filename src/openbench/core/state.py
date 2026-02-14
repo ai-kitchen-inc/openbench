@@ -3,8 +3,8 @@ State management for workflows.
 
 Enables checkpointing, pause/resume, and replay capabilities.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import contextlib
 import json
@@ -75,7 +75,7 @@ class StepRecord:
             return {"__type__": type(data).__name__, "__repr__": repr(data)}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "StepRecord":
+    def from_dict(cls, data: dict[str, Any]) -> StepRecord:
         """Create from dictionary."""
         data["started_at"] = datetime.fromisoformat(data["started_at"])
         data["completed_at"] = datetime.fromisoformat(data["completed_at"])
@@ -192,7 +192,7 @@ class WorkflowState:
             "status": self.status.value,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "completed_at": (self.completed_at.isoformat() if self.completed_at else None),
             "steps": [step.to_dict() for step in self.steps],
             "current_step_index": self.current_step_index,
             "metadata": self.metadata,
@@ -200,7 +200,7 @@ class WorkflowState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "WorkflowState":
+    def from_dict(cls, data: dict[str, Any]) -> WorkflowState:
         """Create from dictionary."""
         data["status"] = WorkflowStatus(data["status"])
         data["created_at"] = datetime.fromisoformat(data["created_at"])
@@ -425,7 +425,9 @@ class StatefulChainable(Chainable):
 
             workflow_id = str(uuid4())
             state = WorkflowState(
-                workflow_id=workflow_id, workflow_name=self.workflow_name, initial_input=input
+                workflow_id=workflow_id,
+                workflow_name=self.workflow_name,
+                initial_input=input,
             )
             state.status = WorkflowStatus.RUNNING
 

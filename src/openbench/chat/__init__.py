@@ -12,10 +12,10 @@ Public API:
 
 from openbench.chat.a2ui import (
     A2UI_VERSION,
+    OPENBENCH_CATALOG_ID,
     A2UIComponent,
     A2UIMessage,
     A2UIMessageBuilder,
-    OPENBENCH_CATALOG_ID,
 )
 from openbench.chat.engine import ChatEngine
 from openbench.chat.layer import ChatFactory, ChatLayer

@@ -5,6 +5,7 @@ Provides:
 - FileContentExtractor: Extract text from uploaded files (PDF, text, etc.)
 - StoredFile: Metadata for a stored file
 """
+
 from __future__ import annotations
 
 import logging
@@ -156,15 +157,9 @@ class FileContentExtractor:
             return self._extract_text(stored_file)
 
         if mime.startswith("image/"):
-            return (
-                f"[Image: {stored_file.name}] "
-                f"({mime}, {stored_file.size_bytes} bytes)"
-            )
+            return f"[Image: {stored_file.name}] ({mime}, {stored_file.size_bytes} bytes)"
 
-        return (
-            f"[File: {stored_file.name}] "
-            f"({mime}, {stored_file.size_bytes} bytes)"
-        )
+        return f"[File: {stored_file.name}] ({mime}, {stored_file.size_bytes} bytes)"
 
     def _extract_pdf(self, stored_file: StoredFile) -> str:
         """Extract text from PDF using PDFSource."""
@@ -176,10 +171,7 @@ class FileContentExtractor:
             return raw_data.content
         except Exception as e:
             logger.warning(f"PDF extraction failed for {stored_file.name}: {e}")
-            return (
-                f"[PDF: {stored_file.name}] "
-                f"(extraction failed: {e})"
-            )
+            return f"[PDF: {stored_file.name}] (extraction failed: {e})"
 
     def _extract_text(self, stored_file: StoredFile) -> str:
         """Read text file directly."""

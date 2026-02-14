@@ -32,7 +32,12 @@ if not os.getenv("GOOGLE_API_KEY"):
     print("  Set it with: export GOOGLE_API_KEY=your-key-here\n")
     sys.exit(1)
 
-from gemini_agent import clear_render_items, create_gemini_agent, get_render_items, set_attachments
+from gemini_agent import (
+    clear_render_items,
+    create_gemini_agent,
+    get_render_items,
+    set_attachments,
+)
 
 agent = create_gemini_agent()
 

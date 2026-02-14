@@ -1,6 +1,6 @@
 """Project context for multi-tenant data isolation."""
-from __future__ import annotations
 
+from __future__ import annotations
 
 import json
 import secrets
@@ -60,7 +60,7 @@ class ProjectContext:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ProjectContext":
+    def from_dict(cls, data: dict[str, Any]) -> ProjectContext:
         """Create from dictionary."""
         data = data.copy()
         if isinstance(data.get("created_at"), str):

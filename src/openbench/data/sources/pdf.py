@@ -1,10 +1,10 @@
 """PDF data source for extracting text from PDF files."""
-from __future__ import annotations
 
+from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from openbench.core.abstractions import DataSource, RawData
 from openbench.core.context import ProjectContext
@@ -43,7 +43,7 @@ class PDFSource(DataSource):
         self,
         path: str | Path,
         project: ProjectContext | None = None,
-        store: Optional["DataStore"] = None,
+        store: DataStore | None = None,
         recursive: bool = True,
         encoding: str = "utf-8",
         auto_index: bool = True,

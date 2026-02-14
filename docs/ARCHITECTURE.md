@@ -33,6 +33,7 @@ Three-layer architecture with composable abstractions for building AI workflows.
 │                  INTELLIGENCE LAYER                     │
 │  Execute AI tasks: Research, Analysis, Content         │
 │  Multi-agent orchestration, tool use, memory           │
+│  Progressive token streaming via on_chunk callbacks    │
 │                                                         │
 │  Agent & LLMProvider abstractions                      │
 │  Implementations: OpenAI, Anthropic, Local Models      │

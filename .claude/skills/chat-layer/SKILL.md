@@ -40,9 +40,8 @@ src/openbench/chat/
 │   ├── form.py         # FormRenderer (dynamic forms)
 │   └── file.py         # FileRenderer (file preview/download)
 ├── transport/
-│   ├── base.py         # Transport ABC
-│   ├── sse.py          # SSE transport (FastAPI, primary)
-│   └── websocket.py    # WebSocket transport (FastAPI, optional)
+│   ├── agui.py         # AGUIHandler -- AG-UI SSE event streaming
+│   └── agui_actions.py # AGUIActionHandler -- REST for A2UI actions
 └── layer.py            # ChatLayer (L2) + ChatFactory
 ```
 
@@ -180,13 +179,34 @@ Client                                Server
   |     "threadId":"...",             |
   |     "runId":"..."}                |
   |                                   |
-  |<-- data: {"type":"STEP_STARTED",  |  AG-UI: step begins
-  |     "stepName":"Processing"}      |
+  |<-- data: {"type":"STEP_STARTED",  |  AG-UI: processing input
+  |     "stepName":"Processing input"}|
+  |<-- data: {"type":"STEP_FINISHED"} |
   |                                   |
-  |<-- data: {"type":"CUSTOM",        |  AG-UI: A2UI message
+  |<-- data: {"type":"STEP_STARTED",  |  AG-UI: thinking (streaming)
+  |     "stepName":"Thinking"}        |
+  |                                   |
+  |<-- data: {"type":"TEXT_MESSAGE_START",  |  Text streaming begins
+  |     "messageId":"msg-xxx",        |
+  |     "role":"assistant"}           |
+  |                                   |
+  |<-- data: {"type":"TEXT_MESSAGE_CONTENT",|  Token deltas (progressive)
+  |     "messageId":"msg-xxx",        |
+  |     "delta":"The revenue..."}     |
+  |   ... (more deltas)               |
+  |                                   |
+  |<-- data: {"type":"TEXT_MESSAGE_END",    |  Text streaming complete
+  |     "messageId":"msg-xxx"}        |
+  |                                   |
+  |<-- data: {"type":"STEP_FINISHED"} |
+  |                                   |
+  |<-- data: {"type":"STEP_STARTED",  |  (only if rich content)
+  |     "stepName":"Rendering"}       |
+  |<-- data: {"type":"CUSTOM",        |  AG-UI: A2UI messages
   |     "name":"a2ui",                |
   |     "value":{"version":"v0.10",   |
   |       "createSurface":{...}}}     |
+  |<-- data: {"type":"STEP_FINISHED"} |
   |                                   |
   |<-- data: {"type":"RUN_FINISHED",  |  AG-UI: run complete
   |     "result":{...}}               |
@@ -198,6 +218,28 @@ Client                                Server
   |     "context":{...}}             |
   |<-- [response messages]         ---|  JSON array
 ```
+
+## Progressive Token Streaming
+
+AGUIHandler streams text token-by-token using an `asyncio.Queue` bridge pattern:
+
+```
+Sync Thread (BaseAgent)           Async Event Loop (AGUIHandler)
+┌─────────────────────┐          ┌──────────────────────────┐
+│ llm.generate_stream()│          │ _event_stream():         │
+│   ├─ chunk "The"    │──queue──>│   ├─ TextMessageContent  │──SSE──> Browser
+│   ├─ chunk " answer"│──queue──>│   ├─ TextMessageContent  │──SSE──> Browser
+│   ├─ chunk " is..." │──queue──>│   ├─ TextMessageContent  │──SSE──> Browser
+│   └─ DONE sentinel  │──queue──>│   └─ break loop          │
+└─────────────────────┘          └──────────────────────────┘
+```
+
+- `ChatEngine._execute_agent(content, config, attachments, on_chunk)` accepts the callback
+- Agent calls `on_chunk(delta)` for each token
+- `on_chunk` puts deltas into `asyncio.Queue` via `loop.call_soon_threadsafe()`
+- SSE generator reads from queue and emits `TextMessageContentEvent`
+- Text-only responses: 2 steps (Processing input + Thinking)
+- Rich content responses: 3 steps (+ Rendering response with A2UI surfaces)
 
 ## Custom A2UI Catalog
 

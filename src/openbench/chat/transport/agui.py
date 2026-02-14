@@ -85,6 +85,9 @@ class AGUIHandler:
     async def _event_stream(self, body: dict[str, Any], accept: str) -> Any:
         """Generate AG-UI events as SSE strings.
 
+        Uses an asyncio.Queue bridge to stream text deltas from the sync
+        agent thread into async SSE events (TextMessageContent).
+
         Args:
             body: Request body (AG-UI RunAgentInput or OpenBench format).
             accept: Accept header for content negotiation.
@@ -99,6 +102,9 @@ class AGUIHandler:
             RunStartedEvent,
             StepFinishedEvent,
             StepStartedEvent,
+            TextMessageContentEvent,
+            TextMessageEndEvent,
+            TextMessageStartEvent,
         )
         from ag_ui.encoder import EventEncoder
 
@@ -118,33 +124,73 @@ class AGUIHandler:
             self.engine.session.add_user_message(content, attachments=attachments)
             yield encoder.encode(StepFinishedEvent(step_name="Processing input"))
 
-            # ── Step 2: Thinking (in thread pool) ──
+            # ── Step 2: Thinking (with streaming text deltas) ──
             yield encoder.encode(StepStartedEvent(step_name="Thinking"))
-            agent_result = await asyncio.to_thread(
-                self.engine._execute_agent, content, None, attachments
+
+            message_id = f"msg-{uuid.uuid4().hex[:8]}"
+            queue: asyncio.Queue[str | None] = asyncio.Queue()
+            loop = asyncio.get_event_loop()
+
+            def on_chunk(delta: str) -> None:
+                """Callback from sync agent thread → async queue."""
+                loop.call_soon_threadsafe(queue.put_nowait, delta)
+
+            # Run agent in thread pool with on_chunk callback
+            agent_task = asyncio.create_task(
+                asyncio.to_thread(self.engine._execute_agent, content, None, attachments, on_chunk)
             )
+
+            # Signal queue end when agent completes (success or failure)
+            def _on_done(fut: asyncio.Future) -> None:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+            agent_task.add_done_callback(_on_done)
+
+            # Emit TEXT_MESSAGE_START
+            yield encoder.encode(TextMessageStartEvent(message_id=message_id, role="assistant"))
+
+            # Stream text deltas as they arrive
+            while True:
+                delta = await queue.get()
+                if delta is None:
+                    break
+                yield encoder.encode(TextMessageContentEvent(message_id=message_id, delta=delta))
+
+            # Emit TEXT_MESSAGE_END
+            yield encoder.encode(TextMessageEndEvent(message_id=message_id))
+
+            # Get agent result (re-raises if agent errored)
+            agent_result = await agent_task
+
             agent_output = self.engine._extract_output(agent_result)
             metadata = self.engine._extract_metadata(agent_result)
             extra_items = self.engine._render_items_fn() if self.engine._render_items_fn else None
             yield encoder.encode(StepFinishedEvent(step_name="Thinking"))
 
-            # ── Step 3: Rendering response ──
-            yield encoder.encode(StepStartedEvent(step_name="Rendering response"))
-            components = self.engine._render_content(agent_output, extra_items)
-            components = self.engine._ensure_root(components)
-            surface_id = f"s-{uuid.uuid4().hex[:8]}"
-            messages = self.engine.builder.build_surface(surface_id, components)
+            # ── Step 3: Rendering response (rich content only) ──
+            # Text was already streamed via TEXT_MESSAGE events.
+            # A2UI surfaces are only for rich content (charts, forms, files).
+            surface_id = None
 
-            for msg in messages:
-                yield encoder.encode(CustomEvent(name="a2ui", value=msg))
+            if extra_items:
+                yield encoder.encode(StepStartedEvent(step_name="Rendering response"))
 
-            yield encoder.encode(StepFinishedEvent(step_name="Rendering response"))
+                # Render only extra_items — skip text to avoid duplication
+                components = self.engine._render_content(None, extra_items)
+                components = self.engine._ensure_root(components)
+                surface_id = f"s-{uuid.uuid4().hex[:8]}"
+                messages = self.engine.builder.build_surface(surface_id, components)
+
+                for msg in messages:
+                    yield encoder.encode(CustomEvent(name="a2ui", value=msg))
+
+                yield encoder.encode(StepFinishedEvent(step_name="Rendering response"))
 
             # Session history
             text_content = self.engine._extract_text_content(agent_output)
             self.engine.session.add_assistant_message(
                 content=text_content,
-                surfaces=[{"surfaceId": surface_id}],
+                surfaces=[{"surfaceId": surface_id}] if surface_id else None,
                 metadata=metadata,
             )
 

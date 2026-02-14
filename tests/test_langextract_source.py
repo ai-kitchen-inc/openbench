@@ -190,7 +190,11 @@ class TestLangExtractSourceExamples(unittest.TestCase):
                 {
                     "text": "Romeo spoke",
                     "extractions": [
-                        {"class": "character", "text": "Romeo", "attributes": {"role": "lead"}}
+                        {
+                            "class": "character",
+                            "text": "Romeo",
+                            "attributes": {"role": "lead"},
+                        }
                     ],
                 }
             ]

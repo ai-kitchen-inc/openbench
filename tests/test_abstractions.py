@@ -1,6 +1,6 @@
 """Tests for core abstractions."""
-from __future__ import annotations
 
+from __future__ import annotations
 
 import unittest
 from datetime import datetime
@@ -43,7 +43,10 @@ class MockDataSource(DataSource):
 
     def extract(self) -> RawData:
         return RawData(
-            content="test content", content_type="text", metadata=self.get_metadata(), source=self
+            content="test content",
+            content_type="text",
+            metadata=self.get_metadata(),
+            source=self,
         )
 
     def validate(self) -> bool:
@@ -185,7 +188,10 @@ class TestAbstractions(unittest.TestCase):
         """Test RawData container."""
         source = MockDataSource()
         data = RawData(
-            content="test", content_type="text", metadata={"key": "value"}, source=source
+            content="test",
+            content_type="text",
+            metadata={"key": "value"},
+            source=source,
         )
 
         self.assertEqual(data.content, "test")
@@ -196,7 +202,11 @@ class TestAbstractions(unittest.TestCase):
     def test_query(self):
         """Test Query object."""
         query = Query(
-            text="test query", vector=[0.1, 0.2], filters={"category": "test"}, limit=5, offset=0
+            text="test query",
+            vector=[0.1, 0.2],
+            filters={"category": "test"},
+            limit=5,
+            offset=0,
         )
 
         self.assertEqual(query.text, "test query")
@@ -206,7 +216,10 @@ class TestAbstractions(unittest.TestCase):
     def test_search_result(self):
         """Test SearchResult object."""
         result = SearchResult(
-            items=[{"id": 1}, {"id": 2}], total=10, scores=[0.9, 0.8], metadata={"query": "test"}
+            items=[{"id": 1}, {"id": 2}],
+            total=10,
+            scores=[0.9, 0.8],
+            metadata={"query": "test"},
         )
 
         self.assertEqual(len(result.items), 2)

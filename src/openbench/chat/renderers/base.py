@@ -5,8 +5,8 @@ ContentRenderer converts agent output (text, chart data, form definitions, files
 into A2UI v0.10 component definitions. Uses the same PluginRegistry pattern as
 DataSourceRegistry, AgentRegistry, etc.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any

@@ -2,7 +2,6 @@
 
 import unittest
 
-from openbench.chat.a2ui.schema import A2UIComponent
 from openbench.chat.renderers.base import ContentRendererRegistry
 from openbench.chat.renderers.file import FileRenderer
 
@@ -31,13 +30,19 @@ class TestFileRenderer(unittest.TestCase):
     # -- detect --
 
     def test_detect_single_file(self):
-        self.assertTrue(self.renderer.detect({"name": "report.pdf", "url": "https://example.com/report.pdf"}))
+        self.assertTrue(
+            self.renderer.detect({"name": "report.pdf", "url": "https://example.com/report.pdf"})
+        )
 
     def test_detect_file_list(self):
-        self.assertTrue(self.renderer.detect([
-            {"name": "a.pdf", "url": "https://example.com/a.pdf"},
-            {"name": "b.csv", "url": "https://example.com/b.csv"},
-        ]))
+        self.assertTrue(
+            self.renderer.detect(
+                [
+                    {"name": "a.pdf", "url": "https://example.com/a.pdf"},
+                    {"name": "b.csv", "url": "https://example.com/b.csv"},
+                ]
+            )
+        )
 
     def test_detect_missing_name(self):
         self.assertFalse(self.renderer.detect({"url": "https://example.com/file.pdf"}))

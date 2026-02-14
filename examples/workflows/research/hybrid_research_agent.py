@@ -410,7 +410,9 @@ Examples:
     parser.add_argument("--model", default="gemini-2.5-flash")
     parser.add_argument("--index", default="openbench", help="Pinecone index name")
     parser.add_argument(
-        "--namespace", default=None, help="Pinecone namespace (auto-detected if not specified)"
+        "--namespace",
+        default=None,
+        help="Pinecone namespace (auto-detected if not specified)",
     )
     parser.add_argument(
         "--no-auto-detect", action="store_true", help="Disable namespace auto-detection"
@@ -428,7 +430,10 @@ Examples:
         help="Embedding dimension override (default: provider native, e.g. 3072 for gemini-embedding-001)",
     )
     parser.add_argument(
-        "--list-namespaces", "-l", action="store_true", help="List available namespaces in Pinecone"
+        "--list-namespaces",
+        "-l",
+        action="store_true",
+        help="List available namespaces in Pinecone",
     )
     parser.add_argument("--interactive", "-i", action="store_true")
     args = parser.parse_args()

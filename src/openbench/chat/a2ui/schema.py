@@ -9,8 +9,8 @@ Defines the four A2UI message types matching the Google A2UI v0.10 specification
 
 Reference: https://github.com/google/A2UI -- specification/v0_10/
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
@@ -41,7 +41,7 @@ class A2UIComponent:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "A2UIComponent":
+    def from_dict(cls, data: dict[str, Any]) -> A2UIComponent:
         """Deserialize from A2UI format."""
         component_id = data["id"]
         component_type = data["component"]
@@ -71,7 +71,7 @@ class CreateSurfaceMessage:
         return {"version": A2UI_VERSION, "createSurface": create_surface}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "CreateSurfaceMessage":
+    def from_dict(cls, data: dict[str, Any]) -> CreateSurfaceMessage:
         """Deserialize from A2UI v0.10 wire format."""
         cs = data["createSurface"]
         return cls(
@@ -100,7 +100,7 @@ class UpdateComponentsMessage:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "UpdateComponentsMessage":
+    def from_dict(cls, data: dict[str, Any]) -> UpdateComponentsMessage:
         """Deserialize from A2UI v0.10 wire format."""
         uc = data["updateComponents"]
         components = [A2UIComponent.from_dict(c) for c in uc["components"]]
@@ -125,7 +125,7 @@ class UpdateDataModelMessage:
         return {"version": A2UI_VERSION, "updateDataModel": update}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "UpdateDataModelMessage":
+    def from_dict(cls, data: dict[str, Any]) -> UpdateDataModelMessage:
         """Deserialize from A2UI v0.10 wire format."""
         udm = data["updateDataModel"]
         return cls(
@@ -149,7 +149,7 @@ class DeleteSurfaceMessage:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "DeleteSurfaceMessage":
+    def from_dict(cls, data: dict[str, Any]) -> DeleteSurfaceMessage:
         """Deserialize from A2UI v0.10 wire format."""
         ds = data["deleteSurface"]
         return cls(surface_id=ds["surfaceId"])
@@ -157,10 +157,7 @@ class DeleteSurfaceMessage:
 
 # Union type for all A2UI messages
 A2UIMessage = (
-    CreateSurfaceMessage
-    | UpdateComponentsMessage
-    | UpdateDataModelMessage
-    | DeleteSurfaceMessage
+    CreateSurfaceMessage | UpdateComponentsMessage | UpdateDataModelMessage | DeleteSurfaceMessage
 )
 
 
@@ -194,7 +191,7 @@ class StepStartMessage:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "StepStartMessage":
+    def from_dict(cls, data: dict[str, Any]) -> StepStartMessage:
         """Deserialize from wire format."""
         return cls(
             step_id=data["stepId"],
@@ -221,7 +218,7 @@ class StepCompleteMessage:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "StepCompleteMessage":
+    def from_dict(cls, data: dict[str, Any]) -> StepCompleteMessage:
         """Deserialize from wire format."""
         return cls(
             step_id=data["stepId"],
@@ -248,7 +245,7 @@ class StreamMessage:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "StreamMessage":
+    def from_dict(cls, data: dict[str, Any]) -> StreamMessage:
         """Deserialize from wire format."""
         return cls(
             type=StreamMessageType(data["type"]),

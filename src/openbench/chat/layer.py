@@ -4,8 +4,8 @@ ChatLayer -- L2 chat orchestrator.
 Composable with DataLayer, IntelligenceLayer, and OutputLayer
 following the same patterns as existing OpenBench L2 layers.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import logging
 from typing import Any
@@ -19,7 +19,7 @@ from openbench.chat.engine import ChatEngine
 from openbench.chat.renderers.base import ContentRenderer
 from openbench.core.abstractions import Agent, FrameworkAdapter
 from openbench.core.chainable import Chainable, RunnableConfig
-from openbench.core.layers import PRESERVED_KEYS, _preserve_input_params
+from openbench.core.layers import _preserve_input_params
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class ChatLayer(Chainable[Any, dict[str, Any]]):
                     else:
                         content_parts.append(str(item))
                 return {
-                    "content": "\n\n".join(content_parts) if content_parts else str(input),
+                    "content": ("\n\n".join(content_parts) if content_parts else str(input)),
                 }
 
             # From IntelligenceLayer

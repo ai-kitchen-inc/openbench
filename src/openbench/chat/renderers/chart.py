@@ -4,8 +4,8 @@ Chart content renderer.
 Converts chart data dicts to A2UI ObChart components.
 Supports: bar, line, pie, scatter, area chart types.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import uuid
 from typing import Any
@@ -59,11 +59,13 @@ class ChartRenderer(ContentRenderer):
 
         # Optional title as Text component
         if title:
-            components.append(A2UIComponent(
-                id=_gen_id("chart-title"),
-                component="Text",
-                properties={"text": title, "variant": "h4"},
-            ))
+            components.append(
+                A2UIComponent(
+                    id=_gen_id("chart-title"),
+                    component="Text",
+                    properties={"text": title, "variant": "h4"},
+                )
+            )
 
         # ObChart component
         chart_props: dict[str, Any] = {
@@ -75,11 +77,13 @@ class ChartRenderer(ContentRenderer):
         if options:
             chart_props["options"] = options
 
-        components.append(A2UIComponent(
-            id=_gen_id("chart"),
-            component="ObChart",
-            properties=chart_props,
-        ))
+        components.append(
+            A2UIComponent(
+                id=_gen_id("chart"),
+                component="ObChart",
+                properties=chart_props,
+            )
+        )
 
         return components
 

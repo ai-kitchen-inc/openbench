@@ -190,7 +190,10 @@ def print_result(result):
 
 
 def demo_builtin_store(
-    model: str, query: str, namespace: str = DEFAULT_NAMESPACE, dimension: int | None = None
+    model: str,
+    query: str,
+    namespace: str = DEFAULT_NAMESPACE,
+    dimension: int | None = None,
 ):
     """Demo 1: Built-in Store + Web Tool.
 
@@ -271,7 +274,10 @@ def demo_tool_based(model: str, query: str):
 
 
 def demo_combined(
-    model: str, query: str, namespace: str = DEFAULT_NAMESPACE, dimension: int | None = None
+    model: str,
+    query: str,
+    namespace: str = DEFAULT_NAMESPACE,
+    dimension: int | None = None,
 ):
     """Demo 3: Combined -- built-in store + both search tools.
 
@@ -376,7 +382,10 @@ def main():
     try:
         if args.demo in ("1", "all"):
             demo_builtin_store(
-                args.model, args.query or DEFAULT_QUERIES["1"], args.namespace, args.dimension
+                args.model,
+                args.query or DEFAULT_QUERIES["1"],
+                args.namespace,
+                args.dimension,
             )
 
         if args.demo in ("2", "all"):
@@ -384,7 +393,10 @@ def main():
 
         if args.demo in ("3", "all"):
             demo_combined(
-                args.model, args.query or DEFAULT_QUERIES["3"], args.namespace, args.dimension
+                args.model,
+                args.query or DEFAULT_QUERIES["3"],
+                args.namespace,
+                args.dimension,
             )
 
         print(f"\n{'=' * 60}")

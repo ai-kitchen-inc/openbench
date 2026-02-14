@@ -7,8 +7,8 @@ Provides single source of truth for all configuration:
 - Validation and type coercion
 - Hierarchical config with dot notation access
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import json
 import logging
@@ -74,7 +74,7 @@ class ModelInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ModelInfo":
+    def from_dict(cls, data: dict[str, Any]) -> ModelInfo:
         """Create from dictionary."""
         return cls(
             name=data["name"],
@@ -116,7 +116,7 @@ class Config:
         self._data: dict[str, Any] = data or {}
         self._models: dict[str, ModelInfo] = {}
 
-    def load(self, path: str | Path) -> "Config":
+    def load(self, path: str | Path) -> Config:
         """
         Load configuration from file.
 
@@ -168,7 +168,7 @@ class Config:
         logger.debug(f"Loaded config from {path}")
         return self
 
-    def load_env(self, prefix: str = "OPENBENCH_") -> "Config":
+    def load_env(self, prefix: str = "OPENBENCH_") -> Config:
         """
         Load configuration from environment variables.
 
@@ -423,7 +423,10 @@ def _build_embedding_models_registry() -> dict[str, dict[str, Any]]:
         for provider_name, provider_class in EMBEDDING_PROVIDERS.items():
             if hasattr(provider_class, "MODELS"):
                 for model, dimension in provider_class.MODELS.items():
-                    registry[model] = {"dimension": dimension, "provider": provider_name}
+                    registry[model] = {
+                        "dimension": dimension,
+                        "provider": provider_name,
+                    }
     except ImportError:
         pass
 
