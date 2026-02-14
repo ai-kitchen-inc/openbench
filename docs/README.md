@@ -9,7 +9,9 @@ Welcome to the OpenBench documentation.
 ## Reference
 
 - [API Reference](API.md) - Complete technical reference for all abstractions and APIs
-- [Architecture Overview](architecture.md) - Vision, design philosophy, and three-layer model
+- [Architecture Overview](ARCHITECTURE.md) - Vision, design philosophy, and three-layer model
+- [Chat UI Architecture](CHAT_UI_ARCHITECTURE.md) - Chat SDK architecture (A2UI v0.10, SSE transport)
+- [Design System](DESIGN_SYSTEM.md) - Notion-inspired design tokens and visual language
 
 ## Examples
 

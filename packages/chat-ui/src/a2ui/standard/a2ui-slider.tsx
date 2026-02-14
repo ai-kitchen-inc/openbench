@@ -58,7 +58,9 @@ export const A2UISlider: A2UIComponentRenderer = ({ component, surface, onAction
         value={value}
         disabled={disabled}
         onChange={handleChange}
-        style={{ background: `linear-gradient(to right, #37352f ${pct}%, rgba(55,53,47,0.12) ${pct}%)` }}
+        style={{
+          background: `linear-gradient(to right, #37352f ${pct}%, rgba(55,53,47,0.12) ${pct}%)`,
+        }}
       />
       <div className="a2ui-slider__range">
         <span className="a2ui-slider__min">{min}</span>

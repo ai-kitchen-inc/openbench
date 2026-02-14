@@ -3,8 +3,8 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { createChatStore } from "../src/core/chat-store";
 import type { ChatStore } from "../src/core/chat-store";
+import { createChatStore } from "../src/core/chat-store";
 import type { A2UISurface, ChatMessage } from "../src/types";
 
 describe("ChatStore", () => {

@@ -1103,7 +1103,7 @@ print(f"Generated: {result['generated_outputs'][0].file_path}")
 ## Next Steps
 
 - **Get Started**: [docs/GETTING_STARTED.md](GETTING_STARTED.md)
-- **Understand Architecture**: [docs/architecture.md](architecture.md)
+- **Understand Architecture**: [docs/ARCHITECTURE.md](ARCHITECTURE.md)
 - **See Examples**: Run the examples in `examples/`
 - **Join Community**: [Discord](https://discord.com/users/openbench.ai)
 

@@ -7,7 +7,13 @@
  * No persistent connection. No reconnect logic.
  */
 
-import type { Attachment, ChatConfig, ClientAction, ClientMessage, TransportStatus } from "../types";
+import type {
+  Attachment,
+  ChatConfig,
+  ClientAction,
+  ClientMessage,
+  TransportStatus,
+} from "../types";
 
 export type TransportListener = (data: Record<string, unknown>) => void;
 export type StatusListener = (status: TransportStatus) => void;

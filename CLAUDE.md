@@ -28,7 +28,7 @@ Guidance for Claude Code when working with this repository.
 - **Agent** - AI processing
 - **OutputGenerator** - Generated artifacts (PDF, PPTX, audio)
 
-**Four-Layer Architecture:** Data Layer -> Intelligence Layer -> Chat Layer -> Output Layer
+**Three-Layer Architecture:** Data Layer -> Intelligence Layer -> Output Layer
 
 **Design Principles:**
 1. Everything is Chainable (`invoke()`, `|`, `&` operators)
@@ -442,9 +442,9 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | **adapters** | LangChain, CrewAI, AG2, E2B, Google ADK adapters |
 | **testing-openbench** | Writing tests, test patterns, coverage |
 
-## Chat UI Design System
+## Design System
 
-**Notion-inspired. Monochrome. Icon-driven. No emojis.**
+**Notion-inspired. Monochrome. Icon-driven. No emojis.** Applies to all UI/UX across the project.
 
 - **Colors**: Carbon gray scale (#1a1a1a on #ffffff), blue accent for links only
 - **Icons**: Lucide React -- 16px inline, 18px buttons, 1.5px stroke, inherit color
@@ -461,7 +461,7 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 - All CSS via custom properties with `--ob-` prefix
 - Dark mode via `[data-theme="dark"]` attribute
 
-Full design tokens: [docs/chat-ui-design-system.md](docs/chat-ui-design-system.md)
+Full design tokens: [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)
 
 ## Frontend Build (packages/chat-ui)
 
@@ -478,7 +478,7 @@ pnpm vitest               # Run tests
 
 - [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) - Installation and first workflow
 - [docs/API.md](docs/API.md) - Complete API reference
-- [docs/architecture.md](docs/architecture.md) - Architecture overview
-- [docs/chat-ui-architecture.md](docs/chat-ui-architecture.md) - Chat UI SDK architecture
-- [docs/chat-ui-design-system.md](docs/chat-ui-design-system.md) - Design tokens and visual language
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Architecture overview
+- [docs/CHAT_UI_ARCHITECTURE.md](docs/CHAT_UI_ARCHITECTURE.md) - Chat UI SDK architecture
+- [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) - Design tokens and visual language
 - [examples/README.md](examples/README.md) - Example usage patterns

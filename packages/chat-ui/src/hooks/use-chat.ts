@@ -7,8 +7,8 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useStore } from "zustand";
-import { createChatStore } from "../core/chat-store";
 import type { ChatStore } from "../core/chat-store";
+import { createChatStore } from "../core/chat-store";
 import { ChatTransport } from "../core/transport";
 import { nowISO } from "../core/utils";
 import type {

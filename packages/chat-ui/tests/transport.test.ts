@@ -119,10 +119,7 @@ describe("ChatTransport SSE", () => {
   });
 
   it("stream() sets status to error on failure", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response(null, { status: 500 })),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 500 })));
 
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -327,10 +324,7 @@ describe("ChatTransport REST", () => {
   });
 
   it("sendAction() sets status to error on failure", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response(null, { status: 500 })),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 500 })));
 
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -357,9 +351,7 @@ describe("ChatTransport listeners", () => {
   it("unsubscribes message listener", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        createSSEResponse([{ type: "stream_start", messageId: "msg-1" }]),
-      ),
+      vi.fn().mockResolvedValue(createSSEResponse([{ type: "stream_start", messageId: "msg-1" }])),
     );
 
     const t = new ChatTransport(config);
@@ -373,9 +365,7 @@ describe("ChatTransport listeners", () => {
 
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        createSSEResponse([{ type: "stream_start", messageId: "msg-2" }]),
-      ),
+      vi.fn().mockResolvedValue(createSSEResponse([{ type: "stream_start", messageId: "msg-2" }])),
     );
 
     await t.stream({ type: "message", content: "World" });
@@ -443,7 +433,13 @@ describe("ChatTransport upload", () => {
 
   it("upload() uses custom uploadUrl when configured", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      createJSONResponse({ id: "f1", type: "file", name: "f.txt", url: "/f", mimeType: "text/plain" }),
+      createJSONResponse({
+        id: "f1",
+        type: "file",
+        name: "f.txt",
+        url: "/f",
+        mimeType: "text/plain",
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -451,16 +447,16 @@ describe("ChatTransport upload", () => {
     const file = new File(["data"], "f.txt", { type: "text/plain" });
     await t.upload(file);
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/upload", expect.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/upload",
+      expect.objectContaining({ method: "POST" }),
+    );
 
     t.dispose();
   });
 
   it("upload() throws on server error", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response(null, { status: 500 })),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 500 })));
 
     const t = new ChatTransport(config);
     const file = new File(["data"], "f.txt", { type: "text/plain" });

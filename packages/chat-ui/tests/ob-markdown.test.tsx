@@ -38,9 +38,7 @@ describe("ObMarkdown", () => {
     const component = makeComponent("# Title\n\nSome body text");
     const surface = makeSurface();
 
-    const { container } = render(
-      <ObMarkdown component={component} surface={surface} />,
-    );
+    const { container } = render(<ObMarkdown component={component} surface={surface} />);
 
     const h1 = container.querySelector("h1");
     expect(h1).not.toBeNull();
@@ -51,9 +49,7 @@ describe("ObMarkdown", () => {
     const component = makeComponent("The formula is $E = mc^2$ here.");
     const surface = makeSurface();
 
-    const { container } = render(
-      <ObMarkdown component={component} surface={surface} />,
-    );
+    const { container } = render(<ObMarkdown component={component} surface={surface} />);
 
     // KaTeX wraps math in .katex spans
     const katexEl = container.querySelector(".katex");
@@ -61,14 +57,10 @@ describe("ObMarkdown", () => {
   });
 
   it("renders display math ($$...$$) without crashing", () => {
-    const component = makeComponent(
-      "Below is a formula:\n\n$$\\sum_{i=1}^n x_i$$\n\nEnd.",
-    );
+    const component = makeComponent("Below is a formula:\n\n$$\\sum_{i=1}^n x_i$$\n\nEnd.");
     const surface = makeSurface();
 
-    const { container } = render(
-      <ObMarkdown component={component} surface={surface} />,
-    );
+    const { container } = render(<ObMarkdown component={component} surface={surface} />);
 
     // KaTeX renders math in .katex spans (display math may use .katex-display or .katex-html)
     const katexEl = container.querySelector(".katex");
@@ -81,9 +73,7 @@ describe("ObMarkdown", () => {
     );
     const surface = makeSurface();
 
-    const { container } = render(
-      <ObMarkdown component={component} surface={surface} />,
-    );
+    const { container } = render(<ObMarkdown component={component} surface={surface} />);
 
     // Should have both heading and katex elements
     expect(container.querySelector("h1")).not.toBeNull();
@@ -91,14 +81,10 @@ describe("ObMarkdown", () => {
   });
 
   it("renders currency dollar signs as literal text, not math", () => {
-    const component = makeComponent(
-      "Solar costs $0.03/kWh for solar and $0.034/kWh for wind.",
-    );
+    const component = makeComponent("Solar costs $0.03/kWh for solar and $0.034/kWh for wind.");
     const surface = makeSurface();
 
-    const { container } = render(
-      <ObMarkdown component={component} surface={surface} />,
-    );
+    const { container } = render(<ObMarkdown component={component} surface={surface} />);
 
     // Currency should NOT trigger KaTeX math rendering
     const katexEl = container.querySelector(".katex");
@@ -114,9 +100,7 @@ describe("ObMarkdown", () => {
     const component = makeComponent("Test");
     const surface = makeSurface();
 
-    const { container } = render(
-      <ObMarkdown component={component} surface={surface} />,
-    );
+    const { container } = render(<ObMarkdown component={component} surface={surface} />);
 
     const wrapper = container.querySelector(".ob-markdown");
     expect(wrapper).not.toBeNull();

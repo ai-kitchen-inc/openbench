@@ -6,14 +6,16 @@ runs content renderers, and builds A2UI v0.10 JSONL output.
 
 Inherits from Chainable for composability with OpenBench layers.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Callable, Iterator
 
 from openbench.chat.a2ui.builder import A2UIMessageBuilder
 from openbench.chat.a2ui.catalog import OPENBENCH_CATALOG_ID
@@ -162,33 +164,23 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         try:
             # ── Step 1: Processing input ──
             sid = _step_id()
-            yield json.dumps(
-                StepStartMessage(sid, "Processing input", message_id).to_dict()
-            )
+            yield json.dumps(StepStartMessage(sid, "Processing input", message_id).to_dict())
             content, attachments = self._parse_input(input)
             self.session.add_user_message(content, attachments=attachments)
-            yield json.dumps(
-                StepCompleteMessage(sid, message_id).to_dict()
-            )
+            yield json.dumps(StepCompleteMessage(sid, message_id).to_dict())
 
             # ── Step 2: Thinking ──
             sid = _step_id()
-            yield json.dumps(
-                StepStartMessage(sid, "Thinking", message_id).to_dict()
-            )
+            yield json.dumps(StepStartMessage(sid, "Thinking", message_id).to_dict())
             agent_result = self._execute_agent(content, config, attachments=attachments)
             agent_output = self._extract_output(agent_result)
             metadata = self._extract_metadata(agent_result)
             extra_items = self._render_items_fn() if self._render_items_fn else None
-            yield json.dumps(
-                StepCompleteMessage(sid, message_id).to_dict()
-            )
+            yield json.dumps(StepCompleteMessage(sid, message_id).to_dict())
 
             # ── Step 3: Rendering response ──
             sid = _step_id()
-            yield json.dumps(
-                StepStartMessage(sid, "Rendering response", message_id).to_dict()
-            )
+            yield json.dumps(StepStartMessage(sid, "Rendering response", message_id).to_dict())
             components = self._render_content(agent_output, extra_items)
             components = self._ensure_root(components)
             surface_id = f"s-{uuid.uuid4().hex[:8]}"
@@ -198,9 +190,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             for msg in messages:
                 yield json.dumps(msg)
 
-            yield json.dumps(
-                StepCompleteMessage(sid, message_id).to_dict()
-            )
+            yield json.dumps(StepCompleteMessage(sid, message_id).to_dict())
 
             # Build text content for session history
             text_content = self._extract_text_content(agent_output)
@@ -246,26 +236,20 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
 
         # Stream start
         yield json.dumps(
-            StreamMessage(
-                type=StreamMessageType.STREAM_START, message_id=message_id
-            ).to_dict()
+            StreamMessage(type=StreamMessageType.STREAM_START, message_id=message_id).to_dict()
         )
 
         try:
             # ── Step 1: Processing input ──
             sid = _step_id()
-            yield json.dumps(
-                StepStartMessage(sid, "Processing input", message_id).to_dict()
-            )
+            yield json.dumps(StepStartMessage(sid, "Processing input", message_id).to_dict())
             content, attachments = self._parse_input(input)
             self.session.add_user_message(content, attachments=attachments)
             yield json.dumps(StepCompleteMessage(sid, message_id).to_dict())
 
             # ── Step 2: Thinking (run in thread pool) ──
             sid = _step_id()
-            yield json.dumps(
-                StepStartMessage(sid, "Thinking", message_id).to_dict()
-            )
+            yield json.dumps(StepStartMessage(sid, "Thinking", message_id).to_dict())
             agent_result = await asyncio.to_thread(
                 self._execute_agent, content, config, attachments
             )
@@ -276,9 +260,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
 
             # ── Step 3: Rendering response ──
             sid = _step_id()
-            yield json.dumps(
-                StepStartMessage(sid, "Rendering response", message_id).to_dict()
-            )
+            yield json.dumps(StepStartMessage(sid, "Rendering response", message_id).to_dict())
             components = self._render_content(agent_output, extra_items)
             components = self._ensure_root(components)
             surface_id = f"s-{uuid.uuid4().hex[:8]}"
@@ -425,11 +407,13 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                 main_components = renderer.render(content, surface_id="")
                 break
         if not main_components:
-            main_components = [A2UIComponent(
-                id="txt-fallback",
-                component="Text",
-                properties={"text": str(content), "variant": "body"},
-            )]
+            main_components = [
+                A2UIComponent(
+                    id="txt-fallback",
+                    component="Text",
+                    properties={"text": str(content), "variant": "body"},
+                )
+            ]
 
         # Render extra items from render queue
         if not extra_items:
@@ -490,9 +474,13 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             result: list[A2UIComponent] = []
             for c in components:
                 if c.id == target_id:
-                    result.append(A2UIComponent(
-                        id="root", component=c.component, properties=c.properties,
-                    ))
+                    result.append(
+                        A2UIComponent(
+                            id="root",
+                            component=c.component,
+                            properties=c.properties,
+                        )
+                    )
                 else:
                     result.append(c)
             return result
@@ -503,7 +491,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             component="Column",
             properties={"children": top_level_ids},
         )
-        return [root] + components
+        return [root, *components]
 
     @staticmethod
     def _deduplicate_render_items(items: list[dict]) -> list[dict]:
