@@ -40,7 +40,7 @@ Guidance for Claude Code when working with this repository.
 **Frontend SDK:**
 - `@openbench/chat-ui` -- React component library for chat interfaces
 - A2UI v0.10 (Google) declarative JSON streaming protocol for rich UI rendering
-- WebSocket real-time transport
+- SSE + REST transport (progressive streaming)
 
 ## Positioning & Classification
 
@@ -154,7 +154,8 @@ openbench/
 │   │   │   └── file.py          # FileRenderer
 │   │   └── transport/           # Real-time transport
 │   │       ├── base.py          # Transport ABC
-│   │       └── websocket.py     # WebSocket transport (FastAPI)
+│   │       ├── sse.py           # SSE transport (FastAPI, primary)
+│   │       └── websocket.py     # WebSocket transport (FastAPI, optional)
 │   ├── output/                  # Output generation layer
 │   │   ├── generators.py        # Output generator implementations
 │   │   └── layer.py             # OutputFactory for generating outputs
@@ -167,10 +168,10 @@ openbench/
 ├── packages/
 │   └── chat-ui/                 # @openbench/chat-ui (React SDK)
 │       ├── src/
-│       │   ├── core/            # WebSocket transport, JSONL processor, Zustand store
+│       │   ├── core/            # SSE + REST transport, JSONL processor, Zustand store
 │       │   ├── a2ui/            # SurfaceRenderer, catalog, standard + custom components
 │       │   ├── components/      # ChatProvider, ChatPanel, MessageList, SessionSidebar
-│       │   └── hooks/           # useChat, useChatTransport, useA2UIProcessor
+│       │   └── hooks/           # useChat, useA2UIProcessor
 │       ├── styles/              # Default CSS (Notion-inspired, Lucide icons)
 │       └── tests/
 ├── tests/                       # Test suite
@@ -225,7 +226,7 @@ pip install -e ".[security]"     # With encryption
 pip install -e ".[vector]"       # Pinecone vector store
 pip install -e ".[search]"       # Tavily, Google Search, DuckDuckGo
 pip install -e ".[google]"       # Google GenAI SDK
-pip install -e ".[chat]"         # FastAPI + WebSocket for chat
+pip install -e ".[chat]"         # FastAPI + SSE for chat
 
 # Test
 python -m unittest discover tests -v
@@ -257,7 +258,7 @@ examples/
 ├── chat/           # Chat layer examples
 │   ├── basic_chat_demo.py          # ChatEngine standalone
 │   ├── chat_with_rag_demo.py       # DataLayer | ChatLayer pipeline
-│   └── websocket_server_demo.py    # FastAPI WebSocket server
+│   └── websocket_server_demo.py    # FastAPI SSE server
 └── workflows/      # Complete E2E workflow examples
     ├── pdf/        # PDF processing workflows
     │   ├── pdf_google_adk_workflow.py
@@ -409,7 +410,8 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/chat/a2ui/builder.py` | A2UIMessageBuilder -- JSONL generator |
 | `src/openbench/chat/a2ui/catalog.py` | Custom A2UI catalog (ObChart, ObFileCard, ObCodeBlock, ObMarkdown) |
 | `src/openbench/chat/renderers/base.py` | ContentRenderer ABC + ContentRendererRegistry |
-| `src/openbench/chat/transport/websocket.py` | WebSocket transport (FastAPI) |
+| `src/openbench/chat/transport/sse.py` | SSE transport (FastAPI, primary) |
+| `src/openbench/chat/transport/websocket.py` | WebSocket transport (FastAPI, optional) |
 | `packages/chat-ui/src/index.ts` | @openbench/chat-ui public API exports |
 | `packages/chat-ui/src/types.ts` | TypeScript interfaces for chat messages, A2UI, etc. |
 | `packages/chat-ui/src/a2ui/surface-renderer.tsx` | A2UI adjacency list to React tree |
@@ -435,7 +437,7 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | **data-layer** | PineconeStore, chunking, embeddings, RAG, vector search |
 | **intelligence-layer** | BaseAgent, LLM providers, tools, memory, RAG agents |
 | **output-layer** | PDF, PPTX, Dashboard, Audio, Markdown generators |
-| **chat-layer** | ChatEngine, A2UI v0.10 builder, content renderers, WebSocket transport, ChatLayer L2 |
+| **chat-layer** | ChatEngine, A2UI v0.10 builder, content renderers, SSE transport, ChatLayer L2 |
 | **chat-ui** | @openbench/chat-ui React SDK, A2UI v0.10 components (18 standard + 4 custom), hooks, design system |
 | **adapters** | LangChain, CrewAI, AG2, E2B, Google ADK adapters |
 | **testing-openbench** | Writing tests, test patterns, coverage |

@@ -1,4 +1,6 @@
 """PDF data source for extracting text from PDF files."""
+from __future__ import annotations
+
 
 import hashlib
 from pathlib import Path

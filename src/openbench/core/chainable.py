@@ -3,6 +3,8 @@ Chainable workflow system compatible with LangChain's Runnable interface.
 
 Enables DAG-based workflows with pipe operator composition.
 """
+from __future__ import annotations
+
 
 import asyncio
 import logging

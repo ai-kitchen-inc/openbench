@@ -1,4 +1,6 @@
 """Tests for ChatEngine."""
+from __future__ import annotations
+
 
 import asyncio
 import json
@@ -8,7 +10,7 @@ from unittest.mock import MagicMock
 
 from openbench.chat.a2ui.schema import A2UI_VERSION
 from openbench.chat.engine import ChatEngine
-from openbench.chat.session import ChatSession, MessageRole
+from openbench.chat.session import Attachment, ChatSession, MessageRole
 from openbench.core.abstractions import (
     Agent,
     ExecutionContext,
@@ -363,6 +365,30 @@ class TestChatEngineAsyncStream(unittest.TestCase):
         step_starts = [m for m in parsed if m.get("type") == "step_start"]
         self.assertEqual(len(step_starts), 3)
 
+    def test_async_stream_error_handling(self):
+        """async_stream should yield error message if agent fails."""
+        agent = MockAgent()
+        agent.execute = MagicMock(side_effect=RuntimeError("Agent error"))
+        engine = ChatEngine(agent=agent)
+
+        lines = self._run_async(self._collect_async_stream(engine, "Hello"))
+        self.assertTrue(len(lines) >= 2)
+
+        last = json.loads(lines[-1])
+        self.assertEqual(last["type"], "error")
+        self.assertIn("error", last.get("metadata", {}))
+
+    def test_async_stream_step_names(self):
+        """async_stream steps should have correct names."""
+        engine = ChatEngine(agent=MockAgent("Reply"))
+        lines = self._run_async(self._collect_async_stream(engine, "Hello"))
+        parsed = [json.loads(line) for line in lines]
+
+        step_starts = [m for m in parsed if m.get("type") == "step_start"]
+        names = [s["stepName"] for s in step_starts]
+
+        self.assertEqual(names, ["Processing input", "Thinking", "Rendering response"])
+
 
 class TestChatEngineComposition(unittest.TestCase):
     """Tests for ChatEngine composability with other Chainable components."""
@@ -395,6 +421,296 @@ class TestChatEngineComposition(unittest.TestCase):
             "metadata": {"layer": "data"},
         })
         self.assertIn("messages", result)
+
+
+class TestChatEngineAttachments(unittest.TestCase):
+    """Tests for ChatEngine attachment threading to agent."""
+
+    def test_invoke_with_attachments_passes_context(self):
+        """Attachments with extracted_text are threaded to agent via ExecutionContext."""
+        agent = MockAgent("Got it!")
+        captured_contexts: list[ExecutionContext] = []
+        original_execute = agent.execute
+
+        def capturing_execute(ctx):
+            captured_contexts.append(ctx)
+            return original_execute(ctx)
+
+        agent.execute = capturing_execute
+        engine = ChatEngine(agent=agent)
+
+        attachments = [
+            Attachment(
+                id="att-1",
+                type="file",
+                name="doc.pdf",
+                url="/uploads/doc.pdf",
+                mime_type="application/pdf",
+                extracted_text="This is the PDF content.",
+            )
+        ]
+        engine.invoke({"content": "Summarize this", "attachments": [a.to_dict() for a in attachments]})
+
+        self.assertEqual(len(captured_contexts), 1)
+        ctx = captured_contexts[0]
+        self.assertIn("attachments", ctx.data)
+        self.assertEqual(len(ctx.data["attachments"]), 1)
+        self.assertEqual(ctx.data["attachments"][0]["name"], "doc.pdf")
+        self.assertEqual(ctx.data["attachments"][0]["content"], "This is the PDF content.")
+
+    def test_invoke_without_attachments_unchanged(self):
+        """Invoke without attachments should not include attachments key in data."""
+        agent = MockAgent("Reply")
+        captured_contexts: list[ExecutionContext] = []
+        original_execute = agent.execute
+
+        def capturing_execute(ctx):
+            captured_contexts.append(ctx)
+            return original_execute(ctx)
+
+        agent.execute = capturing_execute
+        engine = ChatEngine(agent=agent)
+        engine.invoke({"content": "Hello"})
+
+        self.assertEqual(len(captured_contexts), 1)
+        self.assertNotIn("attachments", captured_contexts[0].data)
+
+    def test_invoke_skips_attachments_without_extracted_text(self):
+        """Attachments without extracted_text are filtered out."""
+        agent = MockAgent("Reply")
+        captured_contexts: list[ExecutionContext] = []
+        original_execute = agent.execute
+
+        def capturing_execute(ctx):
+            captured_contexts.append(ctx)
+            return original_execute(ctx)
+
+        agent.execute = capturing_execute
+        engine = ChatEngine(agent=agent)
+
+        attachments = [
+            Attachment(
+                id="att-1",
+                type="image",
+                name="photo.png",
+                url="/uploads/photo.png",
+                mime_type="image/png",
+            )
+        ]
+        engine.invoke({"content": "What's this?", "attachments": [a.to_dict() for a in attachments]})
+
+        self.assertEqual(len(captured_contexts), 1)
+        # No attachments key since none had extracted_text
+        self.assertNotIn("attachments", captured_contexts[0].data)
+
+
+class TestChatEngineRenderItems(unittest.TestCase):
+    """Tests for ChatEngine render_items_fn (visualization tools side-channel)."""
+
+    def test_invoke_with_chart_render_item(self):
+        """render_items_fn returning chart dict should produce ObChart component."""
+        chart_item = {"type": "bar", "title": "Sales", "data": [{"name": "Q1", "value": 100}]}
+        engine = ChatEngine(
+            agent=MockAgent("Here's the chart:"),
+            render_items_fn=lambda: [chart_item],
+        )
+        result = engine.invoke("Show sales chart")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        component_types = [c["component"] for c in components]
+        self.assertIn("ObChart", component_types)
+        # Text content should also be present (ObMarkdown or Text)
+        has_text = any(c["component"] in ("ObMarkdown", "Text") for c in components)
+        self.assertTrue(has_text, "Should have text alongside chart")
+
+    def test_invoke_with_form_render_item(self):
+        """render_items_fn returning form dict should produce form components."""
+        form_item = {
+            "fields": [
+                {"name": "email", "type": "email", "label": "Email", "required": True},
+                {"name": "name", "type": "text", "label": "Name"},
+            ],
+            "submitLabel": "Send",
+        }
+        engine = ChatEngine(
+            agent=MockAgent("Please fill out this form:"),
+            render_items_fn=lambda: [form_item],
+        )
+        result = engine.invoke("Create feedback form")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        component_types = [c["component"] for c in components]
+        self.assertIn("TextField", component_types)
+        self.assertIn("Button", component_types)
+
+    def test_invoke_with_file_render_item(self):
+        """render_items_fn returning file dict should produce ObFileCard component."""
+        file_item = {"name": "report.pdf", "url": "https://example.com/report.pdf"}
+        engine = ChatEngine(
+            agent=MockAgent("Here's your file:"),
+            render_items_fn=lambda: [file_item],
+        )
+        result = engine.invoke("Show report")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        component_types = [c["component"] for c in components]
+        self.assertIn("ObFileCard", component_types)
+
+    def test_invoke_no_render_items_regression(self):
+        """Engine with render_items_fn returning empty list should render normally."""
+        engine = ChatEngine(
+            agent=MockAgent("Just text"),
+            render_items_fn=lambda: [],
+        )
+        result = engine.invoke("Hello")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        # Should only have text components, no chart/form/file
+        component_types = [c["component"] for c in components]
+        self.assertNotIn("ObChart", component_types)
+        self.assertNotIn("ObFileCard", component_types)
+
+    def test_invoke_without_render_items_fn(self):
+        """Engine without render_items_fn should work normally (backward compat)."""
+        engine = ChatEngine(agent=MockAgent("Normal reply"))
+        result = engine.invoke("Hello")
+
+        self.assertIn("messages", result)
+        components = result["messages"][1]["updateComponents"]["components"]
+        self.assertTrue(len(components) > 0)
+
+    def test_invoke_mixed_text_and_chart(self):
+        """Text agent output + chart render item should produce both components."""
+        chart_item = {
+            "type": "pie",
+            "title": "Funding",
+            "data": [{"name": "AI", "value": 40}, {"name": "Bio", "value": 30}],
+        }
+        engine = ChatEngine(
+            agent=MockAgent("AI leads in funding allocation:"),
+            render_items_fn=lambda: [chart_item],
+        )
+        result = engine.invoke("Show funding breakdown")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        component_types = [c["component"] for c in components]
+
+        # Should have both text and chart
+        has_text = any(t in ("ObMarkdown", "Text") for t in component_types)
+        has_chart = "ObChart" in component_types
+        self.assertTrue(has_text, "Should have text component")
+        self.assertTrue(has_chart, "Should have ObChart component")
+
+    def test_invoke_multiple_render_items(self):
+        """Multiple render items should all be rendered."""
+        items = [
+            {"type": "bar", "data": [{"x": 1, "y": 2}]},
+            {"name": "data.csv", "url": "/files/data.csv"},
+        ]
+        engine = ChatEngine(
+            agent=MockAgent("Analysis complete:"),
+            render_items_fn=lambda: items,
+        )
+        result = engine.invoke("Analyze data")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        component_types = [c["component"] for c in components]
+        self.assertIn("ObChart", component_types)
+        self.assertIn("ObFileCard", component_types)
+
+    def test_stream_with_render_items(self):
+        """stream() should include render items in output."""
+        chart_item = {"type": "line", "data": [{"x": 1, "y": 10}]}
+        engine = ChatEngine(
+            agent=MockAgent("Trend data:"),
+            render_items_fn=lambda: [chart_item],
+        )
+        lines = list(engine.stream("Show trend"))
+
+        # Find the updateComponents message
+        all_components = []
+        for line in lines:
+            parsed = json.loads(line)
+            if "updateComponents" in parsed:
+                all_components.extend(parsed["updateComponents"]["components"])
+
+        component_types = [c["component"] for c in all_components]
+        self.assertIn("ObChart", component_types)
+
+    # -- Deduplication tests --
+
+    def test_duplicate_forms_deduped_to_last(self):
+        """If render_items_fn returns duplicate forms, only the last one is rendered."""
+        forms = [
+            {"fields": [{"name": "a", "type": "text", "label": "A"}], "title": "Form v1"},
+            {"fields": [{"name": "b", "type": "text", "label": "B"}], "title": "Form v2"},
+        ]
+        engine = ChatEngine(
+            agent=MockAgent("Here's the form:"),
+            render_items_fn=lambda: forms,
+        )
+        result = engine.invoke("Create form")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        # Should only have one Card (from last form), not two
+        cards = [c for c in components if c["component"] == "Card"]
+        self.assertEqual(len(cards), 1, "Duplicate forms should be deduped to one")
+
+        # The surviving form should be "Form v2" (the last one)
+        text_components = [c for c in components if c["component"] == "Text"]
+        titles = [c for c in text_components if c.get("variant") == "h4"]
+        self.assertTrue(
+            any(t["text"] == "Form v2" for t in titles),
+            "Last form ('Form v2') should survive deduplication",
+        )
+
+    def test_duplicate_charts_same_title_deduped(self):
+        """Charts with the same title should be deduped (last wins)."""
+        charts = [
+            {"type": "bar", "title": "Sales", "data": [{"x": "Q1", "y": 100}]},
+            {"type": "line", "title": "Sales", "data": [{"x": "Q1", "y": 200}]},
+        ]
+        engine = ChatEngine(
+            agent=MockAgent("Updated chart:"),
+            render_items_fn=lambda: charts,
+        )
+        result = engine.invoke("Show sales")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        ob_charts = [c for c in components if c["component"] == "ObChart"]
+        self.assertEqual(len(ob_charts), 1, "Same-title charts should be deduped")
+
+    def test_different_chart_titles_kept(self):
+        """Charts with different titles should all be kept."""
+        charts = [
+            {"type": "bar", "title": "Sales", "data": [{"x": "Q1", "y": 100}]},
+            {"type": "pie", "title": "Revenue", "data": [{"x": "AI", "y": 40}]},
+        ]
+        engine = ChatEngine(
+            agent=MockAgent("Two charts:"),
+            render_items_fn=lambda: charts,
+        )
+        result = engine.invoke("Compare")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        ob_charts = [c for c in components if c["component"] == "ObChart"]
+        self.assertEqual(len(ob_charts), 2, "Different-title charts should both render")
+
+    def test_duplicate_file_cards_deduped(self):
+        """File cards with the same name should be deduped (last wins)."""
+        files = [
+            {"name": "report.pdf", "url": "/old/report.pdf"},
+            {"name": "report.pdf", "url": "/new/report.pdf"},
+        ]
+        engine = ChatEngine(
+            agent=MockAgent("Updated file:"),
+            render_items_fn=lambda: files,
+        )
+        result = engine.invoke("Show file")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        file_cards = [c for c in components if c["component"] == "ObFileCard"]
+        self.assertEqual(len(file_cards), 1, "Same-name file cards should be deduped")
 
 
 if __name__ == "__main__":

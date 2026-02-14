@@ -1,22 +1,22 @@
 /**
  * Fullscreen chat demo using ChatProvider + ChatPanel hooks.
  *
- * Uses the proper hook chain: ChatProvider → useChat → useChatTransport + useA2UIProcessor.
+ * Uses the proper hook chain: ChatProvider → useChat → useA2UIProcessor.
  * No bypassing — this exercises the full SDK as intended.
  */
 
 import { ChatPanel, ChatProvider, SessionSidebar, useChatContext } from "@openbench/chat-ui";
 import "@openbench/chat-ui/styles/chat-ui.css";
+import "@openbench/chat-ui/styles/bundle.css";
 import "./global.css";
 
-const WS_URL = `ws://${window.location.host}/chat/ws`;
 const STREAM_URL = "/chat/stream";
 
 const SUGGESTIONS = [
-  "Show me a sales chart",
-  "What are the latest AI trends?",
-  "Open registration form",
-  "Compare solar and wind energy",
+  "Search the web for latest AI agent trends",
+  "Upload a PDF and summarize it",
+  "Calculate the ROI: 150000 / 42000 * 100",
+  "Compare solar vs wind energy costs",
 ];
 
 function ChatLayout() {
@@ -26,8 +26,9 @@ function ChatLayout() {
     <div className="chat-layout">
       {sidebarOpen && <SessionSidebar />}
       <ChatPanel
+        title="OpenBench"
         suggestions={SUGGESTIONS}
-        placeholder="Try: chart, pie, form, file..."
+        placeholder="Ask anything, search the web, or upload a file..."
         greeting="Welcome to OpenBench Chat"
       />
     </div>
@@ -36,7 +37,7 @@ function ChatLayout() {
 
 export default function App() {
   return (
-    <ChatProvider config={{ wsUrl: WS_URL, streamUrl: STREAM_URL }}>
+    <ChatProvider config={{ streamUrl: STREAM_URL }}>
       <ChatLayout />
     </ChatProvider>
   );

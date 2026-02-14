@@ -15,6 +15,7 @@ export const A2UITextField: A2UIComponentRenderer = ({ component, surface, onAct
   const placeholder = resolveString(component.placeholder ?? "", surface);
   const inputType = (component.inputType as string) ?? "text";
   const disabled = component.disabled ? resolveBoolean(component.disabled, surface) : false;
+  const required = component.required ? resolveBoolean(component.required, surface) : false;
   const initialValue = resolveString(component.value ?? "", surface);
 
   const [value, setValue] = useState(initialValue);
@@ -38,7 +39,12 @@ export const A2UITextField: A2UIComponentRenderer = ({ component, surface, onAct
 
   return (
     <div className="a2ui-textfield" data-component-id={component.id}>
-      {label && <label className="a2ui-textfield__label">{label}</label>}
+      {label && (
+        <label className="a2ui-textfield__label">
+          {label}
+          {required && <span className="a2ui-field-required"> *</span>}
+        </label>
+      )}
       {isMultiline ? (
         <textarea
           className="a2ui-textfield__input a2ui-textfield__input--multiline"

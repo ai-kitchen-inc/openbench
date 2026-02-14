@@ -13,7 +13,7 @@ import type { ChatConfig } from "../types";
 const ChatContext = createContext<UseChatReturn | null>(null);
 
 export interface ChatProviderProps {
-  /** WebSocket and theme configuration. */
+  /** Transport and theme configuration. */
   config: ChatConfig;
   children: React.ReactNode;
 }
@@ -22,7 +22,7 @@ export interface ChatProviderProps {
  * Provides chat state and actions to all child components.
  *
  * ```tsx
- * <ChatProvider config={{ wsUrl: 'ws://localhost:8000/chat/ws' }}>
+ * <ChatProvider config={{ streamUrl: '/chat/stream' }}>
  *   <ChatPanel />
  * </ChatProvider>
  * ```

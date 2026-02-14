@@ -11,6 +11,7 @@ export const A2UIDateTimeInput: A2UIComponentRenderer = ({ component, surface, o
   const label = resolveString(component.label ?? "", surface);
   const inputType = (component.inputType as string) ?? "date";
   const disabled = component.disabled ? resolveBoolean(component.disabled, surface) : false;
+  const required = component.required ? resolveBoolean(component.required, surface) : false;
   const initialValue = resolveString(component.value ?? "", surface);
 
   const [value, setValue] = useState(initialValue);
@@ -35,7 +36,12 @@ export const A2UIDateTimeInput: A2UIComponentRenderer = ({ component, surface, o
 
   return (
     <div className="a2ui-datetime-input" data-component-id={component.id}>
-      {label && <label className="a2ui-datetime-input__label">{label}</label>}
+      {label && (
+        <label className="a2ui-datetime-input__label">
+          {label}
+          {required && <span className="a2ui-field-required"> *</span>}
+        </label>
+      )}
       <input
         className="a2ui-datetime-input__input"
         type={htmlType}

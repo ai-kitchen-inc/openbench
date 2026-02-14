@@ -3,6 +3,8 @@ File content renderer.
 
 Converts file metadata dicts to A2UI ObFileCard components.
 """
+from __future__ import annotations
+
 
 import uuid
 from typing import Any

@@ -1,27 +1,130 @@
 /**
  * ObFileCard — OpenBench custom file preview/download card.
+ *
+ * Uses Lucide-style SVG icons (no emojis).
  */
 
 import { formatFileSize } from "../../core/utils";
 import type { A2UIComponentRenderer } from "../../types";
 import { resolveNumber, resolveString } from "../data-binding";
 
-const MIME_ICONS: Record<string, string> = {
-  "application/pdf": "\u{1F4C4}",
-  "text/plain": "\u{1F4DD}",
-  "text/csv": "\u{1F4CA}",
-  "application/json": "\u{1F4CB}",
-  "image/": "\u{1F5BC}",
-  "audio/": "\u{1F3B5}",
-  "video/": "\u{1F3AC}",
-  "application/zip": "\u{1F4E6}",
-};
+/** Lucide-style SVG icon components for file types. */
+function FileTextIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+      <polyline points="10 9 9 9 8 9" />
+    </svg>
+  );
+}
 
-function getFileIcon(mimeType: string): string {
-  for (const [prefix, icon] of Object.entries(MIME_ICONS)) {
+function SheetIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <line x1="3" y1="9" x2="21" y2="9" />
+      <line x1="3" y1="15" x2="21" y2="15" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+    </svg>
+  );
+}
+
+function FileJsonIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <path d="M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1" />
+      <path d="M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1" />
+    </svg>
+  );
+}
+
+function ImageIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <polyline points="21 15 16 10 5 21" />
+    </svg>
+  );
+}
+
+function MusicIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 18V5l12-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="16" r="3" />
+    </svg>
+  );
+}
+
+function FilmIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />
+      <line x1="7" y1="2" x2="7" y2="22" />
+      <line x1="17" y1="2" x2="17" y2="22" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <line x1="2" y1="7" x2="7" y2="7" />
+      <line x1="2" y1="17" x2="7" y2="17" />
+      <line x1="17" y1="7" x2="22" y2="7" />
+      <line x1="17" y1="17" x2="22" y2="17" />
+    </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="21 8 21 21 3 21 3 8" />
+      <rect x="1" y="3" width="22" height="5" />
+      <line x1="10" y1="12" x2="14" y2="12" />
+    </svg>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
+type MimeEntry = { prefix: string; icon: () => React.JSX.Element };
+
+const MIME_ICONS: MimeEntry[] = [
+  { prefix: "application/pdf", icon: FileTextIcon },
+  { prefix: "text/plain", icon: FileTextIcon },
+  { prefix: "text/csv", icon: SheetIcon },
+  { prefix: "application/json", icon: FileJsonIcon },
+  { prefix: "image/", icon: ImageIcon },
+  { prefix: "audio/", icon: MusicIcon },
+  { prefix: "video/", icon: FilmIcon },
+  { prefix: "application/zip", icon: ArchiveIcon },
+  { prefix: "application/gzip", icon: ArchiveIcon },
+];
+
+function getFileIcon(mimeType: string): () => React.JSX.Element {
+  for (const { prefix, icon } of MIME_ICONS) {
     if (mimeType.startsWith(prefix)) return icon;
   }
-  return "\u{1F4CE}"; // paperclip
+  return PaperclipIcon;
 }
 
 export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
@@ -33,7 +136,7 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
     ? resolveString(component.previewUrl, surface)
     : undefined;
 
-  const icon = getFileIcon(mimeType);
+  const IconComponent = getFileIcon(mimeType);
 
   return (
     <div
@@ -44,7 +147,7 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
         alignItems: "center",
         gap: "12px",
         padding: "12px 16px",
-        border: "1px solid var(--a2ui-divider-color, #e0e0e0)",
+        border: "1px solid var(--a2ui-divider-color, rgba(55,53,47,0.09))",
         borderRadius: "8px",
         backgroundColor: "var(--a2ui-card-bg, #ffffff)",
       }}
@@ -56,7 +159,9 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
           style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }}
         />
       ) : (
-        <span style={{ fontSize: 28 }}>{icon}</span>
+        <span style={{ display: "flex", flexShrink: 0, color: "var(--chat-text-secondary, #787774)" }}>
+          <IconComponent />
+        </span>
       )}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
@@ -70,7 +175,7 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
           {fileName}
         </div>
         {fileSize != null && (
-          <div style={{ fontSize: "0.85em", opacity: 0.7 }}>{formatFileSize(fileSize)}</div>
+          <div style={{ fontSize: "0.85em", opacity: 0.6 }}>{formatFileSize(fileSize)}</div>
         )}
       </div>
       <a
@@ -78,13 +183,18 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
         download={fileName}
         className="ob-file-card__download"
         style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "4px",
           padding: "6px 12px",
           borderRadius: "4px",
-          border: "1px solid currentColor",
+          border: "1px solid var(--a2ui-divider-color, rgba(55,53,47,0.09))",
           textDecoration: "none",
           fontSize: "0.85em",
+          color: "inherit",
         }}
       >
+        <DownloadIcon />
         Download
       </a>
     </div>

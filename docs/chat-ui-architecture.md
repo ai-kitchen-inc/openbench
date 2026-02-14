@@ -4,10 +4,10 @@
 
 The Chat UI system spans two packages:
 
-1. **Python Backend** (`src/openbench/chat/`) -- ChatEngine, A2UI builder, content renderers, WebSocket transport
+1. **Python Backend** (`src/openbench/chat/`) -- ChatEngine, A2UI builder, content renderers, SSE + REST transport
 2. **TypeScript Frontend** (`packages/chat-ui/`) -- `@openbench/chat-ui` React component library
 
-Both communicate via WebSocket using **A2UI v0.10 JSONL** as the wire format.
+Both communicate via SSE (streaming) and REST (actions) using **A2UI v0.10 JSONL** as the wire format.
 
 **A2UI Spec Reference**: [github.com/google/A2UI](https://github.com/google/A2UI) -- specification/v0_10/
 
@@ -131,7 +131,7 @@ A2UI is transport-agnostic. Supports: A2A, AG-UI, WebSocket, SSE, REST, MCP.
 |                               |                                       |
 |  +---------------------------v-----------------------------------+    |
 |  |                    Core Layer                                  |    |
-|  |  ChatTransport (WebSocket) <-> Any backend                    |    |
+|  |  ChatTransport (SSE + REST) <-> Any backend                   |    |
 |  |  A2UIMessageProcessor (JSONL parser + surface state)          |    |
 |  |  ChatStore (Zustand -- sessions, messages, streaming)         |    |
 |  +---------------------------------------------------------------+    |
@@ -159,8 +159,8 @@ A2UI is transport-agnostic. Supports: A2A, AG-UI, WebSocket, SSE, REST, MCP.
 |  +----------------------------+----------------------------------+  |
 |                                |                                      |
 |  +----------------------------v----------------------------------+  |
-|  |  WebSocket Transport (FastAPI)                                 |  |
-|  |  Streams A2UI v0.10 JSONL to connected clients                 |  |
+|  |  SSE + REST Transport (FastAPI)                                |  |
+|  |  Streams A2UI v0.10 JSONL via SSE events                       |  |
 |  +---------------------------------------------------------------+  |
 +---------------------------------------------------------------------+
 ```
@@ -191,7 +191,8 @@ src/openbench/chat/
 ├── transport/
 │   ├── __init__.py
 │   ├── base.py                 # Transport abstract base
-│   └── websocket.py            # WebSocket transport (FastAPI)
+│   ├── sse.py                  # SSE transport (FastAPI, primary)
+│   └── websocket.py            # WebSocket transport (FastAPI, optional)
 └── layer.py                    # ChatLayer (L2 orchestrator) + ChatFactory
 ```
 
@@ -585,77 +586,81 @@ class ChatLayer(Chainable[Any, dict[str, Any]]):
         """
 ```
 
-#### WebSocket Transport (transport/websocket.py)
+#### SSE Transport (transport/sse.py) — Primary
 
-FastAPI WebSocket server that streams A2UI v0.10 JSONL:
+FastAPI SSE handler that streams A2UI v0.10 JSONL via HTTP chunked transfer encoding:
 
 ```python
-class ChatWebSocketServer:
-    """FastAPI-compatible WebSocket handler.
+class ChatSSEHandler:
+    """FastAPI-compatible SSE handler for chat.
 
     Usage with FastAPI:
         app = FastAPI()
-        chat_ws = ChatWebSocketServer(engine=ChatEngine(agent=my_agent))
+        sse_handler = ChatSSEHandler(engine=ChatEngine(agent=my_agent))
 
-        @app.websocket("/chat/ws")
-        async def websocket_endpoint(websocket: WebSocket):
-            await chat_ws.handle(websocket)
+        @app.post("/chat/stream")
+        async def chat_stream(request: Request):
+            body = await request.json()
+            return StreamingResponse(
+                sse_handler.stream(body),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        @app.post("/chat/action")
+        async def chat_action(request: Request):
+            body = await request.json()
+            result = await asyncio.to_thread(engine.invoke, {"content": f"[Action: {body.get('name')}]", "action": body})
+            return result.get("messages", [])
     """
 
     def __init__(self, engine: ChatEngine): ...
 
-    async def handle(self, websocket) -> None:
-        """Handle a WebSocket connection lifecycle."""
-
-    async def _process_message(self, websocket, data: dict) -> None:
-        """Process incoming message and stream A2UI v0.10 response."""
-
-    async def _handle_action(self, websocket, data: dict) -> None:
-        """Handle A2UI action (event dispatched from Button click, etc.)."""
+    async def stream(self, payload: dict) -> AsyncIterator[str]:
+        """Stream A2UI v0.10 response as SSE events."""
 ```
 
-### WebSocket Protocol
+Note: `transport/websocket.py` (`ChatWebSocketServer`) is kept as an optional alternative transport.
+
+### SSE + REST Protocol
 
 ```
 Client (@openbench/chat-ui)              Server (Python)
   |                                          |
-  |---- ws://host/chat/ws ----------------->|  Connect
+  |-- POST /chat/stream ------------------>|  User sends message
+  |   { "type": "message",                 |
+  |     "sessionId": "...",                 |
+  |     "content": "Show Q4 sales" }       |
   |                                          |
-  |---- { "type": "message",  ------------->|  User sends message
-  |       "sessionId": "...",               |
-  |       "content": "Show Q4 sales",       |
-  |       "attachments": [] }               |
+  |<-- data: { "type": "stream_start",     |  SSE: begin streaming
+  |     "messageId": "msg-123" }            |
   |                                          |
-  |<---- { "type": "stream_start",          |  Begin streaming
-  |        "messageId": "msg-123" }         |
+  |<-- data: { "version": "v0.10",         |  SSE: A2UI create surface
+  |     "createSurface": {                  |
+  |       "surfaceId": "s1",               |
+  |       "catalogId": "https://..." }}     |
   |                                          |
-  |<---- { "version": "v0.10",              |  A2UI: create surface
-  |        "createSurface": {               |
-  |          "surfaceId": "s1",             |
-  |          "catalogId": "https://..." }}  |
+  |<-- data: { "version": "v0.10",         |  SSE: A2UI components
+  |     "updateComponents": {               |
+  |       "surfaceId": "s1",               |
+  |       "components": [...] }}            |
   |                                          |
-  |<---- { "version": "v0.10",              |  A2UI: components
-  |        "updateComponents": {            |
-  |          "surfaceId": "s1",             |
-  |          "components": [...] }}         |
+  |<-- data: { "version": "v0.10",         |  SSE: A2UI data
+  |     "updateDataModel": {                |
+  |       "surfaceId": "s1",               |
+  |       "path": "/chart/data",           |
+  |       "value": [...] }}                 |
   |                                          |
-  |<---- { "version": "v0.10",              |  A2UI: data
-  |        "updateDataModel": {             |
-  |          "surfaceId": "s1",             |
-  |          "path": "/chart/data",         |
-  |          "value": [...] }}              |
+  |<-- data: { "type": "stream_end",       |  SSE: stream complete
+  |     "messageId": "msg-123",             |
+  |     "metadata": { ... } }              |
   |                                          |
-  |<---- { "type": "stream_end",            |  Stream complete
-  |        "messageId": "msg-123",          |
-  |        "metadata": { ... } }            |
-  |                                          |
-  |---- { "type": "action",                |  User action (A2UI event)
-  |       "name": "submit_form",            |
-  |       "surfaceId": "s1",                |
-  |       "sourceComponentId": "submit-btn",|
-  |       "timestamp": "2026-...",          |
-  |       "context": {                      |
-  |         "email": "a@b.com" }}           |
+  |-- POST /chat/action ------------------>|  User action (A2UI event)
+  |   { "name": "submit_form",             |
+  |     "surfaceId": "s1",                  |
+  |     "sourceComponentId": "submit-btn",  |
+  |     "context": { "email": "a@b.com" }} |
+  |<-- [response messages] (JSON array)     |
 ```
 
 ### Modified Existing Files
@@ -693,7 +698,7 @@ packages/chat-ui/
 │   ├── types.ts                    # All TypeScript interfaces
 │   │
 │   ├── core/                       # No React dependency
-│   │   ├── transport.ts            # WebSocket client (connect, send, reconnect)
+│   │   ├── transport.ts            # SSE + REST client (stream, sendAction)
 │   │   ├── message-processor.ts    # A2UI v0.10 JSONL parser + surface state
 │   │   ├── chat-store.ts           # Zustand store (sessions, messages, streaming)
 │   │   └── utils.ts                # Helpers (formatTime, formatFileSize, generateId)
@@ -744,7 +749,6 @@ packages/chat-ui/
 │   │
 │   └── hooks/                      # React hooks for custom UIs
 │       ├── use-chat.ts             # Main: sendMessage, messages, isStreaming
-│       ├── use-chat-transport.ts   # WebSocket lifecycle
 │       └── use-a2ui-processor.ts   # Process A2UI JSONL -> surfaces
 │
 ├── styles/
@@ -767,7 +771,7 @@ packages/chat-ui/
 |  ChatProvider, ChatPanel, MessageBubble ...  |  (drop-in ready)
 +---------------------------------------------+
 |              Hooks Layer                     |  React hooks
-|  useChat, useChatTransport, useA2UIProcessor |  (for custom UIs)
+|  useChat, useA2UIProcessor                   |  (for custom UIs)
 +---------------------------------------------+
 |              A2UI Layer                      |  Rendering engine
 |  SurfaceRenderer, Catalog, DataBinding,     |  (framework for A2UI v0.10)
@@ -877,14 +881,12 @@ interface FunctionCall {
 
 // -- Configuration --
 interface ChatConfig {
-  wsUrl: string;
-  reconnect?: boolean;                // default: true
-  reconnectInterval?: number;         // default: 3000ms
-  maxReconnectAttempts?: number;      // default: 5
+  streamUrl: string;                   // POST → SSE (e.g., "/chat/stream")
+  actionUrl?: string;                  // POST → JSON (defaults to "/chat/action")
   theme?: 'light' | 'dark' | 'auto';
 }
 
-type TransportStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
+type TransportStatus = 'connected' | 'disconnected' | 'error';
 ```
 
 ### Key Component Designs
@@ -968,7 +970,7 @@ export { ChatProvider, ChatPanel, MessageList, MessageBubble,
          ChatInput, SessionSidebar, WelcomeScreen };
 
 // Hooks (custom UI)
-export { useChat, useChatTransport, useA2UIProcessor };
+export { useChat, useA2UIProcessor };
 
 // A2UI (extend)
 export { SurfaceRenderer, registerCustomComponent, getComponentCatalog };
@@ -991,7 +993,7 @@ import '@openbench/chat-ui/styles/chat-ui.css';
 
 function ChatPage() {
   return (
-    <ChatProvider config={{ wsUrl: 'ws://localhost:8000/chat/ws' }}>
+    <ChatProvider config={{ streamUrl: '/chat/stream' }}>
       <div className="flex h-screen">
         <SessionSidebar />
         <ChatPanel className="flex-1" />
@@ -1005,7 +1007,7 @@ import { useChat } from '@openbench/chat-ui';
 
 function MyChat() {
   const { messages, sendMessage, isStreaming } = useChat({
-    wsUrl: 'ws://localhost:8000/chat/ws',
+    streamUrl: '/chat/stream',
   });
   // ... render custom UI
 }
@@ -1026,10 +1028,10 @@ User types "Show Q4 sales by region" -> clicks Send
 ChatInput.onSend()
   |-- chatStore.addMessage({ role: "user", content: "...", status: "complete" })
   |-- chatStore.addMessage({ role: "assistant", content: "", status: "streaming" })
-  +-- transport.send({ type: "message", sessionId, content: "..." })
+  +-- transport.stream({ type: "message", sessionId, content: "..." })
         |
         v
-WebSocket -> Python ChatEngine.invoke()
+POST /chat/stream -> Python ChatEngine.invoke()
   |-- session.add_user_message(content)
   |-- agent.execute(context)  -> agent output (text + structured data)
   |-- ContentRenderers detect and render:
@@ -1040,7 +1042,7 @@ WebSocket -> Python ChatEngine.invoke()
   |     1. {"version":"v0.10","createSurface":{"surfaceId":"s1","catalogId":"..."}}
   |     2. {"version":"v0.10","updateComponents":{"surfaceId":"s1","components":[...]}}
   |     3. {"version":"v0.10","updateDataModel":{"surfaceId":"s1","path":"/chart","value":{...}}}
-  +-- Stream JSONL back over WebSocket
+  +-- Stream JSONL back via SSE events
         |
         v
 transport.onMessage() -> for each JSONL line:
@@ -1157,7 +1159,6 @@ transport.onMessage() -> for each JSONL line:
 ```toml
 chat = [
     "fastapi>=0.100.0",
-    "websockets>=12.0",
     "uvicorn>=0.25.0",
 ]
 ```
@@ -1206,4 +1207,4 @@ chat = [
 - `pnpm build` -> `dist/` with ESM + `.d.ts`
 - `pnpm tsc --noEmit` -- type check
 - `pnpm vitest` -- message processor, data binding, functions, store, transport
-- E2E: Python WS server + React app consuming `@openbench/chat-ui`
+- E2E: Python SSE server + React app consuming `@openbench/chat-ui`

@@ -8,6 +8,8 @@ Provides a dynamic, decorator-based plugin system with:
 - Plugin metadata (version, description, author)
 - Singleton pattern support
 """
+from __future__ import annotations
+
 
 import importlib
 import importlib.util

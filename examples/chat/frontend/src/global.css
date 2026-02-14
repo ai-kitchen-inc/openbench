@@ -25,9 +25,11 @@ body {
   display: flex;
   height: 100vh;
   width: 100vw;
+  /* overflow: hidden; */
 }
 
 .chat-layout .chat-panel {
   flex: 1;
   min-width: 0;
+  height: 100%;
 }

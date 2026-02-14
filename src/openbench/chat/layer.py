@@ -4,6 +4,8 @@ ChatLayer -- L2 chat orchestrator.
 Composable with DataLayer, IntelligenceLayer, and OutputLayer
 following the same patterns as existing OpenBench L2 layers.
 """
+from __future__ import annotations
+
 
 import logging
 from typing import Any

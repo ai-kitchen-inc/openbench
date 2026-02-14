@@ -4,6 +4,8 @@ Chart content renderer.
 Converts chart data dicts to A2UI ObChart components.
 Supports: bar, line, pie, scatter, area chart types.
 """
+from __future__ import annotations
+
 
 import uuid
 from typing import Any

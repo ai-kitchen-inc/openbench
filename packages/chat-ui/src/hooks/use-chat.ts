@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useStore } from "zustand";
 import { createChatStore } from "../core/chat-store";
 import type { ChatStore } from "../core/chat-store";
+import { ChatTransport } from "../core/transport";
 import { nowISO } from "../core/utils";
 import type {
   A2UIAction,
@@ -19,7 +20,6 @@ import type {
   TransportStatus,
 } from "../types";
 import { useA2UIProcessor } from "./use-a2ui-processor";
-import { useChatTransport } from "./use-chat-transport";
 
 export interface UseChatReturn {
   // Messages
@@ -29,8 +29,6 @@ export interface UseChatReturn {
 
   // Connection
   connectionStatus: TransportStatus;
-  connect: () => void;
-  disconnect: () => void;
 
   // Sessions
   sessions: ChatStore["sessions"];
@@ -53,7 +51,7 @@ export interface UseChatReturn {
  *
  * ```tsx
  * const { messages, sendMessage, isStreaming } = useChat({
- *   wsUrl: 'ws://localhost:8000/chat/ws',
+ *   streamUrl: '/chat/stream',
  * });
  * ```
  */
@@ -67,6 +65,13 @@ export function useChat(config: ChatConfig): UseChatReturn {
   const sessions = useStore(store, (s) => s.sessions);
   const activeSessionId = useStore(store, (s) => s.activeSessionId);
   const sidebarOpen = useStore(store, (s) => s.sidebarOpen);
+
+  // Create stable transport instance
+  const transportRef = useRef<ChatTransport | null>(null);
+  if (!transportRef.current) {
+    transportRef.current = new ChatTransport(config);
+  }
+  const transport = transportRef.current;
 
   // A2UI processor
   const { processor, surfaces, processMessage, reset: resetProcessor } = useA2UIProcessor();
@@ -116,14 +121,28 @@ export function useChat(config: ChatConfig): UseChatReturn {
 
       if (data.type === "stream_end") {
         const messageId = data.messageId as string;
-        const metadata = data.metadata as ChatMessage["metadata"];
+        const rawMeta = data.metadata as Record<string, unknown> | undefined;
+        // Extract content fallback (sent by Python engine for text recovery)
+        const contentFallback = rawMeta?.content as string | undefined;
+        // Build metadata without the content field (it's not real metadata)
+        const metadata = rawMeta
+          ? (Object.fromEntries(
+              Object.entries(rawMeta).filter(([k]) => k !== "content"),
+            ) as ChatMessage["metadata"])
+          : undefined;
         // Read fresh surfaces from processor (not stale closure)
         const freshSurfaces = processor.getRenderableSurfaces();
-        state.updateMessage(messageId, {
+        const patch: Partial<ChatMessage> = {
           status: "complete",
           metadata,
           surfaces: freshSurfaces.length > 0 ? [...freshSurfaces] : undefined,
-        });
+        };
+        // Set content fallback if message has no text yet
+        const currentMsg = state.messages.find((m) => m.id === messageId);
+        if (contentFallback && (!currentMsg?.content || currentMsg.content === "")) {
+          patch.content = contentFallback;
+        }
+        state.updateMessage(messageId, patch);
         state.setStreaming(false);
         streamingMsgRef.current = null;
         return;
@@ -171,18 +190,20 @@ export function useChat(config: ChatConfig): UseChatReturn {
     [store, processor, processMessage, resetProcessor],
   );
 
-  // Transport
-  const {
-    status: connectionStatus,
-    transport,
-    connect,
-    disconnect,
-  } = useChatTransport(config, handleMessage);
-
-  // Sync connection status to store
+  // Register message listener + status sync + cleanup
   useEffect(() => {
-    store.getState().setConnectionStatus(connectionStatus);
-  }, [store, connectionStatus]);
+    const unsubMsg = transport.onMessage(handleMessage);
+    const unsubStatus = transport.onStatusChange((status) => {
+      store.getState().setConnectionStatus(status);
+    });
+
+    return () => {
+      unsubMsg();
+      unsubStatus();
+      transport.dispose();
+      transportRef.current = null;
+    };
+  }, [transport, handleMessage, store]);
 
   // Create initial session if none exists
   useEffect(() => {
@@ -191,43 +212,63 @@ export function useChat(config: ChatConfig): UseChatReturn {
     }
   }, [store]);
 
-  // Send message
+  // Send message via SSE stream (uploads files first if needed)
   const sendMessage = useCallback(
     (content: string, attachments?: Attachment[]) => {
       const state = store.getState();
+
+      // Show user message immediately with local attachments
       const msg = state.sendMessage(content, attachments);
 
-      const payload = {
-        type: "message" as const,
-        sessionId: state.activeSessionId ?? undefined,
-        content,
-        attachments,
-      };
+      // Upload files then stream (async, fire-and-forget)
+      (async () => {
+        try {
+          let serverAttachments: Attachment[] | undefined;
 
-      if (transport.hasSSE) {
-        // Use SSE for progressive streaming (each event delivered immediately)
-        transport.streamViaSSE(payload).catch(console.error);
-      } else {
-        // Fallback to WebSocket
-        transport.send(payload);
-      }
+          if (attachments?.length) {
+            serverAttachments = await Promise.all(
+              attachments.map(async (att) => {
+                if (att.file) {
+                  const uploaded = await transport.upload(att.file);
+                  URL.revokeObjectURL(att.url);
+                  return { ...uploaded, file: undefined };
+                }
+                return att;
+              }),
+            );
+          }
+
+          const payload = {
+            type: "message" as const,
+            sessionId: state.activeSessionId ?? undefined,
+            content,
+            attachments: serverAttachments,
+          };
+
+          await transport.stream(payload);
+        } catch (err) {
+          console.error("[useChat] Upload/stream error:", err);
+        }
+      })();
 
       return msg;
     },
     [store, transport],
   );
 
-  // Send A2UI action
+  // Send A2UI action via REST
   const sendAction = useCallback(
     (action: A2UIAction) => {
-      transport.send({
-        type: "action",
-        name: action.name,
-        surfaceId: action.surfaceId,
-        sourceComponentId: action.sourceComponentId,
-        timestamp: action.timestamp,
-        context: action.context,
-      });
+      transport
+        .sendAction({
+          type: "action",
+          name: action.name,
+          surfaceId: action.surfaceId,
+          sourceComponentId: action.sourceComponentId,
+          timestamp: action.timestamp,
+          context: action.context,
+        })
+        .catch(console.error);
     },
     [transport],
   );
@@ -241,13 +282,14 @@ export function useChat(config: ChatConfig): UseChatReturn {
     [store],
   );
 
+  // Read connectionStatus from store
+  const connectionStatus = useStore(store, (s) => s.connectionStatus);
+
   return {
     messages,
     sendMessage,
     isStreaming,
     connectionStatus,
-    connect,
-    disconnect,
     sessions,
     activeSessionId,
     createSession,

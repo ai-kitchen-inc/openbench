@@ -1,7 +1,7 @@
 /**
  * A2UI Button component.
  *
- * Dispatches an A2UIAction on click.
+ * Dispatches an A2UIAction on click. Supports fullWidth for form submit.
  */
 
 import { nowISO } from "../../core/utils";
@@ -12,6 +12,7 @@ export const A2UIButton: A2UIComponentRenderer = ({ component, surface, onAction
   const label = resolveString(component.label ?? component.text, surface);
   const variant = (component.variant as string) ?? "primary";
   const disabled = component.disabled ? resolveBoolean(component.disabled, surface) : false;
+  const fullWidth = component.fullWidth ? resolveBoolean(component.fullWidth, surface) : false;
 
   const handleClick = () => {
     if (!onAction || disabled) return;
@@ -38,9 +39,17 @@ export const A2UIButton: A2UIComponentRenderer = ({ component, surface, onAction
     }
   };
 
+  const classNames = [
+    "a2ui-button",
+    `a2ui-button--${variant}`,
+    fullWidth ? "a2ui-button--full-width" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <button
-      className={`a2ui-button a2ui-button--${variant}`}
+      className={classNames}
       data-component-id={component.id}
       disabled={disabled}
       onClick={handleClick}

@@ -125,6 +125,22 @@ export function createChatStore() {
       set((state) => ({
         messages: state.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
       }));
+
+      // Sync update to the active session
+      const { activeSessionId, sessions } = get();
+      if (activeSessionId) {
+        set({
+          sessions: sessions.map((s) =>
+            s.id === activeSessionId
+              ? {
+                  ...s,
+                  messages: s.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+                  updatedAt: nowISO(),
+                }
+              : s,
+          ),
+        });
+      }
     },
 
     appendSurface: (messageId: string, surface: A2UISurface) => {

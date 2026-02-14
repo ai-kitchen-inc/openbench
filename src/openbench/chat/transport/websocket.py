@@ -6,6 +6,8 @@ to connected clients.
 
 Note: fastapi and websockets are optional dependencies -- imported lazily.
 """
+from __future__ import annotations
+
 
 import asyncio
 import json

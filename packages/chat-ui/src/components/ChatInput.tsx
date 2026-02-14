@@ -56,6 +56,7 @@ export function ChatInput({
       url: URL.createObjectURL(file),
       mimeType: file.type,
       sizeBytes: file.size,
+      file: file,
     }));
 
     setAttachments((prev) => [...prev, ...newAttachments]);
@@ -121,8 +122,18 @@ export function ChatInput({
           type="button"
           aria-label="Send message"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <line x1="12" y1="19" x2="12" y2="5" />
+            <polyline points="5 12 12 5 19 12" />
           </svg>
         </button>
       </div>
