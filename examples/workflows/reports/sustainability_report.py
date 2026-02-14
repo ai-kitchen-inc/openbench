@@ -39,7 +39,7 @@ from openbench.core import (
 )
 
 # Import real PDFSource
-from openbench.data import PDFSource
+from openbench.data.sources import PDFSource
 from openbench.workflows import Workflow
 
 # ============================================================================

@@ -12,8 +12,11 @@ examples/
 │   └── agent_registry_demo.py
 ├── adapters/                    # Framework adapters (no API key needed)
 │   └── framework_adapters_demo.py
-├── data/                        # Data source examples
-│   └── langextract_demo.py
+├── chat/                        # Chat UI demo (AG-UI + A2UI)
+│   ├── gemini_agent.py          # Gemini agent with tools
+│   ├── server.py                # FastAPI AG-UI server
+│   ├── frontend/                # React frontend (@openbench/chat-ui)
+│   └── README.md
 ├── embeddings/                  # Embedding provider demos
 │   ├── embedding_providers_demo.py
 │   └── dynamic_registration_demo.py
@@ -125,21 +128,33 @@ python examples/adapters/framework_adapters_demo.py
 
 ---
 
-## Data Examples (`data/`)
+## Chat Demo (`chat/`)
 
-### 5. LangExtract Demo (`data/langextract_demo.py`)
+### 5. Chat Demo (`chat/`)
 
-Structured entity extraction using LangExtractSource:
-- Few-shot examples for domain-specific extraction
-- Multi-provider support (Gemini, OpenAI, Ollama)
-- Class filtering (extract only specific entity types)
-- Long document processing
+Full-stack chat application: Python AG-UI backend + React frontend with `@openbench/chat-ui`.
 
-**Requires:** `GOOGLE_API_KEY`, `pip install langextract`
+- **Progressive token streaming** -- text appears word-by-word via AG-UI protocol
+- **Gemini agent** with real LLM reasoning, tool calling, and multi-turn memory
+- **5 tools**: search_web, analyze_file, knowledge_lookup, calculate, get_datetime
+- **File upload** -- upload PDFs/text files for agent analysis
+- **Rich UI** -- A2UI v0.10 streaming with charts, forms, file cards, markdown
+
+**Requires:** `GOOGLE_API_KEY`
 
 ```bash
-python examples/data/langextract_demo.py
+# Backend
+cd examples/chat
+export GOOGLE_API_KEY=your-key-here
+uvicorn server:app --port 8000 --reload
+
+# Frontend (separate terminal)
+cd examples/chat/frontend
+pnpm install
+pnpm dev
 ```
+
+See [chat/README.md](chat/README.md) for full details.
 
 ---
 
@@ -418,7 +433,7 @@ python examples/workflows/reports/knowledge_base_workflow.py pipeline doc.pdf "S
 | 2 | `core/orchestration_demo.py` | None | L1/L2 composition, create_workflow() |
 | 3 | `core/agent_registry_demo.py` | None | AgentFactory, dynamic registration |
 | 4 | `adapters/framework_adapters_demo.py` | None | Multi-framework orchestration |
-| 5 | `data/langextract_demo.py` | Google | Structured entity extraction |
+| 5 | `chat/` | Google | AG-UI streaming, A2UI rich UI, file upload |
 | 6a | `embeddings/embedding_providers_demo.py` | Google | Vector embeddings |
 | 6b | `embeddings/dynamic_registration_demo.py` | None | Dynamic model/provider registration |
 | 7 | `intelligence/gemini_agent_demo.py` | Google | BaseAgent reasoning loop + tools |

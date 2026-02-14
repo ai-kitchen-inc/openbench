@@ -27,8 +27,8 @@ uvicorn server:app --port 8000 --reload
 
 ```bash
 cd examples/chat/frontend
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 ### 3. Open the browser
@@ -72,18 +72,24 @@ Uses `ChatProvider` + `SessionSidebar` + `ChatPanel`. Minimal code, full feature
 ## Architecture
 
 ```
-Browser (React)              Server (Python)
-┌──────────────┐             ┌──────────────────┐
-│ ChatProvider  │── SSE ────>│ FastAPI           │
-│  └─ ChatPanel│<────────────│  └─ AGUIHandler   │
-│     └─ A2UI  │             │     └─ ChatEngine  │
-│       render  │── REST ───>│       └─ Agent     │
-│              │<────────────│          ├─ Gemini │
-└──────────────┘             │          └─ Tools  │
-                             │            ├─ search_web
-                             │            ├─ analyze_file
-                             │            ├─ knowledge_lookup
-                             │            ├─ calculate
-                             │            └─ get_datetime
-                             └──────────────────┘
+Browser (React)                         Server (Python)
++--------------------------------------+--------------------------------------+
+|                                       |                                      |
+|  ChatProvider                         |  FastAPI                             |
+|    SessionSidebar                     |                                      |
+|    ChatPanel                          |  POST /awp ------> AGUIHandler       |
+|      MessageList  <--- SSE stream --- |    TextMessageStart/Content/End      |
+|      A2UI surfaces <-- SSE stream --- |    Custom (A2UI createSurface, ...)  |
+|      ChatInput --- POST /awp -------> |                                      |
+|                                       |  POST /chat/action > ActionHandler   |
+|                                       |  POST /chat/upload > file upload     |
+|                                       |                                      |
++--------------------------------------+  ChatEngine                          |
+                                        |    Gemini Agent (BaseAgent)          |
+                                        |      search_web                     |
+                                        |      analyze_file                   |
+                                        |      knowledge_lookup               |
+                                        |      calculate                      |
+                                        |      get_datetime                   |
+                                        +--------------------------------------+
 ```
