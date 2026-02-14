@@ -6,6 +6,8 @@ This module provides factory functions for creating agents.
 
 Agents are registered with AgentRegistry for dynamic discovery and extensibility.
 """
+from __future__ import annotations
+
 
 from typing import Any
 

@@ -26,17 +26,18 @@ import {
 import type { A2UIComponentRenderer } from "../../types";
 import { resolveString, resolveValue } from "../data-binding";
 
+/** Notion-inspired monochrome palette — carbon to light gray, no color. */
 const DEFAULT_COLORS = [
-  "#8884d8",
-  "#82ca9d",
-  "#ffc658",
-  "#ff7300",
-  "#0088fe",
-  "#00c49f",
-  "#ffbb28",
-  "#ff8042",
-  "#a4de6c",
-  "#d0ed57",
+  "#37352f",
+  "#787774",
+  "#9b9a97",
+  "#bfbfba",
+  "#d8d7d3",
+  "#4a4946",
+  "#6b6b67",
+  "#acaba7",
+  "#c8c7c2",
+  "#55544f",
 ];
 
 export const ObChart: A2UIComponentRenderer = ({ component, surface }) => {

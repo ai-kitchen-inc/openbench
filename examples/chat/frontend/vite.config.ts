@@ -8,12 +8,19 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/chat/ws": {
+      "/chat/stream": {
         target: "http://localhost:8000",
-        ws: true,
         changeOrigin: true,
       },
-      "/chat/stream": {
+      "/chat/action": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
+      "/chat/upload": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
+      "/uploads": {
         target: "http://localhost:8000",
         changeOrigin: true,
       },

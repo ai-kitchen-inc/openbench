@@ -1,6 +1,6 @@
 ---
 name: chat-layer
-description: Working with OpenBench chat layer - ChatEngine, A2UI v0.10 builder, content renderers, WebSocket transport, and ChatLayer L2 orchestrator. Use when building chat interfaces, streaming A2UI JSONL, rendering rich content (charts, forms, files), or composing chat workflows.
+description: Working with OpenBench chat layer - ChatEngine, A2UI v0.10 builder, content renderers, SSE + REST transport, and ChatLayer L2 orchestrator. Use when building chat interfaces, streaming A2UI JSONL, rendering rich content (charts, forms, files), or composing chat workflows.
 ---
 
 # Chat Layer
@@ -41,7 +41,8 @@ src/openbench/chat/
 │   └── file.py         # FileRenderer (file preview/download)
 ├── transport/
 │   ├── base.py         # Transport ABC
-│   └── websocket.py    # WebSocket transport (FastAPI)
+│   ├── sse.py          # SSE transport (FastAPI, primary)
+│   └── websocket.py    # WebSocket transport (FastAPI, optional)
 └── layer.py            # ChatLayer (L2) + ChatFactory
 ```
 
@@ -144,58 +145,69 @@ messages = builder.build_surface(
 jsonl = builder.to_jsonl(messages)
 ```
 
-## WebSocket Transport
+## SSE Transport (Primary)
 
 ```python
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
 from openbench.chat import ChatEngine
-from openbench.chat.transport import ChatWebSocketServer
+from openbench.chat.transport.sse import ChatSSEHandler
 
 app = FastAPI()
 engine = ChatEngine(agent=my_agent)
-ws_server = ChatWebSocketServer(engine=engine)
+sse_handler = ChatSSEHandler(engine=engine)
 
-@app.websocket("/chat/ws")
-async def chat_ws(websocket: WebSocket):
-    await ws_server.handle(websocket)
+@app.post("/chat/stream")
+async def chat_stream(request: Request):
+    body = await request.json()
+    return StreamingResponse(
+        sse_handler.stream(body),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+@app.post("/chat/action")
+async def chat_action(request: Request):
+    body = await request.json()
+    result = await asyncio.to_thread(engine.invoke, {
+        "content": f"[Action: {body.get('name')}]",
+        "action": body,
+    })
+    return result.get("messages", [])
 ```
 
-## WebSocket Protocol
+## SSE Protocol
 
 ```
 Client                                Server
-  |-- {"type":"message",           -->|  User sends
-  |    "sessionId":"...",             |
-  |    "content":"Show Q4 sales"}    |
   |                                   |
-  |<-- {"type":"stream_start",     ---|  Stream begins
+  |-- POST /chat/stream            -->|  User sends message
+  |    {"type":"message",             |
+  |     "sessionId":"...",            |
+  |     "content":"Show Q4 sales"}   |
+  |                                   |
+  |<-- data: {"type":"stream_start",  |  SSE: stream begins
   |     "messageId":"msg-123"}        |
   |                                   |
-  |<-- {"version":"v0.10",         ---|  A2UI: create surface
-  |     "createSurface":{             |
-  |       "surfaceId":"s1",           |
-  |       "catalogId":"..."}}         |
+  |<-- data: {"version":"v0.10",      |  SSE: A2UI create surface
+  |     "createSurface":{...}}        |
   |                                   |
-  |<-- {"version":"v0.10",         ---|  A2UI: components
-  |     "updateComponents":{          |
-  |       "surfaceId":"s1",           |
-  |       "components":[...]}}        |
+  |<-- data: {"version":"v0.10",      |  SSE: A2UI components
+  |     "updateComponents":{...}}     |
   |                                   |
-  |<-- {"version":"v0.10",         ---|  A2UI: data
-  |     "updateDataModel":{           |
-  |       "surfaceId":"s1",           |
-  |       "path":"/chart",            |
-  |       "value":{...}}}             |
+  |<-- data: {"version":"v0.10",      |  SSE: A2UI data
+  |     "updateDataModel":{...}}      |
   |                                   |
-  |<-- {"type":"stream_end",       ---|  Stream complete
+  |<-- data: {"type":"stream_end",    |  SSE: stream complete
   |     "messageId":"msg-123",        |
-  |     "metadata":{...}}            |
+  |     "metadata":{...}}             |
   |                                   |
-  |-- {"type":"action",            -->|  User action (A2UI event)
-  |    "name":"submit_form",          |
-  |    "surfaceId":"s1",              |
-  |    "sourceComponentId":"btn",     |
-  |    "context":{...}}              |
+  |-- POST /chat/action            -->|  User action (A2UI event)
+  |    {"name":"submit_form",         |
+  |     "surfaceId":"s1",             |
+  |     "sourceComponentId":"btn",    |
+  |     "context":{...}}             |
+  |<-- [response messages]         ---|  JSON array
 ```
 
 ## Custom A2UI Catalog
@@ -214,10 +226,10 @@ Note: `AudioPlayer` and `Video` are standard A2UI components -- no custom wrappe
 ## Anti-Patterns
 
 **DO NOT:**
-- Import `fastapi` or `websockets` at module level -- use lazy imports (they're optional deps)
+- Import `fastapi` at module level -- use lazy imports (it's an optional dep)
 - Create ChatEngine without an agent -- it requires `Agent | FrameworkAdapter`
 - Skip `detect()` before `render()` on ContentRenderers -- always check first
-- Send raw strings over WebSocket -- always use A2UI v0.10 JSONL format
+- Send raw strings over SSE -- always use A2UI v0.10 JSONL format
 - Use `surfaceUpdate` or `beginRendering` -- those are NOT real A2UI message types
 - Use `"type"` on components -- the correct field is `"component"`
 - Nest properties inside a `"properties"` dict -- A2UI properties are flat on the component object

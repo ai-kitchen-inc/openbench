@@ -9,6 +9,8 @@ Defines the four A2UI message types matching the Google A2UI v0.10 specification
 
 Reference: https://github.com/google/A2UI -- specification/v0_10/
 """
+from __future__ import annotations
+
 
 import logging
 from dataclasses import dataclass, field

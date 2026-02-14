@@ -1,6 +1,6 @@
 ---
 name: chat-ui
-description: Building and extending the @openbench/chat-ui TypeScript/React SDK. Use when creating chat components, A2UI v0.10 renderers, custom components, hooks, WebSocket transport, or styling the chat interface.
+description: Building and extending the @openbench/chat-ui TypeScript/React SDK. Use when creating chat components, A2UI v0.10 renderers, custom components, hooks, SSE + REST transport, or styling the chat interface.
 ---
 
 # Chat UI SDK
@@ -26,7 +26,7 @@ packages/chat-ui/
 │   ├── index.ts              # Public API exports
 │   ├── types.ts              # All TypeScript interfaces
 │   ├── core/                 # No React dependency
-│   │   ├── transport.ts      # WebSocket client
+│   │   ├── transport.ts      # SSE + REST client
 │   │   ├── message-processor.ts  # A2UI v0.10 JSONL parser
 │   │   ├── chat-store.ts     # Zustand store
 │   │   └── utils.ts          # Helpers
@@ -55,7 +55,7 @@ import '@openbench/chat-ui/styles/chat-ui.css';
 
 function ChatPage() {
   return (
-    <ChatProvider config={{ wsUrl: 'ws://localhost:8000/chat/ws' }}>
+    <ChatProvider config={{ streamUrl: '/chat/stream' }}>
       <div className="flex h-screen">
         <SessionSidebar />
         <ChatPanel className="flex-1" />
@@ -72,7 +72,7 @@ import { useChat } from '@openbench/chat-ui';
 
 function MyChat() {
   const { messages, sendMessage, isStreaming } = useChat({
-    wsUrl: 'ws://localhost:8000/chat/ws',
+    streamUrl: '/chat/stream',
   });
   return (
     <div>

@@ -48,6 +48,8 @@ export interface Attachment {
   url: string;
   mimeType: string;
   sizeBytes?: number;
+  file?: File; // Browser File reference (never serialized to server)
+  extractedPreview?: string; // Text preview from server extraction
 }
 
 // ── Sessions ──
@@ -210,15 +212,13 @@ export type ClientPayload = ClientMessage | ClientAction;
 // ── Configuration ──
 
 export interface ChatConfig {
-  wsUrl: string;
-  streamUrl?: string; // SSE endpoint URL (e.g., "/chat/stream") for progressive streaming
-  reconnect?: boolean; // default: true
-  reconnectInterval?: number; // default: 3000ms
-  maxReconnectAttempts?: number; // default: 5
+  streamUrl: string; // POST → SSE (e.g., "/chat/stream")
+  actionUrl?: string; // POST → JSON (defaults to "/chat/action")
+  uploadUrl?: string; // POST → JSON (defaults to "/chat/upload")
   theme?: "light" | "dark" | "auto";
 }
 
-export type TransportStatus = "connecting" | "connected" | "disconnected" | "error";
+export type TransportStatus = "connected" | "disconnected" | "error";
 
 // ── Component Catalog ──
 

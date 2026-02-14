@@ -1,4 +1,6 @@
 """Pre-built agent types extending BaseAgent."""
+from __future__ import annotations
+
 
 import logging
 from collections.abc import Callable

@@ -7,6 +7,8 @@ Provides unified provider configuration and resolution:
 - Default provider per type
 - Integration with PluginRegistry for instance creation
 """
+from __future__ import annotations
+
 
 import base64
 import contextlib

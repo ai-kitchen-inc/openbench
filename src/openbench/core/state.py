@@ -3,6 +3,8 @@ State management for workflows.
 
 Enables checkpointing, pause/resume, and replay capabilities.
 """
+from __future__ import annotations
+
 
 import contextlib
 import json

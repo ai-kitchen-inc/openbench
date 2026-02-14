@@ -4,6 +4,8 @@ Text content renderer.
 Converts plain text and markdown strings to A2UI Text and ObMarkdown components.
 Handles semantic variants (h1-h5, body, caption) via markdown heading detection.
 """
+from __future__ import annotations
+
 
 import re
 import uuid
@@ -56,6 +58,10 @@ class TextRenderer(ContentRenderer):
             r"^\s*[-*+]\s",  # Unordered lists
             r"^\s*\d+\.\s",  # Ordered lists
             r"^\s*>",        # Blockquotes
+            r"\$\$",         # Display math ($$...$$)
+            r"(?<!\$)\$(?!\$|\d).+?\$(?!\$)",  # Inline math ($...$), not $$ or currency ($digits)
+            r"\\\[",         # Display math (\[...\])
+            r"\\\(",         # Inline math (\(...\))
         ]
         for pattern in complex_patterns:
             if re.search(pattern, text, re.MULTILINE):

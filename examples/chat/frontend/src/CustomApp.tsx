@@ -11,8 +11,8 @@
 import { ChatProvider, SurfaceRenderer, useChatContext } from "@openbench/chat-ui";
 import { useState } from "react";
 import "@openbench/chat-ui/styles/chat-ui.css";
+import "@openbench/chat-ui/styles/bundle.css";
 
-const WS_URL = `ws://${window.location.host}/chat/ws`;
 const STREAM_URL = "/chat/stream";
 
 function CustomChat() {
@@ -72,7 +72,7 @@ function CustomChat() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSend()}
           placeholder="Try: chart, pie, form, file..."
-          disabled={isStreaming || connectionStatus !== "connected"}
+          disabled={isStreaming}
           style={{
             flex: 1,
             padding: "10px 14px",
@@ -106,7 +106,7 @@ function CustomChat() {
 
 export default function CustomApp() {
   return (
-    <ChatProvider config={{ wsUrl: WS_URL, streamUrl: STREAM_URL }}>
+    <ChatProvider config={{ streamUrl: STREAM_URL }}>
       <CustomChat />
     </ChatProvider>
   );

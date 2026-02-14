@@ -1,4 +1,6 @@
 """Project context for multi-tenant data isolation."""
+from __future__ import annotations
+
 
 import json
 import secrets

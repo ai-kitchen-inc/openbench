@@ -1,15 +1,15 @@
 # OpenBench Chat Demo
 
-End-to-end demo: Python WebSocket backend + React frontend using `@openbench/chat-ui`.
+End-to-end demo: Python SSE backend + React frontend using `@openbench/chat-ui`.
 
-## Two Modes
+## Features
 
-| Mode | When | Agent | Capabilities |
-|------|------|-------|-------------|
-| **Gemini** | `GOOGLE_API_KEY` is set | `BaseAgent` + `GeminiLLMProvider` | Real LLM reasoning, tool calling, multi-turn memory |
-| **Mock** | No API key | `MockAgent` | Deterministic responses based on keywords |
-
-The server auto-detects which mode to use at startup.
+- **Gemini agent** with real LLM reasoning, tool calling, and multi-turn memory
+- **Web search** via Google Search grounding (GroundedSearchSource)
+- **File upload & analysis** -- upload PDFs/text files, agent reads and answers questions
+- **Knowledge base** -- curated data on renewable energy, AI trends, market data
+- **Calculator** -- math expression evaluation
+- **Rich UI** -- A2UI v0.10 streaming with charts, forms, file cards, markdown
 
 ## Quick Start
 
@@ -17,13 +17,9 @@ The server auto-detects which mode to use at startup.
 
 ```bash
 cd examples/chat
-pip install fastapi uvicorn websockets
+pip install fastapi uvicorn
 
-# Option A: With real Gemini agent
 export GOOGLE_API_KEY=your-key-here
-uvicorn server:app --port 8000 --reload
-
-# Option B: Without API key (mock agent)
 uvicorn server:app --port 8000 --reload
 ```
 
@@ -41,36 +37,24 @@ Navigate to http://localhost:5173
 
 ## Example Prompts
 
-### Mock mode (keyword-based)
-
-| Prompt | Content Type |
-|--------|-------------|
-| `chart` or `sales` | Bar chart |
-| `pie` | Pie chart |
-| `line` or `trend` | Line chart |
-| `form` or `register` | Interactive form |
-| `file` or `download` | File card |
-| anything else | Markdown text |
-
-### Gemini mode (real AI)
-
+- "Search the web for latest AI agent trends" (uses search_web tool)
 - "What are the latest AI trends?" (uses knowledge_lookup tool)
 - "Calculate sqrt(144) * pi" (uses calculate tool)
 - "What time is it?" (uses get_datetime tool)
-- "Compare solar and wind energy costs" (tool + reasoning)
+- "Compare solar and wind energy costs" (uses knowledge_lookup + reasoning)
+- Upload a PDF -> "Summarize this document" (uses analyze_file tool)
 - Any open-ended question (direct LLM response)
 
 ## Project Structure
 
 ```
 examples/chat/
-├── mock_agent.py           # Mock agent (no API key)
-├── gemini_agent.py         # Real Gemini agent (BaseAgent + tools)
-├── server.py               # FastAPI server (auto-detects mode)
+├── gemini_agent.py         # Gemini agent (BaseAgent + 5 tools)
+├── server.py               # FastAPI server (SSE + REST + upload)
 ├── frontend/
 │   ├── package.json        # Vite + React + @openbench/chat-ui
 │   ├── tsconfig.json       # TypeScript config
-│   ├── vite.config.ts      # Vite dev (proxies WS to :8000)
+│   ├── vite.config.ts      # Vite dev (proxies SSE/REST to :8000)
 │   ├── index.html          # Entry HTML
 │   └── src/
 │       ├── main.tsx        # React entry
@@ -100,11 +84,16 @@ import App from './CustomApp';
 ```
 Browser (React)              Server (Python)
 ┌──────────────┐             ┌──────────────────┐
-│ ChatProvider  │◄──── WS ──►│ FastAPI           │
-│  └─ ChatPanel│             │  └─ WS Server     │
+│ ChatProvider  │── SSE ────>│ FastAPI           │
+│  └─ ChatPanel│<────────────│  └─ SSE Handler   │
 │     └─ A2UI  │             │     └─ ChatEngine  │
-│       render  │             │       └─ Agent     │
-└──────────────┘             │          ├─ Gemini │
-                             │          └─ Tools  │
+│       render  │── REST ───>│       └─ Agent     │
+│              │<────────────│          ├─ Gemini │
+└──────────────┘             │          └─ Tools  │
+                             │            ├─ search_web
+                             │            ├─ analyze_file
+                             │            ├─ knowledge_lookup
+                             │            ├─ calculate
+                             │            └─ get_datetime
                              └──────────────────┘
 ```

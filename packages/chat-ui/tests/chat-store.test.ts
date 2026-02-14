@@ -280,14 +280,14 @@ describe("ChatStore", () => {
     });
 
     it("setConnectionStatus updates status", () => {
-      state().setConnectionStatus("connecting");
-      expect(state().connectionStatus).toBe("connecting");
-
       state().setConnectionStatus("connected");
       expect(state().connectionStatus).toBe("connected");
 
       state().setConnectionStatus("error");
       expect(state().connectionStatus).toBe("error");
+
+      state().setConnectionStatus("disconnected");
+      expect(state().connectionStatus).toBe("disconnected");
     });
 
     it("setSidebarOpen toggles sidebar", () => {

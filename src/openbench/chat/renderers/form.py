@@ -5,6 +5,8 @@ Converts form field definitions to A2UI input components
 (TextField, CheckBox, ChoicePicker, Slider, DateTimeInput)
 with data binding and validation checks.
 """
+from __future__ import annotations
+
 
 import uuid
 from typing import Any
@@ -64,21 +66,45 @@ class FormRenderer(ContentRenderer):
         return isinstance(fields, list) and len(fields) > 0
 
     def render(self, content: Any, surface_id: str) -> list[A2UIComponent]:
-        """Convert form definition to A2UI input components."""
+        """Convert form definition to A2UI input components.
+
+        Wraps all fields in a Card → Column structure with optional title.
+        """
         fields = content["fields"]
+        title = content.get("title", "")
         submit_label = content.get("submitLabel", "Submit")
         submit_action = content.get("submitAction", "submit_form")
 
         components: list[A2UIComponent] = []
-        child_ids: list[str] = []
+        col_child_ids: list[str] = []
 
+        # Form title
+        if title:
+            title_id = _gen_id("form-title")
+            components.append(A2UIComponent(
+                id=title_id,
+                component="Text",
+                properties={"text": title, "variant": "h4"},
+            ))
+            col_child_ids.append(title_id)
+
+            # Divider after title
+            divider_id = _gen_id("form-divider")
+            components.append(A2UIComponent(
+                id=divider_id,
+                component="Divider",
+                properties={},
+            ))
+            col_child_ids.append(divider_id)
+
+        # Render fields
         for field_def in fields:
             field_components = self._render_field(field_def)
             for comp in field_components:
                 components.append(comp)
-                child_ids.append(comp.id)
+                col_child_ids.append(comp.id)
 
-        # Submit button
+        # Submit button (full-width)
         btn_id = _gen_id("btn")
         context: dict[str, Any] = {}
         for field_def in fields:
@@ -90,6 +116,7 @@ class FormRenderer(ContentRenderer):
             component="Button",
             properties={
                 "label": submit_label,
+                "fullWidth": True,
                 "action": {
                     "event": {
                         "name": submit_action,
@@ -98,7 +125,23 @@ class FormRenderer(ContentRenderer):
                 },
             },
         ))
-        child_ids.append(btn_id)
+        col_child_ids.append(btn_id)
+
+        # Wrap in Column
+        col_id = _gen_id("form-col")
+        components.append(A2UIComponent(
+            id=col_id,
+            component="Column",
+            properties={"children": col_child_ids, "gap": "16px"},
+        ))
+
+        # Wrap in Card
+        card_id = _gen_id("form-card")
+        components.append(A2UIComponent(
+            id=card_id,
+            component="Card",
+            properties={"children": [col_id], "elevation": 0, "padding": "24px"},
+        ))
 
         return components
 
@@ -113,8 +156,16 @@ class FormRenderer(ContentRenderer):
         comp_id = _gen_id(f"field-{name}")
         props: dict[str, Any] = {"label": label}
 
+        # Required indicator as separate prop (frontend renders red *)
+        if field_def.get("required"):
+            props["required"] = True
+
         # Data binding for value
         props["value"] = {"path": data_path}
+
+        # Placeholder support
+        if "placeholder" in field_def:
+            props["placeholder"] = field_def["placeholder"]
 
         # Type-specific properties
         if component_type == "TextField":
@@ -152,7 +203,19 @@ class FormRenderer(ContentRenderer):
         if checks:
             props["checks"] = checks
 
-        return [A2UIComponent(id=comp_id, component=component_type, properties=props)]
+        result = [A2UIComponent(id=comp_id, component=component_type, properties=props)]
+
+        # Description/help text
+        description = field_def.get("description")
+        if description:
+            desc_id = _gen_id(f"desc-{name}")
+            result.append(A2UIComponent(
+                id=desc_id,
+                component="Text",
+                properties={"text": description, "variant": "caption"},
+            ))
+
+        return result
 
     def _build_checks(
         self, field_def: dict[str, Any], data_path: str

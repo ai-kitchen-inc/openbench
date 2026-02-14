@@ -3,6 +3,8 @@ E2B sandbox adapter for OpenBench.
 
 Allows running custom Python code in isolated sandboxed environments.
 """
+from __future__ import annotations
+
 
 import json
 from typing import Any

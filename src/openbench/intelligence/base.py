@@ -11,6 +11,8 @@ Provides:
 This decouples agents from specific frameworks (Mastra, LangChain, etc.)
 while maintaining compatibility with any LLM provider.
 """
+from __future__ import annotations
+
 
 import inspect
 import json

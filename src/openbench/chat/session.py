@@ -6,6 +6,8 @@ Provides:
 - Attachment: File/media attachment
 - ChatSession: Manages conversation history and state
 """
+from __future__ import annotations
+
 
 import logging
 import uuid
@@ -36,6 +38,7 @@ class Attachment:
     url: str
     mime_type: str
     size_bytes: int | None = None
+    extracted_text: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict."""
@@ -48,6 +51,8 @@ class Attachment:
         }
         if self.size_bytes is not None:
             result["sizeBytes"] = self.size_bytes
+        if self.extracted_text is not None:
+            result["extractedText"] = self.extracted_text
         return result
 
     @classmethod
@@ -60,6 +65,7 @@ class Attachment:
             url=data["url"],
             mime_type=data["mimeType"],
             size_bytes=data.get("sizeBytes"),
+            extracted_text=data.get("extractedText"),
         )
 
 

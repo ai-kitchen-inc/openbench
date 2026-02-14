@@ -11,9 +11,13 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
-    "./styles/chat-ui.css": "./styles/chat-ui.css"
+    "./styles/chat-ui.css": "./styles/chat-ui.css",
+    "./styles/bundle.css": "./dist/index.css"
   },
-  "files": ["dist", "styles"],
+  "files": [
+    "dist",
+    "styles"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -31,8 +35,12 @@
   },
   "dependencies": {
     "dompurify": "^3.3.1",
+    "katex": "^0.16.0",
     "react-markdown": "^10.1.0",
     "recharts": "^3.7.0",
+    "rehype-katex": "^7.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "shiki": "^3.22.0",
     "zustand": "^5.0.0"
   },
@@ -51,7 +59,14 @@
     "vite-plugin-dts": "^4.3.0",
     "vitest": "^3.0.0"
   },
-  "keywords": ["react", "chat", "a2ui", "openbench", "ui", "streaming"],
+  "keywords": [
+    "react",
+    "chat",
+    "a2ui",
+    "openbench",
+    "ui",
+    "streaming"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",

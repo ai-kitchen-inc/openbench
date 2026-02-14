@@ -38,9 +38,6 @@ export type { AttachmentPreviewProps } from "./components/AttachmentPreview";
 export { useChat } from "./hooks/use-chat";
 export type { UseChatReturn } from "./hooks/use-chat";
 
-export { useChatTransport } from "./hooks/use-chat-transport";
-export type { UseChatTransportReturn } from "./hooks/use-chat-transport";
-
 export { useA2UIProcessor } from "./hooks/use-a2ui-processor";
 export type { UseA2UIProcessorReturn } from "./hooks/use-a2ui-processor";
 

@@ -3,6 +3,8 @@ Transport abstract base class.
 
 Defines the interface for chat transport implementations (WebSocket, SSE, etc.).
 """
+from __future__ import annotations
+
 
 from abc import ABC, abstractmethod
 from typing import Any

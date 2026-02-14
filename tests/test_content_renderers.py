@@ -127,6 +127,57 @@ class TestTextRenderer(unittest.TestCase):
         md_components = self.renderer.render("```\ncode\n```", surface_id="s1")
         self.assertTrue(md_components[0].id.startswith("md-"))
 
+    # -- LaTeX detection --
+
+    def test_render_inline_math(self):
+        """Inline math ($...$) should be detected as complex markdown."""
+        text = "The formula is $E = mc^2$ here."
+        components = self.renderer.render(text, surface_id="s1")
+        self.assertEqual(components[0].component, "ObMarkdown")
+
+    def test_render_display_math(self):
+        """Display math ($$...$$) should be detected as complex markdown."""
+        text = "$$\\sum_{i=1}^n x_i$$"
+        components = self.renderer.render(text, surface_id="s1")
+        self.assertEqual(components[0].component, "ObMarkdown")
+
+    def test_render_latex_paren(self):
+        """LaTeX inline math (\\(...\\)) should be detected as complex markdown."""
+        text = "The formula is \\(f(x) = x^2\\) here."
+        components = self.renderer.render(text, surface_id="s1")
+        self.assertEqual(components[0].component, "ObMarkdown")
+
+    def test_render_latex_bracket(self):
+        """LaTeX display math (\\[...\\]) should be detected as complex markdown."""
+        text = "\\[a^2 + b^2 = c^2\\]"
+        components = self.renderer.render(text, surface_id="s1")
+        self.assertEqual(components[0].component, "ObMarkdown")
+
+    def test_dollar_sign_not_math(self):
+        """A lone dollar sign like 'Price is $50' should NOT trigger math detection."""
+        text = "Price is $50"
+        components = self.renderer.render(text, surface_id="s1")
+        # Should remain simple text, not ObMarkdown
+        self.assertEqual(components[0].component, "Text")
+
+    def test_currency_multiple_dollars_not_math(self):
+        """Multiple currency amounts like '$0.03/kWh ... $0.034/kWh' should NOT be math."""
+        text = "Solar costs $0.03/kWh for solar and $0.034/kWh for wind."
+        components = self.renderer.render(text, surface_id="s1")
+        self.assertEqual(components[0].component, "Text")
+
+    def test_currency_with_commas_not_math(self):
+        """Currency with commas like '$1,000' should NOT trigger math."""
+        text = "The budget is $1,000 and expenses are $500."
+        components = self.renderer.render(text, surface_id="s1")
+        self.assertEqual(components[0].component, "Text")
+
+    def test_render_mixed_math_and_text(self):
+        """Text with both markdown headings and math should use ObMarkdown."""
+        text = "The quadratic formula is $x = \\frac{-b}{2a}$ and it works."
+        components = self.renderer.render(text, surface_id="s1")
+        self.assertEqual(components[0].component, "ObMarkdown")
+
 
 if __name__ == "__main__":
     unittest.main()
