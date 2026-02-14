@@ -7,8 +7,8 @@ Provides unified provider configuration and resolution:
 - Default provider per type
 - Integration with PluginRegistry for instance creation
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import base64
 import contextlib
@@ -171,7 +171,7 @@ class ProviderConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any], decrypt: bool = False) -> "ProviderConfig":
+    def from_dict(cls, data: dict[str, Any], decrypt: bool = False) -> ProviderConfig:
         """Create from dictionary."""
         credentials = data.get("credentials", {})
         if decrypt:

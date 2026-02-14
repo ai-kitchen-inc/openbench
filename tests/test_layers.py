@@ -1,6 +1,6 @@
 """Tests for L2 Layer classes."""
-from __future__ import annotations
 
+from __future__ import annotations
 
 import unittest
 from typing import Any
@@ -104,7 +104,10 @@ class MockGenerator(OutputGenerator):
 
     def generate(self, content: Any, template: str | None = None, **options) -> GeneratedOutput:
         return GeneratedOutput(
-            file_path=f"/tmp/test.{self._format}", format=self._format, size_bytes=100, metadata={}
+            file_path=f"/tmp/test.{self._format}",
+            format=self._format,
+            size_bytes=100,
+            metadata={},
         )
 
     def validate(self, content: Any) -> bool:

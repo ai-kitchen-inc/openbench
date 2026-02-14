@@ -29,13 +29,13 @@ Example:
         examples=[...]
     )
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import hashlib
 import os
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal
 
 from openbench.core.abstractions import DataSource, RawData
 from openbench.data.exceptions import ExtractionError, ValidationError
@@ -109,7 +109,7 @@ class LangExtractSource(DataSource):
         temperature: float = 0.3,
         include_positions: bool = True,
         filter_classes: list[str] | None = None,
-        store: Optional["DataStore"] = None,
+        store: DataStore | None = None,
         auto_index: bool = False,
     ):
         """Initialize LangExtract source.

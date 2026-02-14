@@ -424,11 +424,15 @@ def demo_config_driven():
     )
 
     agent = AgentRegistry.create(
-        config["agent"]["type"], config["agent"]["provider"], goal=config["agent"]["goal"]
+        config["agent"]["type"],
+        config["agent"]["provider"],
+        goal=config["agent"]["goal"],
     )
 
     generator = OutputGeneratorRegistry.create(
-        config["output"]["format"], config["output"]["provider"], style=config["output"]["style"]
+        config["output"]["format"],
+        config["output"]["provider"],
+        style=config["output"]["style"],
     )
 
     print("✅ Created from config:")

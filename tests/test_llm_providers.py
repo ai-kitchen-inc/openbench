@@ -107,7 +107,12 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
     def test_tool_message_converted(self, mock_client):
         """Test tool result message becomes function_response."""
         messages = [
-            {"role": "tool", "content": '{"result": "42"}', "name": "calc", "tool_call_id": "c0"},
+            {
+                "role": "tool",
+                "content": '{"result": "42"}',
+                "name": "calc",
+                "tool_call_id": "c0",
+            },
         ]
         _system, contents = self.provider._convert_messages(messages)
         self.assertEqual(len(contents), 1)
@@ -202,8 +207,14 @@ class TestGeminiLLMProviderConvertTools(unittest.TestCase):
     def test_multiple_tools(self):
         """Test converting multiple tools into a single types.Tool."""
         tools = [
-            {"type": "function", "function": {"name": "search", "description": "Search"}},
-            {"type": "function", "function": {"name": "calc", "description": "Calculate"}},
+            {
+                "type": "function",
+                "function": {"name": "search", "description": "Search"},
+            },
+            {
+                "type": "function",
+                "function": {"name": "calc", "description": "Calculate"},
+            },
         ]
         result = self.provider._convert_tools(tools)
         self.assertEqual(len(result), 1)  # Wrapped in single Tool

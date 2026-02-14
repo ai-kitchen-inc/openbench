@@ -547,6 +547,22 @@ Processing flow inside `invoke()`:
 10. Return {messages, session, metadata}
 ```
 
+**Streaming flow** (via AGUIHandler):
+```
+1. Parse input, add user message to session
+2. Step "Processing input"
+3. Step "Thinking":
+   a. agent.execute(context, on_chunk=callback) in thread pool
+   b. on_chunk puts deltas into asyncio.Queue (thread-safe bridge)
+   c. TEXT_MESSAGE_START -> TEXT_MESSAGE_CONTENT (deltas) -> TEXT_MESSAGE_END
+4. Step "Rendering response" (only if rich content like charts/files):
+   a. ContentRenderers produce A2UI components (text skipped, already streamed)
+   b. CUSTOM(a2ui, createSurface) -> CUSTOM(a2ui, updateComponents)
+5. RUN_FINISHED with complete text + metadata
+```
+
+Text-only responses have 2 steps (Processing + Thinking). Rich content responses have 3 steps (+ Rendering).
+
 #### ChatLayer (layer.py)
 
 L2 orchestrator -- composable with DataLayer, IntelligenceLayer, OutputLayer:
@@ -628,6 +644,30 @@ Client (@openbench/chat-ui)              Server (Python)
   |<-- data: {"type":"STEP_FINISHED",       |
   |     "stepName":"Processing input"}      |
   |                                          |
+  |<-- data: {"type":"STEP_STARTED",        |  AG-UI: thinking step
+  |     "stepName":"Thinking"}              |
+  |                                          |
+  |<-- data: {"type":"TEXT_MESSAGE_START",  |  AG-UI: text streaming begins
+  |     "messageId":"msg-abc123",           |
+  |     "role":"assistant"}                 |
+  |                                          |
+  |<-- data: {"type":"TEXT_MESSAGE_CONTENT",|  AG-UI: progressive text deltas
+  |     "messageId":"msg-abc123",           |  (token-by-token streaming)
+  |     "delta":"The quarterly"}            |
+  |<-- data: {"type":"TEXT_MESSAGE_CONTENT",|
+  |     "messageId":"msg-abc123",           |
+  |     "delta":" revenue shows..."}        |
+  |   ... (more deltas)                     |
+  |                                          |
+  |<-- data: {"type":"TEXT_MESSAGE_END",    |  AG-UI: text streaming complete
+  |     "messageId":"msg-abc123"}           |
+  |                                          |
+  |<-- data: {"type":"STEP_FINISHED",       |
+  |     "stepName":"Thinking"}              |
+  |                                          |
+  |<-- data: {"type":"STEP_STARTED",        |  AG-UI: rendering (only if rich content)
+  |     "stepName":"Rendering response"}    |
+  |                                          |
   |<-- data: {"type":"CUSTOM",              |  AG-UI: A2UI create surface
   |     "name":"a2ui","value":{             |
   |       "version":"v0.10",                |
@@ -637,6 +677,9 @@ Client (@openbench/chat-ui)              Server (Python)
   |     "name":"a2ui","value":{             |
   |       "version":"v0.10",                |
   |       "updateComponents":{...}}}        |
+  |                                          |
+  |<-- data: {"type":"STEP_FINISHED",       |
+  |     "stepName":"Rendering response"}    |
   |                                          |
   |<-- data: {"type":"RUN_FINISHED",        |  AG-UI: run complete
   |     "threadId":"t1","runId":"r1",       |
@@ -1020,22 +1063,28 @@ ChatInput.onSend()
         v
 POST /awp -> Python AGUIHandler._event_stream()
   |-- session.add_user_message(content)
-  |-- agent.execute(context)  -> agent output (text + structured data)
-  |-- ContentRenderers detect and render:
-  |     TextRenderer   -> Text components (with id, component, text, variant)
+  |-- agent.execute(context, on_chunk=callback)  -> progressive streaming
+  |     |-- on_chunk("The ")     -> queue -> TEXT_MESSAGE_CONTENT(delta="The ")
+  |     |-- on_chunk("revenue ") -> queue -> TEXT_MESSAGE_CONTENT(delta="revenue ")
+  |     |-- ... (tokens stream progressively via asyncio.Queue bridge)
+  |     +-- returns ExecutionResult with complete text + structured data
+  |-- ContentRenderers detect and render (rich content only, text already streamed):
   |     ChartRenderer  -> ObChart component (with id, component, chartType, data)
   |     FileRenderer   -> ObFileCard component (with id, component, fileName, fileUrl)
-  |-- A2UIMessageBuilder builds A2UI v0.10 JSONL:
+  |-- A2UIMessageBuilder builds A2UI v0.10 JSONL (only if rich content exists):
   |     1. {"version":"v0.10","createSurface":{"surfaceId":"s1","catalogId":"..."}}
   |     2. {"version":"v0.10","updateComponents":{"surfaceId":"s1","components":[...]}}
-  |     3. {"version":"v0.10","updateDataModel":{"surfaceId":"s1","path":"/chart","value":{...}}}
   +-- Stream AG-UI events via SSE
         |
         v
 transport.onEvent() -> for each AG-UI event:
-  |-- { type: "RUN_STARTED" }           -> chatStore.setStreaming(true), create msg
-  |-- { type: "STEP_STARTED" }          -> addStep(msgId, stepName)
-  |-- { type: "CUSTOM", name: "a2ui" }  -> A2UI message processing:
+  |-- { type: "RUN_STARTED" }              -> chatStore.setStreaming(true), create msg
+  |-- { type: "STEP_STARTED" }             -> addStep(msgId, stepName)
+  |-- { type: "TEXT_MESSAGE_START" }       -> begin text accumulation
+  |-- { type: "TEXT_MESSAGE_CONTENT" }     -> append delta to message.content
+  |     (multiple deltas arrive progressively, text appears token-by-token)
+  |-- { type: "TEXT_MESSAGE_END" }         -> text streaming complete
+  |-- { type: "CUSTOM", name: "a2ui" }    -> A2UI message processing (rich content):
   |     |-- { createSurface: {...} }    -> messageProcessor: create surface entry
   |     |-- { updateComponents: {...} } -> messageProcessor: merge components
   |     |                                  if root exists -> surface renderable

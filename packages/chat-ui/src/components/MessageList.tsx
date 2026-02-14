@@ -1,5 +1,9 @@
 /**
  * MessageList — scrollable message history with auto-scroll.
+ *
+ * Scrolls the parent container (chat-panel__body) to bottom when content
+ * changes during streaming. Uses instant scroll during streaming to avoid
+ * animation cancellation on rapid deltas.
  */
 
 import { useEffect, useRef } from "react";
@@ -8,26 +12,45 @@ import { MessageBubble } from "./MessageBubble";
 
 export interface MessageListProps {
   messages: ChatMessage[];
+  isStreaming?: boolean;
   onAction?: (action: A2UIAction) => void;
 }
 
-export function MessageList({ messages, onAction }: MessageListProps) {
-  const endRef = useRef<HTMLDivElement>(null);
+export function MessageList({ messages, isStreaming, onAction }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Track content changes for scroll trigger.
+  const lastMsg = messages[messages.length - 1];
+  const scrollDep = `${messages.length}-${lastMsg?.content?.length ?? 0}-${lastMsg?.surfaces?.length ?? 0}`;
+
   useEffect(() => {
-    if (endRef.current && typeof endRef.current.scrollIntoView === "function") {
-      endRef.current.scrollIntoView({ behavior: "smooth" });
+    const el = containerRef.current;
+    if (!el) return;
+
+    // The scrollable parent is chat-panel__body (overflow-y: auto).
+    const scrollParent = el.parentElement;
+    if (!scrollParent) return;
+
+    if (isStreaming) {
+      // Instant scroll during streaming — no animation to cancel on rapid deltas
+      scrollParent.scrollTop = scrollParent.scrollHeight;
+    } else if (typeof scrollParent.scrollTo === "function") {
+      // Smooth scroll for new messages / completion
+      scrollParent.scrollTo({
+        top: scrollParent.scrollHeight,
+        behavior: "smooth",
+      });
+    } else {
+      // Fallback (e.g. jsdom) — instant scroll
+      scrollParent.scrollTop = scrollParent.scrollHeight;
     }
-  }, [messages.length]);
+  }, [scrollDep, isStreaming]);
 
   return (
     <div className="chat-message-list" ref={containerRef}>
       {messages.map((msg) => (
         <MessageBubble key={msg.id} message={msg} onAction={onAction} />
       ))}
-      <div ref={endRef} />
     </div>
   );
 }

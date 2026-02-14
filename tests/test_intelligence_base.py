@@ -1,6 +1,6 @@
 """Tests for framework-agnostic agent interface."""
-from __future__ import annotations
 
+from __future__ import annotations
 
 import unittest
 from typing import Any
@@ -173,7 +173,10 @@ class MockTool(Tool):
             "function": {
                 "name": self._name,
                 "description": self.description,
-                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                },
             },
         }
 

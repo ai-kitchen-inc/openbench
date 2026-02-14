@@ -34,6 +34,34 @@ class MockAgent(Agent):
         return 0.001
 
 
+class StreamingMockAgent(Agent):
+    """Mock agent that supports on_chunk streaming callback."""
+
+    def __init__(self, chunks: list[str] | None = None):
+        self._chunks = chunks or ["Hello", " ", "World", "!"]
+
+    @property
+    def agent_type(self) -> str:
+        return "streaming-mock"
+
+    def execute(self, context: ExecutionContext, on_chunk=None) -> ExecutionResult:
+        full_text = ""
+        for chunk in self._chunks:
+            if on_chunk:
+                on_chunk(chunk)
+            full_text += chunk
+        return ExecutionResult(
+            output=full_text,
+            status="success",
+            metadata={"model": "mock"},
+            tokens_used=10,
+            cost=0.001,
+        )
+
+    def estimate_cost(self, context: ExecutionContext) -> float:
+        return 0.001
+
+
 class ErrorMockAgent(Agent):
     """Mock agent that raises an error."""
 
@@ -113,8 +141,8 @@ class TestAGUIHandlerEventStream(unittest.TestCase):
         self.assertEqual(events[-1]["type"], "RUN_FINISHED")
         self.assertIn("result", events[-1])
 
-    def test_event_stream_three_step_pairs(self):
-        """Should emit exactly 3 STEP_STARTED and 3 STEP_FINISHED events."""
+    def test_event_stream_text_only_has_two_step_pairs(self):
+        """Text-only response should emit 2 STEP pairs (no Rendering step)."""
         engine = ChatEngine(agent=MockAgent("Reply"))
         handler = AGUIHandler(engine=engine)
 
@@ -123,11 +151,11 @@ class TestAGUIHandlerEventStream(unittest.TestCase):
         step_starts = [e for e in events if e["type"] == "STEP_STARTED"]
         step_finishes = [e for e in events if e["type"] == "STEP_FINISHED"]
 
-        self.assertEqual(len(step_starts), 3)
-        self.assertEqual(len(step_finishes), 3)
+        self.assertEqual(len(step_starts), 2)
+        self.assertEqual(len(step_finishes), 2)
 
-    def test_event_stream_step_names(self):
-        """Steps should have correct names in order."""
+    def test_event_stream_text_only_step_names(self):
+        """Text-only steps should be Processing input and Thinking (no Rendering)."""
         engine = ChatEngine(agent=MockAgent("Reply"))
         handler = AGUIHandler(engine=engine)
 
@@ -136,33 +164,75 @@ class TestAGUIHandlerEventStream(unittest.TestCase):
         step_starts = [e for e in events if e["type"] == "STEP_STARTED"]
         names = [s["stepName"] for s in step_starts]
 
-        self.assertEqual(names, ["Processing input", "Thinking", "Rendering response"])
+        self.assertEqual(names, ["Processing input", "Thinking"])
 
-    def test_event_stream_contains_a2ui_custom_events(self):
-        """Should include CUSTOM events with name='a2ui' for A2UI messages."""
+    def test_event_stream_text_only_no_a2ui_events(self):
+        """Text-only response should NOT emit A2UI surface events."""
         engine = ChatEngine(agent=MockAgent("Reply"))
         handler = AGUIHandler(engine=engine)
 
         events = _run(_collect_events(handler, {"content": "Hello"}))
 
         custom_events = [e for e in events if e["type"] == "CUSTOM" and e.get("name") == "a2ui"]
+        self.assertEqual(len(custom_events), 0)
+
+    def test_event_stream_rich_content_has_three_step_pairs(self):
+        """Response with rich content (extra_items) should emit 3 STEP pairs."""
+        chart_data = {
+            "title": "Sales",
+            "data": [{"x": "Q1", "y": 100}],
+            "chart_type": "bar",
+        }
+        engine = ChatEngine(
+            agent=MockAgent("Here are the results"),
+            render_items_fn=lambda: [chart_data],
+        )
+        handler = AGUIHandler(engine=engine)
+
+        events = _run(_collect_events(handler, {"content": "Show chart"}))
+
+        step_starts = [e for e in events if e["type"] == "STEP_STARTED"]
+        step_finishes = [e for e in events if e["type"] == "STEP_FINISHED"]
+
+        self.assertEqual(len(step_starts), 3)
+        self.assertEqual(len(step_finishes), 3)
+
+    def test_event_stream_rich_content_has_a2ui_events(self):
+        """Response with rich content should emit A2UI surface events."""
+        chart_data = {
+            "title": "Sales",
+            "data": [{"x": "Q1", "y": 100}],
+            "chart_type": "bar",
+        }
+        engine = ChatEngine(
+            agent=MockAgent("Here are the results"),
+            render_items_fn=lambda: [chart_data],
+        )
+        handler = AGUIHandler(engine=engine)
+
+        events = _run(_collect_events(handler, {"content": "Show chart"}))
+
+        custom_events = [e for e in events if e["type"] == "CUSTOM" and e.get("name") == "a2ui"]
         self.assertTrue(len(custom_events) >= 2)
 
-        # First A2UI message should be createSurface
         first_value = custom_events[0]["value"]
         self.assertEqual(first_value["version"], A2UI_VERSION)
         self.assertIn("createSurface", first_value)
 
-        # Second should be updateComponents
-        second_value = custom_events[1]["value"]
-        self.assertIn("updateComponents", second_value)
-
-    def test_event_stream_a2ui_between_rendering_steps(self):
+    def test_event_stream_rich_content_a2ui_between_rendering_steps(self):
         """CUSTOM(a2ui) events should appear between Rendering step_start and step_finish."""
-        engine = ChatEngine(agent=MockAgent("Reply"))
+        chart_data = {
+            "title": "Sales",
+            "data": [{"x": "Q1", "y": 100}],
+            "chart_type": "bar",
+        }
+        engine = ChatEngine(
+            agent=MockAgent("Here are the results"),
+            render_items_fn=lambda: [chart_data],
+        )
         handler = AGUIHandler(engine=engine)
 
-        events = _run(_collect_events(handler, {"content": "Hello"}))
+        events = _run(_collect_events(handler, {"content": "Show chart"}))
 
         rendering_start_idx = None
         rendering_finish_idx = None
@@ -357,6 +427,135 @@ class TestAGUIHandlerHandle(unittest.TestCase):
 
         self.assertIsInstance(response, StreamingResponse)
         self.assertEqual(response.media_type, "text/event-stream")
+
+
+class TestAGUIHandlerTextStreaming(unittest.TestCase):
+    """Tests for progressive text streaming via TEXT_MESSAGE events."""
+
+    def test_streaming_agent_emits_text_message_events(self):
+        """Streaming agent should produce TEXT_MESSAGE_START/CONTENT/END events."""
+        engine = ChatEngine(agent=StreamingMockAgent(["The ", "answer ", "is 42."]))
+        handler = AGUIHandler(engine=engine)
+
+        events = _run(_collect_events(handler, {"content": "Hello"}))
+
+        types = [e["type"] for e in events]
+        self.assertIn("TEXT_MESSAGE_START", types)
+        self.assertIn("TEXT_MESSAGE_CONTENT", types)
+        self.assertIn("TEXT_MESSAGE_END", types)
+
+    def test_streaming_text_deltas_match_chunks(self):
+        """TEXT_MESSAGE_CONTENT deltas should match the agent's chunks."""
+        chunks = ["Solar ", "energy ", "costs ", "less."]
+        engine = ChatEngine(agent=StreamingMockAgent(chunks))
+        handler = AGUIHandler(engine=engine)
+
+        events = _run(_collect_events(handler, {"content": "Compare energy"}))
+
+        content_events = [e for e in events if e["type"] == "TEXT_MESSAGE_CONTENT"]
+        deltas = [e["delta"] for e in content_events]
+
+        self.assertEqual(deltas, chunks)
+
+    def test_streaming_message_id_consistent(self):
+        """TEXT_MESSAGE_START/CONTENT/END should share the same messageId."""
+        engine = ChatEngine(agent=StreamingMockAgent(["a", "b"]))
+        handler = AGUIHandler(engine=engine)
+
+        events = _run(_collect_events(handler, {"content": "Hello"}))
+
+        start_events = [e for e in events if e["type"] == "TEXT_MESSAGE_START"]
+        content_events = [e for e in events if e["type"] == "TEXT_MESSAGE_CONTENT"]
+        end_events = [e for e in events if e["type"] == "TEXT_MESSAGE_END"]
+
+        self.assertEqual(len(start_events), 1)
+        self.assertEqual(len(end_events), 1)
+
+        msg_id = start_events[0]["messageId"]
+        for e in content_events:
+            self.assertEqual(e["messageId"], msg_id)
+        self.assertEqual(end_events[0]["messageId"], msg_id)
+
+    def test_streaming_events_between_thinking_steps(self):
+        """Text streaming events should appear between Thinking step_start and step_finish."""
+        engine = ChatEngine(agent=StreamingMockAgent(["x"]))
+        handler = AGUIHandler(engine=engine)
+
+        events = _run(_collect_events(handler, {"content": "Hello"}))
+
+        thinking_start_idx = None
+        thinking_finish_idx = None
+        for i, e in enumerate(events):
+            if e["type"] == "STEP_STARTED" and e.get("stepName") == "Thinking":
+                thinking_start_idx = i
+            if (
+                thinking_start_idx is not None
+                and e["type"] == "STEP_FINISHED"
+                and e.get("stepName") == "Thinking"
+                and thinking_finish_idx is None
+            ):
+                thinking_finish_idx = i
+
+        self.assertIsNotNone(thinking_start_idx)
+        self.assertIsNotNone(thinking_finish_idx)
+
+        text_indices = [
+            i
+            for i, e in enumerate(events)
+            if e["type"] in ("TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END")
+        ]
+        for idx in text_indices:
+            self.assertGreater(idx, thinking_start_idx)
+            self.assertLess(idx, thinking_finish_idx)
+
+    def test_non_streaming_agent_still_emits_text_events(self):
+        """Non-streaming MockAgent should still emit text events."""
+        engine = ChatEngine(agent=MockAgent("Reply"))
+        handler = AGUIHandler(engine=engine)
+
+        events = _run(_collect_events(handler, {"content": "Hello"}))
+
+        types = [e["type"] for e in events]
+        # Should still have TEXT_MESSAGE_START and TEXT_MESSAGE_END
+        self.assertIn("TEXT_MESSAGE_START", types)
+        self.assertIn("TEXT_MESSAGE_END", types)
+        # Text-only: no A2UI events (text already streamed)
+        custom_events = [e for e in events if e["type"] == "CUSTOM" and e.get("name") == "a2ui"]
+        self.assertEqual(len(custom_events), 0)
+
+    def test_streaming_with_rich_content_has_a2ui_events(self):
+        """After streaming text, A2UI surface events emitted when rich content exists."""
+        chart_data = {
+            "title": "Sales",
+            "data": [{"x": "Q1", "y": 100}],
+            "chart_type": "bar",
+        }
+        engine = ChatEngine(
+            agent=StreamingMockAgent(["Hello ", "world"]),
+            render_items_fn=lambda: [chart_data],
+        )
+        handler = AGUIHandler(engine=engine)
+
+        events = _run(_collect_events(handler, {"content": "Hello"}))
+
+        custom_events = [e for e in events if e["type"] == "CUSTOM" and e.get("name") == "a2ui"]
+        self.assertTrue(len(custom_events) >= 2)
+
+        # Verify createSurface and updateComponents
+        self.assertIn("createSurface", custom_events[0]["value"])
+        self.assertIn("updateComponents", custom_events[1]["value"])
+
+    def test_streaming_run_finished_has_full_content(self):
+        """RUN_FINISHED result should have complete text, not just last delta."""
+        chunks = ["Hello", " ", "World"]
+        engine = ChatEngine(agent=StreamingMockAgent(chunks))
+        handler = AGUIHandler(engine=engine)
+
+        events = _run(_collect_events(handler, {"content": "Test"}))
+
+        run_finished = [e for e in events if e["type"] == "RUN_FINISHED"]
+        self.assertEqual(len(run_finished), 1)
+        self.assertEqual(run_finished[0]["result"]["content"], "Hello World")
 
 
 if __name__ == "__main__":

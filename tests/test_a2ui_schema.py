@@ -49,7 +49,12 @@ class TestA2UIComponent(unittest.TestCase):
         self.assertEqual(d, {"id": "divider", "component": "Divider"})
 
     def test_from_dict(self):
-        data = {"id": "btn", "component": "Button", "label": "Click me", "variant": "primary"}
+        data = {
+            "id": "btn",
+            "component": "Button",
+            "label": "Click me",
+            "variant": "primary",
+        }
         comp = A2UIComponent.from_dict(data)
         self.assertEqual(comp.id, "btn")
         self.assertEqual(comp.component, "Button")
@@ -82,7 +87,8 @@ class TestCreateSurfaceMessage(unittest.TestCase):
 
     def test_to_dict_with_theme(self):
         msg = CreateSurfaceMessage(
-            surface_id="s1", catalog_id="cat",
+            surface_id="s1",
+            catalog_id="cat",
             theme={"primaryColor": "#FF0000"},
         )
         d = msg.to_dict()
@@ -95,8 +101,10 @@ class TestCreateSurfaceMessage(unittest.TestCase):
 
     def test_roundtrip(self):
         original = CreateSurfaceMessage(
-            surface_id="s1", catalog_id="cat",
-            theme={"primaryColor": "#00FF00"}, send_data_model=True,
+            surface_id="s1",
+            catalog_id="cat",
+            theme={"primaryColor": "#00FF00"},
+            send_data_model=True,
         )
         restored = CreateSurfaceMessage.from_dict(original.to_dict())
         self.assertEqual(restored.surface_id, original.surface_id)
@@ -135,7 +143,9 @@ class TestUpdateDataModelMessage(unittest.TestCase):
 
     def test_to_dict(self):
         msg = UpdateDataModelMessage(
-            surface_id="s1", path="/chart/data", value=[1, 2, 3],
+            surface_id="s1",
+            path="/chart/data",
+            value=[1, 2, 3],
         )
         d = msg.to_dict()
         self.assertEqual(d["version"], A2UI_VERSION)
@@ -181,7 +191,10 @@ class TestParseA2UIMessage(unittest.TestCase):
     """Tests for parse_a2ui_message."""
 
     def test_parse_create_surface(self):
-        data = {"version": "v0.10", "createSurface": {"surfaceId": "s1", "catalogId": "cat"}}
+        data = {
+            "version": "v0.10",
+            "createSurface": {"surfaceId": "s1", "catalogId": "cat"},
+        }
         msg = parse_a2ui_message(data)
         self.assertIsInstance(msg, CreateSurfaceMessage)
         self.assertEqual(msg.surface_id, "s1")
@@ -213,7 +226,10 @@ class TestParseA2UIMessage(unittest.TestCase):
         self.assertIsInstance(msg, DeleteSurfaceMessage)
 
     def test_parse_wrong_version(self):
-        data = {"version": "v0.9", "createSurface": {"surfaceId": "s1", "catalogId": "cat"}}
+        data = {
+            "version": "v0.9",
+            "createSurface": {"surfaceId": "s1", "catalogId": "cat"},
+        }
         with self.assertRaises(ValueError) as ctx:
             parse_a2ui_message(data)
         self.assertIn("v0.9", str(ctx.exception))
@@ -264,7 +280,8 @@ class TestStreamMessage(unittest.TestCase):
 
     def test_stream_start(self):
         msg = StreamMessage(
-            type=StreamMessageType.STREAM_START, message_id="msg-1",
+            type=StreamMessageType.STREAM_START,
+            message_id="msg-1",
         )
         d = msg.to_dict()
         self.assertEqual(d["type"], "stream_start")
@@ -272,7 +289,8 @@ class TestStreamMessage(unittest.TestCase):
 
     def test_stream_end_with_metadata(self):
         msg = StreamMessage(
-            type=StreamMessageType.STREAM_END, message_id="msg-1",
+            type=StreamMessageType.STREAM_END,
+            message_id="msg-1",
             metadata={"tokensUsed": 450, "model": "gemini-2.5-flash"},
         )
         d = msg.to_dict()
@@ -280,7 +298,8 @@ class TestStreamMessage(unittest.TestCase):
 
     def test_roundtrip(self):
         original = StreamMessage(
-            type=StreamMessageType.ERROR, message_id="msg-2",
+            type=StreamMessageType.ERROR,
+            message_id="msg-2",
             metadata={"error": "timeout"},
         )
         restored = StreamMessage.from_dict(original.to_dict())

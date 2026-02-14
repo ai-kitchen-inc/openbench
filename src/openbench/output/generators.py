@@ -7,8 +7,8 @@ Provides concrete implementations of OutputGenerator for various formats:
 - AudioGenerator: Generate audio content from text
 - MarkdownGenerator: Generate markdown files
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import logging
 import os
@@ -291,7 +291,9 @@ class PDFGenerator(OutputGenerator):
             fontSize=self.title_font_size,
             spaceAfter=30,
             alignment=TA_CENTER,
-            fontName=f"{self.font_name}-Bold" if self.font_name == "Helvetica" else self.font_name,
+            fontName=(
+                f"{self.font_name}-Bold" if self.font_name == "Helvetica" else self.font_name
+            ),
         )
 
         heading_style = ParagraphStyle(
@@ -300,7 +302,9 @@ class PDFGenerator(OutputGenerator):
             fontSize=self.heading_font_size,
             spaceBefore=20,
             spaceAfter=10,
-            fontName=f"{self.font_name}-Bold" if self.font_name == "Helvetica" else self.font_name,
+            fontName=(
+                f"{self.font_name}-Bold" if self.font_name == "Helvetica" else self.font_name
+            ),
         )
 
         body_style = ParagraphStyle(
@@ -342,7 +346,9 @@ class PDFGenerator(OutputGenerator):
             fontSize=self.heading_font_size,
             spaceBefore=15,
             spaceAfter=8,
-            fontName=f"{self.font_name}-Bold" if self.font_name == "Helvetica" else self.font_name,
+            fontName=(
+                f"{self.font_name}-Bold" if self.font_name == "Helvetica" else self.font_name
+            ),
         )
 
         h3_style = ParagraphStyle(
@@ -351,7 +357,9 @@ class PDFGenerator(OutputGenerator):
             fontSize=self.font_size + 1,
             spaceBefore=12,
             spaceAfter=6,
-            fontName=f"{self.font_name}-Bold" if self.font_name == "Helvetica" else self.font_name,
+            fontName=(
+                f"{self.font_name}-Bold" if self.font_name == "Helvetica" else self.font_name
+            ),
         )
 
         # Process content line by line for better markdown handling

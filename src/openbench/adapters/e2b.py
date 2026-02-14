@@ -3,8 +3,8 @@ E2B sandbox adapter for OpenBench.
 
 Allows running custom Python code in isolated sandboxed environments.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import json
 from typing import Any
@@ -68,7 +68,10 @@ class E2BAdapter(FrameworkAdapter):
         return "e2b"
 
     def __init__(
-        self, code: str, template: str = "python-data-science", packages: list[str] | None = None
+        self,
+        code: str,
+        template: str = "python-data-science",
+        packages: list[str] | None = None,
     ):
         """
         Initialize the E2B adapter.

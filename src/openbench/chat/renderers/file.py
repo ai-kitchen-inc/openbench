@@ -3,8 +3,8 @@ File content renderer.
 
 Converts file metadata dicts to A2UI ObFileCard components.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import uuid
 from typing import Any
@@ -41,8 +41,7 @@ class FileRenderer(ContentRenderer):
             return "name" in content and "url" in content
         if isinstance(content, list) and len(content) > 0:
             return all(
-                isinstance(item, dict) and "name" in item and "url" in item
-                for item in content
+                isinstance(item, dict) and "name" in item and "url" in item for item in content
             )
         return False
 

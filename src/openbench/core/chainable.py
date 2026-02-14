@@ -3,8 +3,8 @@ Chainable workflow system compatible with LangChain's Runnable interface.
 
 Enables DAG-based workflows with pipe operator composition.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -121,7 +121,7 @@ class Chainable(ABC, Generic[Input, Output]):
 
     # Composition operators (pipe and parallel)
 
-    def __or__(self, other: "Chainable[Output, OtherOutput]") -> "Chain[Input, OtherOutput]":
+    def __or__(self, other: Chainable[Output, OtherOutput]) -> Chain[Input, OtherOutput]:
         """
         Pipe operator: self | other
 
@@ -139,7 +139,7 @@ class Chainable(ABC, Generic[Input, Output]):
         """
         return Chain(steps=[self, other])
 
-    def __and__(self, other: "Chainable") -> "Parallel":
+    def __and__(self, other: Chainable) -> Parallel:
         """
         Parallel operator: self & other
 
@@ -266,7 +266,7 @@ class Chain(Chainable[Input, Output]):
                 ) from e
         return result
 
-    def __or__(self, other: Chainable) -> "Chain":
+    def __or__(self, other: Chainable) -> Chain:
         """
         Extend this chain with another step.
 
@@ -345,7 +345,7 @@ class Parallel(Chainable[Input, list[Any]]):
 
         return list(results)
 
-    def __and__(self, other: Chainable) -> "Parallel":
+    def __and__(self, other: Chainable) -> Parallel:
         """
         Add another branch to this parallel execution.
 

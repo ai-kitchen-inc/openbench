@@ -3,8 +3,8 @@ AG2 (AutoGen) framework adapter for OpenBench.
 
 Allows using AG2 agents in OpenBench workflows.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 from typing import Any
 

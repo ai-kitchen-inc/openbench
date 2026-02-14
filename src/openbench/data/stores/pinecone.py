@@ -1,12 +1,12 @@
 """Pinecone vector store implementation."""
-from __future__ import annotations
 
+from __future__ import annotations
 
 import json
 import os
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from openbench.core.abstractions import DataStore, Query, RawData, SearchResult
 from openbench.data.stores.base import (
@@ -83,11 +83,11 @@ class PineconeStore(DataStore, EmbeddingMixin):
         index_name: str,
         *,
         api_key: str | None = None,
-        project: Optional["ProjectContext"] = None,
+        project: ProjectContext | None = None,
         namespace: str | None = None,
         dimension: int | None = None,
         metric: str = "cosine",
-        embedding_provider: Optional["EmbeddingProvider"] = None,
+        embedding_provider: EmbeddingProvider | None = None,
         embedding_model: str | None = None,
         chunking_config: ChunkingConfig | None = None,
         create_if_missing: bool = True,
@@ -159,7 +159,7 @@ class PineconeStore(DataStore, EmbeddingMixin):
         return ""
 
     @property
-    def pinecone_index(self) -> "Index":
+    def pinecone_index(self) -> Index:
         """Get Pinecone index, initializing if needed."""
         if self._index is None:
             self._init_client()
@@ -189,7 +189,7 @@ class PineconeStore(DataStore, EmbeddingMixin):
         except Exception as e:
             raise StoreConnectionError("pinecone", str(e)) from e
 
-    def _get_or_create_index(self) -> "Index":
+    def _get_or_create_index(self) -> Index:
         """Get existing index or create if missing."""
         from pinecone import ServerlessSpec
 

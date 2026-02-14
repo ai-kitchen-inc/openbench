@@ -205,6 +205,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
             });
           }
         }
+        return;
       }
     },
     [store, processor, processMessage, resetProcessor],

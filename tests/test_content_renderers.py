@@ -3,7 +3,7 @@
 import unittest
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRendererRegistry
 from openbench.chat.renderers.text import TextRenderer
 
 
