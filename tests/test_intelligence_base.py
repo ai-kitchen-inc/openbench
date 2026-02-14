@@ -1,4 +1,6 @@
 """Tests for framework-agnostic agent interface."""
+from __future__ import annotations
+
 
 import unittest
 from typing import Any

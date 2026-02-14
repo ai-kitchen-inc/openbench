@@ -7,6 +7,8 @@ Provides single source of truth for all configuration:
 - Validation and type coercion
 - Hierarchical config with dot notation access
 """
+from __future__ import annotations
+
 
 import json
 import logging

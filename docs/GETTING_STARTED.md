@@ -26,7 +26,7 @@ pip install -e ".[security]"     # Credential encryption
 
 ```bash
 python -m unittest discover tests -v
-# Expected: Ran 508 tests ... OK
+# Expected: 850+ Python tests + 171 TypeScript tests
 ```
 
 ---
@@ -176,18 +176,22 @@ python -m unittest discover tests -v
 python -m unittest tests.test_abstractions -v  # Specific file
 ```
 
-**Test coverage (508 tests):**
+**Test coverage (850+ Python, 171 TypeScript):**
 - Core abstractions (16), Registry (45), Chainable (18)
 - L2 layers (17), Workflow (15), Provider service (32)
 - Config (20), Intelligence base (31)
+- Chat engine (45), Chat session, A2UI builder, Content renderers
+- TypeScript: A2UI components, data-binding, functions, store, transport
 
 ---
 
 ## Status
 
-**Phase 1 & 2 Complete:** Core abstractions, plugin registry, chainable composition, L2 layers, workflows, Provider Service, Config system, Agent interface, 508 tests.
+**Core SDK Complete:** Core abstractions, plugin registry, chainable composition, L2 layers, workflows, Provider Service, Config system, Agent interface, framework adapters, embeddings.
 
-**Phase 3 In Progress:** Provider implementations (OpenAI, Anthropic, ChromaDB, Pinecone, ReportLab, python-pptx).
+**Chat Layer Complete:** ChatEngine, A2UI v0.10 builder, content renderers (text, chart, form, file), SSE + REST transport, ChatLayer L2.
+
+**Chat UI SDK Complete:** @openbench/chat-ui React SDK — 18 standard + 4 custom A2UI components, hooks, SSE transport, Zustand store, Notion-inspired design system.
 
 ---
 
@@ -231,7 +235,7 @@ rm -rf workflow_state/
 ## Next Steps
 
 - [API Reference](API.md)
-- [Architecture](architecture.md)
+- [Architecture](ARCHITECTURE.md)
 - [Examples](../examples/)
 - [Discord](https://discord.com/users/openbench.ai)
 - [GitHub](https://github.com/ai-kitchen-inc/openbench)

@@ -1,4 +1,6 @@
 """Workflow orchestration CLI commands."""
+from __future__ import annotations
+
 
 import time
 

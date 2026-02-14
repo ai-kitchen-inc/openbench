@@ -452,7 +452,7 @@ Good documentation is just as important as good code.
 
 ## 🎓 Resources for Contributors
 
-- [Architecture Overview](docs/architecture.md)
+- [Architecture Overview](docs/ARCHITECTURE.md)
 - [API Documentation](docs/API.md)
 - [Getting Started Guide](docs/GETTING_STARTED.md)
 

@@ -91,9 +91,9 @@ result = workflow.run()
 
 | Phase | Status |
 |-------|--------|
-| **Phase 1: Core Abstractions** | Complete - Interfaces, plugin registry, DAG workflows, state management |
-| **Phase 2: Infrastructure** | Complete - Provider Service, Config, Agent interface, L2 layers, 508 tests |
-| **Phase 3: Providers** | In Progress - LLM (OpenAI, Anthropic), Vector (ChromaDB, Pinecone), Output (ReportLab, python-pptx) |
+| **Phase 1: Core Abstractions** | ✅ Complete - Interfaces, plugin registry, DAG workflows, state management |
+| **Phase 2: Infrastructure** | ✅ Complete - Provider Service, Config, Agent interface, L2 layers, 759 tests |
+| **Phase 3: Providers** | 🚧 In Progress - LLM (Gemini ✅, OpenAI 🚧, Anthropic 📋), Vector (Pinecone ✅, ChromaDB 📋), Output (PDF ✅, PPTX ✅, Markdown ✅) |
 
 ```bash
 pip install -e ".[all]" && python examples/workflows/reports/sustainability_report.py
@@ -151,11 +151,11 @@ result = workflow.invoke({"goal": "Q4 Sales Analysis"})
 
 Three layers working in harmony:
 
-**Data Layer** - Connect to any source: PDFs, databases, APIs, multimedia. Access via REST, MCP, or native SDKs.
+**Data Layer** - Connect to any source: PDFs, web search, entity extraction. More sources planned (databases, APIs, multimedia).
 
-**Intelligence Layer** - Build AI agents: Research, Analysis, Content, Action. Multi-agent coordination with human-in-the-loop support.
+**Intelligence Layer** - Build AI agents: Research, Analysis, Content, Action. Multi-agent coordination with human-in-the-loop support. Currently supports Google Gemini; OpenAI and Anthropic in progress.
 
-**Output Layer** - Export anywhere: PDF, PowerPoint, Markdown, Audio, Dashboards.
+**Output Layer** - Export to PDF, PowerPoint, and Markdown today. Audio, Dashboards, and more planned.
 
 ```python
 from openbench import Workflow
@@ -212,11 +212,11 @@ Python, Click, Pydantic, Google GenAI, LangChain, CrewAI, AG2, Pinecone, ReportL
 ## Features
 
 - **Privacy-First**: Self-hosted, zero lock-in, credential encryption
-- **Model Agnostic**: OpenAI, Anthropic, open source models
+- **LLM Providers**: Google Gemini ✅ | OpenAI 🚧 | Anthropic 📋 | Local models 📋
 - **Enterprise Ready**: Centralized config, encryption, audit ready
 - **Extensible**: Plugin registry with decorators and auto-discovery
 - **Composable**: DAG workflows with `|` and `&` operators
-- **Well-Tested**: 508 tests
+- **Well-Tested**: 759 tests
 
 ## 🗺️ Roadmap
 

@@ -49,7 +49,6 @@ dev = [
     "pytest-cov>=4.0.0",
     "ruff>=0.9.0",
     "mypy>=1.0.0",
-    "pre-commit>=4.0.0",
 ]
 
 data = [
@@ -97,8 +96,14 @@ extraction = [
     "langextract>=1.0.0",
 ]
 
+chat = [
+    "fastapi>=0.100.0",
+    "websockets>=12.0",
+    "uvicorn>=0.25.0",
+]
+
 all = [
-    "openbench[dev,data,intelligence,output,security,google,vector,search,extraction]"
+    "openbench[dev,data,intelligence,output,security,google,vector,search,extraction,chat]"
 ]
 
 [project.urls]

@@ -7,6 +7,8 @@ Provides concrete implementations of OutputGenerator for various formats:
 - AudioGenerator: Generate audio content from text
 - MarkdownGenerator: Generate markdown files
 """
+from __future__ import annotations
+
 
 import logging
 import os

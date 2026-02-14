@@ -23,6 +23,7 @@ Run the test suite with coverage analysis.
 - `data` - Coverage for openbench.data only
 - `adapters` - Coverage for openbench.adapters only
 - `output` - Coverage for openbench.output only
+- `chat` - Coverage for openbench.chat only
 
 ## Instructions
 
@@ -39,6 +40,7 @@ pytest tests/ --cov=openbench.intelligence --cov-report=term-missing
 pytest tests/ --cov=openbench.data --cov-report=term-missing
 pytest tests/ --cov=openbench.adapters --cov-report=term-missing
 pytest tests/ --cov=openbench.output --cov-report=term-missing
+pytest tests/ --cov=openbench.chat --cov-report=term-missing
 ```
 
 3. Analyze the results:

@@ -6,6 +6,8 @@ This ensures implementation independence and pluggability.
 
 All core abstractions are Chainable, enabling L1 component-level composition.
 """
+from __future__ import annotations
+
 
 from abc import ABC, abstractmethod
 from datetime import datetime
