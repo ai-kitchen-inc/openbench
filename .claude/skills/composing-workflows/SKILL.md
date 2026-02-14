@@ -32,12 +32,17 @@ outputs = pdf_gen & pptx_gen & audio_gen
 **L2 (System-Level):** Compose entire layers
 ```python
 from openbench.core import DataLayer, IntelligenceLayer, OutputLayer
+from openbench.chat import ChatLayer
 
 pipeline = (
     DataLayer(sources=sources, stores=[vector_store])
     | IntelligenceLayer(agents=agents)
     | OutputLayer(generators=outputs)
 )
+
+# With chat layer
+chat_pipeline = DataLayer(sources=[pdf]) | ChatLayer(agent=rag_agent)
+chat_with_output = ChatLayer(agent=agent) | OutputLayer(generators=[transcript])
 ```
 
 ## Framework Adapters
@@ -105,11 +110,13 @@ result = workflow.run(input_data)
 
 ## Cross-References
 
-- **Intelligence Layer**: Agents used in `IntelligenceLayer` → see `intelligence-layer` skill
-- **Data Layer**: DataSources and stores used in `DataLayer` → see `data-layer` skill
-- **Output Layer**: Generators used in `OutputLayer` → see `output-layer` skill
-- **Adapters**: External framework agents used via adapters → see `adapters` skill
-- **Creating Abstractions**: Custom Chainable implementations → see `creating-abstractions` skill
+- **Intelligence Layer**: Agents used in `IntelligenceLayer` -> see `intelligence-layer` skill
+- **Data Layer**: DataSources and stores used in `DataLayer` -> see `data-layer` skill
+- **Output Layer**: Generators used in `OutputLayer` -> see `output-layer` skill
+- **Chat Layer**: ChatEngine and ChatLayer for chat UIs -> see `chat-layer` skill
+- **Chat UI**: @openbench/chat-ui React SDK -> see `chat-ui` skill
+- **Adapters**: External framework agents used via adapters -> see `adapters` skill
+- **Creating Abstractions**: Custom Chainable implementations -> see `creating-abstractions` skill
 
 ## Best Practices
 

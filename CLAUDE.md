@@ -28,7 +28,7 @@ Guidance for Claude Code when working with this repository.
 - **Agent** - AI processing
 - **OutputGenerator** - Generated artifacts (PDF, PPTX, audio)
 
-**Three-Layer Architecture:** Data Layer -> Intelligence Layer -> Output Layer
+**Four-Layer Architecture:** Data Layer -> Intelligence Layer -> Chat Layer -> Output Layer
 
 **Design Principles:**
 1. Everything is Chainable (`invoke()`, `|`, `&` operators)
@@ -36,6 +36,11 @@ Guidance for Claude Code when working with this repository.
 3. Implementation Independence (swap providers without code changes)
 4. Two-Level Orchestration (L1 components, L2 layers)
 5. DAG Workflows
+
+**Frontend SDK:**
+- `@openbench/chat-ui` -- React component library for chat interfaces
+- A2UI v0.10 (Google) declarative JSON streaming protocol for rich UI rendering
+- WebSocket real-time transport
 
 ## Positioning & Classification
 
@@ -133,6 +138,23 @@ openbench/
 │   │   ├── agents.py            # Agent implementations (Research, Analysis, Content)
 │   │   ├── llm_providers.py     # Concrete LLM providers (GeminiLLMProvider)
 │   │   └── layer.py             # AgentFactory for creating agents
+│   ├── chat/                    # Chat layer (A2UI-powered)
+│   │   ├── engine.py            # ChatEngine (Chainable) -- main orchestrator
+│   │   ├── session.py           # ChatSession, ChatMessage, Attachment
+│   │   ├── layer.py             # ChatLayer (L2) + ChatFactory
+│   │   ├── a2ui/                # A2UI v0.10 message building
+│   │   │   ├── builder.py       # A2UIMessageBuilder -- A2UI v0.10 JSONL generator
+│   │   │   ├── catalog.py       # Custom catalog (ObChart, ObFileCard, ObCodeBlock, ObMarkdown)
+│   │   │   └── schema.py        # A2UI v0.10 message types and validation
+│   │   ├── renderers/           # Content -> A2UI component renderers
+│   │   │   ├── base.py          # ContentRenderer ABC + Registry
+│   │   │   ├── text.py          # TextRenderer
+│   │   │   ├── chart.py         # ChartRenderer
+│   │   │   ├── form.py          # FormRenderer
+│   │   │   └── file.py          # FileRenderer
+│   │   └── transport/           # Real-time transport
+│   │       ├── base.py          # Transport ABC
+│   │       └── websocket.py     # WebSocket transport (FastAPI)
 │   ├── output/                  # Output generation layer
 │   │   ├── generators.py        # Output generator implementations
 │   │   └── layer.py             # OutputFactory for generating outputs
@@ -142,7 +164,16 @@ openbench/
 │   │   ├── main.py              # CLI entry point
 │   │   └── commands/            # CLI command groups (init, data, agent, workflow, provider, models)
 │   └── utils/                   # Utilities
-├── tests/                       # Test suite (510 tests)
+├── packages/
+│   └── chat-ui/                 # @openbench/chat-ui (React SDK)
+│       ├── src/
+│       │   ├── core/            # WebSocket transport, JSONL processor, Zustand store
+│       │   ├── a2ui/            # SurfaceRenderer, catalog, standard + custom components
+│       │   ├── components/      # ChatProvider, ChatPanel, MessageList, SessionSidebar
+│       │   └── hooks/           # useChat, useChatTransport, useA2UIProcessor
+│       ├── styles/              # Default CSS (Notion-inspired, Lucide icons)
+│       └── tests/
+├── tests/                       # Test suite
 ├── examples/                    # Example workflows
 ├── docs/                        # Documentation
 ├── pyproject.toml               # Python project configuration
@@ -165,6 +196,10 @@ workflow = step_a | Parallel([step_b, step_c]) | step_d
 
 # L2: Compose layers
 workflow = DataLayer(sources=sources) | IntelligenceLayer(agents=agents) | OutputLayer(generators=outputs)
+
+# L2: With chat layer
+workflow = DataLayer(sources=[pdf]) | ChatLayer(agent=rag_agent)
+workflow = ChatLayer(agent=agent) | OutputLayer(generators=[transcript])
 ```
 
 ### Registry and Workflows
@@ -190,6 +225,7 @@ pip install -e ".[security]"     # With encryption
 pip install -e ".[vector]"       # Pinecone vector store
 pip install -e ".[search]"       # Tavily, Google Search, DuckDuckGo
 pip install -e ".[google]"       # Google GenAI SDK
+pip install -e ".[chat]"         # FastAPI + WebSocket for chat
 
 # Test
 python -m unittest discover tests -v
@@ -218,6 +254,10 @@ examples/
 │   ├── gemini_agent_demo.py
 │   ├── agentic_research_demo.py
 │   └── agentic_analysis_demo.py
+├── chat/           # Chat layer examples
+│   ├── basic_chat_demo.py          # ChatEngine standalone
+│   ├── chat_with_rag_demo.py       # DataLayer | ChatLayer pipeline
+│   └── websocket_server_demo.py    # FastAPI WebSocket server
 └── workflows/      # Complete E2E workflow examples
     ├── pdf/        # PDF processing workflows
     │   ├── pdf_google_adk_workflow.py
@@ -363,6 +403,18 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/data/stores/pinecone.py` | Pinecone vector store implementation |
 | `src/openbench/adapters/google_adk.py` | Google ADK framework adapter |
 | `src/openbench/workflows/workflow.py` | Named workflows with state |
+| `src/openbench/chat/engine.py` | ChatEngine (Chainable) -- main chat orchestrator |
+| `src/openbench/chat/session.py` | ChatSession, ChatMessage, Attachment |
+| `src/openbench/chat/layer.py` | ChatLayer (L2) composable with other layers |
+| `src/openbench/chat/a2ui/builder.py` | A2UIMessageBuilder -- JSONL generator |
+| `src/openbench/chat/a2ui/catalog.py` | Custom A2UI catalog (ObChart, ObFileCard, ObCodeBlock, ObMarkdown) |
+| `src/openbench/chat/renderers/base.py` | ContentRenderer ABC + ContentRendererRegistry |
+| `src/openbench/chat/transport/websocket.py` | WebSocket transport (FastAPI) |
+| `packages/chat-ui/src/index.ts` | @openbench/chat-ui public API exports |
+| `packages/chat-ui/src/types.ts` | TypeScript interfaces for chat messages, A2UI, etc. |
+| `packages/chat-ui/src/a2ui/surface-renderer.tsx` | A2UI adjacency list to React tree |
+| `packages/chat-ui/src/a2ui/catalog.ts` | Component registry (standard + custom) |
+| `packages/chat-ui/src/core/chat-store.ts` | Zustand store (sessions, messages, streaming) |
 
 ## Slash Commands
 
@@ -383,12 +435,48 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | **data-layer** | PineconeStore, chunking, embeddings, RAG, vector search |
 | **intelligence-layer** | BaseAgent, LLM providers, tools, memory, RAG agents |
 | **output-layer** | PDF, PPTX, Dashboard, Audio, Markdown generators |
+| **chat-layer** | ChatEngine, A2UI v0.10 builder, content renderers, WebSocket transport, ChatLayer L2 |
+| **chat-ui** | @openbench/chat-ui React SDK, A2UI v0.10 components (18 standard + 4 custom), hooks, design system |
 | **adapters** | LangChain, CrewAI, AG2, E2B, Google ADK adapters |
 | **testing-openbench** | Writing tests, test patterns, coverage |
+
+## Chat UI Design System
+
+**Notion-inspired. Monochrome. Icon-driven. No emojis.**
+
+- **Colors**: Carbon gray scale (#1a1a1a on #ffffff), blue accent for links only
+- **Icons**: Lucide React -- 16px inline, 18px buttons, 1.5px stroke, inherit color
+- **Typography**: System font stack, 14px base (--ob-text-base)
+- **Borders**: 1px solid rgba(0,0,0,0.08) -- subtle, not heavy shadows
+- **Spacing**: 4px base unit, all spacing multiples of 4
+- **Shadows**: Almost none -- only modals and dropdowns
+- **Transitions**: 150ms ease for micro-interactions
+
+**Rules:**
+- Never use emojis -- use Lucide icons for all visual indicators
+- Never use colored icons except for status (error/success/warning)
+- Never use heavy shadows or gradients
+- All CSS via custom properties with `--ob-` prefix
+- Dark mode via `[data-theme="dark"]` attribute
+
+Full design tokens: [docs/chat-ui-design-system.md](docs/chat-ui-design-system.md)
+
+## Frontend Build (packages/chat-ui)
+
+```bash
+cd packages/chat-ui
+pnpm install              # Install dependencies
+pnpm dev                  # Dev server
+pnpm build                # Build library (ESM + .d.ts)
+pnpm tsc --noEmit         # Type check
+pnpm vitest               # Run tests
+```
 
 ## Additional Documentation
 
 - [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) - Installation and first workflow
 - [docs/API.md](docs/API.md) - Complete API reference
 - [docs/architecture.md](docs/architecture.md) - Architecture overview
+- [docs/chat-ui-architecture.md](docs/chat-ui-architecture.md) - Chat UI SDK architecture
+- [docs/chat-ui-design-system.md](docs/chat-ui-design-system.md) - Design tokens and visual language
 - [examples/README.md](examples/README.md) - Example usage patterns
