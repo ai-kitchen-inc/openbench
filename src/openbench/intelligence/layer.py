@@ -6,8 +6,8 @@ This module provides factory functions for creating agents.
 
 Agents are registered with AgentRegistry for dynamic discovery and extensibility.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 from typing import Any
 
@@ -23,11 +23,18 @@ def _register_builtin_agents() -> None:
         MetaAgent,
         ResearchAgent,
     )
-    from openbench.intelligence.base import BaseAgent, SimpleAgent, StructuredOutputAgent
+    from openbench.intelligence.base import (
+        BaseAgent,
+        SimpleAgent,
+        StructuredOutputAgent,
+    )
 
     # Register base agents
     AgentRegistry.register_class(
-        "base", "default", BaseAgent, description="Framework-agnostic base agent with tool support"
+        "base",
+        "default",
+        BaseAgent,
+        description="Framework-agnostic base agent with tool support",
     )
     AgentRegistry.register_class(
         "simple", "default", SimpleAgent, description="Simple agent without tool use"
@@ -53,7 +60,10 @@ def _register_builtin_agents() -> None:
         description="Agent specialized in data analysis and insights",
     )
     AgentRegistry.register_class(
-        "content", "default", ContentAgent, description="Agent specialized in content generation"
+        "content",
+        "default",
+        ContentAgent,
+        description="Agent specialized in content generation",
     )
     AgentRegistry.register_class(
         "action",
@@ -179,7 +189,12 @@ class AgentFactory:
 
     @classmethod
     def register(
-        cls, agent_type: str, provider: str, agent_class: type, description: str = "", **metadata
+        cls,
+        agent_type: str,
+        provider: str,
+        agent_class: type,
+        description: str = "",
+        **metadata,
     ) -> None:
         """
         Register a custom agent type.

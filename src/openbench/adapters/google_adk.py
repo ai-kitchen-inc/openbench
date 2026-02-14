@@ -7,8 +7,8 @@ Provides two modes of operation:
 
 Supports Google Generative AI models: gemini-2.5-flash, gemini-2.5-pro, gemini-3-flash-preview
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import logging
 import os

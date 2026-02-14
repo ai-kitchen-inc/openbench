@@ -95,7 +95,9 @@ class TestFormRenderer(unittest.TestCase):
     def test_title(self):
         content = {"fields": [{"name": "x"}], "title": "User Profile"}
         components = self.renderer.render(content, surface_id="s1")
-        titles = [c for c in components if c.component == "Text" and c.properties.get("variant") == "h4"]
+        titles = [
+            c for c in components if c.component == "Text" and c.properties.get("variant") == "h4"
+        ]
         self.assertEqual(len(titles), 1)
         self.assertEqual(titles[0].properties["text"], "User Profile")
 
@@ -108,7 +110,9 @@ class TestFormRenderer(unittest.TestCase):
     def test_no_title(self):
         content = {"fields": [{"name": "x"}]}
         components = self.renderer.render(content, surface_id="s1")
-        titles = [c for c in components if c.component == "Text" and c.properties.get("variant") == "h4"]
+        titles = [
+            c for c in components if c.component == "Text" and c.properties.get("variant") == "h4"
+        ]
         self.assertEqual(len(titles), 0)
         dividers = _find_by_type(components, "Divider")
         self.assertEqual(len(dividers), 0)
@@ -156,10 +160,14 @@ class TestFormRenderer(unittest.TestCase):
 
     def test_render_select(self):
         content = {
-            "fields": [{
-                "name": "role", "type": "select", "label": "Role",
-                "options": ["Admin", "User", "Guest"],
-            }]
+            "fields": [
+                {
+                    "name": "role",
+                    "type": "select",
+                    "label": "Role",
+                    "options": ["Admin", "User", "Guest"],
+                }
+            ]
         }
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "ChoicePicker")
@@ -167,10 +175,16 @@ class TestFormRenderer(unittest.TestCase):
 
     def test_render_slider(self):
         content = {
-            "fields": [{
-                "name": "volume", "type": "slider", "label": "Volume",
-                "min": 0, "max": 100, "step": 5,
-            }]
+            "fields": [
+                {
+                    "name": "volume",
+                    "type": "slider",
+                    "label": "Volume",
+                    "min": 0,
+                    "max": 100,
+                    "step": 5,
+                }
+            ]
         }
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "Slider")
@@ -193,7 +207,9 @@ class TestFormRenderer(unittest.TestCase):
     # -- required indicator --
 
     def test_required_prop(self):
-        content = {"fields": [{"name": "email", "type": "email", "label": "Email", "required": True}]}
+        content = {
+            "fields": [{"name": "email", "type": "email", "label": "Email", "required": True}]
+        }
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "TextField")
         self.assertEqual(field.properties["label"], "Email")
@@ -209,7 +225,9 @@ class TestFormRenderer(unittest.TestCase):
     # -- placeholder --
 
     def test_placeholder(self):
-        content = {"fields": [{"name": "email", "type": "email", "placeholder": "user@example.com"}]}
+        content = {
+            "fields": [{"name": "email", "type": "email", "placeholder": "user@example.com"}]
+        }
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "TextField")
         self.assertEqual(field.properties["placeholder"], "user@example.com")
@@ -224,17 +242,32 @@ class TestFormRenderer(unittest.TestCase):
 
     def test_description(self):
         content = {
-            "fields": [{"name": "email", "type": "email", "label": "Email", "description": "Your work email"}]
+            "fields": [
+                {
+                    "name": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "description": "Your work email",
+                }
+            ]
         }
         components = self.renderer.render(content, surface_id="s1")
-        captions = [c for c in components if c.component == "Text" and c.properties.get("variant") == "caption"]
+        captions = [
+            c
+            for c in components
+            if c.component == "Text" and c.properties.get("variant") == "caption"
+        ]
         self.assertEqual(len(captions), 1)
         self.assertEqual(captions[0].properties["text"], "Your work email")
 
     def test_no_description(self):
         content = {"fields": [{"name": "email", "type": "email"}]}
         components = self.renderer.render(content, surface_id="s1")
-        captions = [c for c in components if c.component == "Text" and c.properties.get("variant") == "caption"]
+        captions = [
+            c
+            for c in components
+            if c.component == "Text" and c.properties.get("variant") == "caption"
+        ]
         self.assertEqual(len(captions), 0)
 
     # -- submit button --
@@ -280,7 +313,9 @@ class TestFormRenderer(unittest.TestCase):
     # -- validation checks --
 
     def test_required_check(self):
-        content = {"fields": [{"name": "email", "type": "text", "label": "Email", "required": True}]}
+        content = {
+            "fields": [{"name": "email", "type": "text", "label": "Email", "required": True}]
+        }
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "TextField")
         self.assertTrue(len(field.properties["checks"]) >= 1)
@@ -297,10 +332,14 @@ class TestFormRenderer(unittest.TestCase):
         self.assertEqual(len(email_checks), 1)
 
     def test_numeric_check_with_min_max(self):
-        content = {"fields": [{"name": "age", "type": "number", "label": "Age", "min": 0, "max": 150}]}
+        content = {
+            "fields": [{"name": "age", "type": "number", "label": "Age", "min": 0, "max": 150}]
+        }
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "TextField")
-        numeric_checks = [c for c in field.properties["checks"] if c["condition"]["call"] == "numeric"]
+        numeric_checks = [
+            c for c in field.properties["checks"] if c["condition"]["call"] == "numeric"
+        ]
         self.assertEqual(len(numeric_checks), 1)
         args = numeric_checks[0]["condition"]["args"]
         self.assertEqual(args["min"], 0)
@@ -308,10 +347,15 @@ class TestFormRenderer(unittest.TestCase):
 
     def test_regex_check(self):
         content = {
-            "fields": [{
-                "name": "zip", "type": "text", "label": "ZIP",
-                "pattern": r"^\d{5}$", "patternMessage": "Must be 5 digits",
-            }]
+            "fields": [
+                {
+                    "name": "zip",
+                    "type": "text",
+                    "label": "ZIP",
+                    "pattern": r"^\d{5}$",
+                    "patternMessage": "Must be 5 digits",
+                }
+            ]
         }
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "TextField")

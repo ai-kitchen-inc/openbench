@@ -36,7 +36,34 @@ agent = BaseAgent(
 )
 
 result = agent.execute(context)  # Returns ExecutionResult
+
+# Execute with progressive token streaming
+def on_token(delta: str) -> None:
+    print(delta, end='', flush=True)
+
+result = agent.execute(context, on_chunk=on_token)
 ```
+
+## Progressive Token Streaming
+
+Both `BaseAgent` and `SimpleAgent` support real-time token streaming via the `on_chunk` callback:
+
+```python
+def on_token(delta: str) -> None:
+    print(delta, end='', flush=True)
+
+agent = BaseAgent(goal="Analyze sales data", model="gemini-2.5-flash")
+result = agent.execute(context, on_chunk=on_token)
+```
+
+When `on_chunk` is provided:
+- `LLMProvider.generate_stream()` is used instead of `generate()`
+- Text deltas are yielded progressively as they arrive from the LLM
+- `on_chunk(delta)` is called for each text delta
+- Final `ExecutionResult.output` contains the complete accumulated text
+- If the provider doesn't implement `generate_stream()`, it falls back to `generate()` (single chunk)
+
+This is used by the AG-UI transport (`AGUIHandler`) to stream `TEXT_MESSAGE_CONTENT` events via SSE.
 
 ## Pre-built Agent Types
 
@@ -131,6 +158,23 @@ configure_provider(
 agent = BaseAgent(goal="Analyze", model="gemini-2.5-flash")
 ```
 
+### LLMProvider Streaming
+
+`LLMProvider` has two generation methods:
+
+```python
+class LLMProvider(ABC):
+    def generate(self, prompt, model, **params) -> LLMResponse:
+        """Single blocking response."""
+
+    def generate_stream(self, prompt, model, **params) -> Iterator[LLMResponse]:
+        """Progressive streaming (for on_chunk support).
+        Default: falls back to generate() as single chunk."""
+        yield self.generate(prompt, model, **params)
+```
+
+`GeminiLLMProvider` implements `generate_stream()` using `generate_content_stream()` API. Each chunk yields a partial `LLMResponse` with delta text. Token usage comes from the final chunk.
+
 ## RAG (Retrieval-Augmented Generation)
 
 Pass a DataStore to BaseAgent for automatic context retrieval:
@@ -157,7 +201,7 @@ agent = BaseAgent(
 ## Anti-Patterns
 
 **DO NOT:**
-- Invent LLMProvider methods - read `src/openbench/core/abstractions.py` for the interface (`generate()`, `provider_name`)
+- Invent LLMProvider methods - read `src/openbench/core/abstractions.py` for the interface (`generate()`, `generate_stream()`, `provider_name`)
 - Call `agent._get_llm()` directly - use `agent.execute(context)` which handles the full loop
 - Assume tool call response format - different LLMs return different formats, `_parse_tool_calls()` handles this
 - Skip `ProviderService` - don't instantiate `GeminiLLMProvider` directly in agents, use `configure_provider()` + `service.resolve()`

@@ -98,7 +98,10 @@ class TestGoogleADKAdapterExtractContent(unittest.TestCase):
 
     def test_extract_dict_with_intelligence_output(self):
         """Test extracting content from IntelligenceLayer output."""
-        input_data = {"intelligence_output": {"content": "AI generated content"}, "metadata": {}}
+        input_data = {
+            "intelligence_output": {"content": "AI generated content"},
+            "metadata": {},
+        }
         result = self.adapter._extract_content(input_data)
         self.assertEqual(result, "AI generated content")
 

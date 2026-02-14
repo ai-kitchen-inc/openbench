@@ -150,69 +150,10 @@ export type A2UIServerMessage =
   | { version: "v0.10"; updateDataModel: UpdateDataModelPayload }
   | { version: "v0.10"; deleteSurface: DeleteSurfacePayload };
 
-// ── Stream Envelope Messages (outside A2UI spec) ──
-
-export interface StreamStartMessage {
-  type: "stream_start";
-  messageId: string;
-}
-
-export interface StreamEndMessage {
-  type: "stream_end";
-  messageId: string;
-  metadata?: MessageMetadata;
-}
-
-export interface StreamErrorMessage {
-  type: "error";
-  messageId: string;
-  metadata?: { error: string };
-}
-
-export interface StepStartMessage {
-  type: "step_start";
-  stepId: string;
-  stepName: string;
-  messageId?: string;
-}
-
-export interface StepCompleteMessage {
-  type: "step_complete";
-  stepId: string;
-  messageId?: string;
-}
-
-export type StreamEnvelopeMessage =
-  | StreamStartMessage
-  | StreamEndMessage
-  | StreamErrorMessage
-  | StepStartMessage
-  | StepCompleteMessage;
-
-// ── Client Messages (sent to server) ──
-
-export interface ClientMessage {
-  type: "message";
-  sessionId?: string;
-  content: string;
-  attachments?: Attachment[];
-}
-
-export interface ClientAction {
-  type: "action";
-  name: string;
-  surfaceId: string;
-  sourceComponentId: string;
-  timestamp: string;
-  context: Record<string, unknown>;
-}
-
-export type ClientPayload = ClientMessage | ClientAction;
-
 // ── Configuration ──
 
 export interface ChatConfig {
-  streamUrl: string; // POST → SSE (e.g., "/chat/stream")
+  streamUrl: string; // POST → SSE AG-UI endpoint (e.g., "/awp")
   actionUrl?: string; // POST → JSON (defaults to "/chat/action")
   uploadUrl?: string; // POST → JSON (defaults to "/chat/upload")
   theme?: "light" | "dark" | "auto";

@@ -4,8 +4,8 @@ Embedding providers for OpenBench.
 Provides implementation-agnostic embedding generation with auto-detection
 of dimensions and model capabilities.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import os
 

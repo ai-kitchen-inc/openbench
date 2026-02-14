@@ -34,6 +34,8 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
+    "@ag-ui/client": "^0.0.45",
+    "@ag-ui/core": "^0.0.45",
     "dompurify": "^3.3.1",
     "katex": "^0.16.0",
     "react-markdown": "^10.1.0",

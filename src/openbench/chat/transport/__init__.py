@@ -1,16 +1,14 @@
 """
-Chat transport layer (WebSocket, SSE).
+Chat transport layer (AG-UI protocol).
 
 Public API:
-    from openbench.chat.transport import ChatTransport
-    from openbench.chat.transport.websocket import ChatWebSocketServer
-    from openbench.chat.transport.sse import ChatSSEHandler
+    from openbench.chat.transport import AGUIHandler, AGUIActionHandler
 """
 
-from openbench.chat.transport.base import ChatTransport
-from openbench.chat.transport.sse import ChatSSEHandler
+from openbench.chat.transport.agui import AGUIHandler
+from openbench.chat.transport.agui_actions import AGUIActionHandler
 
 __all__ = [
-    "ChatTransport",
-    "ChatSSEHandler",
+    "AGUIHandler",
+    "AGUIActionHandler",
 ]

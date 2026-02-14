@@ -1,16 +1,14 @@
 """Tests for ChatLayer L2 orchestrator."""
 
 import unittest
-from typing import Any
 
 from openbench.chat.layer import ChatFactory, ChatLayer
 from openbench.core.abstractions import (
     Agent,
     ExecutionContext,
     ExecutionResult,
-    FrameworkAdapter,
 )
-from openbench.core.layers import DataLayer, OutputLayer
+from openbench.core.layers import DataLayer
 
 
 class MockAgent(Agent):
@@ -59,12 +57,14 @@ class TestChatLayer(unittest.TestCase):
 
     def test_invoke_preserves_keys(self):
         layer = ChatLayer(agent=MockAgent())
-        result = layer.invoke({
-            "content": "Hello",
-            "goal": "Test goal",
-            "output_path": "/tmp/test",
-            "title": "Test Title",
-        })
+        result = layer.invoke(
+            {
+                "content": "Hello",
+                "goal": "Test goal",
+                "output_path": "/tmp/test",
+                "title": "Test Title",
+            }
+        )
 
         self.assertEqual(result.get("goal"), "Test goal")
         self.assertEqual(result.get("output_path"), "/tmp/test")
@@ -119,6 +119,7 @@ class TestChatLayerComposition(unittest.TestCase):
         layer = ChatLayer(agent=MockAgent())
         # Just verify the pipe operator works (creates a Chain)
         from openbench.core.chainable import Chainable
+
         self.assertIsInstance(layer, Chainable)
 
     def test_compose_with_data_layer(self):

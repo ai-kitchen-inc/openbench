@@ -6,8 +6,8 @@ Provides:
 - Attachment: File/media attachment
 - ChatSession: Manages conversation history and state
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 import logging
 import uuid
@@ -56,7 +56,7 @@ class Attachment:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Attachment":
+    def from_dict(cls, data: dict[str, Any]) -> Attachment:
         """Deserialize from dict."""
         return cls(
             id=data["id"],
@@ -98,7 +98,7 @@ class ChatMessage:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ChatMessage":
+    def from_dict(cls, data: dict[str, Any]) -> ChatMessage:
         """Deserialize from dict."""
         attachments = None
         if "attachments" in data:
@@ -202,7 +202,7 @@ class ChatSession:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ChatSession":
+    def from_dict(cls, data: dict[str, Any]) -> ChatSession:
         """Deserialize from dict."""
         session = cls(
             session_id=data["sessionId"],

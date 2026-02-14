@@ -245,7 +245,12 @@ def providers():
 
     providers_info = [
         ("openai", "OpenAI", "GPT-4, GPT-4o, GPT-3.5", "https://platform.openai.com"),
-        ("anthropic", "Anthropic", "Claude 3.5, Claude 3", "https://console.anthropic.com"),
+        (
+            "anthropic",
+            "Anthropic",
+            "Claude 3.5, Claude 3",
+            "https://console.anthropic.com",
+        ),
         ("google", "Google", "Gemini Pro, Gemini Ultra", "https://ai.google.dev"),
         ("local", "Local", "Ollama, LM Studio", "localhost"),
     ]

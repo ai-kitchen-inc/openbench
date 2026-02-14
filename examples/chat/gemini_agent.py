@@ -327,18 +327,32 @@ CREATE_FORM_SCHEMA: dict[str, Any] = {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "name": {"type": "string", "description": "Field identifier"},
+                            "name": {
+                                "type": "string",
+                                "description": "Field identifier",
+                            },
                             "type": {
                                 "type": "string",
                                 "enum": [
-                                    "text", "email", "password", "number", "textarea",
-                                    "date", "datetime", "time", "checkbox", "select",
+                                    "text",
+                                    "email",
+                                    "password",
+                                    "number",
+                                    "textarea",
+                                    "date",
+                                    "datetime",
+                                    "time",
+                                    "checkbox",
+                                    "select",
                                     "slider",
                                 ],
                                 "description": "Input field type",
                             },
                             "label": {"type": "string", "description": "Display label"},
-                            "required": {"type": "boolean", "description": "Whether field is required"},
+                            "required": {
+                                "type": "boolean",
+                                "description": "Whether field is required",
+                            },
                             "options": {
                                 "type": "array",
                                 "items": {"type": "string"},
@@ -560,9 +574,7 @@ def get_datetime() -> str:
 # ── Visualization tool functions ──
 
 
-def create_chart(
-    chart_type: str, title: str, data: list[dict], options: dict | None = None
-) -> str:
+def create_chart(chart_type: str, title: str, data: list[dict], options: dict | None = None) -> str:
     """Create a visual chart by pushing structured data to the render queue.
 
     If a chart with the same title already exists (agent refinement), it is replaced.
@@ -585,17 +597,12 @@ def create_chart(
         if "height" in options:
             item["height"] = options["height"]
     # Replace chart with same title (refinement), keep different titles
-    _render_items[:] = [
-        i for i in _render_items
-        if not (i.get("title") == title and "data" in i)
-    ]
+    _render_items[:] = [i for i in _render_items if not (i.get("title") == title and "data" in i)]
     _render_items.append(item)
     return f"Chart created: {chart_type} chart titled '{title}' with {len(data)} data points."
 
 
-def create_form(
-    title: str, fields: list[dict], submit_label: str = "Submit"
-) -> str:
+def create_form(title: str, fields: list[dict], submit_label: str = "Submit") -> str:
     """Create an interactive form by pushing field definitions to the render queue.
 
     Only one form per response — if the agent refines the form across reasoning
@@ -603,18 +610,18 @@ def create_form(
     """
     # Replace any existing form item (agent may call this multiple times in reasoning loop)
     _render_items[:] = [item for item in _render_items if "fields" not in item]
-    _render_items.append({
-        "fields": fields,
-        "submitLabel": submit_label,
-        "title": title,
-    })
+    _render_items.append(
+        {
+            "fields": fields,
+            "submitLabel": submit_label,
+            "title": title,
+        }
+    )
     field_names = ", ".join(f["name"] for f in fields)
     return f"Form created: '{title}' with fields: {field_names}."
 
 
-def show_file(
-    name: str, url: str, mime_type: str = "", size: int = 0
-) -> str:
+def show_file(name: str, url: str, mime_type: str = "", size: int = 0) -> str:
     """Display a file card by pushing file metadata to the render queue.
 
     If a file card with the same name already exists, it is replaced.
@@ -626,8 +633,7 @@ def show_file(
         item["size"] = size
     # Replace file card with same name (don't show same file twice)
     _render_items[:] = [
-        i for i in _render_items
-        if not (i.get("name") == name and "url" in i and "fields" not in i)
+        i for i in _render_items if not (i.get("name") == name and "url" in i and "fields" not in i)
     ]
     _render_items.append(item)
     return f"File card displayed: {name}."

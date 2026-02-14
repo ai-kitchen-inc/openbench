@@ -139,7 +139,10 @@ class DemoDataSource(DataSource):
 
     def extract(self):
         return RawData(
-            content="Sample data from demo source", content_type="text", metadata={}, source=self
+            content="Sample data from demo source",
+            content_type="text",
+            metadata={},
+            source=self,
         )
 
     def validate(self):
@@ -218,7 +221,8 @@ def demo_2_mixed_frameworks():
     output_layer = OutputLayer(generators=DemoOutputGenerator())
 
     workflow = Workflow(
-        name="mixed-framework-demo", chain=data_layer | intelligence_layer | output_layer
+        name="mixed-framework-demo",
+        chain=data_layer | intelligence_layer | output_layer,
     )
 
     print("\nWorkflow: Data → LangChain → AG2 → CrewAI → Output")
@@ -262,7 +266,8 @@ def demo_4_adapter_interface():
     print("=" * 80)
 
     print("\nThe FrameworkAdapter interface is minimal:")
-    print("""
+    print(
+        """
 class FrameworkAdapter(ABC):
     @property
     @abstractmethod
@@ -274,7 +279,8 @@ class FrameworkAdapter(ABC):
     def invoke(self, input, config=None):
         \"\"\"Execute the wrapped agent.\"\"\"
         pass
-    """)
+    """
+    )
 
     print("That's it! Just 2 methods and your framework works with OpenBench.")
 
@@ -315,7 +321,8 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("KEY TAKEAWAYS")
     print("=" * 80)
-    print("""
+    print(
+        """
 1. FrameworkAdapter is a minimal interface (just invoke() method)
 2. Wrap any framework's agent in 5 lines of code
 3. Mix frameworks freely in workflows (LangChain → AG2 → CrewAI)
@@ -324,5 +331,6 @@ if __name__ == "__main__":
 
 OpenBench is not another framework.
 It's the control plane and plumbing that connects them all.
-""")
+"""
+    )
     print("=" * 80)

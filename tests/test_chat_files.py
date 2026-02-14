@@ -1,4 +1,5 @@
 """Tests for chat file storage and content extraction."""
+
 from __future__ import annotations
 
 import os
@@ -133,9 +134,7 @@ class TestFileContentExtractor(unittest.TestCase):
 
     def test_extract_text_file(self):
         """Text files are read directly."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Hello from text file!")
             f.flush()
             stored = StoredFile(
@@ -225,8 +224,11 @@ class TestAttachmentExtractedText(unittest.TestCase):
     def test_to_dict_without_extracted_text(self):
         """Attachment without extracted_text omits the field."""
         att = Attachment(
-            id="a1", type="file", name="f.txt",
-            url="/f.txt", mime_type="text/plain",
+            id="a1",
+            type="file",
+            name="f.txt",
+            url="/f.txt",
+            mime_type="text/plain",
         )
         d = att.to_dict()
         self.assertNotIn("extractedText", d)
@@ -234,8 +236,11 @@ class TestAttachmentExtractedText(unittest.TestCase):
     def test_to_dict_with_extracted_text(self):
         """Attachment with extracted_text includes the field."""
         att = Attachment(
-            id="a1", type="file", name="f.txt",
-            url="/f.txt", mime_type="text/plain",
+            id="a1",
+            type="file",
+            name="f.txt",
+            url="/f.txt",
+            mime_type="text/plain",
             extracted_text="file content here",
         )
         d = att.to_dict()
@@ -244,8 +249,11 @@ class TestAttachmentExtractedText(unittest.TestCase):
     def test_from_dict_with_extracted_text(self):
         """from_dict() preserves extractedText."""
         data = {
-            "id": "a1", "type": "file", "name": "f.txt",
-            "url": "/f.txt", "mimeType": "text/plain",
+            "id": "a1",
+            "type": "file",
+            "name": "f.txt",
+            "url": "/f.txt",
+            "mimeType": "text/plain",
             "extractedText": "hello world",
         }
         att = Attachment.from_dict(data)
@@ -254,8 +262,11 @@ class TestAttachmentExtractedText(unittest.TestCase):
     def test_from_dict_without_extracted_text(self):
         """from_dict() defaults extracted_text to None."""
         data = {
-            "id": "a1", "type": "file", "name": "f.txt",
-            "url": "/f.txt", "mimeType": "text/plain",
+            "id": "a1",
+            "type": "file",
+            "name": "f.txt",
+            "url": "/f.txt",
+            "mimeType": "text/plain",
         }
         att = Attachment.from_dict(data)
         self.assertIsNone(att.extracted_text)

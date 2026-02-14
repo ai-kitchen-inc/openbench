@@ -28,7 +28,12 @@ from openbench.chat.a2ui.schema import (
 )
 from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
 from openbench.chat.session import Attachment, ChatSession
-from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult, FrameworkAdapter
+from openbench.core.abstractions import (
+    Agent,
+    ExecutionContext,
+    ExecutionResult,
+    FrameworkAdapter,
+)
 from openbench.core.chainable import Chainable, RunnableConfig
 
 logger = logging.getLogger(__name__)
@@ -341,8 +346,17 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         content: str,
         config: RunnableConfig | None,
         attachments: list[Attachment] | None = None,
+        on_chunk: Callable[[str], None] | None = None,
     ) -> Any:
-        """Execute the agent with the given content."""
+        """Execute the agent with the given content.
+
+        Args:
+            content: User message text.
+            config: Optional runnable config.
+            attachments: Optional file attachments.
+            on_chunk: Optional callback for progressive token streaming.
+                Called with each text delta as it arrives from the LLM.
+        """
         if isinstance(self.agent, Agent):
             data: dict[str, Any] = {"session": self.session.to_dict()}
             if attachments:
@@ -362,6 +376,12 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                 goal=content,
                 data=data,
             )
+            # Pass on_chunk if agent supports it (BaseAgent does)
+            if on_chunk:
+                try:
+                    return self.agent.execute(context, on_chunk=on_chunk)
+                except TypeError:
+                    return self.agent.execute(context)
             return self.agent.execute(context)
         elif isinstance(self.agent, FrameworkAdapter):
             return self.agent.invoke(content, config)
@@ -400,20 +420,21 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                 (visualization tools). Each item is rendered through the
                 renderer pipeline independently and combined with main content.
         """
-        # Render main content
+        # Render main content (skip when content is None — text already streamed)
         main_components: list[A2UIComponent] = []
-        for renderer in self.renderers:
-            if renderer.detect(content):
-                main_components = renderer.render(content, surface_id="")
-                break
-        if not main_components:
-            main_components = [
-                A2UIComponent(
-                    id="txt-fallback",
-                    component="Text",
-                    properties={"text": str(content), "variant": "body"},
-                )
-            ]
+        if content is not None:
+            for renderer in self.renderers:
+                if renderer.detect(content):
+                    main_components = renderer.render(content, surface_id="")
+                    break
+            if not main_components:
+                main_components = [
+                    A2UIComponent(
+                        id="txt-fallback",
+                        component="Text",
+                        properties={"text": str(content), "variant": "body"},
+                    )
+                ]
 
         # Render extra items from render queue
         if not extra_items:
