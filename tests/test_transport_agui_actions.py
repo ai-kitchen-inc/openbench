@@ -3,43 +3,22 @@
 import asyncio
 import unittest
 from typing import Any
+from unittest.mock import MagicMock
 
-from openbench.chat.a2ui.schema import A2UI_VERSION
 from openbench.chat.engine import ChatEngine
-from openbench.chat.transport.agui_actions import AGUIActionHandler
+from openbench.chat.transport.agui_actions import ActionData, AGUIActionHandler
 from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult
 
 
 class MockAgent(Agent):
     """Mock agent for testing."""
 
-    def __init__(self, response: str = "Action reply"):
-        self._response = response
-
     @property
     def agent_type(self) -> str:
         return "mock"
 
     def execute(self, context: ExecutionContext) -> ExecutionResult:
-        return ExecutionResult(
-            output=self._response,
-            status="success",
-            metadata={"model": "mock"},
-        )
-
-    def estimate_cost(self, context: ExecutionContext) -> float:
-        return 0.0
-
-
-class ErrorMockAgent(Agent):
-    """Mock agent that raises an error."""
-
-    @property
-    def agent_type(self) -> str:
-        return "error-mock"
-
-    def execute(self, context: ExecutionContext) -> ExecutionResult:
-        raise RuntimeError("Agent crashed")
+        return ExecutionResult(output="reply", status="success", metadata={})
 
     def estimate_cost(self, context: ExecutionContext) -> float:
         return 0.0
@@ -64,6 +43,27 @@ def _run(coro):
         loop.close()
 
 
+class TestActionData(unittest.TestCase):
+    """Tests for ActionData dataclass."""
+
+    def test_defaults(self):
+        action = ActionData(name="click", surface_id="s-1")
+        self.assertEqual(action.name, "click")
+        self.assertEqual(action.surface_id, "s-1")
+        self.assertIsNone(action.source_component_id)
+        self.assertEqual(action.context, {})
+
+    def test_full_fields(self):
+        action = ActionData(
+            name="submit_form",
+            surface_id="s-1",
+            source_component_id="btn-1",
+            context={"field": "value"},
+        )
+        self.assertEqual(action.source_component_id, "btn-1")
+        self.assertEqual(action.context, {"field": "value"})
+
+
 class TestAGUIActionHandlerInit(unittest.TestCase):
     """Tests for AGUIActionHandler initialization."""
 
@@ -72,14 +72,53 @@ class TestAGUIActionHandlerInit(unittest.TestCase):
         handler = AGUIActionHandler(engine=engine)
         self.assertIs(handler.engine, engine)
 
-
-class TestAGUIActionHandlerHandle(unittest.TestCase):
-    """Tests for AGUIActionHandler.handle()."""
-
-    def test_handle_returns_a2ui_messages(self):
-        """Should return A2UI messages from engine.invoke()."""
-        engine = ChatEngine(agent=MockAgent("Action reply"))
+    def test_init_empty_handlers(self):
+        engine = ChatEngine(agent=MockAgent())
         handler = AGUIActionHandler(engine=engine)
+        self.assertEqual(handler._handlers, {})
+
+
+class TestAGUIActionHandlerDefaultResponse(unittest.TestCase):
+    """Tests for default response when no handler registered."""
+
+    def test_default_response_returns_empty(self):
+        """No registered handler -> returns empty list (no-op)."""
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+        request = MockRequest({"name": "unknown_action", "surfaceId": "s-1", "context": {}})
+
+        messages = _run(handler.handle(request))
+
+        self.assertIsInstance(messages, list)
+        self.assertEqual(len(messages), 0)
+
+    def test_action_data_with_missing_fields(self):
+        """Minimal body handled gracefully -- returns empty (no-op)."""
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+        request = MockRequest({"name": "click"})
+
+        messages = _run(handler.handle(request))
+
+        self.assertIsInstance(messages, list)
+        self.assertEqual(len(messages), 0)
+
+
+class TestAGUIActionHandlerRegistry(unittest.TestCase):
+    """Tests for handler registration and dispatch."""
+
+    def test_registered_handler_called(self):
+        """Custom handler called for matching action name."""
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        called_with = []
+
+        @handler.on("submit_form")
+        def handle_submit(action: ActionData):
+            called_with.append(action)
+            return [{"type": "updateComponents", "custom": True}]
+
         request = MockRequest(
             {
                 "name": "submit_form",
@@ -91,60 +130,114 @@ class TestAGUIActionHandlerHandle(unittest.TestCase):
 
         messages = _run(handler.handle(request))
 
-        self.assertIsInstance(messages, list)
-        self.assertTrue(len(messages) > 0)
+        self.assertEqual(len(called_with), 1)
+        self.assertEqual(called_with[0].name, "submit_form")
+        self.assertEqual(called_with[0].surface_id, "s-1")
+        self.assertEqual(called_with[0].source_component_id, "btn-1")
+        self.assertEqual(called_with[0].context, {"field": "value"})
+        self.assertEqual(messages, [{"type": "updateComponents", "custom": True}])
 
-        # Should contain A2UI messages
-        a2ui_msgs = [m for m in messages if m.get("version") == A2UI_VERSION]
-        self.assertTrue(len(a2ui_msgs) >= 2)  # createSurface + updateComponents
-
-    def test_handle_forwards_action_to_engine(self):
-        """Action data should be forwarded to engine.invoke()."""
-        engine = ChatEngine(agent=MockAgent("Reply"))
+    def test_register_method(self):
+        """register() method works like on() decorator."""
+        engine = ChatEngine(agent=MockAgent())
         handler = AGUIActionHandler(engine=engine)
-        request = MockRequest(
-            {
-                "name": "click_button",
-                "surfaceId": "s-1",
-                "context": {"key": "val"},
-            }
-        )
 
-        _run(handler.handle(request))
+        def my_handler(action: ActionData):
+            return [{"handled": True}]
 
-        # Engine should have processed the action (session updated)
-        self.assertTrue(len(engine.session) > 0)
+        handler.register("my_action", my_handler)
 
-    def test_handle_with_missing_optional_fields(self):
-        """Should handle action with minimal fields."""
-        engine = ChatEngine(agent=MockAgent("Reply"))
-        handler = AGUIActionHandler(engine=engine)
-        request = MockRequest(
-            {
-                "name": "click",
-            }
-        )
-
+        request = MockRequest({"name": "my_action", "surfaceId": "s-1"})
         messages = _run(handler.handle(request))
 
-        self.assertIsInstance(messages, list)
+        self.assertEqual(messages, [{"handled": True}])
 
-    def test_handle_preserves_action_context(self):
-        """Context dict should be passed through to engine."""
-        engine = ChatEngine(agent=MockAgent("Reply"))
+    def test_async_handler_supported(self):
+        """Async handlers are awaited properly."""
+        engine = ChatEngine(agent=MockAgent())
         handler = AGUIActionHandler(engine=engine)
+
+        @handler.on("async_action")
+        async def handle_async(action: ActionData):
+            return [{"async": True, "surface": action.surface_id}]
+
+        request = MockRequest({"name": "async_action", "surfaceId": "s-2"})
+        messages = _run(handler.handle(request))
+
+        self.assertEqual(messages, [{"async": True, "surface": "s-2"}])
+
+    def test_handler_receives_action_data(self):
+        """Handler receives correct ActionData fields."""
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        received = []
+
+        @handler.on("test_action")
+        def capture(action: ActionData):
+            received.append(action)
+            return []
+
         request = MockRequest(
             {
-                "name": "update_value",
-                "surfaceId": "s-1",
+                "name": "test_action",
+                "surfaceId": "surface-42",
                 "sourceComponentId": "slider-1",
                 "context": {"value": 42, "min": 0, "max": 100},
             }
         )
 
-        messages = _run(handler.handle(request))
+        _run(handler.handle(request))
 
-        self.assertIsInstance(messages, list)
+        self.assertEqual(len(received), 1)
+        action = received[0]
+        self.assertIsInstance(action, ActionData)
+        self.assertEqual(action.name, "test_action")
+        self.assertEqual(action.surface_id, "surface-42")
+        self.assertEqual(action.source_component_id, "slider-1")
+        self.assertEqual(action.context, {"value": 42, "min": 0, "max": 100})
+
+    def test_no_agent_execution(self):
+        """Verify engine.invoke() is NOT called (key regression test)."""
+        engine = ChatEngine(agent=MockAgent())
+        engine.invoke = MagicMock(side_effect=AssertionError("invoke should not be called"))
+        handler = AGUIActionHandler(engine=engine)
+
+        @handler.on("submit_form")
+        def handle_submit(action: ActionData):
+            return [{"ok": True}]
+
+        request = MockRequest(
+            {"name": "submit_form", "surfaceId": "s-1", "context": {"data": "test"}}
+        )
+
+        # Should NOT raise -- engine.invoke() must not be called
+        messages = _run(handler.handle(request))
+        self.assertEqual(messages, [{"ok": True}])
+        engine.invoke.assert_not_called()
+
+    def test_no_agent_execution_default_handler(self):
+        """Default handler also does NOT call engine.invoke()."""
+        engine = ChatEngine(agent=MockAgent())
+        engine.invoke = MagicMock(side_effect=AssertionError("invoke should not be called"))
+        handler = AGUIActionHandler(engine=engine)
+
+        request = MockRequest({"name": "unknown", "surfaceId": "s-1"})
+
+        messages = _run(handler.handle(request))
+        self.assertEqual(len(messages), 0)
+        engine.invoke.assert_not_called()
+
+    def test_on_decorator_returns_original_function(self):
+        """on() decorator should not wrap the function."""
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        @handler.on("test")
+        def my_func(action: ActionData):
+            return []
+
+        self.assertIs(handler._handlers["test"], my_func)
 
 
 if __name__ == "__main__":

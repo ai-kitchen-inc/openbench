@@ -19,6 +19,7 @@ from openbench.intelligence.base import (
     BaseAgent,
     Message,
     MessageRole,
+    ProgressEvent,
     SimpleAgent,
     StructuredOutputAgent,
     ToolExecutor,
@@ -59,6 +60,7 @@ __all__ = [
     # Agent utilities
     "AgentMemory",
     "AgentConfig",
+    "ProgressEvent",
     "ToolExecutor",
     "Message",
     "MessageRole",

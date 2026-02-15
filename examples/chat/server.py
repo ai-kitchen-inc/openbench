@@ -1,10 +1,15 @@
 """
 FastAPI chat server for the demo.
 
-Provides three endpoints:
+Provides endpoints:
   - POST /awp          -> SSE (AG-UI protocol event stream)
   - POST /chat/action  -> JSON (A2UI button clicks, form submits)
   - POST /chat/upload  -> JSON (file upload, returns attachment metadata)
+
+Phase 2 Agentic AI features:
+  - Task Planning: agent decomposes complex queries before execution
+  - Parallel Tool Execution: multiple tools run concurrently
+  - Persistent Memory: conversations persist across server restarts (SQLite)
 
 Requires GOOGLE_API_KEY for the Gemini agent.
 
@@ -14,16 +19,21 @@ Run:
 """
 
 import asyncio
+import copy
 import os
 import sys
+import threading
 
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from openbench.chat import ChatEngine
+from openbench.chat.a2ui.schema import A2UIComponent
 from openbench.chat.files import FileContentExtractor, FileStore
-from openbench.chat.transport import AGUIActionHandler, AGUIHandler
+from openbench.chat.transport import ActionData, AGUIActionHandler, AGUIHandler
+from openbench.intelligence.base import AgentMemory, BaseAgent, MessageRole
+from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
 
 # ── Agent: Gemini (required) ──
 
@@ -39,7 +49,70 @@ from gemini_agent import (
     set_attachments,
 )
 
-agent = create_gemini_agent()
+# ── Persistent Memory Setup ──
+
+DB_PATH = os.getenv("CHAT_MEMORY_DB", "chat_memory.db")
+
+
+# ── Custom AG-UI Handler with Persistent Memory ──
+
+
+class AgenticAGUIHandler(AGUIHandler):
+    """AG-UI handler that creates per-session agents with persistent memory.
+
+    Overrides the default request-agent creation to use PersistentMemory
+    backed by SQLiteMemoryStore. Each AG-UI thread gets its own memory
+    session, so conversations persist across server restarts.
+    """
+
+    def __init__(self, engine, db_path: str = "chat_memory.db"):
+        super().__init__(engine)
+        self._memory_store = SQLiteMemoryStore(db_path=db_path)
+        self._current_session_id: str | None = None
+        self._session_lock = threading.Lock()
+
+    def _get_or_create_session(self, session_id):
+        """Track current session_id for agent creation, then delegate."""
+        with self._session_lock:
+            self._current_session_id = session_id
+        return super()._get_or_create_session(session_id)
+
+    def _create_request_agent(self):
+        """Create a request-scoped agent with persistent memory."""
+        agent = self.engine.agent
+        if not isinstance(agent, BaseAgent):
+            return agent
+
+        agent_copy = copy.copy(agent)
+
+        with self._session_lock:
+            session_id = self._current_session_id
+
+        if session_id and self._memory_store:
+            agent_copy.memory = PersistentMemory(
+                store=self._memory_store,
+                session_id=session_id,
+            )
+        else:
+            agent_copy.memory = AgentMemory()
+
+        # Add system prompt if not already present (first message in session)
+        if (
+            not agent_copy.memory.messages
+            or agent_copy.memory.messages[0].role != MessageRole.SYSTEM
+        ):
+            agent_copy.memory.add_system(agent._system_prompt)
+
+        # Share LLM provider and tools (thread-safe, read-only)
+        agent_copy._llm = agent._llm
+        agent_copy.tools = agent.tools
+        return agent_copy
+
+
+agent = create_gemini_agent(
+    enable_planning=True,
+    parallel_tool_execution=True,
+)
 
 # Wire: Agent -> ChatEngine -> AG-UI Transport (with render items from visualization tools)
 engine = ChatEngine(
@@ -47,8 +120,36 @@ engine = ChatEngine(
     render_items_fn=get_render_items,
     clear_render_items_fn=clear_render_items,
 )
-agui_handler = AGUIHandler(engine=engine)
+agui_handler = AgenticAGUIHandler(engine=engine, db_path=DB_PATH)
 action_handler = AGUIActionHandler(engine=engine)
+
+
+@action_handler.on("submit_form")
+def handle_form_submit(action: ActionData):
+    """Replace form with submission confirmation."""
+    data = action.context
+    summary_items = [f"{k}: {v}" for k, v in data.items() if v]
+    summary = "\n".join(summary_items) if summary_items else "No data submitted"
+
+    components = [
+        A2UIComponent(
+            id="confirm-text",
+            component="Text",
+            properties={"text": "Form submitted successfully", "variant": "h4"},
+        ),
+        A2UIComponent(
+            id="confirm-data",
+            component="ObMarkdown",
+            properties={"content": f"**Submitted data:**\n\n{summary}"},
+        ),
+        A2UIComponent(
+            id="root",
+            component="Column",
+            properties={"children": ["confirm-text", "confirm-data"], "gap": "12px"},
+        ),
+    ]
+    return [engine.builder.build_update_components(action.surface_id, components)]
+
 
 # File upload
 file_store = FileStore(upload_dir="./uploads")
@@ -68,6 +169,8 @@ app.add_middleware(
 async def startup():
     print("\n  OpenBench Chat Demo")
     print(f"  Agent: Gemini ({agent.model})")
+    print(f"  Memory DB: {DB_PATH}")
+    print("  Features: planning, parallel-tools, persistent-memory")
     print("  AG-UI: POST http://localhost:8000/awp")
     print("  Action: POST http://localhost:8000/chat/action")
     print("  Upload: POST http://localhost:8000/chat/upload\n")
@@ -97,15 +200,14 @@ async def upload_file(file: UploadFile = File(...)):
 
 @app.post("/awp")
 async def agent_endpoint(request: Request):
-    """AG-UI protocol endpoint for progressive message streaming.
+    """AG-UI protocol endpoint with persistent memory.
 
     Streams AG-UI events (RunStarted, StepStarted, CustomEvent(a2ui), etc.)
-    as SSE. Compatible with AG-UI client SDKs and @openbench/chat-ui.
+    as SSE. Each threadId maps to a persistent memory session.
     """
     body = await request.json()
 
     # Resolve uploaded file paths so agent tools can read full content from disk
-    # Attachments can come from forwardedProps (AG-UI format) or top-level (OpenBench format)
     forwarded = body.get("forwardedProps") or {}
     attachments_list = forwarded.get("attachments") or body.get("attachments") or []
 
@@ -131,26 +233,8 @@ async def agent_endpoint(request: Request):
 
 @app.post("/chat/action")
 async def chat_action(request: Request):
-    """REST endpoint for A2UI actions (button clicks, form submits).
-
-    Returns response messages as a JSON array.
-    """
+    """REST endpoint for A2UI actions (button clicks, form submits)."""
     return await action_handler.handle(request)
-
-
-@app.get("/")
-async def root():
-    return {
-        "status": "ok",
-        "agent": "gemini",
-        "model": agent.model,
-        "protocol": "ag-ui",
-        "endpoints": {
-            "agui": "POST /awp",
-            "action": "POST /chat/action",
-            "upload": "POST /chat/upload",
-        },
-    }
 
 
 # Mount static files AFTER route definitions so routes take priority
