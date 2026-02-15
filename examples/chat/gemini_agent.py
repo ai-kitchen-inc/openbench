@@ -13,6 +13,11 @@ Uses BaseAgent with GeminiLLMProvider + tools:
   - show_file: Display file cards (A2UI ObFileCard)
   - generate_file: Generate downloadable files (text, markdown, CSV, JSON, HTML)
 
+Phase 2 Agentic AI features (optional, enabled via factory params):
+  - Task Planning: LLM decomposes complex queries into steps
+  - Parallel Tool Execution: Concurrent tool calls
+  - Persistent Memory: Cross-session recall via memory_store
+
 Supports multi-turn conversation with memory.
 
 Requires:
@@ -20,6 +25,7 @@ Requires:
     - pip install google-genai
 """
 
+import contextvars
 import math
 import os
 import uuid
@@ -47,9 +53,24 @@ from openbench.data.sources import GroundedSearchSource, LangExtractSource, PDFS
 from openbench.intelligence.base import BaseAgent
 from openbench.workflows import Workflow
 
-# ── Global attachment context (set per-request from server.py) ──
+# ── Per-request context (ContextVar for async isolation) ──
+# asyncio.to_thread() automatically copies context to spawned threads,
+# so tool functions running in the agent thread see the correct per-request values.
 
-_current_attachments: list[dict] | None = None
+_current_attachments_var: contextvars.ContextVar[list[dict] | None] = contextvars.ContextVar(
+    "current_attachments", default=None
+)
+_render_items_var: contextvars.ContextVar[list[dict]] = contextvars.ContextVar("render_items")
+
+
+def _get_render_list() -> list[dict]:
+    """Get per-request render items list, creating if needed."""
+    try:
+        return _render_items_var.get()
+    except LookupError:
+        items: list[dict] = []
+        _render_items_var.set(items)
+        return items
 
 
 def set_attachments(attachments: list[dict] | None) -> None:
@@ -60,25 +81,17 @@ def set_attachments(attachments: list[dict] | None) -> None:
 
     Each dict should have: name (str), path (str), mime_type (str).
     """
-    global _current_attachments
-    _current_attachments = attachments
-
-
-# ── Render queue (side-channel for visualization tools) ──
-# Same pattern as _current_attachments: module-level list populated by tools,
-# read by ChatEngine after agent execution, cleared before each request.
-
-_render_items: list[dict] = []
+    _current_attachments_var.set(attachments)
 
 
 def get_render_items() -> list[dict]:
     """Return accumulated render items from visualization tools."""
-    return list(_render_items)
+    return list(_get_render_list())
 
 
 def clear_render_items() -> None:
     """Clear render items queue. Called before each request."""
-    _render_items.clear()
+    _render_items_var.set([])
 
 
 # ── Knowledge base ──
@@ -159,14 +172,15 @@ def search_web(query: str) -> str:
 
 def _resolve_attachment(filename: str) -> dict | None:
     """Find an attachment by filename. Returns None if not found."""
-    if not _current_attachments:
+    attachments = _current_attachments_var.get()
+    if not attachments:
         return None
-    return next((a for a in _current_attachments if a["name"] == filename), None)
+    return next((a for a in attachments if a["name"] == filename), None)
 
 
 def _format_not_found(filename: str) -> str:
     """Format a 'file not found' error with available filenames."""
-    available = ", ".join(a["name"] for a in (_current_attachments or []))
+    available = ", ".join(a["name"] for a in (_current_attachments_var.get() or []))
     return f"File '{filename}' not found. Available files: {available}"
 
 
@@ -174,7 +188,7 @@ def extract_entities(prompt: str, text: str = "", filename: str = "") -> str:
     """Extract structured entities using Workflow(Chain([PDFSource, LangExtractSource]))."""
     try:
         # Workflow: PDFSource -> LangExtractSource for uploaded PDF files
-        if filename and _current_attachments:
+        if filename and _current_attachments_var.get():
             att = _resolve_attachment(filename)
             if not att:
                 return _format_not_found(filename)
@@ -220,10 +234,11 @@ def _format_entities(result: Any) -> str:
 
 def analyze_file(filename: str = "") -> str:
     """Read full content of uploaded files from disk using PDFSource."""
-    if not _current_attachments:
+    attachments = _current_attachments_var.get()
+    if not attachments:
         return "No files have been uploaded in this message."
 
-    targets = _current_attachments
+    targets = attachments
     if filename:
         att = _resolve_attachment(filename)
         if not att:
@@ -323,8 +338,9 @@ def create_chart(chart_type: str, title: str, data: list[dict], options: dict | 
         if "height" in options:
             item["height"] = options["height"]
     # Replace chart with same title (refinement), keep different titles
-    _render_items[:] = [i for i in _render_items if not (i.get("title") == title and "data" in i)]
-    _render_items.append(item)
+    items = _get_render_list()
+    items[:] = [i for i in items if not (i.get("title") == title and "data" in i)]
+    items.append(item)
     return f"Chart created: {chart_type} chart titled '{title}' with {len(data)} data points."
 
 
@@ -335,8 +351,9 @@ def create_form(title: str, fields: list[dict], submit_label: str = "Submit") ->
     iterations, the previous form is replaced (not accumulated).
     """
     # Replace any existing form item (agent may call this multiple times in reasoning loop)
-    _render_items[:] = [item for item in _render_items if "fields" not in item]
-    _render_items.append(
+    items = _get_render_list()
+    items[:] = [item for item in items if "fields" not in item]
+    items.append(
         {
             "fields": fields,
             "submitLabel": submit_label,
@@ -358,10 +375,11 @@ def show_file(name: str, url: str, mime_type: str = "", size: int = 0) -> str:
     if size:
         item["size"] = size
     # Replace file card with same name (don't show same file twice)
-    _render_items[:] = [
-        i for i in _render_items if not (i.get("name") == name and "url" in i and "fields" not in i)
+    items = _get_render_list()
+    items[:] = [
+        i for i in items if not (i.get("name") == name and "url" in i and "fields" not in i)
     ]
-    _render_items.append(item)
+    items.append(item)
     return f"File card displayed: {name}."
 
 
@@ -416,12 +434,11 @@ def generate_file(filename: str, content: str, mime_type: str = "") -> str:
         "mimeType": mime_type,
         "size": size,
     }
-    _render_items[:] = [
-        i
-        for i in _render_items
-        if not (i.get("name") == filename and "url" in i and "fields" not in i)
+    items = _get_render_list()
+    items[:] = [
+        i for i in items if not (i.get("name") == filename and "url" in i and "fields" not in i)
     ]
-    _render_items.append(item)
+    items.append(item)
 
     return f"File generated: {filename} ({size} bytes)"
 
@@ -430,11 +447,22 @@ def generate_file(filename: str, content: str, mime_type: str = "") -> str:
 
 
 def create_gemini_agent(
-    # model: str = "gemini-3-flash-preview",
     model: str = "gemini-2.5-flash",
     temperature: float = 0.7,
+    enable_planning: bool = False,
+    parallel_tool_execution: bool = False,
+    memory_store: Any = None,
+    session_id: str | None = None,
 ) -> BaseAgent:
     """Create a BaseAgent powered by Gemini with tools.
+
+    Args:
+        model: Gemini model name.
+        temperature: Model temperature.
+        enable_planning: Enable task decomposition before execution.
+        parallel_tool_execution: Enable concurrent tool calls.
+        memory_store: Optional MemoryStore for persistent memory.
+        session_id: Session ID for persistent memory (required with memory_store).
 
     Requires GOOGLE_API_KEY environment variable.
     """
@@ -462,6 +490,10 @@ def create_gemini_agent(
         temperature=temperature,
         max_iterations=8,
         system_prompt=SYSTEM_PROMPT,
+        enable_planning=enable_planning,
+        parallel_tool_execution=parallel_tool_execution,
+        memory_store=memory_store,
+        session_id=session_id,
     )
 
     agent.tools.register("search_web", search_web, schema=SEARCH_WEB_SCHEMA)

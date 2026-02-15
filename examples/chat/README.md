@@ -10,6 +10,9 @@ End-to-end demo: Python AG-UI backend + React frontend using `@openbench/chat-ui
 - **Knowledge base** -- curated data on renewable energy, AI trends, market data
 - **Calculator** -- math expression evaluation
 - **Rich UI** -- A2UI v0.10 streaming with charts, forms, file cards, markdown
+- **Task Planning** -- agent decomposes complex queries into steps before execution
+- **Parallel Tool Execution** -- multiple tools run concurrently for faster responses
+- **Persistent Memory** -- conversations survive server restarts via SQLite
 
 ## Quick Start
 
@@ -41,16 +44,19 @@ Navigate to http://localhost:5173
 - "What are the latest AI trends?" (uses knowledge_lookup tool)
 - "Calculate sqrt(144) * pi" (uses calculate tool)
 - "What time is it?" (uses get_datetime tool)
-- "Compare solar and wind energy costs" (uses knowledge_lookup + reasoning)
+- "Compare solar and wind energy costs with a chart" (uses knowledge_lookup + create_chart)
 - Upload a PDF -> "Summarize this document" (uses analyze_file tool)
-- Any open-ended question (direct LLM response)
+- "Give me AI news, market data, and current time" (planning + parallel tools)
+- "What did we discuss earlier?" (persistent memory)
 
 ## Project Structure
 
 ```
 examples/chat/
-├── gemini_agent.py         # Gemini agent (BaseAgent + 5 tools)
-├── server.py               # FastAPI server (AG-UI + REST + upload)
+├── gemini_agent.py         # Gemini agent (BaseAgent + 10 tools + Phase 2 params)
+├── server.py               # FastAPI server (AG-UI + REST + upload + memory)
+├── schemas.py              # Tool schemas (OpenAI function-calling format)
+├── prompt.py               # System prompt with tool + capability descriptions
 ├── frontend/
 │   ├── package.json        # Vite + React + @openbench/chat-ui
 │   ├── tsconfig.json       # TypeScript config
@@ -83,6 +89,7 @@ Browser (React)                         Server (Python)
 |      ChatInput --- POST /awp -------> |                                      |
 |                                       |  POST /chat/action > ActionHandler   |
 |                                       |  POST /chat/upload > file upload     |
+|                                       |  GET  /sessions    > memory sessions |
 |                                       |                                      |
 +--------------------------------------+  ChatEngine                          |
                                         |    Gemini Agent (BaseAgent)          |
@@ -91,5 +98,8 @@ Browser (React)                         Server (Python)
                                         |      knowledge_lookup               |
                                         |      calculate                      |
                                         |      get_datetime                   |
+                                        |    AgenticAGUIHandler               |
+                                        |      PersistentMemory (SQLite)      |
+                                        |      Planning + Parallel Tools      |
                                         +--------------------------------------+
 ```

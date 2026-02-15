@@ -353,6 +353,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         on_chunk: Callable[[str], None] | None = None,
         session: ChatSession | None = None,
         agent: Agent | FrameworkAdapter | None = None,
+        on_progress: Callable | None = None,
     ) -> Any:
         """Execute the agent with the given content.
 
@@ -364,11 +365,22 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                 Called with each text delta as it arrives from the LLM.
             session: Optional per-request session override (default: self.session).
             agent: Optional per-request agent override (default: self.agent).
+            on_progress: Optional callback for agent progress events.
+                Called with ProgressEvent instances during agent execution.
         """
         active_session = session if session is not None else self.session
         active_agent = agent if agent is not None else self.agent
         if isinstance(active_agent, Agent):
-            data: dict[str, Any] = {"session": active_session.to_dict()}
+            data: dict[str, Any] = {}
+            # Only include session data if agent doesn't have persistent memory.
+            # Agents with PersistentMemory already have full conversation history
+            # in self.memory — including session.to_dict() would be redundant,
+            # noisy, and can confuse the LLM (especially for generate_file).
+            _has_persistent_memory = hasattr(active_agent, "memory") and hasattr(
+                active_agent.memory, "store"
+            )
+            if not _has_persistent_memory:
+                data["session"] = active_session.to_dict()
             if attachments:
                 att_data = [
                     {
@@ -386,11 +398,23 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                 goal=content,
                 data=data,
             )
-            # Pass on_chunk if agent supports it (BaseAgent does)
-            if on_chunk:
+            # Pass on_chunk and on_progress if agent supports them.
+            # Tiered fallback: try all kwargs → on_chunk only → bare execute.
+            if on_chunk or on_progress:
+                kwargs: dict[str, Any] = {}
+                if on_chunk:
+                    kwargs["on_chunk"] = on_chunk
+                if on_progress:
+                    kwargs["on_progress"] = on_progress
                 try:
-                    return active_agent.execute(context, on_chunk=on_chunk)
+                    return active_agent.execute(context, **kwargs)
                 except TypeError:
+                    # Agent might not support on_progress; retry with on_chunk only
+                    if on_chunk:
+                        try:
+                            return active_agent.execute(context, on_chunk=on_chunk)
+                        except TypeError:
+                            pass
                     return active_agent.execute(context)
             return active_agent.execute(context)
         elif isinstance(active_agent, FrameworkAdapter):

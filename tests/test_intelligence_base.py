@@ -18,6 +18,7 @@ from openbench.intelligence.base import (
     BaseAgent,
     Message,
     MessageRole,
+    ProgressEvent,
     QueryRewriter,
     SimpleAgent,
     StructuredOutputAgent,
@@ -710,6 +711,373 @@ class TestBaseAgentMultiHopRAG(unittest.TestCase):
         result = agent._rag_tool_retrieve("query")
 
         self.assertEqual(result, "No knowledge base configured.")
+
+
+class TestParallelToolExecution(unittest.TestCase):
+    """Test parallel tool execution in ToolExecutor."""
+
+    def test_execute_parallel_two_tools(self):
+        """Test two independent tools run concurrently."""
+        import time
+
+        executor = ToolExecutor()
+
+        def slow_add(x: int, y: int) -> int:
+            time.sleep(0.1)
+            return x + y
+
+        def slow_multiply(x: int, y: int) -> int:
+            time.sleep(0.1)
+            return x * y
+
+        executor.register("add", slow_add, description="Add numbers")
+        executor.register("multiply", slow_multiply, description="Multiply numbers")
+
+        calls = [
+            {"id": "call_0", "name": "add", "arguments": {"x": 2, "y": 3}},
+            {"id": "call_1", "name": "multiply", "arguments": {"x": 4, "y": 5}},
+        ]
+
+        start = time.monotonic()
+        results = executor.execute_parallel(calls)
+        elapsed = time.monotonic() - start
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["result"], 5)
+        self.assertEqual(results[1]["result"], 20)
+        self.assertIsNone(results[0]["error"])
+        self.assertIsNone(results[1]["error"])
+        # Parallel should be faster than sequential (0.2s)
+        self.assertLess(elapsed, 0.19)
+
+    def test_execute_parallel_preserves_order(self):
+        """Test results are returned in input order."""
+        import time
+
+        executor = ToolExecutor()
+
+        def fast(x: int) -> str:
+            return f"fast-{x}"
+
+        def slow(x: int) -> str:
+            time.sleep(0.05)
+            return f"slow-{x}"
+
+        executor.register("fast", fast, description="Fast tool")
+        executor.register("slow", slow, description="Slow tool")
+
+        calls = [
+            {"id": "call_0", "name": "slow", "arguments": {"x": 1}},
+            {"id": "call_1", "name": "fast", "arguments": {"x": 2}},
+        ]
+
+        results = executor.execute_parallel(calls)
+        # Even though fast finishes first, results should be in input order
+        self.assertEqual(results[0]["result"], "slow-1")
+        self.assertEqual(results[1]["result"], "fast-2")
+
+    def test_execute_parallel_one_failure(self):
+        """Test one tool failure doesn't block others."""
+        executor = ToolExecutor()
+
+        def good() -> str:
+            return "success"
+
+        def bad() -> str:
+            raise ValueError("Tool error")
+
+        executor.register("good", good, description="Good tool")
+        executor.register("bad", bad, description="Bad tool")
+
+        calls = [
+            {"id": "call_0", "name": "good", "arguments": {}},
+            {"id": "call_1", "name": "bad", "arguments": {}},
+        ]
+
+        results = executor.execute_parallel(calls)
+        self.assertEqual(results[0]["result"], "success")
+        self.assertIsNone(results[0]["error"])
+        self.assertIsNone(results[1]["result"])
+        self.assertIn("Tool error", results[1]["error"])
+
+    def test_execute_parallel_single_call(self):
+        """Test parallel with single call still works."""
+        executor = ToolExecutor()
+        executor.register("echo", lambda msg: msg, description="Echo")
+
+        calls = [{"id": "call_0", "name": "echo", "arguments": {"msg": "hello"}}]
+        results = executor.execute_parallel(calls)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["result"], "hello")
+
+
+class TestBaseAgentPlanning(unittest.TestCase):
+    """Test BaseAgent planning integration."""
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_planning_injects_steps_into_memory(self, mock_service):
+        """Test planning adds plan steps to agent memory."""
+        import json
+
+        mock_llm = MagicMock()
+        mock_service.return_value.resolve.return_value = mock_llm
+
+        # Planning call returns plan JSON
+        plan_response = LLMResponse(
+            text=json.dumps(
+                {
+                    "steps": ["Search data", "Analyze results"],
+                    "estimated_tools": ["search"],
+                    "reasoning": "Two-phase approach",
+                }
+            ),
+            model="test",
+            tokens_used=50,
+            cost=0.01,
+        )
+        # Execution call returns final answer
+        answer_response = LLMResponse(
+            text="Analysis complete", model="test", tokens_used=100, cost=0.01
+        )
+        mock_llm.generate.side_effect = [plan_response, answer_response]
+        mock_llm.generate_stream.return_value = iter([answer_response])
+
+        agent = BaseAgent(goal="Analyze data", enable_planning=True)
+        context = ExecutionContext(goal="Analyze quarterly data", data={})
+        agent.execute(context)
+
+        # Verify planning was called (first LLM call)
+        self.assertGreaterEqual(mock_llm.generate.call_count, 1)
+        # Verify plan was injected into memory
+        system_messages = [m for m in agent.memory.messages if m.role == MessageRole.SYSTEM]
+        plan_messages = [m for m in system_messages if "Execute this plan" in m.content]
+        self.assertEqual(len(plan_messages), 1)
+        self.assertIn("1. Search data", plan_messages[0].content)
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_planning_disabled_by_default(self, mock_service):
+        """Test planning is not triggered when disabled."""
+        mock_llm = MagicMock()
+        mock_service.return_value.resolve.return_value = mock_llm
+        mock_llm.generate.return_value = LLMResponse(
+            text="Done", model="test", tokens_used=50, cost=0.01
+        )
+
+        agent = BaseAgent(goal="Simple task")  # enable_planning defaults to False
+        context = ExecutionContext(goal="Do something", data={})
+        agent.execute(context)
+
+        # Only one LLM call (no planning call)
+        self.assertEqual(mock_llm.generate.call_count, 1)
+
+
+class TestBaseAgentParallelTools(unittest.TestCase):
+    """Test BaseAgent with parallel tool execution."""
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_parallel_flag_enables_concurrent_execution(self, mock_service):
+        """Test parallel_tool_execution uses execute_parallel."""
+        mock_llm = MagicMock()
+        mock_service.return_value.resolve.return_value = mock_llm
+
+        # First call returns two tool calls, second call returns answer
+        tool_response = LLMResponse(text="", model="test", tokens_used=50, cost=0.01)
+        tool_response.tool_calls = [
+            {"id": "call_0", "name": "add", "arguments": {"x": 1, "y": 2}},
+            {"id": "call_1", "name": "multiply", "arguments": {"x": 3, "y": 4}},
+        ]
+        answer_response = LLMResponse(
+            text="Done: 3 and 12", model="test", tokens_used=50, cost=0.01
+        )
+        mock_llm.generate.side_effect = [tool_response, answer_response]
+
+        agent = BaseAgent(
+            goal="Calculate",
+            tools=[],
+            parallel_tool_execution=True,
+        )
+        agent.tools.register("add", lambda x, y: x + y, description="Add")
+        agent.tools.register("multiply", lambda x, y: x * y, description="Multiply")
+
+        context = ExecutionContext(goal="Calculate 1+2 and 3*4", data={})
+        result = agent.execute(context)
+
+        self.assertEqual(result.status, "completed")
+        # Both tools should have been called
+        self.assertIn("add", result.metadata.get("tools_used", []))
+        self.assertIn("multiply", result.metadata.get("tools_used", []))
+
+
+class TestProgressEvent(unittest.TestCase):
+    """Test ProgressEvent dataclass."""
+
+    def test_create_with_phase_only(self):
+        """Test creating progress event with phase only."""
+        event = ProgressEvent(phase="Thinking")
+        self.assertEqual(event.phase, "Thinking")
+        self.assertEqual(event.detail, "")
+
+    def test_create_with_detail(self):
+        """Test creating progress event with detail."""
+        event = ProgressEvent(phase="Running search_web", detail="query=AI")
+        self.assertEqual(event.phase, "Running search_web")
+        self.assertEqual(event.detail, "query=AI")
+
+
+class TestBaseAgentProgressEvents(unittest.TestCase):
+    """Test BaseAgent on_progress callback."""
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_on_progress_emits_thinking(self, mock_get_service):
+        """Test that on_progress emits 'Thinking' for simple execution."""
+        mock_provider = MockLLMProvider(["Response"])
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = mock_provider
+        mock_get_service.return_value = mock_service
+
+        agent = BaseAgent(goal="Test")
+        context = ExecutionContext(goal="Do something", data={})
+
+        progress_events: list[ProgressEvent] = []
+        result = agent.execute(context, on_progress=progress_events.append)
+
+        self.assertEqual(result.status, "completed")
+        phases = [e.phase for e in progress_events]
+        self.assertIn("Thinking", phases)
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_on_progress_emits_tool_execution(self, mock_get_service):
+        """Test that on_progress emits tool names during execution."""
+        mock_llm = MagicMock()
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = mock_llm
+        mock_get_service.return_value = mock_service
+
+        # First call returns tool call, second returns final answer
+        tool_response = LLMResponse(text="", model="test", tokens_used=50, cost=0.01)
+        tool_response.tool_calls = [
+            {"id": "call_0", "name": "search_web", "arguments": {"q": "AI"}},
+        ]
+        answer_response = LLMResponse(text="Found results", model="test", tokens_used=50, cost=0.01)
+        mock_llm.generate.side_effect = [tool_response, answer_response]
+
+        agent = BaseAgent(goal="Research", tools=[])
+        agent.tools.register("search_web", lambda q: "results", description="Search")
+
+        context = ExecutionContext(goal="Search for AI", data={})
+        progress_events: list[ProgressEvent] = []
+        result = agent.execute(context, on_progress=progress_events.append)
+
+        self.assertEqual(result.status, "completed")
+        phases = [e.phase for e in progress_events]
+        self.assertIn("Thinking", phases)
+        self.assertIn("Running search_web", phases)
+        self.assertIn("Analyzing results", phases)
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_on_progress_emits_planning(self, mock_get_service):
+        """Test that on_progress emits 'Planning approach' when planning enabled."""
+        import json
+
+        mock_llm = MagicMock()
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = mock_llm
+        mock_get_service.return_value = mock_service
+
+        plan_response = LLMResponse(
+            text=json.dumps(
+                {
+                    "steps": ["Step 1"],
+                    "estimated_tools": [],
+                    "reasoning": "Simple plan",
+                }
+            ),
+            model="test",
+            tokens_used=50,
+            cost=0.01,
+        )
+        answer_response = LLMResponse(text="Done", model="test", tokens_used=50, cost=0.01)
+        mock_llm.generate.side_effect = [plan_response, answer_response]
+        mock_llm.generate_stream.return_value = iter([answer_response])
+
+        agent = BaseAgent(goal="Plan something", enable_planning=True)
+        context = ExecutionContext(goal="Do a task", data={})
+
+        progress_events: list[ProgressEvent] = []
+        agent.execute(context, on_progress=progress_events.append)
+
+        phases = [e.phase for e in progress_events]
+        self.assertIn("Planning approach", phases)
+        self.assertIn("Thinking", phases)
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_on_progress_emits_rag_retrieval(self, mock_get_service):
+        """Test that on_progress emits 'Searching knowledge' for RAG."""
+        mock_provider = MockLLMProvider(["Answer with context"])
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = mock_provider
+        mock_get_service.return_value = mock_service
+
+        mock_store = MagicMock()
+        mock_result = MagicMock()
+        mock_result.items = [{"id": "doc1", "content": "Info", "metadata": {}}]
+        mock_result.scores = [0.9]
+        mock_store.search.return_value = mock_result
+
+        agent = BaseAgent(goal="RAG test", store=mock_store)
+        context = ExecutionContext(goal="What is X?", data={})
+
+        progress_events: list[ProgressEvent] = []
+        agent.execute(context, on_progress=progress_events.append)
+
+        phases = [e.phase for e in progress_events]
+        self.assertIn("Searching knowledge", phases)
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_on_progress_none_backward_compat(self, mock_get_service):
+        """Test that on_progress=None works fine (backward compat)."""
+        mock_provider = MockLLMProvider(["Response"])
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = mock_provider
+        mock_get_service.return_value = mock_service
+
+        agent = BaseAgent(goal="Test")
+        context = ExecutionContext(goal="Do something", data={})
+
+        # Should not raise
+        result = agent.execute(context, on_progress=None)
+        self.assertEqual(result.status, "completed")
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_on_progress_multiple_tools(self, mock_get_service):
+        """Test that multiple tool calls are listed in progress phase."""
+        mock_llm = MagicMock()
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = mock_llm
+        mock_get_service.return_value = mock_service
+
+        tool_response = LLMResponse(text="", model="test", tokens_used=50, cost=0.01)
+        tool_response.tool_calls = [
+            {"id": "call_0", "name": "search", "arguments": {}},
+            {"id": "call_1", "name": "calculate", "arguments": {}},
+        ]
+        answer_response = LLMResponse(text="Done", model="test", tokens_used=50, cost=0.01)
+        mock_llm.generate.side_effect = [tool_response, answer_response]
+
+        agent = BaseAgent(goal="Multi-tool", tools=[])
+        agent.tools.register("search", lambda: "found", description="Search")
+        agent.tools.register("calculate", lambda: 42, description="Calc")
+
+        context = ExecutionContext(goal="Search and calculate", data={})
+        progress_events: list[ProgressEvent] = []
+        agent.execute(context, on_progress=progress_events.append)
+
+        phases = [e.phase for e in progress_events]
+        # Should have a phase that mentions both tools
+        tool_phase = [p for p in phases if p.startswith("Running")]
+        self.assertEqual(len(tool_phase), 1)
+        self.assertIn("search", tool_phase[0])
+        self.assertIn("calculate", tool_phase[0])
 
 
 if __name__ == "__main__":

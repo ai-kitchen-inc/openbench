@@ -1,33 +1,58 @@
 """
 REST handler for A2UI actions (button clicks, form submits).
 
-AG-UI does not define an action mechanism, so this remains a REST POST
-endpoint. Receives action data, forwards to ChatEngine, returns A2UI messages.
+Handles actions directly with a registry pattern -- no agent re-execution.
+Registered handlers process specific action names and return A2UI
+updateComponents messages to update surfaces in-place.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Handler type: receives ActionData, returns list of A2UI message dicts
+ActionHandler = Callable[["ActionData"], list[dict[str, Any]]]
+
+
+@dataclass
+class ActionData:
+    """Parsed action from frontend."""
+
+    name: str
+    surface_id: str
+    source_component_id: str | None = None
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 class AGUIActionHandler:
     """REST handler for A2UI actions.
 
-    Processes button clicks, form submits, and other A2UI events.
-    Returns response messages as a JSON array.
+    Processes button clicks, form submits, and other A2UI events using
+    a handler registry. Registered handlers run directly without agent
+    re-execution, returning updateComponents messages to update surfaces.
 
     Usage with FastAPI:
         from fastapi import FastAPI, Request
         from openbench.chat import ChatEngine
-        from openbench.chat.transport.agui_actions import AGUIActionHandler
+        from openbench.chat.transport.agui_actions import AGUIActionHandler, ActionData
 
         app = FastAPI()
         engine = ChatEngine(agent=my_agent)
         action_handler = AGUIActionHandler(engine=engine)
+
+        @action_handler.on("submit_form")
+        def handle_submit(action: ActionData):
+            return [engine.builder.build_update_components(
+                action.surface_id,
+                [A2UIComponent(id="root", component="Text",
+                               properties={"text": "Done!", "variant": "body"})],
+            )]
 
         @app.post("/chat/action")
         async def chat_action(request: Request):
@@ -38,12 +63,41 @@ class AGUIActionHandler:
         """Initialize action handler.
 
         Args:
-            engine: ChatEngine instance for processing actions.
+            engine: ChatEngine instance (used for builder access).
         """
         self.engine = engine
+        self._handlers: dict[str, ActionHandler] = {}
+
+    def on(self, action_name: str) -> Callable:
+        """Decorator to register a handler for a specific action name.
+
+        Args:
+            action_name: The action name to handle (e.g. "submit_form").
+
+        Returns:
+            Decorator that registers the function.
+        """
+
+        def decorator(fn: ActionHandler) -> ActionHandler:
+            self._handlers[action_name] = fn
+            return fn
+
+        return decorator
+
+    def register(self, action_name: str, handler: ActionHandler) -> None:
+        """Register a handler function for a specific action name.
+
+        Args:
+            action_name: The action name to handle.
+            handler: Callable that receives ActionData and returns A2UI messages.
+        """
+        self._handlers[action_name] = handler
 
     async def handle(self, request: Any) -> list[dict[str, Any]]:
         """Handle an A2UI action and return response messages.
+
+        Looks up a registered handler for the action name. If found, calls it.
+        Otherwise returns a default confirmation response.
 
         Args:
             request: FastAPI Request object.
@@ -53,21 +107,31 @@ class AGUIActionHandler:
         """
         body = await request.json()
 
-        action_name = body.get("name")
-        surface_id = body.get("surfaceId")
-        context = body.get("context", {})
+        action = ActionData(
+            name=body.get("name", ""),
+            surface_id=body.get("surfaceId", ""),
+            source_component_id=body.get("sourceComponentId"),
+            context=body.get("context", {}),
+        )
 
-        logger.info(f"Action received: {action_name} on surface {surface_id}")
+        logger.info(f"Action received: {action.name} on surface {action.surface_id}")
 
-        input_data = {
-            "content": f"[Action: {action_name}]",
-            "action": {
-                "name": action_name,
-                "surfaceId": surface_id,
-                "sourceComponentId": body.get("sourceComponentId"),
-                "context": context,
-            },
-        }
+        handler = self._handlers.get(action.name)
+        if handler:
+            result = handler(action)
+            if asyncio.iscoroutine(result):
+                result = await result
+            return result
 
-        result = await asyncio.to_thread(self.engine.invoke, input_data)
-        return result.get("messages", [])
+        return self._default_response(action)
+
+    def _default_response(self, action: ActionData) -> list[dict[str, Any]]:
+        """Default handler: no-op for unregistered actions.
+
+        Returns an empty list so the surface is NOT modified.
+        Only explicitly registered handlers should update surfaces.
+        This prevents destructive behavior for data-binding events
+        like 'change' from form fields.
+        """
+        logger.debug(f"No handler for action '{action.name}', ignoring")
+        return []
