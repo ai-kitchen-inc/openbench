@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from openbench.core import FrameworkAdapter
 

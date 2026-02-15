@@ -10,9 +10,11 @@ All core abstractions are Chainable, enabling L1 component-level composition.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from openbench.core.chainable import Chainable
 

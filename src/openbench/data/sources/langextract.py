@@ -248,7 +248,7 @@ class LangExtractSource(DataSource):
         """Coerce attribute values to str as required by LangExtract API."""
         if not attrs:
             return None
-        return {k: str(v) if not isinstance(v, (str, list)) else v for k, v in attrs.items()}
+        return {k: str(v) if not isinstance(v, str | list) else v for k, v in attrs.items()}
 
     def _build_extract_params(self) -> dict[str, Any]:
         """Build parameters dict for lx.extract().

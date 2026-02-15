@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult, Tool
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 from openbench.intelligence.base import BaseAgent
 
 logger = logging.getLogger(__name__)

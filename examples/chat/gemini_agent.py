@@ -133,7 +133,6 @@ KNOWLEDGE_BASE: dict[str, dict[str, str]] = {
 }
 
 
-
 # ── Tool functions ──
 
 
@@ -411,9 +410,16 @@ def generate_file(filename: str, content: str, mime_type: str = "") -> str:
     url = f"/uploads/{file_id}/{filename}"
 
     # Push file card to render queue (same pattern as show_file)
-    item: dict[str, Any] = {"name": filename, "url": url, "mimeType": mime_type, "size": size}
+    item: dict[str, Any] = {
+        "name": filename,
+        "url": url,
+        "mimeType": mime_type,
+        "size": size,
+    }
     _render_items[:] = [
-        i for i in _render_items if not (i.get("name") == filename and "url" in i and "fields" not in i)
+        i
+        for i in _render_items
+        if not (i.get("name") == filename and "url" in i and "fields" not in i)
     ]
     _render_items.append(item)
 
@@ -421,6 +427,7 @@ def generate_file(filename: str, content: str, mime_type: str = "") -> str:
 
 
 # ── Agent factory ──
+
 
 def create_gemini_agent(
     # model: str = "gemini-3-flash-preview",

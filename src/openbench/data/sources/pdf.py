@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from openbench.core.abstractions import DataSource, RawData
-from openbench.core.context import ProjectContext
 from openbench.data.exceptions import (
     ExtractionError,
     FileNotFoundError,
@@ -17,6 +16,7 @@ from openbench.data.exceptions import (
 
 if TYPE_CHECKING:
     from openbench.core.abstractions import DataStore
+    from openbench.core.context import ProjectContext
 
 
 class PDFSource(DataSource):
