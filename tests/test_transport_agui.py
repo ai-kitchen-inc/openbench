@@ -141,8 +141,12 @@ class TestAGUIHandlerEventStream(unittest.TestCase):
         self.assertEqual(events[-1]["type"], "RUN_FINISHED")
         self.assertIn("result", events[-1])
 
-    def test_event_stream_text_only_has_two_step_pairs(self):
-        """Text-only response should emit 2 STEP pairs (no Rendering step)."""
+    def test_event_stream_text_only_has_one_step_pair_for_non_base_agent(self):
+        """Non-BaseAgent text-only response emits 1 STEP pair (Processing input only).
+
+        BaseAgent emits ProgressEvents that produce dynamic sub-steps.
+        Non-BaseAgent agents don't emit progress, so no Thinking step appears.
+        """
         engine = ChatEngine(agent=MockAgent("Reply"))
         handler = AGUIHandler(engine=engine)
 
@@ -151,11 +155,11 @@ class TestAGUIHandlerEventStream(unittest.TestCase):
         step_starts = [e for e in events if e["type"] == "STEP_STARTED"]
         step_finishes = [e for e in events if e["type"] == "STEP_FINISHED"]
 
-        self.assertEqual(len(step_starts), 2)
-        self.assertEqual(len(step_finishes), 2)
+        self.assertEqual(len(step_starts), 1)
+        self.assertEqual(len(step_finishes), 1)
 
     def test_event_stream_text_only_step_names(self):
-        """Text-only steps should be Processing input and Thinking (no Rendering)."""
+        """Non-BaseAgent text-only steps should only have Processing input."""
         engine = ChatEngine(agent=MockAgent("Reply"))
         handler = AGUIHandler(engine=engine)
 
@@ -164,7 +168,7 @@ class TestAGUIHandlerEventStream(unittest.TestCase):
         step_starts = [e for e in events if e["type"] == "STEP_STARTED"]
         names = [s["stepName"] for s in step_starts]
 
-        self.assertEqual(names, ["Processing input", "Thinking"])
+        self.assertEqual(names, ["Processing input"])
 
     def test_event_stream_text_only_no_a2ui_events(self):
         """Text-only response should NOT emit A2UI surface events."""
@@ -176,8 +180,11 @@ class TestAGUIHandlerEventStream(unittest.TestCase):
         custom_events = [e for e in events if e["type"] == "CUSTOM" and e.get("name") == "a2ui"]
         self.assertEqual(len(custom_events), 0)
 
-    def test_event_stream_rich_content_has_three_step_pairs(self):
-        """Response with rich content (extra_items) should emit 3 STEP pairs."""
+    def test_event_stream_rich_content_has_two_step_pairs_for_non_base_agent(self):
+        """Non-BaseAgent with rich content emits 2 STEP pairs (Processing + Rendering).
+
+        No Thinking step since non-BaseAgent doesn't emit ProgressEvents.
+        """
         chart_data = {
             "title": "Sales",
             "data": [{"x": "Q1", "y": 100}],
@@ -194,8 +201,8 @@ class TestAGUIHandlerEventStream(unittest.TestCase):
         step_starts = [e for e in events if e["type"] == "STEP_STARTED"]
         step_finishes = [e for e in events if e["type"] == "STEP_FINISHED"]
 
-        self.assertEqual(len(step_starts), 3)
-        self.assertEqual(len(step_finishes), 3)
+        self.assertEqual(len(step_starts), 2)
+        self.assertEqual(len(step_finishes), 2)
 
     def test_event_stream_rich_content_has_a2ui_events(self):
         """Response with rich content should emit A2UI surface events."""
@@ -484,28 +491,23 @@ class TestAGUIHandlerTextStreaming(unittest.TestCase):
             self.assertEqual(e["messageId"], msg_id)
         self.assertEqual(end_events[0]["messageId"], msg_id)
 
-    def test_streaming_events_between_thinking_steps(self):
-        """Text streaming events should appear between Thinking step_start and step_finish."""
+    def test_streaming_text_events_after_processing_input(self):
+        """Text streaming events should appear after Processing input step.
+
+        Non-BaseAgent agents don't emit ProgressEvents, so there's no Thinking
+        step. Text events are emitted directly after the Processing input step.
+        """
         engine = ChatEngine(agent=StreamingMockAgent(["x"]))
         handler = AGUIHandler(engine=engine)
 
         events = _run(_collect_events(handler, {"content": "Hello"}))
 
-        thinking_start_idx = None
-        thinking_finish_idx = None
+        processing_finish_idx = None
         for i, e in enumerate(events):
-            if e["type"] == "STEP_STARTED" and e.get("stepName") == "Thinking":
-                thinking_start_idx = i
-            if (
-                thinking_start_idx is not None
-                and e["type"] == "STEP_FINISHED"
-                and e.get("stepName") == "Thinking"
-                and thinking_finish_idx is None
-            ):
-                thinking_finish_idx = i
+            if e["type"] == "STEP_FINISHED" and e.get("stepName") == "Processing input":
+                processing_finish_idx = i
 
-        self.assertIsNotNone(thinking_start_idx)
-        self.assertIsNotNone(thinking_finish_idx)
+        self.assertIsNotNone(processing_finish_idx)
 
         text_indices = [
             i
@@ -513,8 +515,7 @@ class TestAGUIHandlerTextStreaming(unittest.TestCase):
             if e["type"] in ("TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END")
         ]
         for idx in text_indices:
-            self.assertGreater(idx, thinking_start_idx)
-            self.assertLess(idx, thinking_finish_idx)
+            self.assertGreater(idx, processing_finish_idx)
 
     def test_non_streaming_agent_still_emits_text_events(self):
         """Non-streaming MockAgent should still emit text events."""

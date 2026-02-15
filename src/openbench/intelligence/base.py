@@ -259,6 +259,8 @@ class ToolExecutor:
         if not tool:
             raise ValueError(f"Tool not found: {name}")
 
+        import contextvars
+
         result = [None]
         exception = [None]
 
@@ -273,7 +275,10 @@ class ToolExecutor:
             except Exception as e:
                 exception[0] = e
 
-        thread = threading.Thread(target=_run, daemon=True)
+        # Propagate ContextVar values so tool functions can access
+        # per-request state (e.g. render items, attachments).
+        ctx = contextvars.copy_context()
+        thread = threading.Thread(target=ctx.run, args=(_run,), daemon=True)
         thread.start()
         thread.join(timeout=timeout)
 
@@ -284,6 +289,61 @@ class ToolExecutor:
             raise exception[0]
 
         return result[0]
+
+    def execute_parallel(
+        self, calls: list[dict[str, Any]], timeout: int = 30
+    ) -> list[dict[str, Any]]:
+        """Execute multiple tool calls concurrently.
+
+        Independent tool calls run in separate threads for faster execution.
+        Each call has its own timeout. One failure does not block others.
+
+        Context propagation: each thread receives a copy of the calling
+        context (via ``contextvars.copy_context()``) so that ContextVar
+        values (e.g. per-request render items) are visible to tool functions.
+
+        Args:
+            calls: List of tool call dicts with ``name``, ``arguments``, ``id``.
+            timeout: Maximum execution time per tool in seconds.
+
+        Returns:
+            List of result dicts with ``call``, ``result``, ``error`` keys.
+            Order matches the input ``calls`` order.
+        """
+        import concurrent.futures
+        import contextvars
+
+        results: dict[int, dict[str, Any]] = {}
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(calls)) as pool:
+            future_to_idx = {
+                pool.submit(
+                    contextvars.copy_context().run,
+                    self.execute,
+                    call["name"],
+                    timeout=timeout,
+                    **call["arguments"],
+                ): idx
+                for idx, call in enumerate(calls)
+            }
+            for future in concurrent.futures.as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    result = future.result()
+                    results[idx] = {
+                        "call": calls[idx],
+                        "result": result,
+                        "error": None,
+                    }
+                except Exception as e:
+                    results[idx] = {
+                        "call": calls[idx],
+                        "result": None,
+                        "error": str(e),
+                    }
+
+        # Return in original order
+        return [results[i] for i in range(len(calls))]
 
     def __contains__(self, name: str) -> bool:
         return name in self._tools
@@ -302,6 +362,18 @@ class AgentConfig:
     max_iterations: int = 10
     system_prompt: str | None = None
     stop_sequences: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ProgressEvent:
+    """Progress update from agent execution.
+
+    Emitted via ``on_progress`` callback during BaseAgent.execute() to report
+    sub-phases (planning, tool use, analysis) for real-time UI indicators.
+    """
+
+    phase: str
+    detail: str = ""
 
 
 class QueryRewriter:
@@ -359,6 +431,16 @@ class QueryRewriter:
         return [query]
 
 
+def _emit_progress(
+    on_progress: Callable[[ProgressEvent], None] | None,
+    phase: str,
+    detail: str = "",
+) -> None:
+    """Safely emit a progress event if callback is provided."""
+    if on_progress:
+        on_progress(ProgressEvent(phase=phase, detail=detail))
+
+
 class BaseAgent(Agent):
     """
     Framework-agnostic base agent implementation.
@@ -389,6 +471,10 @@ class BaseAgent(Agent):
         retrieval_threshold: float = 0.0,
         query_rewriter: bool = False,
         multi_hop_rag: bool = False,
+        enable_planning: bool = False,
+        parallel_tool_execution: bool = False,
+        memory_store: Any = None,
+        session_id: str | None = None,
     ):
         """
         Initialize agent.
@@ -408,12 +494,24 @@ class BaseAgent(Agent):
             multi_hop_rag: Enable tool-based multi-hop retrieval (agent decides
                 when to search). When True, auto-retrieval at start is skipped and
                 a ``retrieve_knowledge`` tool is registered instead.
+            enable_planning: Enable task decomposition before execution.
+                Uses LLM to break complex goals into step-by-step plans.
+            parallel_tool_execution: Execute multiple tool calls concurrently.
+                When True, independent tool calls within a single iteration
+                run in parallel threads instead of sequentially.
+            memory_store: Optional MemoryStore for persistent conversation memory.
+                When provided with session_id, uses PersistentMemory instead of
+                in-memory AgentMemory.
+            session_id: Session identifier for persistent memory. Required when
+                memory_store is provided.
         """
         self.goal = goal
         self.model = model or get_default_model()
         self.temperature = temperature
         self.max_iterations = max_iterations
         self.provider_name = provider_name
+        self.enable_planning = enable_planning
+        self.parallel_tool_execution = parallel_tool_execution
 
         # RAG configuration
         self.store = store
@@ -456,12 +554,18 @@ class BaseAgent(Agent):
                 },
             )
 
-        # Initialize memory
-        self.memory = AgentMemory()
+        # Initialize memory (persistent or in-memory)
+        if memory_store is not None and session_id is not None:
+            from openbench.intelligence.memory import PersistentMemory
 
-        # Set system prompt
+            self.memory = PersistentMemory(store=memory_store, session_id=session_id)
+        else:
+            self.memory = AgentMemory()
+
+        # Set system prompt (only if memory is empty — persistent may already have it)
         self._system_prompt = system_prompt or self._default_system_prompt()
-        self.memory.add_system(self._system_prompt)
+        if not self.memory.messages or self.memory.messages[0].role != MessageRole.SYSTEM:
+            self.memory.add_system(self._system_prompt)
 
         # LLM provider (lazy loaded)
         self._llm: LLMProvider | None = None
@@ -490,6 +594,51 @@ Provide clear, actionable responses."""
                 temperature=self.temperature,
             )
         return self._llm
+
+    def _run_planning(self, context: ExecutionContext) -> None:
+        """Run task planning phase and inject plan into memory.
+
+        Passes recent conversation context to the planner so that follow-up
+        requests (e.g. "create table" after a search) produce context-aware plans.
+
+        Args:
+            context: Execution context containing the goal.
+        """
+        from openbench.intelligence.planning import TaskPlanner
+
+        try:
+            planner = TaskPlanner(self._get_llm(), self.model)
+            tool_names = list(self.tools._tools.keys()) if len(self.tools) > 0 else []
+            conversation_context = self._get_recent_context()
+            plan = planner.plan(context.goal, tool_names, conversation_context)
+            if plan.steps:
+                plan_prompt = planner.format_plan_prompt(plan)
+                self.memory.add_system(plan_prompt)
+                logger.info(f"Planning produced {len(plan.steps)} steps")
+        except Exception as e:
+            logger.warning(f"Planning phase failed, continuing without plan: {e}")
+
+    def _get_recent_context(self) -> str:
+        """Build a summary of recent conversation for planning context.
+
+        Returns recent user and assistant messages (up to 6), truncated to
+        keep the planning prompt concise.
+        """
+        recent: list[str] = []
+        for msg in reversed(self.memory.messages):
+            if msg.role == MessageRole.SYSTEM:
+                continue
+            if msg.role in (MessageRole.USER, MessageRole.ASSISTANT) and msg.content:
+                label = "User" if msg.role == MessageRole.USER else "Assistant"
+                content = msg.content[:300]
+                if len(msg.content) > 300:
+                    content += "..."
+                recent.append(f"{label}: {content}")
+            if len(recent) >= 6:
+                break
+        if not recent:
+            return ""
+        return "\n".join(reversed(recent))
 
     def _get_query_rewriter(self) -> QueryRewriter | None:
         """Get query rewriter, lazily initialized."""
@@ -652,6 +801,7 @@ Provide clear, actionable responses."""
         self,
         context: ExecutionContext,
         on_chunk: Callable[[str], None] | None = None,
+        on_progress: Callable[[ProgressEvent], None] | None = None,
     ) -> ExecutionResult:
         """
         Execute the agent's task.
@@ -667,14 +817,23 @@ Provide clear, actionable responses."""
             on_chunk: Optional callback invoked with each text delta during
                 streaming. When provided and the LLM provider supports
                 generate_stream(), tokens are streamed progressively.
+            on_progress: Optional callback invoked with ProgressEvent to report
+                sub-phases (planning, RAG retrieval, tool execution) for
+                real-time UI progress indicators.
 
         Returns:
             ExecutionResult with agent's output
         """
+        # Planning phase (optional) — decompose goal before execution
+        if self.enable_planning:
+            _emit_progress(on_progress, "Planning approach")
+            self._run_planning(context)
+
         # Retrieve and augment context with RAG if store is configured.
         # Skip auto-retrieval when multi_hop_rag is enabled — the agent
         # will call retrieve_knowledge tool during the reasoning loop.
         if self.store and not self.multi_hop_rag:
+            _emit_progress(on_progress, "Searching knowledge")
             retrieved = self._retrieve_context(context.goal)
             context = self._augment_context_with_rag(context, retrieved)
 
@@ -717,6 +876,12 @@ Provide clear, actionable responses."""
             while iterations < self.max_iterations:
                 iterations += 1
                 iter_start = time.monotonic()
+
+                # Emit progress for LLM call phase
+                if iterations == 1:
+                    _emit_progress(on_progress, "Thinking")
+                else:
+                    _emit_progress(on_progress, "Analyzing results")
 
                 gen_kwargs: dict[str, Any] = {
                     "prompt": self.memory.get_messages(),
@@ -782,14 +947,29 @@ Provide clear, actionable responses."""
                     response.text, tool_calls=tool_calls, raw_content=raw_content
                 )
 
-                for tc in tool_calls:
-                    try:
-                        result = self.tools.execute(tc["name"], **tc["arguments"])
-                        result_str = json.dumps(result, default=str)
-                    except Exception as e:
-                        result_str = f"Error: {e!s}"
+                # Emit progress with tool names
+                tool_names = [tc["name"] for tc in tool_calls]
+                _emit_progress(on_progress, f"Running {', '.join(tool_names)}")
 
-                    self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                if self.parallel_tool_execution and len(tool_calls) > 1:
+                    # Parallel execution for multiple tool calls
+                    results = self.tools.execute_parallel(tool_calls)
+                    for r in results:
+                        tc = r["call"]
+                        if r["error"] is not None:
+                            result_str = f"Error: {r['error']}"
+                        else:
+                            result_str = json.dumps(r["result"], default=str)
+                        self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                else:
+                    # Sequential execution (default)
+                    for tc in tool_calls:
+                        try:
+                            result = self.tools.execute(tc["name"], **tc["arguments"])
+                            result_str = json.dumps(result, default=str)
+                        except Exception as e:
+                            result_str = f"Error: {e!s}"
+                        self.memory.add_tool_result(tc["id"], tc["name"], result_str)
 
             total_duration = round(time.monotonic() - start_time, 3)
 

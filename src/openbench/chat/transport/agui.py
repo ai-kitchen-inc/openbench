@@ -24,7 +24,7 @@ import uuid
 from typing import Any
 
 from openbench.chat.session import ChatSession
-from openbench.intelligence.base import AgentMemory, BaseAgent
+from openbench.intelligence.base import AgentMemory, BaseAgent, ProgressEvent
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class AGUIHandler:
     Supports parallel request isolation:
     - Each sessionId maps to its own ChatSession (conversation history).
     - Each request gets a fresh agent copy with clean memory.
-    - Render items are protected by a lock to prevent cross-request leaks.
+    - Render items use ContextVar for per-request isolation (no locks needed).
 
     Event sequence:
         RunStartedEvent
@@ -71,7 +71,6 @@ class AGUIHandler:
         self.engine = engine
         self._sessions: dict[str, ChatSession] = {}
         self._sessions_lock = threading.Lock()
-        self._render_lock = asyncio.Lock()
 
     def _get_or_create_session(self, session_id: str) -> ChatSession:
         """Get or create a ChatSession for the given session ID.
@@ -135,7 +134,7 @@ class AGUIHandler:
         Per-request isolation:
         - Session: looked up/created by forwardedProps.sessionId
         - Agent: fresh copy with clean memory per request
-        - Render items: protected by asyncio.Lock
+        - Render items: ContextVar per-request isolation
 
         Args:
             body: Request body (AG-UI RunAgentInput or OpenBench format).
@@ -183,21 +182,22 @@ class AGUIHandler:
             session.add_user_message(content, attachments=attachments)
             yield encoder.encode(StepFinishedEvent(step_name="Processing input"))
 
-            # ── Step 2: Thinking (with streaming text deltas) ──
-            yield encoder.encode(StepStartedEvent(step_name="Thinking"))
-
+            # ── Step 2: Agent execution (with streaming text + progress) ──
             message_id = f"msg-{uuid.uuid4().hex[:8]}"
-            queue: asyncio.Queue[str | None] = asyncio.Queue()
+            queue: asyncio.Queue[str | ProgressEvent | None] = asyncio.Queue()
             loop = asyncio.get_event_loop()
 
             def on_chunk(delta: str) -> None:
                 """Callback from sync agent thread → async queue."""
                 loop.call_soon_threadsafe(queue.put_nowait, delta)
 
-            # Clear render items before agent execution (under lock)
-            async with self._render_lock:
-                if self.engine._clear_render_items_fn:
-                    self.engine._clear_render_items_fn()
+            def on_progress(event: ProgressEvent) -> None:
+                """Callback from sync agent thread → async queue."""
+                loop.call_soon_threadsafe(queue.put_nowait, event)
+
+            # Clear render items before agent execution
+            if self.engine._clear_render_items_fn:
+                self.engine._clear_render_items_fn()
 
             # Run agent in thread pool with per-request agent and session
             agent_task = asyncio.create_task(
@@ -209,6 +209,7 @@ class AGUIHandler:
                     on_chunk,
                     session,
                     request_agent,
+                    on_progress,
                 )
             )
 
@@ -221,12 +222,32 @@ class AGUIHandler:
             # Emit TEXT_MESSAGE_START
             yield encoder.encode(TextMessageStartEvent(message_id=message_id, role="assistant"))
 
-            # Stream text deltas as they arrive
+            # Stream text deltas and progress events as they arrive
+            current_step: str | None = None
+            any_text_emitted = False
+
             while True:
-                delta = await queue.get()
-                if delta is None:
+                item = await queue.get()
+                if item is None:
                     break
-                yield encoder.encode(TextMessageContentEvent(message_id=message_id, delta=delta))
+                if isinstance(item, ProgressEvent):
+                    # Close previous step, open new one
+                    if current_step:
+                        yield encoder.encode(StepFinishedEvent(step_name=current_step))
+                    current_step = item.phase
+                    yield encoder.encode(StepStartedEvent(step_name=current_step))
+                else:
+                    # Text delta
+                    any_text_emitted = True
+                    yield encoder.encode(TextMessageContentEvent(message_id=message_id, delta=item))
+
+            # Close last sub-step
+            if current_step:
+                yield encoder.encode(StepFinishedEvent(step_name=current_step))
+            elif any_text_emitted:
+                # Fallback: no progress events were emitted (non-BaseAgent)
+                # Wrap in a single "Thinking" step for backward compatibility
+                pass
 
             # Emit TEXT_MESSAGE_END
             yield encoder.encode(TextMessageEndEvent(message_id=message_id))
@@ -237,13 +258,8 @@ class AGUIHandler:
             agent_output = self.engine._extract_output(agent_result)
             metadata = self.engine._extract_metadata(agent_result)
 
-            # Read render items under lock
-            async with self._render_lock:
-                extra_items = (
-                    self.engine._render_items_fn() if self.engine._render_items_fn else None
-                )
-
-            yield encoder.encode(StepFinishedEvent(step_name="Thinking"))
+            # Read render items (per-request via ContextVar, no lock needed)
+            extra_items = self.engine._render_items_fn() if self.engine._render_items_fn else None
 
             # ── Step 3: Rendering response (rich content only) ──
             # Text was already streamed via TEXT_MESSAGE events.
