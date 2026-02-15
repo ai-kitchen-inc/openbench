@@ -107,11 +107,7 @@ export function ChatPanel({
 
       {/* Input */}
       <div className="chat-panel__footer">
-        <ChatInput
-          onSend={sendMessage}
-          disabled={isStreaming}
-          placeholder={isStreaming ? "Waiting for response..." : placeholder}
-        />
+        <ChatInput onSend={sendMessage} placeholder={placeholder} />
       </div>
     </div>
   );

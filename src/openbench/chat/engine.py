@@ -72,6 +72,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         session: ChatSession | None = None,
         catalog_id: str | None = None,
         render_items_fn: Callable[[], list[dict]] | None = None,
+        clear_render_items_fn: Callable[[], None] | None = None,
     ):
         """Initialize ChatEngine.
 
@@ -83,12 +84,15 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             render_items_fn: Optional callback that returns structured render items
                 (chart dicts, form dicts, file dicts) accumulated by agent tools.
                 Called after agent execution to collect side-channel visualizations.
+            clear_render_items_fn: Optional callback to clear render items queue.
+                Called before each agent execution for per-request isolation.
         """
         self.agent = agent
         self.renderers = renderers if renderers is not None else _get_default_renderers()
         self.session = session if session is not None else ChatSession()
         self.builder = A2UIMessageBuilder(catalog_id=catalog_id or OPENBENCH_CATALOG_ID)
         self._render_items_fn = render_items_fn
+        self._clear_render_items_fn = clear_render_items_fn
 
     def invoke(self, input: Any, config: RunnableConfig | None = None) -> dict[str, Any]:
         """Process a single message turn.
@@ -347,6 +351,8 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         config: RunnableConfig | None,
         attachments: list[Attachment] | None = None,
         on_chunk: Callable[[str], None] | None = None,
+        session: ChatSession | None = None,
+        agent: Agent | FrameworkAdapter | None = None,
     ) -> Any:
         """Execute the agent with the given content.
 
@@ -356,9 +362,13 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             attachments: Optional file attachments.
             on_chunk: Optional callback for progressive token streaming.
                 Called with each text delta as it arrives from the LLM.
+            session: Optional per-request session override (default: self.session).
+            agent: Optional per-request agent override (default: self.agent).
         """
-        if isinstance(self.agent, Agent):
-            data: dict[str, Any] = {"session": self.session.to_dict()}
+        active_session = session if session is not None else self.session
+        active_agent = agent if agent is not None else self.agent
+        if isinstance(active_agent, Agent):
+            data: dict[str, Any] = {"session": active_session.to_dict()}
             if attachments:
                 att_data = [
                     {
@@ -379,14 +389,14 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             # Pass on_chunk if agent supports it (BaseAgent does)
             if on_chunk:
                 try:
-                    return self.agent.execute(context, on_chunk=on_chunk)
+                    return active_agent.execute(context, on_chunk=on_chunk)
                 except TypeError:
-                    return self.agent.execute(context)
-            return self.agent.execute(context)
-        elif isinstance(self.agent, FrameworkAdapter):
-            return self.agent.invoke(content, config)
+                    return active_agent.execute(context)
+            return active_agent.execute(context)
+        elif isinstance(active_agent, FrameworkAdapter):
+            return active_agent.invoke(content, config)
         else:
-            return self.agent.invoke(content, config)
+            return active_agent.invoke(content, config)
 
     def _extract_output(self, result: Any) -> Any:
         """Extract the output content from agent result."""

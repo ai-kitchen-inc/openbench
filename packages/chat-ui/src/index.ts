@@ -44,6 +44,9 @@ export type { ChatActions, ChatState, ChatStore } from "./core/chat-store";
 export { createChatStore } from "./core/chat-store";
 export type { SurfaceChangeListener } from "./core/message-processor";
 export { A2UIMessageProcessor } from "./core/message-processor";
+export { StreamContext } from "./core/stream-context";
+export type { StreamManagerConfig } from "./core/stream-manager";
+export { StreamManager } from "./core/stream-manager";
 export type { AGUIEventListener, StatusListener } from "./core/transport";
 // ── Core (headless / framework-agnostic) ──
 export { AGUITransport } from "./core/transport";

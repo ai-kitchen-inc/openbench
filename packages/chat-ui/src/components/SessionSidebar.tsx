@@ -1,7 +1,8 @@
 /**
- * SessionSidebar — session list with create, switch, and delete.
+ * SessionSidebar — session list with create, switch, delete, and rename.
  */
 
+import { useRef, useState } from "react";
 import { formatRelativeTime } from "../core/utils";
 import type { ChatSession } from "../types";
 import { useChatContext } from "./ChatProvider";
@@ -18,11 +19,47 @@ export function SessionSidebar({ className = "" }: SessionSidebarProps) {
     createSession,
     switchSession,
     deleteSession,
+    renameSession,
     sidebarOpen,
     setSidebarOpen,
   } = useChatContext();
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  // Ref to distinguish cancel (Escape) from normal blur
+  const cancelledRef = useRef(false);
+
   if (!sidebarOpen) return null;
+
+  const startEditing = (session: ChatSession) => {
+    cancelledRef.current = false;
+    setEditingId(session.id);
+    setEditValue(session.title);
+  };
+
+  const commitRename = (id: string, value: string) => {
+    const trimmed = value.trim();
+    if (trimmed) {
+      renameSession(id, trimmed);
+    }
+    setEditingId(null);
+    setEditValue("");
+  };
+
+  const cancelEditing = () => {
+    cancelledRef.current = true;
+    setEditingId(null);
+    setEditValue("");
+  };
+
+  const handleBlur = (sessionId: string) => {
+    // Skip if Escape was pressed (cancelEditing already ran)
+    if (cancelledRef.current) {
+      cancelledRef.current = false;
+      return;
+    }
+    commitRename(sessionId, editValue);
+  };
 
   // Group sessions by date
   const grouped = groupSessionsByDate(sessions);
@@ -83,16 +120,43 @@ export function SessionSidebar({ className = "" }: SessionSidebarProps) {
                   session.id === activeSessionId ? "chat-sidebar__item--active" : ""
                 }`}
               >
-                <button
-                  className="chat-sidebar__item-btn"
-                  onClick={() => switchSession(session.id)}
-                  type="button"
-                >
-                  <span className="chat-sidebar__item-title">{session.title}</span>
-                  <span className="chat-sidebar__item-time">
-                    {formatRelativeTime(session.updatedAt)}
-                  </span>
-                </button>
+                {editingId === session.id ? (
+                  <div className="chat-sidebar__item-edit">
+                    <input
+                      className="chat-sidebar__item-input"
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onBlur={() => handleBlur(session.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitRename(session.id, editValue);
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          cancelEditing();
+                        }
+                      }}
+                      ref={(el: HTMLInputElement | null) => el?.focus()}
+                      aria-label="Rename session"
+                    />
+                  </div>
+                ) : (
+                  <button
+                    className="chat-sidebar__item-btn"
+                    onClick={() => switchSession(session.id)}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      startEditing(session);
+                    }}
+                    type="button"
+                  >
+                    <span className="chat-sidebar__item-title">{session.title}</span>
+                    <span className="chat-sidebar__item-time">
+                      {formatRelativeTime(session.updatedAt)}
+                    </span>
+                  </button>
+                )}
                 <button
                   className="chat-sidebar__item-delete"
                   onClick={(e) => {
