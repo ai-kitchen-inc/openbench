@@ -141,9 +141,10 @@ Full-stack chat application: Python AG-UI backend + React frontend with `@openbe
 
 - **Progressive token streaming** -- text appears word-by-word via AG-UI protocol
 - **Gemini agent** with real LLM reasoning, tool calling, and multi-turn memory
-- **5 tools**: search_web, analyze_file, knowledge_lookup, calculate, get_datetime
+- **10 tools**: search_web, analyze_file, knowledge_lookup, calculate, get_datetime, extract_entities, create_chart, create_form, show_file, generate_file
 - **File upload** -- upload PDFs/text files for agent analysis
 - **Rich UI** -- A2UI v0.10 streaming with charts, forms, file cards, markdown
+- **Agentic AI** -- task planning, parallel tool execution, persistent memory (SQLite)
 
 **Requires:** `GOOGLE_API_KEY`
 
@@ -532,7 +533,7 @@ python examples/workflows/reports/knowledge_base_workflow.py pipeline doc.pdf "S
 | 2 | `core/orchestration_demo.py` | None | L1/L2 composition, create_workflow() |
 | 3 | `core/agent_registry_demo.py` | None | AgentFactory, dynamic registration |
 | 4 | `adapters/framework_adapters_demo.py` | None | Multi-framework orchestration |
-| 5 | `chat/` | Google | AG-UI streaming, A2UI rich UI, file upload |
+| 5 | `chat/` | Google | AG-UI streaming, A2UI rich UI, file upload, planning, parallel tools, persistent memory |
 | 6a | `embeddings/embedding_providers_demo.py` | Google | Vector embeddings |
 | 6b | `embeddings/dynamic_registration_demo.py` | None | Dynamic model/provider registration |
 | 7 | `intelligence/gemini_agent_demo.py` | Google | BaseAgent reasoning loop + tools |

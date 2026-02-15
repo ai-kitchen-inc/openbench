@@ -134,9 +134,12 @@ openbench/
 │   │   ├── ag2.py               # AG2 adapter
 │   │   └── e2b.py               # E2B adapter
 │   ├── intelligence/            # AI agent layer
-│   │   ├── base.py              # Framework-agnostic BaseAgent, ToolExecutor, AgentMemory
+│   │   ├── base.py              # Framework-agnostic BaseAgent, ToolExecutor, AgentMemory, QueryRewriter
 │   │   ├── agents.py            # Agent implementations (Research, Analysis, Content)
 │   │   ├── llm_providers.py     # Concrete LLM providers (GeminiLLMProvider)
+│   │   ├── embeddings.py        # Embedding providers (Google, OpenAI)
+│   │   ├── planning.py          # TaskPlanner, TaskPlan (task decomposition)
+│   │   ├── memory.py            # PersistentMemory, SQLiteMemoryStore
 │   │   └── layer.py             # AgentFactory for creating agents
 │   ├── chat/                    # Chat layer (A2UI-powered)
 │   │   ├── engine.py            # ChatEngine (Chainable) -- main orchestrator
@@ -258,7 +261,10 @@ examples/
 │   ├── agentic_analysis_demo.py
 │   ├── query_rewriter_demo.py       # Query rewriting for better retrieval
 │   ├── multi_hop_rag_demo.py        # Agent-driven iterative retrieval
-│   └── combined_rag_demo.py         # All 3 features combined ("Golden Stack")
+│   ├── combined_rag_demo.py         # All 3 features combined ("Golden Stack")
+│   ├── planning_demo.py             # Task decomposition before execution
+│   ├── persistent_memory_demo.py    # SQLite-backed cross-session memory
+│   └── parallel_tools_demo.py       # Concurrent tool execution
 ├── chat/           # Chat layer examples
 │   ├── basic_chat_demo.py          # ChatEngine standalone
 │   ├── chat_with_rag_demo.py       # DataLayer | ChatLayer pipeline
@@ -400,7 +406,12 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/core/state.py` | State management and checkpointing |
 | `src/openbench/core/context.py` | Context management for workflows |
 | `src/openbench/intelligence/base.py` | Framework-agnostic BaseAgent, ToolExecutor, AgentMemory, QueryRewriter |
+| `src/openbench/intelligence/agents.py` | Pre-built agents (Research, Analysis, Content, Action, Meta) |
 | `src/openbench/intelligence/llm_providers.py` | Concrete LLM providers (GeminiLLMProvider) |
+| `src/openbench/intelligence/embeddings.py` | Embedding providers (Google, OpenAI) |
+| `src/openbench/intelligence/planning.py` | TaskPlanner, TaskPlan (task decomposition) |
+| `src/openbench/intelligence/memory.py` | PersistentMemory, SQLiteMemoryStore (persistent conversation) |
+| `src/openbench/intelligence/layer.py` | AgentFactory for creating agents |
 | `src/openbench/data/sources/pdf.py` | PDF data source with chunking support |
 | `src/openbench/data/sources/grounded_search.py` | Grounded search (Tavily, Google, DuckDuckGo) |
 | `src/openbench/data/sources/langextract.py` | Structured entity extraction (Google LangExtract) |
@@ -483,6 +494,7 @@ pnpm vitest               # Run tests
 - [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) - Installation and first workflow
 - [docs/API.md](docs/API.md) - Complete API reference
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Architecture overview
+- [docs/AGENTIC_AI_RAG.md](docs/AGENTIC_AI_RAG.md) - Agentic AI & RAG comprehensive guide
 - [docs/CHAT_UI_ARCHITECTURE.md](docs/CHAT_UI_ARCHITECTURE.md) - Chat UI SDK architecture
 - [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) - Design tokens and visual language
 - [examples/README.md](examples/README.md) - Example usage patterns

@@ -96,15 +96,6 @@ export function MessageBubble({ message, onAction }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Step indicators */}
-        {hasSteps && (
-          <div className="chat-message__steps">
-            {message.steps?.map((step) => (
-              <StepIndicator key={step.stepId} step={step} />
-            ))}
-          </div>
-        )}
-
         {/* Streaming indicator (fallback when no steps and no content) */}
         {isStreaming && !hasSteps && !hasContent && <StreamingIndicator />}
 
@@ -114,6 +105,15 @@ export function MessageBubble({ message, onAction }: MessageBubbleProps) {
             <SurfaceRenderer surface={surface} onAction={onAction} />
           </div>
         ))}
+
+        {/* Step indicators — always at the bottom */}
+        {hasSteps && (
+          <div className="chat-message__steps">
+            {message.steps?.map((step) => (
+              <StepIndicator key={step.stepId} step={step} />
+            ))}
+          </div>
+        )}
 
         {/* Metadata footer */}
         <div className="chat-message__meta">

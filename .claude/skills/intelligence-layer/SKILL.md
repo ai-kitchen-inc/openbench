@@ -14,6 +14,8 @@ OpenBench intelligence layer provides framework-agnostic agents with tool use, m
 - `src/openbench/intelligence/llm_providers.py` - GeminiLLMProvider
 - `src/openbench/intelligence/layer.py` - AgentFactory
 - `src/openbench/intelligence/embeddings.py` - Embedding providers
+- `src/openbench/intelligence/planning.py` - TaskPlanner, TaskPlan (task decomposition)
+- `src/openbench/intelligence/memory.py` - PersistentMemory, SQLiteMemoryStore (persistent conversation)
 
 ## BaseAgent
 
@@ -97,6 +99,89 @@ structured = StructuredOutputAgent(
 )
 ```
 
+## Task Planning
+
+Optional LLM-based task decomposition before execution. Breaks complex goals into step-by-step plans:
+
+```python
+from openbench.intelligence.base import BaseAgent
+
+# Enable planning phase before execution
+agent = BaseAgent(
+    goal="Analyze Q4 revenue trends and create summary",
+    tools=[search_tool, calculate_tool],
+    enable_planning=True,  # Decompose goal into steps
+)
+
+result = agent.execute(context)
+# Agent first plans: ["Search Q4 data", "Calculate trends", "Summarize"]
+# Then executes each step in the reasoning loop
+```
+
+Standalone usage:
+
+```python
+from openbench.intelligence.planning import TaskPlanner, TaskPlan
+
+planner = TaskPlanner(llm_provider, model="gemini-2.5-flash")
+plan = planner.plan("Analyze revenue trends", available_tools=["search", "calculate"])
+# plan.steps -> ["Search for Q4 revenue data", "Calculate growth trends", ...]
+# plan.estimated_tools -> ["search", "calculate"]
+# plan.reasoning -> "Need to gather data first, then analyze..."
+```
+
+When `enable_planning=True`:
+- `TaskPlanner.plan()` is called before the reasoning loop
+- Plan steps are injected into agent memory as a system message
+- Falls back to single-step plan if planning fails
+- Uses low temperature (0.3) for consistent plans
+
+## Persistent Memory
+
+Cross-session conversation persistence using SQLite:
+
+```python
+from openbench.intelligence.memory import SQLiteMemoryStore, PersistentMemory
+
+# Create store (file-backed)
+store = SQLiteMemoryStore(db_path="memory.db")
+
+# Use with BaseAgent
+agent = BaseAgent(
+    goal="Answer questions",
+    memory_store=store,       # Enables persistence
+    session_id="chat-123",    # Links to session
+)
+
+# Or use PersistentMemory directly
+memory = PersistentMemory(store=store, session_id="chat-123")
+memory.add_user("Hello")          # Auto-persisted to SQLite
+memory.add_assistant("Hi there!") # Auto-persisted
+
+# Later, in a new process:
+memory2 = PersistentMemory(store=store, session_id="chat-123")
+memory2.get_messages()  # Contains "Hello" and "Hi there!" from before
+
+# Search across all sessions
+results = memory2.search_history("revenue")
+
+# Clear session (memory + store)
+memory2.clear()
+```
+
+`MemoryStore` is abstract — implement for Redis, PostgreSQL, etc:
+
+```python
+from openbench.intelligence.memory import MemoryStore
+
+class RedisMemoryStore(MemoryStore):
+    def save(self, session_id, messages): ...
+    def load(self, session_id): ...
+    def search(self, query, limit=5): ...
+    def list_sessions(self): ...
+    def delete_session(self, session_id): ...
+```
+
 ## ToolExecutor
 
 Register and execute tools:
@@ -119,7 +204,32 @@ executor.register_from_list([tool1, tool2, my_function])
 # Execute
 result = executor.execute("search", query="revenue")
 schemas = executor.get_schemas()  # For LLM tool declarations
+
+# Execute multiple tools in parallel
+results = executor.execute_parallel([
+    {"name": "search", "id": "call_1", "arguments": {"query": "revenue"}},
+    {"name": "calculate", "id": "call_2", "arguments": {"x": 6, "y": 7}},
+], timeout=30)
+# Returns: [{"call": {...}, "result": ..., "error": None}, ...]
 ```
+
+### Parallel Tool Execution
+
+Enable concurrent tool execution in BaseAgent:
+
+```python
+agent = BaseAgent(
+    goal="Research and analyze",
+    tools=[search_tool, calculate_tool, fetch_tool],
+    parallel_tool_execution=True,  # Run tools concurrently
+)
+```
+
+When `parallel_tool_execution=True` and the LLM returns multiple tool calls in one iteration:
+- Tools execute concurrently via `ThreadPoolExecutor`
+- Results are returned in original order
+- One tool failure doesn't block others
+- Single tool calls still run sequentially (no overhead)
 
 ## AgentMemory
 
@@ -293,4 +403,12 @@ For examples, see:
 - **Adapters**: External agents (LangChain, CrewAI) wrapped as adapters → see `adapters` skill
 - **Testing**: Mock `LLMProvider` and `ToolExecutor` in tests → see `testing-openbench` skill
 
-For examples, see `examples/intelligence/` (query_rewriter_demo, multi_hop_rag_demo, combined_rag_demo) and `examples/workflows/research/`
+For examples, see `examples/intelligence/`:
+- `query_rewriter_demo.py` - Query rewriting for better retrieval
+- `multi_hop_rag_demo.py` - Agent-driven iterative retrieval
+- `combined_rag_demo.py` - Golden Stack (all RAG features)
+- `planning_demo.py` - Task decomposition before execution
+- `persistent_memory_demo.py` - SQLite-backed cross-session memory
+- `parallel_tools_demo.py` - Concurrent tool execution
+
+Also see `examples/workflows/research/` for complete research agent workflows.

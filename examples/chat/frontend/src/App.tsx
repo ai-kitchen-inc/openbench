@@ -14,9 +14,9 @@ const STREAM_URL = "/awp";
 
 const SUGGESTIONS = [
   "Search the web for latest AI agent trends",
-  "Upload a PDF and summarize it",
-  "Calculate the ROI: 150000 / 42000 * 100",
-  "Compare solar vs wind energy costs",
+  "Compare solar vs wind energy costs with a chart",
+  "Give me AI news, market data, and current time",
+  "What did we discuss earlier?",
 ];
 
 function ChatLayout() {
