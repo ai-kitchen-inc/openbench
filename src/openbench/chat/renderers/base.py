@@ -9,10 +9,12 @@ DataSourceRegistry, AgentRegistry, etc.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from openbench.chat.a2ui.schema import A2UIComponent
 from openbench.core.registry import PluginRegistry
+
+if TYPE_CHECKING:
+    from openbench.chat.a2ui.schema import A2UIComponent
 
 
 class ContentRenderer(ABC):

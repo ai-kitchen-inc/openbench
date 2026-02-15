@@ -23,9 +23,7 @@ class ChunkingConfig:
 
     chunk_size: int = 1000
     chunk_overlap: int = 200
-    separators: list[str] = field(
-        default_factory=lambda: ["\n\n", "\n", ". ", ", ", " "]
-    )
+    separators: list[str] = field(default_factory=lambda: ["\n\n", "\n", ". ", ", ", " "])
 
     def __post_init__(self):
         if self.chunk_size <= 0:
@@ -122,9 +120,7 @@ def chunk_text(text: str, config: ChunkingConfig | None = None) -> list[str]:
     return chunks
 
 
-def chunk_raw_data(
-    data: RawData, config: ChunkingConfig | None = None
-) -> list[Chunk]:
+def chunk_raw_data(data: RawData, config: ChunkingConfig | None = None) -> list[Chunk]:
     """Split RawData into chunks with metadata.
 
     Args:
@@ -256,9 +252,7 @@ class EmbeddingMixin:
             try:
                 from openbench.core.config import get_embedding_dimension
 
-                self._resolved_dimension = get_embedding_dimension(
-                    self._embedding_model
-                )
+                self._resolved_dimension = get_embedding_dimension(self._embedding_model)
                 return self._resolved_dimension
             except Exception:
                 pass
@@ -279,9 +273,7 @@ class EmbeddingMixin:
         provider = self._get_embedding_provider()
         return provider.embed(text, model=self._embedding_model)
 
-    def _embed_batch(
-        self, texts: list[str], batch_size: int = 100
-    ) -> list[list[float]]:
+    def _embed_batch(self, texts: list[str], batch_size: int = 100) -> list[list[float]]:
         """Generate embeddings for multiple texts.
 
         Args:
@@ -294,17 +286,13 @@ class EmbeddingMixin:
         provider = self._get_embedding_provider()
 
         if hasattr(provider, "embed_batch"):
-            return provider.embed_batch(
-                texts, model=self._embedding_model, batch_size=batch_size
-            )
+            return provider.embed_batch(texts, model=self._embedding_model, batch_size=batch_size)
 
         # Fallback to individual calls
         embeddings = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            batch_embeddings = [
-                provider.embed(text, model=self._embedding_model) for text in batch
-            ]
+            batch_embeddings = [provider.embed(text, model=self._embedding_model) for text in batch]
             embeddings.extend(batch_embeddings)
 
         return embeddings
