@@ -272,13 +272,21 @@ class TestAGUIHandlerEventStream(unittest.TestCase):
         self.assertEqual(result["content"], "Reply")
 
     def test_event_stream_updates_session(self):
-        """Session should have user + assistant messages after processing."""
+        """Per-session ChatSession should have user + assistant messages after processing."""
         engine = ChatEngine(agent=MockAgent("Reply"))
         handler = AGUIHandler(engine=engine)
 
-        _run(_collect_events(handler, {"content": "Hello"}))
+        body = {
+            "content": "Hello",
+            "threadId": "test-thread",
+            "forwardedProps": {"sessionId": "session-abc"},
+        }
+        _run(_collect_events(handler, body))
 
-        self.assertEqual(len(engine.session), 2)
+        # Session stored in handler's per-session dict, not engine.session
+        session = handler._sessions.get("session-abc")
+        self.assertIsNotNone(session)
+        self.assertEqual(len(session), 2)
 
     def test_event_stream_thread_id_from_body(self):
         """Should use threadId from body if provided."""
@@ -556,6 +564,113 @@ class TestAGUIHandlerTextStreaming(unittest.TestCase):
         run_finished = [e for e in events if e["type"] == "RUN_FINISHED"]
         self.assertEqual(len(run_finished), 1)
         self.assertEqual(run_finished[0]["result"]["content"], "Hello World")
+
+
+class TestAGUIHandlerSessionIsolation(unittest.TestCase):
+    """Tests for per-session isolation in AGUIHandler."""
+
+    def test_different_session_ids_get_separate_sessions(self):
+        """Requests with different sessionIds should use separate ChatSession instances."""
+        engine = ChatEngine(agent=MockAgent("Reply"))
+        handler = AGUIHandler(engine=engine)
+
+        body_a = {
+            "content": "Hello from A",
+            "forwardedProps": {"sessionId": "session-A"},
+        }
+        body_b = {
+            "content": "Hello from B",
+            "forwardedProps": {"sessionId": "session-B"},
+        }
+
+        _run(_collect_events(handler, body_a))
+        _run(_collect_events(handler, body_b))
+
+        # Each session should have exactly 2 messages (user + assistant)
+        session_a = handler._sessions.get("session-A")
+        session_b = handler._sessions.get("session-B")
+        self.assertIsNotNone(session_a)
+        self.assertIsNotNone(session_b)
+        self.assertEqual(len(session_a), 2)
+        self.assertEqual(len(session_b), 2)
+        self.assertIsNot(session_a, session_b)
+
+    def test_same_session_id_accumulates_messages(self):
+        """Multiple requests with the same sessionId should accumulate in one session."""
+        engine = ChatEngine(agent=MockAgent("Reply"))
+        handler = AGUIHandler(engine=engine)
+
+        body = {
+            "content": "First message",
+            "forwardedProps": {"sessionId": "session-shared"},
+        }
+        _run(_collect_events(handler, body))
+
+        body["content"] = "Second message"
+        _run(_collect_events(handler, body))
+
+        session = handler._sessions.get("session-shared")
+        self.assertIsNotNone(session)
+        # 2 user + 2 assistant = 4 messages
+        self.assertEqual(len(session), 4)
+
+    def test_engine_session_not_modified(self):
+        """Engine's default session should NOT be modified by AGUIHandler requests."""
+        engine = ChatEngine(agent=MockAgent("Reply"))
+        handler = AGUIHandler(engine=engine)
+
+        initial_count = len(engine.session)
+
+        body = {
+            "content": "Hello",
+            "forwardedProps": {"sessionId": "session-isolated"},
+        }
+        _run(_collect_events(handler, body))
+
+        # Engine's session should remain untouched
+        self.assertEqual(len(engine.session), initial_count)
+
+    def test_session_id_fallback_to_thread_id(self):
+        """When no sessionId in forwardedProps, should fall back to threadId."""
+        engine = ChatEngine(agent=MockAgent("Reply"))
+        handler = AGUIHandler(engine=engine)
+
+        body = {"content": "Hello", "threadId": "my-thread-id"}
+        _run(_collect_events(handler, body))
+
+        session = handler._sessions.get("my-thread-id")
+        self.assertIsNotNone(session)
+        self.assertEqual(len(session), 2)
+
+    def test_session_isolation_prevents_context_contamination(self):
+        """Messages from one session should NOT appear in another session's context."""
+        engine = ChatEngine(agent=MockAgent("Reply"))
+        handler = AGUIHandler(engine=engine)
+
+        body_a = {
+            "content": "Topic A: quantum computing",
+            "forwardedProps": {"sessionId": "session-A"},
+        }
+        body_b = {
+            "content": "Topic B: cooking recipes",
+            "forwardedProps": {"sessionId": "session-B"},
+        }
+
+        _run(_collect_events(handler, body_a))
+        _run(_collect_events(handler, body_b))
+
+        session_a = handler._sessions["session-A"]
+        session_b = handler._sessions["session-B"]
+
+        # Session A should only contain its own messages
+        a_contents = [m.content for m in session_a.messages]
+        self.assertTrue(any("quantum" in c for c in a_contents))
+        self.assertFalse(any("cooking" in c for c in a_contents))
+
+        # Session B should only contain its own messages
+        b_contents = [m.content for m in session_b.messages]
+        self.assertTrue(any("cooking" in c for c in b_contents))
+        self.assertFalse(any("quantum" in c for c in b_contents))
 
 
 if __name__ == "__main__":

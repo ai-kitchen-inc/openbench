@@ -7,15 +7,24 @@ management and wraps A2UI v0.10 messages as CustomEvent payloads.
 
 AG-UI handles transport; A2UI handles rendering.
 
+Per-session isolation: Each sessionId gets its own ChatSession instance and
+each request gets a fresh agent copy (clean memory). This prevents context
+contamination when multiple requests stream in parallel.
+
 Note: ag-ui-protocol and fastapi are optional dependencies -- imported lazily.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
+import threading
 import uuid
 from typing import Any
+
+from openbench.chat.session import ChatSession
+from openbench.intelligence.base import AgentMemory, BaseAgent
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +34,11 @@ class AGUIHandler:
 
     Streams AG-UI events as SSE, wrapping A2UI v0.10 messages inside
     CustomEvent(name="a2ui") payloads.
+
+    Supports parallel request isolation:
+    - Each sessionId maps to its own ChatSession (conversation history).
+    - Each request gets a fresh agent copy with clean memory.
+    - Render items are protected by a lock to prevent cross-request leaks.
 
     Event sequence:
         RunStartedEvent
@@ -55,6 +69,36 @@ class AGUIHandler:
             engine: ChatEngine instance for processing messages.
         """
         self.engine = engine
+        self._sessions: dict[str, ChatSession] = {}
+        self._sessions_lock = threading.Lock()
+        self._render_lock = asyncio.Lock()
+
+    def _get_or_create_session(self, session_id: str) -> ChatSession:
+        """Get or create a ChatSession for the given session ID.
+
+        Thread-safe: uses a lock for concurrent access.
+        """
+        with self._sessions_lock:
+            if session_id not in self._sessions:
+                self._sessions[session_id] = ChatSession(session_id=session_id)
+            return self._sessions[session_id]
+
+    def _create_request_agent(self) -> Any:
+        """Create a request-scoped copy of the agent with fresh memory.
+
+        For BaseAgent: shallow copy with a new AgentMemory (system prompt only).
+        For other agent types: returns the original (assumed stateless).
+        """
+        agent = self.engine.agent
+        if isinstance(agent, BaseAgent):
+            agent_copy = copy.copy(agent)
+            agent_copy.memory = AgentMemory()
+            agent_copy.memory.add_system(agent._system_prompt)
+            # Share LLM provider and tools (thread-safe, read-only references)
+            agent_copy._llm = agent._llm
+            agent_copy.tools = agent.tools
+            return agent_copy
+        return agent
 
     async def handle(self, request: Any) -> Any:
         """Handle an incoming request and return an SSE StreamingResponse.
@@ -88,6 +132,11 @@ class AGUIHandler:
         Uses an asyncio.Queue bridge to stream text deltas from the sync
         agent thread into async SSE events (TextMessageContent).
 
+        Per-request isolation:
+        - Session: looked up/created by forwardedProps.sessionId
+        - Agent: fresh copy with clean memory per request
+        - Render items: protected by asyncio.Lock
+
         Args:
             body: Request body (AG-UI RunAgentInput or OpenBench format).
             accept: Accept header for content negotiation.
@@ -113,6 +162,16 @@ class AGUIHandler:
         thread_id = body.get("threadId", f"thread-{uuid.uuid4().hex[:8]}")
         run_id = body.get("runId", f"run-{uuid.uuid4().hex[:8]}")
 
+        # Extract session ID for per-session isolation
+        forwarded = body.get("forwardedProps") or {}
+        session_id = forwarded.get("sessionId") or thread_id
+
+        # Get or create per-session ChatSession
+        session = self._get_or_create_session(session_id)
+
+        # Create a request-scoped agent copy with fresh memory
+        request_agent = self._create_request_agent()
+
         # Run started
         yield encoder.encode(RunStartedEvent(thread_id=thread_id, run_id=run_id))
 
@@ -121,7 +180,7 @@ class AGUIHandler:
 
             # ── Step 1: Processing input ──
             yield encoder.encode(StepStartedEvent(step_name="Processing input"))
-            self.engine.session.add_user_message(content, attachments=attachments)
+            session.add_user_message(content, attachments=attachments)
             yield encoder.encode(StepFinishedEvent(step_name="Processing input"))
 
             # ── Step 2: Thinking (with streaming text deltas) ──
@@ -135,9 +194,22 @@ class AGUIHandler:
                 """Callback from sync agent thread → async queue."""
                 loop.call_soon_threadsafe(queue.put_nowait, delta)
 
-            # Run agent in thread pool with on_chunk callback
+            # Clear render items before agent execution (under lock)
+            async with self._render_lock:
+                if self.engine._clear_render_items_fn:
+                    self.engine._clear_render_items_fn()
+
+            # Run agent in thread pool with per-request agent and session
             agent_task = asyncio.create_task(
-                asyncio.to_thread(self.engine._execute_agent, content, None, attachments, on_chunk)
+                asyncio.to_thread(
+                    self.engine._execute_agent,
+                    content,
+                    None,
+                    attachments,
+                    on_chunk,
+                    session,
+                    request_agent,
+                )
             )
 
             # Signal queue end when agent completes (success or failure)
@@ -164,7 +236,13 @@ class AGUIHandler:
 
             agent_output = self.engine._extract_output(agent_result)
             metadata = self.engine._extract_metadata(agent_result)
-            extra_items = self.engine._render_items_fn() if self.engine._render_items_fn else None
+
+            # Read render items under lock
+            async with self._render_lock:
+                extra_items = (
+                    self.engine._render_items_fn() if self.engine._render_items_fn else None
+                )
+
             yield encoder.encode(StepFinishedEvent(step_name="Thinking"))
 
             # ── Step 3: Rendering response (rich content only) ──
@@ -186,9 +264,9 @@ class AGUIHandler:
 
                 yield encoder.encode(StepFinishedEvent(step_name="Rendering response"))
 
-            # Session history
+            # Session history (per-session, not shared)
             text_content = self.engine._extract_text_content(agent_output)
-            self.engine.session.add_assistant_message(
+            session.add_assistant_message(
                 content=text_content,
                 surfaces=[{"surfaceId": surface_id}] if surface_id else None,
                 metadata=metadata,

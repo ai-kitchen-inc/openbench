@@ -31,8 +31,10 @@ import logging
 import os
 import re
 import time
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from openbench.core.abstractions import LLMProvider, LLMResponse
 
@@ -235,7 +237,11 @@ class GeminiLLMProvider(LLMProvider):
 
     @staticmethod
     def _extract_text_from_parts(response: Any) -> str:
-        """Extract only text from response parts, ignoring function_call parts.
+        """Extract only answer text from response parts.
+
+        Filters out:
+        - function_call parts (tool invocations)
+        - thought parts (Gemini 3+ thinking/reasoning content)
 
         Avoids the Gemini SDK warning "there are non-text parts in the
         response" that fires when accessing .text on chunks that contain
@@ -245,7 +251,7 @@ class GeminiLLMProvider(LLMProvider):
             response: Gemini API response or stream chunk.
 
         Returns:
-            Concatenated text from all text-only parts.
+            Concatenated text from all answer-text parts (excludes thoughts).
         """
         if not hasattr(response, "candidates") or not response.candidates:
             return ""
@@ -265,6 +271,7 @@ class GeminiLLMProvider(LLMProvider):
                 hasattr(part, "text")
                 and part.text
                 and not (hasattr(part, "function_call") and part.function_call)
+                and not getattr(part, "thought", False)
             )
         ]
 
@@ -440,11 +447,14 @@ class GeminiLLMProvider(LLMProvider):
         tool_calls = self._extract_tool_calls(response)
         text = ""
         if not tool_calls:
-            try:
-                text = response.text
-            except Exception:
-                # response.text raises if no text parts
-                text = ""
+            # Use _extract_text_from_parts to filter thought parts (Gemini 3+)
+            text = self._extract_text_from_parts(response)
+            if not text:
+                # Fallback to SDK .text property
+                try:
+                    text = response.text
+                except Exception:
+                    text = ""
 
         llm_response = LLMResponse(
             text=text,
@@ -518,6 +528,7 @@ class GeminiLLMProvider(LLMProvider):
 
         # Stream from Gemini API
         last_chunk = None
+        has_text = False
         for chunk in client.models.generate_content_stream(
             model=model,
             contents=contents,
@@ -525,12 +536,12 @@ class GeminiLLMProvider(LLMProvider):
         ):
             last_chunk = chunk
 
-            # Extract text directly from parts to avoid the SDK warning:
-            # "there are non-text parts in the response: ['function_call']"
-            # which fires when accessing chunk.text on mixed-content chunks.
+            # Extract answer text from parts, filtering out thought parts
+            # (Gemini 3+) and function_call parts.
             text = self._extract_text_from_parts(chunk)
 
             if text:
+                has_text = True
                 yield LLMResponse(text=text, model=model, tokens_used=0, cost=0.0)
 
         # Extract token usage from last chunk
@@ -570,6 +581,26 @@ class GeminiLLMProvider(LLMProvider):
                     final.raw_content = candidate.content
 
             yield final
+
+        elif not has_text:
+            # Model produced no text and no tool calls (Gemini 3 "Confidence
+            # Dropout" or empty response). Log warning and yield a final
+            # response so callers still get usage metadata.
+            logger.warning(
+                f"Model {model} returned no text output "
+                f"(prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens}). "
+                "This may be a known issue with Gemini 3 preview models."
+            )
+            yield LLMResponse(
+                text="",
+                model=model,
+                tokens_used=total_tokens,
+                cost=cost,
+                metadata={
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                },
+            )
 
 
 # ============================================================================

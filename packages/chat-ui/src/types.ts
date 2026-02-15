@@ -157,6 +157,7 @@ export interface ChatConfig {
   actionUrl?: string; // POST → JSON (defaults to "/chat/action")
   uploadUrl?: string; // POST → JSON (defaults to "/chat/upload")
   theme?: "light" | "dark" | "auto";
+  maxConcurrentStreams?: number; // Max parallel SSE streams (default: 3)
 }
 
 export type TransportStatus = "connected" | "disconnected" | "error";
