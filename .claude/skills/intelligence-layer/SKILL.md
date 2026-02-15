@@ -9,7 +9,7 @@ OpenBench intelligence layer provides framework-agnostic agents with tool use, m
 
 ## Key Files
 
-- `src/openbench/intelligence/base.py` - BaseAgent, SimpleAgent, StructuredOutputAgent, ToolExecutor, AgentMemory
+- `src/openbench/intelligence/base.py` - BaseAgent, SimpleAgent, StructuredOutputAgent, ToolExecutor, AgentMemory, QueryRewriter
 - `src/openbench/intelligence/agents.py` - Pre-built agents (Research, Analysis, Content, Action, Meta)
 - `src/openbench/intelligence/llm_providers.py` - GeminiLLMProvider
 - `src/openbench/intelligence/layer.py` - AgentFactory
@@ -198,6 +198,85 @@ agent = BaseAgent(
 # 3. Formats retrieved sources in the user message
 ```
 
+## Advanced RAG Features
+
+Three features that compose at different levels for maximum retrieval quality.
+
+### Query Rewriter
+
+LLM-based query enhancement that rewrites user queries into 1-3 optimized search queries for better semantic recall:
+
+```python
+from openbench.intelligence.base import BaseAgent, QueryRewriter
+
+# With BaseAgent (automatic)
+agent = BaseAgent(
+    goal="Answer questions",
+    store=store,
+    query_rewriter=True,  # Rewrites queries before searching
+)
+
+# Standalone usage
+from openbench.core.providers import get_provider_service, ProviderType
+llm = get_provider_service().resolve(ProviderType.LLM)
+rewriter = QueryRewriter(llm, model="gemini-2.5-flash")
+queries = rewriter.rewrite("revenue trends")  # -> ["revenue growth rate", "financial performance", ...]
+```
+
+### Multi-Hop RAG
+
+Agent-driven iterative retrieval. The agent receives a `retrieve_knowledge` tool and decides when and what to search during its reasoning loop:
+
+```python
+agent = BaseAgent(
+    goal="Research complex topics using the knowledge base. "
+         "Use retrieve_knowledge tool to search for information.",
+    store=store,
+    multi_hop_rag=True,   # Registers retrieve_knowledge tool, skips auto-retrieval
+    max_iterations=6,
+)
+
+# Agent reasoning loop:
+# 1. Agent decides to call retrieve_knowledge("topic A")
+# 2. Reads results, realizes it needs more info
+# 3. Calls retrieve_knowledge("topic B")  <- multi-hop
+# 4. Synthesizes all findings into final answer
+```
+
+### Combined "Golden Stack"
+
+All three features working together (query_rewriter + multi_hop_rag + hybrid search):
+
+```python
+from openbench.data.stores.pinecone import PineconeStore
+
+# Store level: hybrid search
+store = PineconeStore(
+    index_name="knowledge",
+    hybrid_search=True,       # BM25 + vector reranking
+    vector_weight=0.7,
+)
+
+# Agent level: query rewriter + multi-hop
+agent = BaseAgent(
+    goal="Research questions thoroughly",
+    store=store,
+    query_rewriter=True,      # Rewrite each query into 1-3 variants
+    multi_hop_rag=True,       # Agent controls when to search
+)
+```
+
+Internal flow when agent calls `retrieve_knowledge(query)`:
+1. `_rag_tool_retrieve()` -> `_retrieve_context()`
+2. `QueryRewriter.rewrite()` -> 1-3 optimized queries
+3. Each query -> `store.search()` -> vector similarity + Hybrid Search re-rank
+4. Deduplicated results returned to agent
+
+For examples, see:
+- `examples/intelligence/query_rewriter_demo.py`
+- `examples/intelligence/multi_hop_rag_demo.py`
+- `examples/intelligence/combined_rag_demo.py` (Golden Stack)
+
 ## Anti-Patterns
 
 **DO NOT:**
@@ -214,4 +293,4 @@ agent = BaseAgent(
 - **Adapters**: External agents (LangChain, CrewAI) wrapped as adapters → see `adapters` skill
 - **Testing**: Mock `LLMProvider` and `ToolExecutor` in tests → see `testing-openbench` skill
 
-For examples, see `examples/intelligence/` and `examples/workflows/research/`
+For examples, see `examples/intelligence/` (query_rewriter_demo, multi_hop_rag_demo, combined_rag_demo) and `examples/workflows/research/`

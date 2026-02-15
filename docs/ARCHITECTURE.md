@@ -34,6 +34,7 @@ Three-layer architecture with composable abstractions for building AI workflows.
 │  Execute AI tasks: Research, Analysis, Content         │
 │  Multi-agent orchestration, tool use, memory           │
 │  Progressive token streaming via on_chunk callbacks    │
+│  Advanced RAG: Query Rewriter, Multi-Hop, Hybrid Search│
 │                                                         │
 │  Agent & LLMProvider abstractions                      │
 │  Implementations: OpenAI, Anthropic, Local Models      │
@@ -46,6 +47,7 @@ Three-layer architecture with composable abstractions for building AI workflows.
 │  Unified search across heterogeneous data              │
 │                                                         │
 │  DataSource & DataStore abstractions                   │
+│  Hybrid Search: BM25 keyword + vector reranking        │
 │  Implementations: PDF, YouTube, Pinecone, ChromaDB     │
 └─────────────────────────────────────────────────────────┘
 ```

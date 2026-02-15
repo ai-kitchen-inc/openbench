@@ -176,7 +176,7 @@ python -m unittest discover tests -v
 python -m unittest tests.test_abstractions -v  # Specific file
 ```
 
-**Test coverage (850+ Python, 171 TypeScript):**
+**Test coverage (896+ Python, 167 TypeScript):**
 - Core abstractions (16), Registry (45), Chainable (18)
 - L2 layers (17), Workflow (15), Provider service (32)
 - Config (20), Intelligence base (31)
@@ -212,6 +212,18 @@ workflow = Conditional(
     condition=lambda x: x["confidence"] > 0.8,
     true_branch=fast_path,
     false_branch=detailed_path
+)
+
+# Advanced RAG (Query Rewriter + Multi-Hop + Hybrid Search)
+from openbench.intelligence.base import BaseAgent
+from openbench.data.stores.pinecone import PineconeStore
+
+store = PineconeStore(index_name="knowledge", hybrid_search=True, vector_weight=0.7)
+agent = BaseAgent(
+    goal="Research thoroughly using the knowledge base",
+    store=store,
+    query_rewriter=True,   # LLM-based query enhancement
+    multi_hop_rag=True,    # Agent-driven iterative retrieval
 )
 ```
 
