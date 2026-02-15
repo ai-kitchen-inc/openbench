@@ -22,9 +22,14 @@ examples/
 │   └── dynamic_registration_demo.py
 ├── intelligence/                # Agent and LLM provider demos
 │   ├── gemini_agent_demo.py
-│   └── agentic_research_demo.py
+│   ├── agentic_research_demo.py
+│   ├── agentic_analysis_demo.py
+│   ├── query_rewriter_demo.py   # Query rewriting for better retrieval
+│   ├── multi_hop_rag_demo.py    # Agent-driven iterative retrieval
+│   └── combined_rag_demo.py     # All 3 features combined ("Golden Stack")
 ├── stores/                      # Vector store examples
-│   └── pinecone_store_demo.py
+│   ├── pinecone_store_demo.py
+│   └── hybrid_search_demo.py    # Vector + BM25 keyword reranking
 ├── workflows/                   # Complete end-to-end workflows
 │   ├── pdf/                     # PDF processing workflows
 │   │   ├── pdf_google_adk_workflow.py
@@ -245,11 +250,84 @@ python examples/intelligence/agentic_analysis_demo.py --demo 1 -q "analyze AI ma
 python examples/intelligence/agentic_analysis_demo.py --model gemini-2.5-pro
 ```
 
+### 10. Query Rewriter Demo (`intelligence/query_rewriter_demo.py`)
+
+**LLM-based query enhancement for better RAG retrieval.**
+
+QueryRewriter rewrites a user query into 1-3 optimized search queries,
+improving semantic search recall without changing application code.
+
+Two demo patterns:
+- **Demo 1 -- Standalone**: Use `QueryRewriter` directly to see how queries are rewritten
+- **Demo 2 -- With BaseAgent**: Enable `query_rewriter=True` on BaseAgent for automatic rewriting
+
+**Requires:** `GOOGLE_API_KEY`, `PINECONE_API_KEY` (optional -- Demo 2 skips gracefully)
+
+```bash
+python examples/intelligence/query_rewriter_demo.py              # All demos
+python examples/intelligence/query_rewriter_demo.py --demo 1     # Standalone only
+python examples/intelligence/query_rewriter_demo.py --model gemini-2.5-pro
+```
+
+### 11. Multi-Hop RAG Demo (`intelligence/multi_hop_rag_demo.py`)
+
+**Agent-driven iterative knowledge retrieval.**
+
+With `multi_hop_rag=True`, BaseAgent receives a `retrieve_knowledge` tool and
+decides when and what to search during its reasoning loop -- enabling multi-step
+research where the agent refines queries based on initial findings.
+
+Two demo patterns:
+- **Demo 1 -- Auto-RAG (baseline)**: Single-pass retrieval at start (for comparison)
+- **Demo 2 -- Multi-Hop RAG**: Agent calls `retrieve_knowledge` multiple times during reasoning
+
+**Requires:** `GOOGLE_API_KEY`, `PINECONE_API_KEY`
+
+```bash
+python examples/intelligence/multi_hop_rag_demo.py               # All demos
+python examples/intelligence/multi_hop_rag_demo.py --demo 2      # Multi-hop only
+python examples/intelligence/multi_hop_rag_demo.py -q "custom query"
+```
+
+### 12. Combined RAG Demo -- The "Golden Stack" (`intelligence/combined_rag_demo.py`)
+
+**All three retrieval features working together for maximum quality.**
+
+Combines Query Rewriter + Multi-Hop RAG + Hybrid Search. Each operates at a
+different level and composes without conflict:
+
+```
+Agent calls retrieve_knowledge("cloud revenue Q3 vs Q4")
+|
++-- QueryRewriter.rewrite()
+|     -> "cloud division revenue Q3"
+|     -> "cloud division revenue Q4"
+|     -> "quarterly cloud earnings report"
+|
++-- for each rewritten query:
+|     +-- store.search() with Hybrid Search (vector + BM25)
+|
+Agent reads Q3 results, needs Q4 from a different document
+|
++-- Agent calls retrieve_knowledge("Q4 financial report cloud")   <- Multi-Hop
+|     +-- (same flow: rewrite -> hybrid search)
+|
+Agent has Q3 + Q4 data -> calculates difference -> final answer
+```
+
+**Requires:** `GOOGLE_API_KEY`, `PINECONE_API_KEY`
+
+```bash
+python examples/intelligence/combined_rag_demo.py
+python examples/intelligence/combined_rag_demo.py --vector-weight 0.5
+python examples/intelligence/combined_rag_demo.py -q "your custom query"
+```
+
 ---
 
 ## Store Examples (`stores/`)
 
-### 10. Pinecone Store Demo (`stores/pinecone_store_demo.py`)
+### 13. Pinecone Store Demo (`stores/pinecone_store_demo.py`)
 
 Vector storage and semantic search with PineconeStore:
 - Create/connect to Pinecone index
@@ -263,13 +341,34 @@ Vector storage and semantic search with PineconeStore:
 python examples/stores/pinecone_store_demo.py
 ```
 
+### 14. Hybrid Search Demo (`stores/hybrid_search_demo.py`)
+
+**Vector + BM25 keyword scoring for better retrieval.**
+
+HybridSearchMixin combines vector similarity with BM25 keyword scoring to
+improve search quality -- especially for exact term matches that pure
+semantic search can miss.
+
+Three demo patterns:
+- **Demo 1 -- Standalone BM25**: Use `HybridSearchMixin` directly (no API keys needed)
+- **Demo 2 -- PineconeStore**: Compare vector-only vs hybrid search results
+- **Demo 3 -- With BaseAgent**: Full RAG pipeline with hybrid-enabled store
+
+**Requires:** Demo 1: None. Demo 2+3: `GOOGLE_API_KEY` + `PINECONE_API_KEY`
+
+```bash
+python examples/stores/hybrid_search_demo.py                     # All demos
+python examples/stores/hybrid_search_demo.py --demo 1            # BM25 only (no API keys)
+python examples/stores/hybrid_search_demo.py --vector-weight 0.5
+```
+
 ---
 
 ## Workflow Examples (`workflows/`)
 
 ### PDF Workflows (`workflows/pdf/`)
 
-#### 11. PDF + Google ADK Workflow (`workflows/pdf/pdf_google_adk_workflow.py`)
+#### 15. PDF + Google ADK Workflow (`workflows/pdf/pdf_google_adk_workflow.py`)
 
 End-to-end: PDF → GoogleADK (Gemini) → PDF/Markdown output:
 - PDF text extraction with PDFSource
@@ -285,7 +384,7 @@ python examples/workflows/pdf/pdf_google_adk_workflow.py input.pdf output.pdf --
 python examples/workflows/pdf/pdf_google_adk_workflow.py input.pdf output.md --format markdown
 ```
 
-#### 12. PDF Indexer (`workflows/pdf/pdf_indexer.py`)
+#### 16. PDF Indexer (`workflows/pdf/pdf_indexer.py`)
 
 Data ingestion: PDF → chunking → embeddings → PineconeStore:
 - PDF text extraction and chunking
@@ -301,7 +400,7 @@ python examples/workflows/pdf/pdf_indexer.py document.pdf --namespace my-project
 python examples/workflows/pdf/pdf_indexer.py ./docs/*.pdf --batch
 ```
 
-#### 13. PDF RAG Workflow (`workflows/pdf/pdf_rag_workflow.py`)
+#### 17. PDF RAG Workflow (`workflows/pdf/pdf_rag_workflow.py`)
 
 Full RAG pipeline using L2 composition:
 - `DataLayer(PDFSource, PineconeStore) | IntelligenceLayer(GoogleADK) | OutputLayer(MarkdownGenerator)`
@@ -317,7 +416,7 @@ python examples/workflows/pdf/pdf_rag_workflow.py document.pdf -q "What is this 
 
 ### Entity Extraction (`workflows/entity/`)
 
-#### 14. Entity Extraction Workflow (`workflows/entity/entity_extraction_workflow.py`)
+#### 18. Entity Extraction Workflow (`workflows/entity/entity_extraction_workflow.py`)
 
 Structured extraction: PDF/text → LangExtractSource → entities:
 - Few-shot examples for domain-specific extraction
@@ -333,7 +432,7 @@ python examples/workflows/entity/entity_extraction_workflow.py report.pdf --clas
 python examples/workflows/entity/entity_extraction_workflow.py report.pdf --provider openai
 ```
 
-#### 15. Entity Analysis + ADK (`workflows/entity/entity_analysis_adk_workflow.py`)
+#### 19. Entity Analysis + ADK (`workflows/entity/entity_analysis_adk_workflow.py`)
 
 Combines extraction with Gemini analysis — 4 demo patterns:
 1. Step-by-step: extract entities → analyze with Gemini
@@ -351,7 +450,7 @@ python examples/workflows/entity/entity_analysis_adk_workflow.py --demo 1
 
 ### Research Workflows (`workflows/research/`)
 
-#### 16. Research Agent (`workflows/research/research_agent.py`)
+#### 20. Research Agent (`workflows/research/research_agent.py`)
 
 RAG-powered research agent with interactive REPL:
 - PineconeStore retrieval with similarity scoring
@@ -367,7 +466,7 @@ python examples/workflows/research/research_agent.py --interactive
 python examples/workflows/research/research_agent.py "Explain findings" --namespace my-project
 ```
 
-#### 17. Hybrid Research Agent (`workflows/research/hybrid_research_agent.py`)
+#### 21. Hybrid Research Agent (`workflows/research/hybrid_research_agent.py`)
 
 Multi-mode research with auto-namespace detection. **Used by openclaw telegram-agent.**
 
@@ -393,7 +492,7 @@ python examples/workflows/research/hybrid_research_agent.py --interactive
 
 ### Reports (`workflows/reports/`)
 
-#### 18. Sustainability Report (`workflows/reports/sustainability_report.py`)
+#### 22. Sustainability Report (`workflows/reports/sustainability_report.py`)
 
 Complete real-world ESG/sustainability report generation. **No API key needed — uses mock data.**
 
@@ -407,7 +506,7 @@ Complete real-world ESG/sustainability report generation. **No API key needed �
 python examples/workflows/reports/sustainability_report.py
 ```
 
-#### 19. Knowledge Base Workflow (`workflows/reports/knowledge_base_workflow.py`)
+#### 23. Knowledge Base Workflow (`workflows/reports/knowledge_base_workflow.py`)
 
 Complete RAG pipeline — index, query, or full pipeline:
 - `index`: PDFs → chunking → PineconeStore
@@ -439,16 +538,20 @@ python examples/workflows/reports/knowledge_base_workflow.py pipeline doc.pdf "S
 | 7 | `intelligence/gemini_agent_demo.py` | Google | BaseAgent reasoning loop + tools |
 | 8 | `intelligence/agentic_research_demo.py` | Google (+Pinecone) | BaseAgent + RAG + web search |
 | 9 | `intelligence/agentic_analysis_demo.py` | Google (+Pinecone) | AnalysisAgent + StructuredOutputAgent |
-| 10 | `stores/pinecone_store_demo.py` | Google + Pinecone | Vector store, semantic search |
-| 11 | `workflows/pdf/pdf_google_adk_workflow.py` | Google | PDF → Gemini → PDF/Markdown |
-| 12 | `workflows/pdf/pdf_indexer.py` | Google + Pinecone | PDF → chunking → Pinecone |
-| 13 | `workflows/pdf/pdf_rag_workflow.py` | Google + Pinecone | Full RAG with L2 layers |
-| 14 | `workflows/entity/entity_extraction_workflow.py` | Google | PDF → entities |
-| 15 | `workflows/entity/entity_analysis_adk_workflow.py` | Google | Extraction + Gemini analysis |
-| 16 | `workflows/research/research_agent.py` | Google + Pinecone | RAG agent + interactive REPL |
-| 17 | `workflows/research/hybrid_research_agent.py` | Google + Pinecone | Multi-mode research, openclaw |
-| 18 | `workflows/reports/sustainability_report.py` | None | Full E2E report (mock data) |
-| 19 | `workflows/reports/knowledge_base_workflow.py` | Google + Pinecone | Index → Query RAG pipeline |
+| 10 | `intelligence/query_rewriter_demo.py` | Google (+Pinecone) | LLM-based query enhancement for RAG |
+| 11 | `intelligence/multi_hop_rag_demo.py` | Google + Pinecone | Agent-driven iterative retrieval |
+| 12 | `intelligence/combined_rag_demo.py` | Google + Pinecone | "Golden Stack" -- all 3 features combined |
+| 13 | `stores/pinecone_store_demo.py` | Google + Pinecone | Vector store, semantic search |
+| 14 | `stores/hybrid_search_demo.py` | None (Demo 1) | Vector + BM25 keyword reranking |
+| 15 | `workflows/pdf/pdf_google_adk_workflow.py` | Google | PDF → Gemini → PDF/Markdown |
+| 16 | `workflows/pdf/pdf_indexer.py` | Google + Pinecone | PDF → chunking → Pinecone |
+| 17 | `workflows/pdf/pdf_rag_workflow.py` | Google + Pinecone | Full RAG with L2 layers |
+| 18 | `workflows/entity/entity_extraction_workflow.py` | Google | PDF → entities |
+| 19 | `workflows/entity/entity_analysis_adk_workflow.py` | Google | Extraction + Gemini analysis |
+| 20 | `workflows/research/research_agent.py` | Google + Pinecone | RAG agent + interactive REPL |
+| 21 | `workflows/research/hybrid_research_agent.py` | Google + Pinecone | Multi-mode research, openclaw |
+| 22 | `workflows/reports/sustainability_report.py` | None | Full E2E report (mock data) |
+| 23 | `workflows/reports/knowledge_base_workflow.py` | Google + Pinecone | Index → Query RAG pipeline |
 
 ## Common Patterns
 

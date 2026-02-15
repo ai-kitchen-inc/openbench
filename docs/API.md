@@ -376,6 +376,50 @@ class ExecutionResult:
         self.tokens_used = tokens_used
 ```
 
+### Advanced RAG (BaseAgent)
+
+BaseAgent supports three retrieval features that compose at different levels:
+
+```python
+from openbench.intelligence.base import BaseAgent
+from openbench.data.stores.pinecone import PineconeStore
+
+# Store level: hybrid search (BM25 + vector)
+store = PineconeStore(
+    index_name="knowledge",
+    hybrid_search=True,
+    vector_weight=0.7,
+)
+
+# Agent level: query rewriter + multi-hop RAG
+agent = BaseAgent(
+    goal="Research questions thoroughly",
+    store=store,
+    retrieval_top_k=5,
+    retrieval_threshold=0.3,
+    query_rewriter=True,    # Rewrite queries into 1-3 optimized variants
+    multi_hop_rag=True,     # Agent receives retrieve_knowledge tool
+)
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `store` | `DataStore` | `None` | Vector store for RAG retrieval |
+| `retrieval_top_k` | `int` | `5` | Number of chunks to retrieve per query |
+| `retrieval_threshold` | `float` | `0.0` | Minimum similarity score |
+| `query_rewriter` | `bool` | `False` | Enable LLM-based query enhancement |
+| `multi_hop_rag` | `bool` | `False` | Register `retrieve_knowledge` tool for agent-driven retrieval |
+
+**Query Rewriter** rewrites a user query into 1-3 semantically diverse search queries, improving recall for ambiguous or complex questions. Works via `QueryRewriter` class internally.
+
+**Multi-Hop RAG** gives the agent a `retrieve_knowledge(query: str)` tool. The agent decides when and what to search during its reasoning loop, enabling iterative research. When enabled, auto-retrieval at start is skipped.
+
+**Hybrid Search** combines vector similarity with BM25 keyword scoring at the store level via `HybridSearchMixin`. Configure `hybrid_search=True` and `vector_weight` on `PineconeStore`.
+
+All three compose through `_retrieve_context()` as the single entry point — when the agent calls `retrieve_knowledge`, QueryRewriter rewrites the query, each variant goes through the store's hybrid search, and results are deduplicated.
+
 ### LLMProvider
 
 Interface for LLM providers.

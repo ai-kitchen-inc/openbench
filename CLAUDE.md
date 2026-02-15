@@ -250,10 +250,15 @@ examples/
 ├── data/           # Data source examples
 ├── embeddings/     # Embedding provider demos
 ├── stores/         # Vector store examples (Pinecone)
+│   ├── pinecone_store_demo.py
+│   └── hybrid_search_demo.py        # Vector + BM25 keyword reranking
 ├── intelligence/   # Agent and LLM provider demos
 │   ├── gemini_agent_demo.py
 │   ├── agentic_research_demo.py
-│   └── agentic_analysis_demo.py
+│   ├── agentic_analysis_demo.py
+│   ├── query_rewriter_demo.py       # Query rewriting for better retrieval
+│   ├── multi_hop_rag_demo.py        # Agent-driven iterative retrieval
+│   └── combined_rag_demo.py         # All 3 features combined ("Golden Stack")
 ├── chat/           # Chat layer examples
 │   ├── basic_chat_demo.py          # ChatEngine standalone
 │   ├── chat_with_rag_demo.py       # DataLayer | ChatLayer pipeline
@@ -394,12 +399,12 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/core/layers.py` | L2 orchestrators (DataLayer, IntelligenceLayer, OutputLayer) |
 | `src/openbench/core/state.py` | State management and checkpointing |
 | `src/openbench/core/context.py` | Context management for workflows |
-| `src/openbench/intelligence/base.py` | Framework-agnostic BaseAgent, ToolExecutor, AgentMemory |
+| `src/openbench/intelligence/base.py` | Framework-agnostic BaseAgent, ToolExecutor, AgentMemory, QueryRewriter |
 | `src/openbench/intelligence/llm_providers.py` | Concrete LLM providers (GeminiLLMProvider) |
 | `src/openbench/data/sources/pdf.py` | PDF data source with chunking support |
 | `src/openbench/data/sources/grounded_search.py` | Grounded search (Tavily, Google, DuckDuckGo) |
 | `src/openbench/data/sources/langextract.py` | Structured entity extraction (Google LangExtract) |
-| `src/openbench/data/stores/base.py` | Base DataStore abstraction |
+| `src/openbench/data/stores/base.py` | Base DataStore abstraction, HybridSearchMixin, chunking |
 | `src/openbench/data/stores/pinecone.py` | Pinecone vector store implementation |
 | `src/openbench/adapters/google_adk.py` | Google ADK framework adapter |
 | `src/openbench/workflows/workflow.py` | Named workflows with state |

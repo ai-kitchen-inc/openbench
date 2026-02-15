@@ -8,6 +8,7 @@ from openbench.data.stores.base import (
     Chunk,
     ChunkingConfig,
     EmbeddingMixin,
+    HybridSearchMixin,
     chunk_raw_data,
     chunk_text,
 )
@@ -366,6 +367,102 @@ class TestStoreExceptions(unittest.TestCase):
         error = InvalidQueryError(reason="missing text")
         self.assertEqual(error.reason, "missing text")
         self.assertIn("missing text", str(error))
+
+
+class TestHybridSearchMixin(unittest.TestCase):
+    """Tests for HybridSearchMixin BM25 and hybrid reranking."""
+
+    def test_bm25_score_basic(self):
+        """Test BM25 score for matching terms."""
+        score = HybridSearchMixin.bm25_score(["python", "programming"], "python programming is fun")
+        self.assertGreater(score, 0.0)
+
+    def test_bm25_score_no_match(self):
+        """Test BM25 score when no terms match."""
+        score = HybridSearchMixin.bm25_score(["python", "programming"], "java development guide")
+        self.assertEqual(score, 0.0)
+
+    def test_bm25_score_repeated_terms(self):
+        """Test BM25 score increases with term frequency."""
+        score_once = HybridSearchMixin.bm25_score(["python"], "python is great")
+        score_twice = HybridSearchMixin.bm25_score(
+            ["python"], "python python tutorial about python"
+        )
+        self.assertGreater(score_twice, score_once)
+
+    def test_bm25_score_case_insensitive(self):
+        """Test BM25 scoring is case insensitive for document."""
+        score = HybridSearchMixin.bm25_score(["python"], "Python Programming PYTHON")
+        self.assertGreater(score, 0.0)
+
+    def test_hybrid_rerank_empty(self):
+        """Test hybrid rerank with empty inputs."""
+        items, scores = HybridSearchMixin.hybrid_rerank([], [], "query")
+        self.assertEqual(items, [])
+        self.assertEqual(scores, [])
+
+    def test_hybrid_rerank_reorders_by_keyword(self):
+        """Test that hybrid rerank boosts keyword-matching results."""
+        items = [
+            {"content": "unrelated document about cats"},
+            {"content": "python programming tutorial guide"},
+        ]
+        vector_scores = [0.9, 0.7]  # First has higher vector score
+
+        reranked_items, reranked_scores = HybridSearchMixin.hybrid_rerank(
+            items,
+            vector_scores,
+            "python programming",
+            vector_weight=0.5,
+            keyword_weight=0.5,
+        )
+
+        # Second item should now rank higher due to keyword match
+        self.assertEqual(reranked_items[0]["content"], "python programming tutorial guide")
+
+    def test_hybrid_rerank_preserves_items(self):
+        """Test that hybrid rerank preserves all items."""
+        items = [
+            {"content": "doc a"},
+            {"content": "doc b"},
+            {"content": "doc c"},
+        ]
+        scores = [0.8, 0.7, 0.6]
+
+        reranked_items, reranked_scores = HybridSearchMixin.hybrid_rerank(
+            items, scores, "test query"
+        )
+
+        self.assertEqual(len(reranked_items), 3)
+        self.assertEqual(len(reranked_scores), 3)
+
+    def test_hybrid_rerank_weights(self):
+        """Test that vector_weight=1.0 preserves original order."""
+        items = [
+            {"content": "first doc with keywords"},
+            {"content": "second doc"},
+        ]
+        scores = [0.9, 0.5]
+
+        reranked_items, _ = HybridSearchMixin.hybrid_rerank(
+            items, scores, "keywords", vector_weight=1.0, keyword_weight=0.0
+        )
+
+        # Should preserve original order (vector only)
+        self.assertEqual(reranked_items[0]["content"], "first doc with keywords")
+
+    def test_hybrid_rerank_zero_vector_scores(self):
+        """Test hybrid rerank when all vector scores are zero."""
+        items = [
+            {"content": "no match"},
+            {"content": "python tutorial"},
+        ]
+        scores = [0.0, 0.0]
+
+        reranked_items, reranked_scores = HybridSearchMixin.hybrid_rerank(items, scores, "python")
+
+        # Should still work, keyword score determines ranking
+        self.assertEqual(len(reranked_items), 2)
 
 
 class TestPineconeStore(unittest.TestCase):
@@ -751,6 +848,120 @@ class TestEmbeddingProviderDimensionScaling(unittest.TestCase):
 
         call_kwargs = mock_client.embeddings.create.call_args
         self.assertNotIn("dimensions", call_kwargs[1])
+
+
+class TestPineconeStoreHybridSearch(unittest.TestCase):
+    """Tests for PineconeStore hybrid search integration."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.pinecone_patch = patch.dict(
+            "sys.modules",
+            {"pinecone": MagicMock()},
+        )
+        self.pinecone_patch.start()
+
+    def tearDown(self):
+        """Clean up patches."""
+        self.pinecone_patch.stop()
+
+    def test_hybrid_search_disabled_by_default(self):
+        """Test hybrid search is disabled by default."""
+        from openbench.data.stores.pinecone import PineconeStore
+
+        store = PineconeStore(
+            index_name="test-index",
+            api_key="test-key",
+        )
+        self.assertFalse(store._hybrid_search)
+
+    def test_hybrid_search_enabled(self):
+        """Test hybrid search can be enabled."""
+        from openbench.data.stores.pinecone import PineconeStore
+
+        store = PineconeStore(
+            index_name="test-index",
+            api_key="test-key",
+            hybrid_search=True,
+            vector_weight=0.6,
+        )
+        self.assertTrue(store._hybrid_search)
+        self.assertEqual(store._vector_weight, 0.6)
+
+    def test_hybrid_search_reranks_results(self):
+        """Test that hybrid search reranks results."""
+        from openbench.data.stores.pinecone import PineconeStore
+
+        mock_index = MagicMock()
+
+        # Create mock matches: first has high vector score but no keyword match
+        mock_match1 = MagicMock()
+        mock_match1.id = "id1"
+        mock_match1.score = 0.95
+        mock_match1.metadata = {"content": "unrelated document about animals"}
+
+        mock_match2 = MagicMock()
+        mock_match2.id = "id2"
+        mock_match2.score = 0.70
+        mock_match2.metadata = {"content": "python programming tutorial basics"}
+
+        mock_response = MagicMock()
+        mock_response.matches = [mock_match1, mock_match2]
+        mock_index.query.return_value = mock_response
+
+        store = PineconeStore(
+            index_name="test-index",
+            api_key="test-key",
+            hybrid_search=True,
+            vector_weight=0.3,  # Low vector weight, high keyword weight
+        )
+        store._index = mock_index
+        store._client = MagicMock()
+        store._embed = MagicMock(return_value=[0.1] * 1536)
+
+        query = Query(text="python programming", limit=10)
+        result = store.search(query)
+
+        # With low vector weight and high keyword weight,
+        # the python doc should be ranked first
+        self.assertEqual(len(result.items), 2)
+        self.assertEqual(result.items[0]["id"], "id2")
+
+    def test_hybrid_search_disabled_preserves_order(self):
+        """Test that disabled hybrid search preserves vector order."""
+        from openbench.data.stores.pinecone import PineconeStore
+
+        mock_index = MagicMock()
+
+        mock_match1 = MagicMock()
+        mock_match1.id = "id1"
+        mock_match1.score = 0.95
+        mock_match1.metadata = {"content": "no keyword match here"}
+
+        mock_match2 = MagicMock()
+        mock_match2.id = "id2"
+        mock_match2.score = 0.70
+        mock_match2.metadata = {"content": "python programming"}
+
+        mock_response = MagicMock()
+        mock_response.matches = [mock_match1, mock_match2]
+        mock_index.query.return_value = mock_response
+
+        store = PineconeStore(
+            index_name="test-index",
+            api_key="test-key",
+            hybrid_search=False,
+        )
+        store._index = mock_index
+        store._client = MagicMock()
+        store._embed = MagicMock(return_value=[0.1] * 1536)
+
+        query = Query(text="python programming", limit=10)
+        result = store.search(query)
+
+        # Original vector order preserved
+        self.assertEqual(result.items[0]["id"], "id1")
+        self.assertEqual(result.items[1]["id"], "id2")
 
 
 if __name__ == "__main__":

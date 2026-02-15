@@ -7,6 +7,7 @@ Provides:
 - StructuredOutputAgent: Agent that outputs structured JSON
 - ToolExecutor: Unified tool execution interface
 - AgentMemory: Conversation and context memory
+- QueryRewriter: LLM-based query enhancement for better RAG retrieval
 
 This decouples agents from specific frameworks (Mastra, LangChain, etc.)
 while maintaining compatibility with any LLM provider.
@@ -303,6 +304,61 @@ class AgentConfig:
     stop_sequences: list[str] = field(default_factory=list)
 
 
+class QueryRewriter:
+    """LLM-based query rewriter for improved RAG retrieval.
+
+    Rewrites user queries into multiple optimized search queries
+    to improve semantic search recall.
+
+    Example:
+        >>> rewriter = QueryRewriter(llm_provider)
+        >>> queries = rewriter.rewrite("How does photosynthesis affect climate?")
+        >>> # ["photosynthesis carbon dioxide absorption", "climate change CO2 cycle", ...]
+    """
+
+    def __init__(self, llm: LLMProvider, model: str | None = None):
+        self.llm = llm
+        self.model = model
+
+    def rewrite(self, query: str, context: str = "") -> list[str]:
+        """Rewrite a query into 1-3 optimized search queries.
+
+        Args:
+            query: Original user query.
+            context: Optional additional context to inform rewriting.
+
+        Returns:
+            List of rewritten search queries (1-3 items).
+            Falls back to [query] on failure.
+        """
+        prompt = (
+            "Given the user query below, generate 1 to 3 search queries optimized for "
+            "semantic search over a document knowledge base. Each query should target "
+            "a different aspect of the information need.\n\n"
+            f"User query: {query}\n"
+        )
+        if context:
+            prompt += f"Additional context: {context}\n"
+        prompt += '\nRespond with ONLY a JSON array of strings, e.g. ["query1", "query2"].'
+
+        try:
+            response = self.llm.generate(prompt=prompt, model=self.model, temperature=0.3)
+            text = response.text.strip()
+            # Handle markdown code blocks
+            if "```" in text:
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+            queries = json.loads(text)
+            if isinstance(queries, list) and queries and all(isinstance(q, str) for q in queries):
+                return queries[:3]  # Cap at 3
+        except Exception as e:
+            logger.warning(f"Query rewriting failed, using original query: {e}")
+
+        return [query]
+
+
 class BaseAgent(Agent):
     """
     Framework-agnostic base agent implementation.
@@ -331,6 +387,8 @@ class BaseAgent(Agent):
         store: DataStore | None = None,
         retrieval_top_k: int = 5,
         retrieval_threshold: float = 0.0,
+        query_rewriter: bool = False,
+        multi_hop_rag: bool = False,
     ):
         """
         Initialize agent.
@@ -346,6 +404,10 @@ class BaseAgent(Agent):
             store: Optional DataStore for RAG (retrieval-augmented generation)
             retrieval_top_k: Number of results to retrieve from store
             retrieval_threshold: Minimum score threshold for retrieved results
+            query_rewriter: Enable LLM-based query rewriting for better retrieval
+            multi_hop_rag: Enable tool-based multi-hop retrieval (agent decides
+                when to search). When True, auto-retrieval at start is skipped and
+                a ``retrieve_knowledge`` tool is registered instead.
         """
         self.goal = goal
         self.model = model or get_default_model()
@@ -357,11 +419,42 @@ class BaseAgent(Agent):
         self.store = store
         self.retrieval_top_k = retrieval_top_k
         self.retrieval_threshold = retrieval_threshold
+        self._query_rewriter_enabled = query_rewriter
+        self._query_rewriter: QueryRewriter | None = None
+        self.multi_hop_rag = multi_hop_rag
 
         # Initialize tool executor
         self.tools = ToolExecutor()
         if tools:
             self.tools.register_from_list(tools)
+
+        # Auto-register RAG tool for multi-hop retrieval
+        if store and multi_hop_rag:
+            self.tools.register(
+                "retrieve_knowledge",
+                self._rag_tool_retrieve,
+                schema={
+                    "type": "function",
+                    "function": {
+                        "name": "retrieve_knowledge",
+                        "description": (
+                            "Search the knowledge base for relevant information. "
+                            "Use when you need more context to answer the question. "
+                            "You can call this multiple times with different queries."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "Search query for the knowledge base",
+                                }
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                },
+            )
 
         # Initialize memory
         self.memory = AgentMemory()
@@ -398,8 +491,42 @@ Provide clear, actionable responses."""
             )
         return self._llm
 
+    def _get_query_rewriter(self) -> QueryRewriter | None:
+        """Get query rewriter, lazily initialized."""
+        if not self._query_rewriter_enabled:
+            return None
+        if self._query_rewriter is None:
+            self._query_rewriter = QueryRewriter(self._get_llm(), self.model)
+        return self._query_rewriter
+
+    def _rag_tool_retrieve(self, query: str) -> str:
+        """Tool function for multi-hop RAG retrieval.
+
+        Called by the agent's reasoning loop via the ``retrieve_knowledge`` tool.
+
+        Args:
+            query: Search query for the knowledge base.
+
+        Returns:
+            Formatted string with retrieved chunks, or a "not found" message.
+        """
+        if not self.store:
+            return "No knowledge base configured."
+
+        results = self._retrieve_context(query)
+        if not results:
+            return "No relevant documents found for this query."
+
+        parts = []
+        for i, item in enumerate(results, 1):
+            parts.append(f"[Source {i}] (relevance: {item['score']:.2f})\n{item['content']}")
+        return "\n\n---\n\n".join(parts)
+
     def _retrieve_context(self, query_text: str) -> list[dict[str, Any]]:
         """Retrieve relevant context from store for RAG.
+
+        Supports query rewriting: when enabled, the query is rewritten into
+        1-3 optimized queries and results are deduplicated.
 
         Args:
             query_text: Text to search for relevant context.
@@ -411,18 +538,24 @@ Provide clear, actionable responses."""
             return []
 
         try:
-            results = self.store.search(
-                Query(
-                    text=query_text,
-                    limit=self.retrieval_top_k,
-                )
-            )
+            rewriter = self._get_query_rewriter()
+            queries = rewriter.rewrite(query_text) if rewriter else [query_text]
 
-            # Filter by threshold and extract content
-            retrieved = []
-            for item, score in zip(results.items, results.scores, strict=False):
-                if score >= self.retrieval_threshold:
-                    retrieved.append(
+            # Retrieve for each query, deduplicate by content hash
+            all_retrieved: list[dict[str, Any]] = []
+            seen_ids: set[str] = set()
+
+            for q in queries:
+                results = self.store.search(Query(text=q, limit=self.retrieval_top_k))
+
+                for item, score in zip(results.items, results.scores, strict=False):
+                    if score < self.retrieval_threshold:
+                        continue
+                    item_id = item.get("id", item.get("content", "")[:100])
+                    if item_id in seen_ids:
+                        continue
+                    seen_ids.add(item_id)
+                    all_retrieved.append(
                         {
                             "content": item.get("content", ""),
                             "score": score,
@@ -430,9 +563,11 @@ Provide clear, actionable responses."""
                         }
                     )
 
-            return retrieved
+            # Sort by score descending, cap at top_k
+            all_retrieved.sort(key=lambda x: x["score"], reverse=True)
+            return all_retrieved[: self.retrieval_top_k]
 
-        except (ConnectionError, TimeoutError, ValueError, RuntimeError, OSError) as e:
+        except Exception as e:
             logger.warning(f"Failed to retrieve context from store: {e}")
             return []
 
@@ -536,8 +671,10 @@ Provide clear, actionable responses."""
         Returns:
             ExecutionResult with agent's output
         """
-        # Retrieve and augment context with RAG if store is configured
-        if self.store:
+        # Retrieve and augment context with RAG if store is configured.
+        # Skip auto-retrieval when multi_hop_rag is enabled — the agent
+        # will call retrieve_knowledge tool during the reasoning loop.
+        if self.store and not self.multi_hop_rag:
             retrieved = self._retrieve_context(context.goal)
             context = self._augment_context_with_rag(context, retrieved)
 

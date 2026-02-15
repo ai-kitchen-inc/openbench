@@ -12,6 +12,7 @@ from openbench.core.abstractions import DataStore, Query, RawData, SearchResult
 from openbench.data.stores.base import (
     ChunkingConfig,
     EmbeddingMixin,
+    HybridSearchMixin,
     chunk_raw_data,
 )
 from openbench.data.stores.exceptions import (
@@ -45,12 +46,13 @@ if TYPE_CHECKING:
     from openbench.core.context import ProjectContext
 
 
-class PineconeStore(DataStore, EmbeddingMixin):
+class PineconeStore(DataStore, EmbeddingMixin, HybridSearchMixin):
     """Pinecone vector store for semantic search and retrieval.
 
     Implements the DataStore interface with Pinecone as the backend.
     Supports multi-tenant isolation via namespaces tied to ProjectContext.
     Auto-detects embedding dimension from provider if not specified.
+    Optional hybrid search combines vector similarity with BM25 keyword scoring.
 
     Example:
         ```python
@@ -68,6 +70,13 @@ class PineconeStore(DataStore, EmbeddingMixin):
         store = PineconeStore(
             index_name="openbench",
             embedding_provider=provider,  # Auto-detects 3072 dim
+        )
+
+        # Enable hybrid search (vector + keyword)
+        store = PineconeStore(
+            index_name="openbench",
+            hybrid_search=True,
+            vector_weight=0.7,  # 70% vector, 30% keyword
         )
 
         # Index data
@@ -91,6 +100,8 @@ class PineconeStore(DataStore, EmbeddingMixin):
         embedding_model: str | None = None,
         chunking_config: ChunkingConfig | None = None,
         create_if_missing: bool = True,
+        hybrid_search: bool = False,
+        vector_weight: float = 0.7,
     ):
         """Initialize PineconeStore.
 
@@ -105,6 +116,8 @@ class PineconeStore(DataStore, EmbeddingMixin):
             embedding_model: Embedding model name for auto-detection.
             chunking_config: Configuration for text chunking.
             create_if_missing: Create index if it doesn't exist.
+            hybrid_search: Enable hybrid search (vector + BM25 keyword scoring).
+            vector_weight: Weight for vector similarity in hybrid search (0-1).
         """
         self._index_name = index_name
         self._api_key = api_key or os.getenv("PINECONE_API_KEY")
@@ -116,6 +129,8 @@ class PineconeStore(DataStore, EmbeddingMixin):
         self._embedding_model = embedding_model
         self._chunking_config = chunking_config or ChunkingConfig()
         self._create_if_missing = create_if_missing
+        self._hybrid_search = hybrid_search
+        self._vector_weight = vector_weight
 
         # For EmbeddingMixin auto-detection
         self._resolved_dimension: int | None = None
@@ -458,7 +473,19 @@ class PineconeStore(DataStore, EmbeddingMixin):
             include_metadata=True,
         )
 
-        return self._to_search_result(response)
+        result = self._to_search_result(response)
+
+        # Apply hybrid reranking if enabled and we have a text query
+        if self._hybrid_search and query.text and result.items:
+            result.items, result.scores = self.hybrid_rerank(
+                result.items,
+                result.scores,
+                query.text,
+                vector_weight=self._vector_weight,
+                keyword_weight=1 - self._vector_weight,
+            )
+
+        return result
 
     def get(self, item_id: str) -> dict[str, Any] | None:
         """Retrieve a specific item by ID.
