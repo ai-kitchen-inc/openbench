@@ -139,6 +139,60 @@ class MyStore(EmbeddingMixin):
         # Store vectors...
 ```
 
+## Hybrid Search
+
+Combine vector similarity with BM25 keyword scoring for better retrieval. Implemented via `HybridSearchMixin` in `src/openbench/data/stores/base.py`.
+
+```python
+from openbench.data.stores.pinecone import PineconeStore
+
+# Enable hybrid search on PineconeStore
+store = PineconeStore(
+    index_name="knowledge",
+    namespace="documents",
+    hybrid_search=True,       # Enable BM25 + vector reranking
+    vector_weight=0.7,        # 0.7 vector + 0.3 BM25 keyword
+)
+
+# search() automatically applies hybrid reranking
+results = store.search(Query(text="Q3 cloud revenue", limit=5))
+```
+
+### Standalone BM25 scoring
+
+Use `HybridSearchMixin` directly for custom re-ranking:
+
+```python
+from openbench.data.stores.base import HybridSearchMixin
+
+# BM25 score for a single document
+score = HybridSearchMixin.bm25_score(
+    query_terms=["cloud", "revenue"],
+    document="Cloud division revenue reached $2.1B",
+)
+
+# Re-rank search results with hybrid scoring
+reranked_items, reranked_scores = HybridSearchMixin.hybrid_rerank(
+    items=items,              # List of dicts with "content" key
+    scores=vector_scores,     # Vector similarity scores
+    query="cloud revenue",
+    vector_weight=0.7,
+    keyword_weight=0.3,
+)
+```
+
+### How it works
+
+1. Vector similarity search via Pinecone API -> items + scores
+2. BM25 keyword scoring per item (term frequency + length normalization)
+3. Normalize both score sets to 0-1
+4. Weighted combination: `hybrid = vector_weight * vector + keyword_weight * bm25`
+5. Sort descending by hybrid score
+
+BM25 is simplified (no corpus-level IDF) since we re-rank a small top-K result set, not the full corpus.
+
+For examples, see `examples/stores/hybrid_search_demo.py`
+
 ## Anti-Patterns
 
 **DO NOT:**
@@ -164,4 +218,4 @@ class MyStore(EmbeddingMixin):
 4. **Handle errors** - Wrap store operations in try/except with specific exception types
 5. **Batch operations** - Use batch methods for large datasets
 
-For examples, see `examples/workflows/research/hybrid_research_agent.py`
+For examples, see `examples/stores/hybrid_search_demo.py` and `examples/workflows/research/hybrid_research_agent.py`

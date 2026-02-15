@@ -180,6 +180,107 @@ def chunk_raw_data(data: RawData, config: ChunkingConfig | None = None) -> list[
     return chunks
 
 
+class HybridSearchMixin:
+    """Mixin providing BM25-style keyword scoring for hybrid search.
+
+    Combines vector similarity scores with keyword relevance to improve
+    retrieval quality — especially for exact term matches that pure
+    semantic search can miss.
+
+    Usage:
+        results = self.hybrid_rerank(results, query_text)
+    """
+
+    @staticmethod
+    def bm25_score(
+        query_terms: list[str],
+        document: str,
+        k1: float = 1.5,
+        b: float = 0.75,
+        avg_dl: float = 200.0,
+    ) -> float:
+        """Compute simplified BM25 score for a single document.
+
+        Uses term frequency only (no corpus-level IDF) since we're
+        re-ranking a small result set, not scoring the full corpus.
+
+        Args:
+            query_terms: Lowercased query tokens.
+            document: Document text.
+            k1: Term frequency saturation parameter.
+            b: Length normalization parameter.
+            avg_dl: Assumed average document length in tokens.
+
+        Returns:
+            BM25 relevance score (higher = more relevant).
+        """
+        doc_terms = document.lower().split()
+        doc_len = len(doc_terms)
+        score = 0.0
+        for term in query_terms:
+            tf = doc_terms.count(term.lower())
+            if tf == 0:
+                continue
+            numerator = tf * (k1 + 1)
+            denominator = tf + k1 * (1 - b + b * doc_len / avg_dl)
+            score += numerator / denominator
+        return score
+
+    @staticmethod
+    def hybrid_rerank(
+        items: list[dict[str, Any]],
+        scores: list[float],
+        query: str,
+        vector_weight: float = 0.7,
+        keyword_weight: float = 0.3,
+    ) -> tuple[list[dict[str, Any]], list[float]]:
+        """Re-rank search results using weighted vector + keyword scores.
+
+        Args:
+            items: Search result items (must have ``"content"`` key).
+            scores: Corresponding vector similarity scores.
+            query: Original query text for keyword scoring.
+            vector_weight: Weight for vector similarity (0-1).
+            keyword_weight: Weight for keyword relevance (0-1).
+
+        Returns:
+            Tuple of (reranked_items, reranked_scores).
+        """
+        if not items:
+            return items, scores
+
+        query_terms = query.lower().split()
+
+        # Compute keyword scores
+        keyword_scores = [
+            HybridSearchMixin.bm25_score(query_terms, item.get("content", "")) for item in items
+        ]
+
+        # Normalize keyword scores to 0-1
+        max_kw = max(keyword_scores) if keyword_scores else 0
+        if max_kw > 0:
+            keyword_scores = [s / max_kw for s in keyword_scores]
+
+        # Normalize vector scores to 0-1
+        max_vs = max(scores) if scores else 0
+        norm_vector = [s / max_vs for s in scores] if max_vs > 0 else scores
+
+        # Compute hybrid scores
+        hybrid = [
+            vector_weight * vs + keyword_weight * ks
+            for vs, ks in zip(norm_vector, keyword_scores, strict=False)
+        ]
+
+        # Sort by hybrid score descending
+        ranked = sorted(
+            zip(items, hybrid, strict=False),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+
+        return [r[0] for r in ranked], [r[1] for r in ranked]
+
+
 class EmbeddingMixin:
     """Mixin providing embedding generation capabilities with auto-detection.
 

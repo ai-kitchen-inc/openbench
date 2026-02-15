@@ -18,6 +18,7 @@ from openbench.intelligence.base import (
     BaseAgent,
     Message,
     MessageRole,
+    QueryRewriter,
     SimpleAgent,
     StructuredOutputAgent,
     ToolExecutor,
@@ -457,6 +458,258 @@ class TestAgentConfig(unittest.TestCase):
         self.assertEqual(config.model, "claude-sonnet")
         self.assertEqual(config.temperature, 0.3)
         self.assertEqual(config.max_tokens, 1000)
+
+
+class TestQueryRewriter(unittest.TestCase):
+    """Test QueryRewriter."""
+
+    def test_rewrite_returns_valid_queries(self):
+        """Test rewrite returns list of query strings."""
+        mock_llm = MockLLMProvider(['["query about X", "details on Y"]'])
+        rewriter = QueryRewriter(mock_llm, model="test-model")
+
+        result = rewriter.rewrite("How does X relate to Y?")
+
+        self.assertEqual(result, ["query about X", "details on Y"])
+
+    def test_rewrite_caps_at_three(self):
+        """Test rewrite caps results at 3 queries."""
+        mock_llm = MockLLMProvider(['["q1", "q2", "q3", "q4", "q5"]'])
+        rewriter = QueryRewriter(mock_llm)
+
+        result = rewriter.rewrite("big question")
+
+        self.assertEqual(len(result), 3)
+
+    def test_rewrite_handles_markdown_code_block(self):
+        """Test rewrite strips markdown code block wrapper."""
+        mock_llm = MockLLMProvider(['```json\n["optimized query"]\n```'])
+        rewriter = QueryRewriter(mock_llm)
+
+        result = rewriter.rewrite("original query")
+
+        self.assertEqual(result, ["optimized query"])
+
+    def test_rewrite_fallback_on_invalid_json(self):
+        """Test fallback to original query on invalid JSON."""
+        mock_llm = MockLLMProvider(["not valid json"])
+        rewriter = QueryRewriter(mock_llm)
+
+        result = rewriter.rewrite("original query")
+
+        self.assertEqual(result, ["original query"])
+
+    def test_rewrite_fallback_on_empty_list(self):
+        """Test fallback to original query on empty list response."""
+        mock_llm = MockLLMProvider(["[]"])
+        rewriter = QueryRewriter(mock_llm)
+
+        result = rewriter.rewrite("original query")
+
+        self.assertEqual(result, ["original query"])
+
+    def test_rewrite_fallback_on_non_string_list(self):
+        """Test fallback when response is list of non-strings."""
+        mock_llm = MockLLMProvider(["[1, 2, 3]"])
+        rewriter = QueryRewriter(mock_llm)
+
+        result = rewriter.rewrite("original query")
+
+        self.assertEqual(result, ["original query"])
+
+    def test_rewrite_with_context(self):
+        """Test that context is included in prompt."""
+        mock_llm = MockLLMProvider(['["contextualized query"]'])
+        rewriter = QueryRewriter(mock_llm)
+
+        result = rewriter.rewrite("query", context="about medicine")
+
+        self.assertEqual(result, ["contextualized query"])
+        # Verify the LLM was called
+        self.assertEqual(mock_llm.call_count, 1)
+
+    def test_rewrite_fallback_on_exception(self):
+        """Test fallback when LLM provider raises exception."""
+        mock_llm = MagicMock(spec=["generate", "provider_name"])
+        mock_llm.generate.side_effect = RuntimeError("API error")
+        rewriter = QueryRewriter(mock_llm)
+
+        result = rewriter.rewrite("my query")
+
+        self.assertEqual(result, ["my query"])
+
+    def test_rewrite_single_query(self):
+        """Test rewrite with single valid query."""
+        mock_llm = MockLLMProvider(['["single optimized query"]'])
+        rewriter = QueryRewriter(mock_llm)
+
+        result = rewriter.rewrite("test")
+
+        self.assertEqual(result, ["single optimized query"])
+
+
+class TestBaseAgentQueryRewriter(unittest.TestCase):
+    """Test BaseAgent with query rewriter integration."""
+
+    def setUp(self):
+        """Set up mock store and provider."""
+        self.mock_store = MagicMock()
+        mock_result = MagicMock()
+        mock_result.items = [
+            {"id": "doc1", "content": "Content about X", "metadata": {}},
+            {"id": "doc2", "content": "Content about Y", "metadata": {}},
+        ]
+        mock_result.scores = [0.9, 0.8]
+        self.mock_store.search.return_value = mock_result
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_query_rewriter_enabled(self, mock_get_service):
+        """Test query rewriter is used when enabled."""
+        mock_provider = MockLLMProvider(
+            ['["rewritten query 1", "rewritten query 2"]', "Final answer"]
+        )
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = mock_provider
+        mock_get_service.return_value = mock_service
+
+        agent = BaseAgent(
+            goal="Test",
+            store=self.mock_store,
+            query_rewriter=True,
+        )
+
+        results = agent._retrieve_context("original question")
+
+        # Store.search should be called once per rewritten query
+        self.assertEqual(self.mock_store.search.call_count, 2)
+        self.assertGreater(len(results), 0)
+
+    def test_query_rewriter_disabled_by_default(self):
+        """Test query rewriter is disabled by default."""
+        agent = BaseAgent(goal="Test", store=self.mock_store)
+
+        self.assertIsNone(agent._get_query_rewriter())
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_retrieve_context_deduplicates(self, mock_get_service):
+        """Test that duplicate results from multiple queries are deduplicated."""
+        mock_provider = MockLLMProvider(['["q1", "q2"]', "answer"])
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = mock_provider
+        mock_get_service.return_value = mock_service
+
+        # Both queries return same doc1
+        mock_result = MagicMock()
+        mock_result.items = [{"id": "doc1", "content": "Same content", "metadata": {}}]
+        mock_result.scores = [0.95]
+        self.mock_store.search.return_value = mock_result
+
+        agent = BaseAgent(
+            goal="Test",
+            store=self.mock_store,
+            query_rewriter=True,
+        )
+
+        results = agent._retrieve_context("question")
+
+        # Should only have 1 unique result despite 2 queries
+        self.assertEqual(len(results), 1)
+
+
+class TestBaseAgentMultiHopRAG(unittest.TestCase):
+    """Test BaseAgent multi-hop RAG functionality."""
+
+    def test_multi_hop_registers_tool(self):
+        """Test that multi_hop_rag registers retrieve_knowledge tool."""
+        mock_store = MagicMock()
+        agent = BaseAgent(
+            goal="Research task",
+            store=mock_store,
+            multi_hop_rag=True,
+        )
+
+        self.assertIn("retrieve_knowledge", agent.tools)
+
+    def test_multi_hop_without_store_no_tool(self):
+        """Test that multi_hop_rag without store doesn't register tool."""
+        agent = BaseAgent(
+            goal="Research task",
+            multi_hop_rag=True,
+        )
+
+        self.assertNotIn("retrieve_knowledge", agent.tools)
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_multi_hop_skips_auto_retrieval(self, mock_get_service):
+        """Test that multi_hop_rag skips auto-retrieval in execute()."""
+        mock_provider = MockLLMProvider(["Answer without auto-retrieval"])
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = mock_provider
+        mock_get_service.return_value = mock_service
+
+        mock_store = MagicMock()
+        agent = BaseAgent(
+            goal="Research",
+            store=mock_store,
+            multi_hop_rag=True,
+        )
+
+        context = ExecutionContext(goal="Find something")
+        agent.execute(context)
+
+        # store.search should NOT be called during execute (no auto-retrieval)
+        mock_store.search.assert_not_called()
+
+    def test_rag_tool_retrieve_returns_formatted(self):
+        """Test _rag_tool_retrieve returns formatted results."""
+        mock_store = MagicMock()
+        mock_result = MagicMock()
+        mock_result.items = [
+            {"id": "doc1", "content": "First document", "metadata": {}},
+            {"id": "doc2", "content": "Second document", "metadata": {}},
+        ]
+        mock_result.scores = [0.9, 0.8]
+        mock_store.search.return_value = mock_result
+
+        agent = BaseAgent(
+            goal="Research",
+            store=mock_store,
+            multi_hop_rag=True,
+        )
+
+        result = agent._rag_tool_retrieve("test query")
+
+        self.assertIn("[Source 1]", result)
+        self.assertIn("[Source 2]", result)
+        self.assertIn("First document", result)
+        self.assertIn("Second document", result)
+        self.assertIn("0.90", result)
+
+    def test_rag_tool_retrieve_no_results(self):
+        """Test _rag_tool_retrieve with no results."""
+        mock_store = MagicMock()
+        mock_result = MagicMock()
+        mock_result.items = []
+        mock_result.scores = []
+        mock_store.search.return_value = mock_result
+
+        agent = BaseAgent(
+            goal="Research",
+            store=mock_store,
+            multi_hop_rag=True,
+        )
+
+        result = agent._rag_tool_retrieve("no results query")
+
+        self.assertEqual(result, "No relevant documents found for this query.")
+
+    def test_rag_tool_retrieve_no_store(self):
+        """Test _rag_tool_retrieve without store."""
+        agent = BaseAgent(goal="Research")
+
+        result = agent._rag_tool_retrieve("query")
+
+        self.assertEqual(result, "No knowledge base configured.")
 
 
 if __name__ == "__main__":
