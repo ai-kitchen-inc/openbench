@@ -1,5 +1,8 @@
 """Core abstractions and interfaces for OpenBench."""
 
+# isort: skip_file
+# ChatLayer must be imported after all core modules to avoid circular imports.
+
 from openbench.core.abstractions import (
     Agent,
     DataSource,
@@ -47,7 +50,6 @@ from openbench.core.layers import (
     OutputLayer,
     create_workflow,
 )
-from openbench.chat.layer import ChatLayer
 from openbench.core.providers import (
     CredentialEncryption,
     ProviderConfig,
@@ -84,6 +86,7 @@ from openbench.core.state import (
     WorkflowState,
     WorkflowStatus,
 )
+from openbench.chat.layer import ChatLayer
 
 __all__ = [
     # Abstractions

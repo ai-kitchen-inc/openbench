@@ -8,7 +8,7 @@ following the same patterns as existing OpenBench L2 layers.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 try:
     from typing import NotRequired, TypedDict
@@ -16,9 +16,11 @@ except ImportError:
     from typing_extensions import NotRequired, TypedDict
 
 from openbench.chat.engine import ChatEngine
-from openbench.chat.renderers.base import ContentRenderer
-from openbench.core.abstractions import Agent, FrameworkAdapter
 from openbench.core.chainable import Chainable, RunnableConfig
+
+if TYPE_CHECKING:
+    from openbench.chat.renderers.base import ContentRenderer
+    from openbench.core.abstractions import Agent, FrameworkAdapter
 from openbench.core.layers import _preserve_input_params
 
 logger = logging.getLogger(__name__)

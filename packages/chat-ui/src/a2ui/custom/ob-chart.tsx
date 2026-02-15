@@ -50,7 +50,7 @@ export const ObChart: A2UIComponentRenderer = ({ component, surface }) => {
   const title = component.title ? resolveString(component.title, surface) : undefined;
 
   // Extract data keys (exclude xKey) for series
-  const xKey = (options.xKey as string) ?? (data[0] ? Object.keys(data[0])[0]! : "name");
+  const xKey = (options.xKey as string) ?? (data[0] ? (Object.keys(data[0])[0] ?? "name") : "name");
   const seriesKeys =
     (options.series as string[]) ?? (data[0] ? Object.keys(data[0]).filter((k) => k !== xKey) : []);
 
