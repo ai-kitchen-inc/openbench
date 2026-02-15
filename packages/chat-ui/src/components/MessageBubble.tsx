@@ -4,6 +4,7 @@
 
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
+import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { SurfaceRenderer } from "../a2ui/surface-renderer";
@@ -86,7 +87,10 @@ export function MessageBubble({ message, onAction }: MessageBubbleProps) {
         {/* Text content — always shown, surfaces now only contain rich content */}
         {message.content && (
           <div className="chat-message__text ob-markdown">
-            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[rehypeRaw, rehypeKatex]}
+            >
               {message.content}
             </ReactMarkdown>
           </div>

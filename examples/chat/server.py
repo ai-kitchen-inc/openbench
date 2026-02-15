@@ -42,7 +42,11 @@ from gemini_agent import (
 agent = create_gemini_agent()
 
 # Wire: Agent -> ChatEngine -> AG-UI Transport (with render items from visualization tools)
-engine = ChatEngine(agent=agent, render_items_fn=get_render_items)
+engine = ChatEngine(
+    agent=agent,
+    render_items_fn=get_render_items,
+    clear_render_items_fn=clear_render_items,
+)
 agui_handler = AGUIHandler(engine=engine)
 action_handler = AGUIActionHandler(engine=engine)
 
@@ -98,9 +102,6 @@ async def agent_endpoint(request: Request):
     Streams AG-UI events (RunStarted, StepStarted, CustomEvent(a2ui), etc.)
     as SSE. Compatible with AG-UI client SDKs and @openbench/chat-ui.
     """
-    # Clear render items from previous request before agent executes
-    clear_render_items()
-
     body = await request.json()
 
     # Resolve uploaded file paths so agent tools can read full content from disk

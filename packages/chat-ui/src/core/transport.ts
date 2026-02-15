@@ -23,6 +23,7 @@ export class AGUITransport {
   private statusListeners: Set<StatusListener> = new Set();
   private _status: TransportStatus = "disconnected";
   private activeSub: { unsubscribe: () => void } | null = null;
+  private runGeneration = 0;
 
   constructor(config: ChatConfig) {
     this.config = config;
@@ -31,6 +32,11 @@ export class AGUITransport {
   /** Current transport status. */
   get status(): TransportStatus {
     return this._status;
+  }
+
+  /** Stream URL from config. */
+  get streamUrl(): string {
+    return this.config.streamUrl;
   }
 
   /**
@@ -43,6 +49,10 @@ export class AGUITransport {
   async run(content: string, sessionId?: string, attachments?: Attachment[]): Promise<void> {
     // Cancel any in-flight stream
     this.cancel();
+
+    // Increment generation so late events from the canceled stream are ignored
+    this.runGeneration++;
+    const currentGen = this.runGeneration;
 
     // Create a fresh HttpAgent per request to avoid state accumulation
     const agent = new HttpAgent({ url: this.config.streamUrl });
@@ -62,9 +72,15 @@ export class AGUITransport {
 
       this.activeSub = events$.subscribe({
         next: (event: BaseEvent) => {
+          // Reject late events from a canceled stream
+          if (this.runGeneration !== currentGen) return;
           this.setStatus("connected");
           for (const listener of this.eventListeners) {
-            listener(event);
+            try {
+              listener(event);
+            } catch (err) {
+              console.error("[AGUITransport] Listener error:", err);
+            }
           }
         },
         error: (err: unknown) => {
@@ -94,7 +110,7 @@ export class AGUITransport {
     sourceComponentId: string;
     timestamp: string;
     context: Record<string, unknown>;
-  }): Promise<void> {
+  }): Promise<Record<string, unknown>[]> {
     const url = this.config.actionUrl ?? "/chat/action";
 
     try {
@@ -110,17 +126,26 @@ export class AGUITransport {
 
       this.setStatus("connected");
 
-      // Response is A2UI messages array — wrap each as a CustomEvent-like object
+      // Return raw A2UI messages for the caller to route via StreamManager
       const messages = (await response.json()) as Record<string, unknown>[];
+
+      // Also dispatch to shared listeners for backward compatibility
       for (const msg of messages) {
         const event = { type: "CUSTOM", name: "a2ui", value: msg } as unknown as BaseEvent;
         for (const listener of this.eventListeners) {
-          listener(event);
+          try {
+            listener(event);
+          } catch (err) {
+            console.error("[AGUITransport] Listener error:", err);
+          }
         }
       }
+
+      return messages;
     } catch (err) {
       console.error("[AGUITransport] Action error:", err);
       this.setStatus("error");
+      return [];
     }
   }
 

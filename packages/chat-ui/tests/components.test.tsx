@@ -1,13 +1,44 @@
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentPreview } from "../src/components/AttachmentPreview";
 import { ChatInput } from "../src/components/ChatInput";
 import { MessageBubble } from "../src/components/MessageBubble";
 import { MessageList } from "../src/components/MessageList";
+import { SessionSidebar } from "../src/components/SessionSidebar";
 import { StreamingIndicator } from "../src/components/StreamingIndicator";
 import { WelcomeScreen } from "../src/components/WelcomeScreen";
 import type { Attachment, ChatMessage } from "../src/types";
+
+// Mock useChatContext for SessionSidebar tests
+const mockChatContext = {
+  sessions: [
+    {
+      id: "session-1",
+      title: "New Chat",
+      messages: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  ],
+  activeSessionId: "session-1",
+  createSession: vi.fn(() => "session-2"),
+  switchSession: vi.fn(),
+  deleteSession: vi.fn(),
+  renameSession: vi.fn(),
+  sidebarOpen: true,
+  setSidebarOpen: vi.fn(),
+  messages: [],
+  sendMessage: vi.fn(),
+  isStreaming: false,
+  connectionStatus: "disconnected" as const,
+  surfaces: [],
+  sendAction: vi.fn(),
+};
+
+vi.mock("../src/components/ChatProvider", () => ({
+  useChatContext: () => mockChatContext,
+}));
 
 // ── WelcomeScreen ──
 
@@ -303,5 +334,87 @@ describe("MessageList", () => {
     ];
     rerender(<MessageList messages={updatedMessages} isStreaming={true} />);
     expect(screen.getByText("Hello World")).toBeDefined();
+  });
+});
+
+// ── SessionSidebar ──
+
+describe("SessionSidebar", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockChatContext.sidebarOpen = true;
+    mockChatContext.sessions = [
+      {
+        id: "session-1",
+        title: "New Chat",
+        messages: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+  });
+
+  it("renders session title", () => {
+    render(<SessionSidebar />);
+    expect(screen.getByText("New Chat")).toBeDefined();
+  });
+
+  it("returns null when sidebar is closed", () => {
+    mockChatContext.sidebarOpen = false;
+    const { container } = render(<SessionSidebar />);
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("double-click shows input with current title", async () => {
+    render(<SessionSidebar />);
+
+    const title = screen.getByText("New Chat");
+    await userEvent.dblClick(title);
+
+    const input = screen.getByLabelText("Rename session") as HTMLInputElement;
+    expect(input).toBeDefined();
+    expect(input.value).toBe("New Chat");
+  });
+
+  it("Enter commits rename", async () => {
+    render(<SessionSidebar />);
+
+    const title = screen.getByText("New Chat");
+    await userEvent.dblClick(title);
+
+    const input = screen.getByLabelText("Rename session") as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, "My Research{Enter}");
+
+    expect(mockChatContext.renameSession).toHaveBeenCalledWith("session-1", "My Research");
+  });
+
+  it("blur commits rename", async () => {
+    render(<SessionSidebar />);
+
+    const title = screen.getByText("New Chat");
+    await userEvent.dblClick(title);
+
+    const input = screen.getByLabelText("Rename session") as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, "Blurred Title");
+    await userEvent.tab(); // triggers blur
+
+    expect(mockChatContext.renameSession).toHaveBeenCalledWith("session-1", "Blurred Title");
+  });
+
+  it("Escape cancels without renaming", async () => {
+    render(<SessionSidebar />);
+
+    const title = screen.getByText("New Chat");
+    await userEvent.dblClick(title);
+
+    const input = screen.getByLabelText("Rename session") as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, "Something{Escape}");
+
+    expect(mockChatContext.renameSession).not.toHaveBeenCalled();
+    // Input should be gone, title should be back
+    expect(screen.getByText("New Chat")).toBeDefined();
   });
 });

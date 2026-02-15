@@ -1,16 +1,18 @@
 /**
- * Main chat hook — composes AG-UI transport, store, and A2UI processor.
+ * Main chat hook — composes StreamManager, transport, and store.
  *
  * Provides the complete chat API: send messages, track streaming,
  * manage sessions, and render A2UI surfaces.
+ *
+ * Supports parallel streaming: multiple messages can stream concurrently.
+ * Each stream gets its own HttpAgent subscription and A2UI processor.
  */
 
-import type { BaseEvent } from "@ag-ui/core";
-import { EventType } from "@ag-ui/core";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useStore } from "zustand";
 import type { ChatStore } from "../core/chat-store";
 import { createChatStore } from "../core/chat-store";
+import { StreamManager } from "../core/stream-manager";
 import { AGUITransport } from "../core/transport";
 import { generateId, nowISO } from "../core/utils";
 import type {
@@ -21,7 +23,6 @@ import type {
   ChatMessage,
   TransportStatus,
 } from "../types";
-import { useA2UIProcessor } from "./use-a2ui-processor";
 
 export interface UseChatReturn {
   // Messages
@@ -38,8 +39,9 @@ export interface UseChatReturn {
   createSession: () => string;
   switchSession: (id: string) => void;
   deleteSession: (id: string) => void;
+  renameSession: (id: string, newTitle: string) => void;
 
-  // A2UI surfaces
+  // A2UI surfaces (kept for backward compat — per-message surfaces are in message.surfaces)
   surfaces: A2UISurface[];
   sendAction: (action: A2UIAction) => void;
 
@@ -68,163 +70,38 @@ export function useChat(config: ChatConfig): UseChatReturn {
   const activeSessionId = useStore(store, (s) => s.activeSessionId);
   const sidebarOpen = useStore(store, (s) => s.sidebarOpen);
 
-  // Create stable transport instance
+  // Create stable transport instance (for upload + sendAction + status)
   const transportRef = useRef<AGUITransport | null>(null);
   if (!transportRef.current) {
     transportRef.current = new AGUITransport(config);
   }
   const transport = transportRef.current;
 
-  // A2UI processor
-  const { processor, surfaces, processMessage, reset: resetProcessor } = useA2UIProcessor();
+  // Create stable StreamManager instance
+  const streamManagerRef = useRef<StreamManager | null>(null);
+  if (!streamManagerRef.current) {
+    streamManagerRef.current = new StreamManager({
+      streamUrl: config.streamUrl,
+      store,
+      maxConcurrent: config.maxConcurrentStreams ?? 3,
+    });
+  }
+  const streamManager = streamManagerRef.current;
 
-  // Stable ref for streaming message ID (survives re-renders)
-  const streamingMsgRef = useRef<string | null>(null);
-
-  // Handle incoming AG-UI events from transport
-  const handleEvent = useCallback(
-    (event: BaseEvent) => {
-      const state = store.getState();
-      // Cast to Record for safe property access (BaseEvent is Zod-inferred)
-      const raw = event as unknown as Record<string, unknown>;
-      const eventType = raw.type as string;
-
-      if (eventType === EventType.RUN_STARTED) {
-        const messageId = generateId();
-        streamingMsgRef.current = messageId;
-
-        // Create placeholder assistant message
-        const assistantMsg: ChatMessage = {
-          id: messageId,
-          role: "assistant",
-          content: "",
-          timestamp: nowISO(),
-          status: "streaming",
-        };
-        state.addMessage(assistantMsg);
-        state.setStreaming(true);
-        resetProcessor();
-        return;
-      }
-
-      if (eventType === EventType.STEP_STARTED) {
-        const messageId = streamingMsgRef.current;
-        if (messageId) {
-          const stepName = raw.stepName as string;
-          state.addStep(messageId, generateId(), stepName);
-        }
-        return;
-      }
-
-      if (eventType === EventType.STEP_FINISHED) {
-        const messageId = streamingMsgRef.current;
-        if (messageId) {
-          // Complete the most recent active step
-          const msg = state.messages.find((m) => m.id === messageId);
-          const activeStep = msg?.steps?.find((s) => s.status === "active");
-          if (activeStep) {
-            state.completeStep(messageId, activeStep.stepId);
-          }
-        }
-        return;
-      }
-
-      if (eventType === EventType.CUSTOM) {
-        const name = raw.name as string;
-        if (name === "a2ui") {
-          // A2UI message — process through A2UI processor
-          processMessage(raw.value as Record<string, unknown>);
-
-          // Update surfaces on the streaming message
-          const currentId = streamingMsgRef.current;
-          if (currentId) {
-            const freshSurfaces = processor.getRenderableSurfaces();
-            state.updateMessage(currentId, {
-              surfaces: freshSurfaces.length > 0 ? [...freshSurfaces] : undefined,
-            });
-          }
-        }
-        return;
-      }
-
-      if (eventType === EventType.RUN_FINISHED) {
-        const messageId = streamingMsgRef.current;
-        if (!messageId) return;
-
-        const result = raw.result as
-          | { content?: string; metadata?: Record<string, unknown> }
-          | undefined;
-        const contentFallback = result?.content;
-        const metadata = result?.metadata as ChatMessage["metadata"] | undefined;
-
-        // Read fresh surfaces from processor
-        const freshSurfaces = processor.getRenderableSurfaces();
-        const patch: Partial<ChatMessage> = {
-          status: "complete",
-          metadata,
-          surfaces: freshSurfaces.length > 0 ? [...freshSurfaces] : undefined,
-        };
-
-        // Set content fallback if message has no text yet
-        const currentMsg = state.messages.find((m) => m.id === messageId);
-        if (contentFallback && (!currentMsg?.content || currentMsg.content === "")) {
-          patch.content = contentFallback;
-        }
-
-        state.updateMessage(messageId, patch);
-        state.setStreaming(false);
-        streamingMsgRef.current = null;
-        return;
-      }
-
-      if (eventType === EventType.RUN_ERROR) {
-        const messageId = streamingMsgRef.current;
-        const errorMessage = (raw.message as string) ?? "An error occurred";
-
-        if (messageId) {
-          state.updateMessage(messageId, {
-            status: "error",
-            content: errorMessage,
-          });
-        }
-
-        state.setStreaming(false);
-        streamingMsgRef.current = null;
-        return;
-      }
-
-      // Text content chunks (progressive text streaming)
-      if (eventType === EventType.TEXT_MESSAGE_CONTENT) {
-        const currentId = streamingMsgRef.current;
-        if (currentId) {
-          const delta = (raw.delta as string) ?? "";
-          const currentMsg = state.messages.find((m) => m.id === currentId);
-          if (currentMsg) {
-            state.updateMessage(currentId, {
-              content: currentMsg.content + delta,
-            });
-          }
-        }
-        return;
-      }
-    },
-    [store, processor, processMessage, resetProcessor],
-  );
-
-  // Register event listener + status sync + cleanup
+  // Sync transport status to store
   useEffect(() => {
-    const unsubEvent = transport.onEvent(handleEvent);
     const unsubStatus = transport.onStatusChange((status) => {
       store.getState().setConnectionStatus(status);
     });
 
     return () => {
-      unsubEvent();
       unsubStatus();
+      streamManager.dispose();
       transport.dispose();
       transportRef.current = null;
+      streamManagerRef.current = null;
     };
-  }, [transport, handleEvent, store]);
+  }, [transport, streamManager, store]);
 
   // Create initial session if none exists
   useEffect(() => {
@@ -233,7 +110,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
     }
   }, [store]);
 
-  // Send message via AG-UI stream (uploads files first if needed)
+  // Send message — creates independent parallel stream via StreamManager
   const sendMessage = useCallback(
     (content: string, attachments?: Attachment[]) => {
       const state = store.getState();
@@ -241,7 +118,21 @@ export function useChat(config: ChatConfig): UseChatReturn {
       // Show user message immediately with local attachments
       const msg = state.sendMessage(content, attachments);
 
-      // Upload files then stream (async, fire-and-forget)
+      // Create placeholder assistant message
+      const assistantId = generateId();
+      const sessionId = state.activeSessionId;
+      if (!sessionId) return msg;
+
+      const assistantMsg: ChatMessage = {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        timestamp: nowISO(),
+        status: "streaming",
+      };
+      store.getState().addMessageToSession(sessionId, assistantMsg);
+
+      // Upload files then start parallel stream (async, fire-and-forget)
       (async () => {
         try {
           let serverAttachments: Attachment[] | undefined;
@@ -259,7 +150,8 @@ export function useChat(config: ChatConfig): UseChatReturn {
             );
           }
 
-          await transport.run(content, state.activeSessionId ?? undefined, serverAttachments);
+          // Start independent stream — does NOT cancel other active streams
+          await streamManager.startStream(sessionId, assistantId, content, serverAttachments);
         } catch (err) {
           console.error("[useChat] Upload/stream error:", err);
         }
@@ -267,29 +159,48 @@ export function useChat(config: ChatConfig): UseChatReturn {
 
       return msg;
     },
-    [store, transport],
+    [store, transport, streamManager],
   );
 
-  // Send A2UI action via REST
+  // Send A2UI action — routes response to correct message's processor
   const sendAction = useCallback(
     (action: A2UIAction) => {
-      transport
-        .sendAction({
-          name: action.name,
-          surfaceId: action.surfaceId,
-          sourceComponentId: action.sourceComponentId,
-          timestamp: action.timestamp,
-          context: action.context,
-        })
-        .catch(console.error);
+      (async () => {
+        try {
+          const messages = await transport.sendAction({
+            name: action.name,
+            surfaceId: action.surfaceId,
+            sourceComponentId: action.sourceComponentId,
+            timestamp: action.timestamp,
+            context: action.context,
+          });
+
+          // Route A2UI response to the processor that owns the surface
+          if (messages.length > 0) {
+            streamManager.processActionResponse(action.surfaceId, messages);
+          }
+        } catch (err) {
+          console.error("[useChat] Action error:", err);
+        }
+      })();
     },
-    [transport],
+    [transport, streamManager],
   );
 
   // Session actions (delegate to store)
   const createSession = useCallback(() => store.getState().createSession(), [store]);
   const switchSession = useCallback((id: string) => store.getState().switchSession(id), [store]);
-  const deleteSession = useCallback((id: string) => store.getState().deleteSession(id), [store]);
+  const deleteSession = useCallback(
+    (id: string) => {
+      streamManager.removeProcessor(id);
+      store.getState().deleteSession(id);
+    },
+    [store, streamManager],
+  );
+  const renameSession = useCallback(
+    (id: string, newTitle: string) => store.getState().renameSession(id, newTitle),
+    [store],
+  );
   const setSidebarOpen = useCallback(
     (open: boolean) => store.getState().setSidebarOpen(open),
     [store],
@@ -308,7 +219,8 @@ export function useChat(config: ChatConfig): UseChatReturn {
     createSession,
     switchSession,
     deleteSession,
-    surfaces,
+    renameSession,
+    surfaces: [], // Deprecated at hook level — use message.surfaces instead
     sendAction,
     sidebarOpen,
     setSidebarOpen,
