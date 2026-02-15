@@ -100,6 +100,23 @@ describe("ChatStore", () => {
       expect(state().activeSessionId).toBe(activeId);
     });
 
+    it("switchSession to same session is a no-op (preserves streaming state)", () => {
+      const id = state().createSession();
+      state().sendMessage("Hello");
+      state().setStreaming(true);
+
+      // Add step to top-level messages
+      const msgId = state().messages[0]!.id;
+      state().addStep(msgId, "step-1", "Thinking");
+
+      // Click same session — should be a no-op
+      state().switchSession(id);
+
+      expect(state().isStreaming).toBe(true);
+      expect(state().messages[0]?.steps).toHaveLength(1);
+      expect(state().messages[0]?.steps?.[0]?.stepName).toBe("Thinking");
+    });
+
     it("deleteSession removes session", () => {
       const id1 = state().createSession();
       const id2 = state().createSession();
@@ -127,6 +144,28 @@ describe("ChatStore", () => {
       expect(state().sessions).toEqual([]);
       expect(state().activeSessionId).toBeNull();
       expect(state().messages).toEqual([]);
+    });
+
+    it("renameSession updates title and updatedAt", () => {
+      const id = state().createSession();
+      const originalUpdatedAt = state().sessions[0]?.updatedAt;
+
+      // Small delay to ensure updatedAt changes
+      state().renameSession(id, "My Research");
+
+      const session = state().sessions.find((s) => s.id === id);
+      expect(session?.title).toBe("My Research");
+      expect(session?.updatedAt).toBeDefined();
+    });
+
+    it("renameSession with nonexistent id does nothing", () => {
+      const id = state().createSession();
+      const sessionsBefore = [...state().sessions];
+
+      state().renameSession("nonexistent", "New Title");
+
+      expect(state().sessions).toHaveLength(1);
+      expect(state().sessions[0]?.title).toBe("New Chat");
     });
   });
 
@@ -339,6 +378,282 @@ describe("ChatStore", () => {
       const updated = state().messages.find((m) => m.id === msg.id);
       expect(updated?.steps?.[0]?.status).toBe("complete");
       expect(updated?.steps?.[1]?.status).toBe("active");
+    });
+
+    it("addStep syncs steps to session messages", () => {
+      const msg = state().sendMessage("Hello");
+
+      state().addStep(msg.id, "step-1", "Processing input");
+
+      const session = state().sessions.find((s) => s.id === state().activeSessionId);
+      const sessionMsg = session?.messages.find((m) => m.id === msg.id);
+      expect(sessionMsg?.steps).toHaveLength(1);
+      expect(sessionMsg?.steps?.[0]?.stepName).toBe("Processing input");
+    });
+
+    it("completeStep syncs to session messages", () => {
+      const msg = state().sendMessage("Hello");
+
+      state().addStep(msg.id, "step-1", "Processing input");
+      state().completeStep(msg.id, "step-1");
+
+      const session = state().sessions.find((s) => s.id === state().activeSessionId);
+      const sessionMsg = session?.messages.find((m) => m.id === msg.id);
+      expect(sessionMsg?.steps?.[0]?.status).toBe("complete");
+    });
+  });
+
+  // ── Streaming lifecycle ──
+
+  describe("streaming lifecycle", () => {
+    beforeEach(() => {
+      state().createSession();
+    });
+
+    it("startStreaming sets streamingSessionId and streamingMessageId", () => {
+      const sessionId = state().activeSessionId!;
+      state().startStreaming(sessionId, "msg-1");
+
+      expect(state().streamingMessages).toEqual({ "msg-1": sessionId });
+      expect(state().isStreaming).toBe(true);
+    });
+
+    it("startStreaming sets isStreaming false when target is not active session", () => {
+      const id1 = state().activeSessionId!;
+      const id2 = state().createSession();
+
+      // Start streaming on session 1 while session 2 is active
+      state().startStreaming(id1, "msg-1");
+
+      expect(state().streamingMessages).toEqual({ "msg-1": id1 });
+      expect(state().isStreaming).toBe(false);
+    });
+
+    it("stopStreaming removes specific message from streaming state", () => {
+      const sessionId = state().activeSessionId!;
+      state().startStreaming(sessionId, "msg-1");
+      state().stopStreaming("msg-1");
+
+      expect(state().streamingMessages).toEqual({});
+      expect(state().isStreaming).toBe(false);
+    });
+
+    it("startStreaming supports multiple concurrent streams", () => {
+      const sessionId = state().activeSessionId!;
+      state().startStreaming(sessionId, "msg-1");
+      state().startStreaming(sessionId, "msg-2");
+
+      expect(state().streamingMessages).toEqual({
+        "msg-1": sessionId,
+        "msg-2": sessionId,
+      });
+      expect(state().isStreaming).toBe(true);
+
+      // Stop one — still streaming
+      state().stopStreaming("msg-1");
+      expect(state().streamingMessages).toEqual({ "msg-2": sessionId });
+      expect(state().isStreaming).toBe(true);
+
+      // Stop the other — no more streaming
+      state().stopStreaming("msg-2");
+      expect(state().streamingMessages).toEqual({});
+      expect(state().isStreaming).toBe(false);
+    });
+  });
+
+  // ── Session-targeted actions ──
+
+  describe("session-targeted actions", () => {
+    let sessionId1: string;
+    let sessionId2: string;
+
+    beforeEach(() => {
+      sessionId1 = state().createSession();
+      sessionId2 = state().createSession(); // sessionId2 is now active
+    });
+
+    it("addMessageToSession adds to active session and top-level messages", () => {
+      const msg: ChatMessage = {
+        id: "msg-target",
+        role: "assistant",
+        content: "Hello",
+        timestamp: new Date().toISOString(),
+        status: "complete",
+      };
+
+      state().addMessageToSession(sessionId2, msg);
+
+      // Top-level messages updated (session2 is active)
+      expect(state().messages).toHaveLength(1);
+      expect(state().messages[0]?.id).toBe("msg-target");
+
+      // Session updated
+      const session = state().sessions.find((s) => s.id === sessionId2);
+      expect(session?.messages).toHaveLength(1);
+    });
+
+    it("addMessageToSession adds to background session without touching top-level messages", () => {
+      const msg: ChatMessage = {
+        id: "msg-bg",
+        role: "assistant",
+        content: "Background",
+        timestamp: new Date().toISOString(),
+        status: "complete",
+      };
+
+      state().addMessageToSession(sessionId1, msg);
+
+      // Top-level messages NOT updated (session1 is not active)
+      expect(state().messages).toEqual([]);
+
+      // Session updated
+      const session = state().sessions.find((s) => s.id === sessionId1);
+      expect(session?.messages).toHaveLength(1);
+      expect(session?.messages[0]?.content).toBe("Background");
+    });
+
+    it("updateMessageInSession updates active session and top-level messages", () => {
+      const msg: ChatMessage = {
+        id: "msg-upd",
+        role: "assistant",
+        content: "",
+        timestamp: new Date().toISOString(),
+        status: "streaming",
+      };
+      state().addMessageToSession(sessionId2, msg);
+
+      state().updateMessageInSession(sessionId2, "msg-upd", (m) => ({
+        ...m,
+        content: "Updated content",
+        status: "complete",
+      }));
+
+      expect(state().messages[0]?.content).toBe("Updated content");
+      expect(state().messages[0]?.status).toBe("complete");
+
+      const session = state().sessions.find((s) => s.id === sessionId2);
+      expect(session?.messages[0]?.content).toBe("Updated content");
+    });
+
+    it("updateMessageInSession updates background session without touching top-level", () => {
+      // Add message to background session (session1)
+      const msg: ChatMessage = {
+        id: "msg-bg-upd",
+        role: "assistant",
+        content: "",
+        timestamp: new Date().toISOString(),
+        status: "streaming",
+      };
+      state().addMessageToSession(sessionId1, msg);
+
+      state().updateMessageInSession(sessionId1, "msg-bg-upd", (m) => ({
+        ...m,
+        content: "Background updated",
+      }));
+
+      // Top-level messages unaffected
+      expect(state().messages).toEqual([]);
+
+      // Background session updated
+      const session = state().sessions.find((s) => s.id === sessionId1);
+      expect(session?.messages[0]?.content).toBe("Background updated");
+    });
+
+    it("switching to session with background updates shows them", () => {
+      // Add and update message in background session
+      const msg: ChatMessage = {
+        id: "msg-reveal",
+        role: "assistant",
+        content: "Streamed in background",
+        timestamp: new Date().toISOString(),
+        status: "complete",
+      };
+      state().addMessageToSession(sessionId1, msg);
+
+      // Now switch to session1
+      state().switchSession(sessionId1);
+
+      expect(state().messages).toHaveLength(1);
+      expect(state().messages[0]?.content).toBe("Streamed in background");
+    });
+  });
+
+  // ── switchSession with streaming ──
+
+  describe("switchSession with streaming", () => {
+    let sessionId1: string;
+    let sessionId2: string;
+
+    beforeEach(() => {
+      sessionId1 = state().createSession();
+      sessionId2 = state().createSession();
+    });
+
+    it("switchSession to streaming session preserves isStreaming", () => {
+      // Start streaming on session1
+      state().startStreaming(sessionId1, "msg-1");
+
+      // session2 is active, isStreaming should be false
+      expect(state().isStreaming).toBe(false);
+
+      // Switch to session1 (the streaming session)
+      state().switchSession(sessionId1);
+
+      expect(state().isStreaming).toBe(true);
+    });
+
+    it("switchSession to non-streaming session sets isStreaming false", () => {
+      // Start streaming on session2 (active)
+      state().startStreaming(sessionId2, "msg-1");
+      expect(state().isStreaming).toBe(true);
+
+      // Switch to session1 (not streaming)
+      state().switchSession(sessionId1);
+
+      expect(state().isStreaming).toBe(false);
+    });
+
+    it("full background streaming scenario", () => {
+      // session2 is active, start streaming on it
+      state().startStreaming(sessionId2, "msg-stream");
+      const msg: ChatMessage = {
+        id: "msg-stream",
+        role: "assistant",
+        content: "",
+        timestamp: new Date().toISOString(),
+        status: "streaming",
+      };
+      state().addMessageToSession(sessionId2, msg);
+
+      // User switches to session1 mid-stream
+      state().switchSession(sessionId1);
+      expect(state().isStreaming).toBe(false);
+      expect(state().messages).toEqual([]);
+
+      // Events keep arriving for session2 (background)
+      state().updateMessageInSession(sessionId2, "msg-stream", (m) => ({
+        ...m,
+        content: "Hello ",
+      }));
+      state().updateMessageInSession(sessionId2, "msg-stream", (m) => ({
+        ...m,
+        content: `${m.content}world!`,
+      }));
+      state().updateMessageInSession(sessionId2, "msg-stream", (m) => ({
+        ...m,
+        status: "complete",
+      }));
+      state().stopStreaming("msg-stream");
+
+      // session1 messages still empty
+      expect(state().messages).toEqual([]);
+
+      // Switch back to session2 — see the completed message
+      state().switchSession(sessionId2);
+      expect(state().messages).toHaveLength(1);
+      expect(state().messages[0]?.content).toBe("Hello world!");
+      expect(state().messages[0]?.status).toBe("complete");
+      expect(state().isStreaming).toBe(false);
     });
   });
 

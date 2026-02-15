@@ -2,6 +2,8 @@
  * Zustand store for chat state management.
  *
  * Manages sessions, messages, streaming state, and connection status.
+ * Supports parallel streaming: multiple messages can stream concurrently,
+ * each tracked independently in `streamingMessages`.
  */
 
 import { createStore } from "zustand/vanilla";
@@ -25,12 +27,15 @@ export interface ChatState {
   isStreaming: boolean;
   connectionStatus: TransportStatus;
 
+  // Parallel streaming: messageId -> sessionId
+  streamingMessages: Record<string, string>;
+
   // UI
   sidebarOpen: boolean;
 }
 
 export interface ChatActions {
-  // Message actions
+  // Message actions (operate on active session)
   sendMessage: (content: string, attachments?: Attachment[]) => ChatMessage;
   addMessage: (message: ChatMessage) => void;
   updateMessage: (id: string, patch: Partial<ChatMessage>) => void;
@@ -38,10 +43,23 @@ export interface ChatActions {
   addStep: (messageId: string, stepId: string, stepName: string) => void;
   completeStep: (messageId: string, stepId: string) => void;
 
+  // Session-targeted actions (route to any session, active or background)
+  addMessageToSession: (sessionId: string, message: ChatMessage) => void;
+  updateMessageInSession: (
+    sessionId: string,
+    messageId: string,
+    updater: (msg: ChatMessage) => ChatMessage,
+  ) => void;
+
+  // Streaming lifecycle (parallel-safe)
+  startStreaming: (sessionId: string, messageId: string) => void;
+  stopStreaming: (messageId: string) => void;
+
   // Session actions
   createSession: () => string;
   switchSession: (id: string) => void;
   deleteSession: (id: string) => void;
+  renameSession: (id: string, newTitle: string) => void;
 
   // State actions
   setStreaming: (streaming: boolean) => void;
@@ -50,6 +68,14 @@ export interface ChatActions {
 }
 
 export type ChatStore = ChatState & ChatActions;
+
+/** Check if any streaming message belongs to the given session. */
+function hasStreamingInSession(
+  streamingMessages: Record<string, string>,
+  sessionId: string,
+): boolean {
+  return Object.values(streamingMessages).includes(sessionId);
+}
 
 /**
  * Create a vanilla Zustand store for chat state.
@@ -63,9 +89,10 @@ export function createChatStore() {
     messages: [],
     isStreaming: false,
     connectionStatus: "disconnected",
+    streamingMessages: {},
     sidebarOpen: true,
 
-    // ── Message actions ──
+    // ── Message actions (active session) ──
 
     sendMessage: (content: string, attachments?: Attachment[]) => {
       const message: ChatMessage = {
@@ -158,6 +185,23 @@ export function createChatStore() {
           m.id === messageId ? { ...m, steps: [...(m.steps ?? []), step] } : m,
         ),
       }));
+
+      // Sync to the active session
+      const { activeSessionId, sessions } = get();
+      if (activeSessionId) {
+        set({
+          sessions: sessions.map((s) =>
+            s.id === activeSessionId
+              ? {
+                  ...s,
+                  messages: s.messages.map((m) =>
+                    m.id === messageId ? { ...m, steps: [...(m.steps ?? []), step] } : m,
+                  ),
+                }
+              : s,
+          ),
+        });
+      }
     },
 
     completeStep: (messageId: string, stepId: string) => {
@@ -173,6 +217,91 @@ export function createChatStore() {
             : m,
         ),
       }));
+
+      // Sync to the active session
+      const { activeSessionId, sessions } = get();
+      if (activeSessionId) {
+        set({
+          sessions: sessions.map((s) =>
+            s.id === activeSessionId
+              ? {
+                  ...s,
+                  messages: s.messages.map((m) =>
+                    m.id === messageId
+                      ? {
+                          ...m,
+                          steps: (m.steps ?? []).map((st) =>
+                            st.stepId === stepId ? { ...st, status: "complete" as const } : st,
+                          ),
+                        }
+                      : m,
+                  ),
+                }
+              : s,
+          ),
+        });
+      }
+    },
+
+    // ── Session-targeted actions ──
+
+    addMessageToSession: (sessionId: string, message: ChatMessage) => {
+      const { activeSessionId } = get();
+      const isActive = sessionId === activeSessionId;
+
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId
+            ? { ...s, messages: [...s.messages, message], updatedAt: nowISO() }
+            : s,
+        ),
+        ...(isActive ? { messages: [...state.messages, message] } : {}),
+      }));
+    },
+
+    updateMessageInSession: (
+      sessionId: string,
+      messageId: string,
+      updater: (msg: ChatMessage) => ChatMessage,
+    ) => {
+      const { activeSessionId } = get();
+      const isActive = sessionId === activeSessionId;
+
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId
+            ? {
+                ...s,
+                messages: s.messages.map((m) => (m.id === messageId ? updater(m) : m)),
+                updatedAt: nowISO(),
+              }
+            : s,
+        ),
+        ...(isActive
+          ? { messages: state.messages.map((m) => (m.id === messageId ? updater(m) : m)) }
+          : {}),
+      }));
+    },
+
+    // ── Streaming lifecycle (parallel-safe) ──
+
+    startStreaming: (sessionId: string, messageId: string) => {
+      const { activeSessionId } = get();
+      set((state) => ({
+        streamingMessages: { ...state.streamingMessages, [messageId]: sessionId },
+        isStreaming: sessionId === activeSessionId || state.isStreaming,
+      }));
+    },
+
+    stopStreaming: (messageId: string) => {
+      const { activeSessionId } = get();
+      set((state) => {
+        const { [messageId]: _, ...rest } = state.streamingMessages;
+        return {
+          streamingMessages: rest,
+          isStreaming: hasStreamingInSession(rest, activeSessionId ?? ""),
+        };
+      });
     },
 
     // ── Session actions ──
@@ -196,13 +325,16 @@ export function createChatStore() {
     },
 
     switchSession: (id: string) => {
-      const { sessions } = get();
+      const { activeSessionId, sessions, streamingMessages } = get();
+      if (id === activeSessionId) return;
+
       const session = sessions.find((s) => s.id === id);
       if (session) {
         set({
           activeSessionId: id,
           messages: [...session.messages],
-          isStreaming: false,
+          // isStreaming true if target session has any active streams
+          isStreaming: hasStreamingInSession(streamingMessages, id),
         });
       }
     },
@@ -217,6 +349,14 @@ export function createChatStore() {
         activeSessionId: newActive,
         messages: newActive ? (filtered.find((s) => s.id === newActive)?.messages ?? []) : [],
       });
+    },
+
+    renameSession: (id: string, newTitle: string) => {
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === id ? { ...s, title: newTitle, updatedAt: nowISO() } : s,
+        ),
+      }));
     },
 
     // ── State actions ──
