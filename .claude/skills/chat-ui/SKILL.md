@@ -50,7 +50,7 @@ packages/chat-ui/
 │   │   ├── catalog.ts        # Component registry
 │   │   ├── data-binding.ts   # JSON Pointer resolver + function evaluator
 │   │   ├── standard/         # 18 standard A2UI components
-│   │   └── custom/           # 4 OpenBench extensions
+│   │   └── custom/           # 6 OpenBench extensions
 │   ├── components/           # Pre-built chat UI
 │   └── hooks/                # React hooks
 ├── styles/
@@ -109,7 +109,7 @@ registerCustomComponent('MyWidget', MyWidgetComponent);
 
 Text, Image, Icon, Video, AudioPlayer, Row, Column, List, Card, Tabs, Modal, Divider, Button, TextField, CheckBox, ChoicePicker, Slider, DateTimeInput
 
-### Custom (4 OpenBench extensions)
+### Custom (6 OpenBench extensions)
 
 | Component | Library | Purpose |
 |-----------|---------|---------|
@@ -117,6 +117,8 @@ Text, Image, Icon, Video, AudioPlayer, Row, Column, List, Card, Tabs, Modal, Div
 | `ObFileCard` | Custom | File preview card with download |
 | `ObCodeBlock` | Shiki | Syntax-highlighted code blocks |
 | `ObMarkdown` | react-markdown | Rich markdown rendering |
+| `ObTable` | Custom | Structured tabular data display |
+| `ObCallout` | Custom + react-markdown | Styled callout boxes (info, success, warning) |
 
 Note: `AudioPlayer` and `Video` are standard A2UI components -- no custom wrappers needed.
 

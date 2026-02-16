@@ -18,6 +18,8 @@ export interface ChatPanelProps {
   suggestions?: string[];
   /** Title displayed in the header (default: "New Chat"). */
   title?: string;
+  /** Extra content rendered in the header-right area (e.g. theme toggle). */
+  headerRight?: React.ReactNode;
 }
 
 export function ChatPanel({
@@ -26,6 +28,7 @@ export function ChatPanel({
   greeting,
   suggestions,
   title,
+  headerRight,
 }: ChatPanelProps) {
   const {
     messages,
@@ -53,6 +56,7 @@ export function ChatPanel({
               aria-label="Open sidebar"
             >
               <svg
+                aria-hidden="true"
                 width="18"
                 height="18"
                 viewBox="0 0 24 24"
@@ -73,6 +77,7 @@ export function ChatPanel({
           {connectionStatus === "error" && (
             <div className="chat-panel__status chat-panel__status--error">
               <svg
+                aria-hidden="true"
                 width="14"
                 height="14"
                 viewBox="0 0 24 24"
@@ -89,6 +94,7 @@ export function ChatPanel({
               <span>Connection error</span>
             </div>
           )}
+          {headerRight}
         </div>
       </div>
 

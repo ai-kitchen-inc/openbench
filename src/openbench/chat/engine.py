@@ -556,18 +556,64 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         iterations (e.g. refining a form). For forms, only keep the last one.
         For charts, keep multiple but deduplicate by title.
         For file cards, deduplicate by name.
+        For code blocks, deduplicate by title (if present); keep all untitled.
+        For media, deduplicate by src URL (last wins).
+        For lists, only keep the last one (one list per response).
+
+        Detection order matters:
+        1. Form: "fields" in item
+        2. Tabs: "tabs" in item and isinstance(item.get("tabs"), list)
+        3. Modal: "modalContent" in item
+        4. List: "items" in item and "listType" in item
+        5. Table: "headers" in item and "rows" in item
+        6. Callout: "calloutContent" in item
+        7. Code: "code" in item and "language" in item
+        8. Media: "src" in item and "mediaType" in item
+        9. Chart: "data" in item and "title" in item
+        10. File: "url" in item and "name" in item
+        11. Other: fallthrough
         """
         forms: list[dict] = []
+        tabs: list[dict] = []
+        modals: list[dict] = []
+        lists: list[dict] = []
+        tables: dict[str, dict] = {}  # keyed by title
+        callouts: list[dict] = []
         charts: dict[str, dict] = {}  # keyed by title
         files: dict[str, dict] = {}  # keyed by name
+        media: dict[str, dict] = {}  # keyed by src URL
+        code_titled: dict[str, dict] = {}  # keyed by title
+        code_untitled: list[dict] = []
         other: list[dict] = []
 
         for item in items:
-            if isinstance(item, dict) and "fields" in item:
+            if not isinstance(item, dict):
+                other.append(item)
+                continue
+            if "fields" in item:
                 forms.append(item)
-            elif isinstance(item, dict) and "data" in item and "title" in item:
+            elif "tabs" in item and isinstance(item.get("tabs"), list):
+                tabs.append(item)
+            elif "modalContent" in item:
+                modals.append(item)
+            elif "items" in item and "listType" in item:
+                lists.append(item)
+            elif "headers" in item and "rows" in item:
+                title = item.get("title", "")
+                tables[title] = item  # last one wins per title
+            elif "calloutContent" in item:
+                callouts.append(item)
+            elif "code" in item and "language" in item:
+                title = item.get("title")
+                if title:
+                    code_titled[title] = item  # last one wins per title
+                else:
+                    code_untitled.append(item)
+            elif "src" in item and "mediaType" in item:
+                media[item["src"]] = item  # last one wins per src URL
+            elif "data" in item and "title" in item:
                 charts[item["title"]] = item  # last one wins per title
-            elif isinstance(item, dict) and "url" in item and "name" in item:
+            elif "url" in item and "name" in item:
                 files[item["name"]] = item  # last one wins per name
             else:
                 other.append(item)
@@ -576,8 +622,24 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         # Only keep the last form (one form per response)
         if forms:
             result.append(forms[-1])
+        # Only keep the last tabs (one tabs per response)
+        if tabs:
+            result.append(tabs[-1])
+        # Only keep the last modal (one modal per response)
+        if modals:
+            result.append(modals[-1])
+        # Only keep the last list (one list per response)
+        if lists:
+            result.append(lists[-1])
+        result.extend(tables.values())
+        # Only keep the last callout (one callout per response)
+        if callouts:
+            result.append(callouts[-1])
+        result.extend(media.values())
         result.extend(charts.values())
         result.extend(files.values())
+        result.extend(code_titled.values())
+        result.extend(code_untitled)
         result.extend(other)
         return result
 

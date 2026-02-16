@@ -240,10 +240,34 @@ CREATE_FORM_SCHEMA: dict[str, Any] = {
                                 "type": "boolean",
                                 "description": "Whether field is required",
                             },
+                            "placeholder": {
+                                "type": "string",
+                                "description": "Placeholder text for input fields",
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Help text displayed below the field",
+                            },
                             "options": {
                                 "type": "array",
                                 "items": {"type": "string"},
                                 "description": "Options for select/choice fields",
+                            },
+                            "min": {
+                                "type": "number",
+                                "description": "Minimum value for number/slider fields",
+                            },
+                            "max": {
+                                "type": "number",
+                                "description": "Maximum value for number/slider fields",
+                            },
+                            "step": {
+                                "type": "number",
+                                "description": "Step increment for slider fields",
+                            },
+                            "pattern": {
+                                "type": "string",
+                                "description": "Regex pattern for text validation",
                             },
                         },
                         "required": ["name", "type", "label"],
@@ -319,6 +343,257 @@ GENERATE_FILE_SCHEMA: dict[str, Any] = {
                 },
             },
             "required": ["filename", "content"],
+        },
+    },
+}
+
+SHOW_MEDIA_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "show_media",
+        "description": (
+            "Display inline media for the user: images, videos, or audio players. "
+            "Use this when showing visual or audio content from URLs."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "URL of the media (image, video, or audio file)",
+                },
+                "media_type": {
+                    "type": "string",
+                    "enum": ["image", "video", "audio"],
+                    "description": "Type of media to display",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Title displayed above the media (optional)",
+                },
+                "caption": {
+                    "type": "string",
+                    "description": "Alt text for images, description for video/audio (optional)",
+                },
+            },
+            "required": ["url", "media_type"],
+        },
+    },
+}
+
+CREATE_LIST_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "create_list",
+        "description": (
+            "MANDATORY: Display a structured list of items as a rich UI component. "
+            "You MUST call this tool whenever your answer contains 3 or more items "
+            "(rankings, top-N lists, steps, search results, recommendations, comparisons). "
+            "NEVER write numbered or bulleted lists in your text — always use this tool. "
+            "Each item has text (required) and optional subtitle for details."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "List title displayed above the list",
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {
+                                "type": "string",
+                                "description": "Main item text",
+                            },
+                            "subtitle": {
+                                "type": "string",
+                                "description": "Secondary text below the item (optional)",
+                            },
+                        },
+                        "required": ["text"],
+                    },
+                    "description": (
+                        "List items as objects with 'text' (required) and optional 'subtitle'"
+                    ),
+                },
+                "ordered": {
+                    "type": "boolean",
+                    "description": "If true, display as numbered list (default: false)",
+                },
+            },
+            "required": ["title", "items"],
+        },
+    },
+}
+
+CREATE_TABS_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "create_tabs",
+        "description": (
+            "Create a tabbed interface to organize content by category. "
+            "Use this when presenting categorized or multi-topic information, "
+            "comparisons, or different perspectives on a subject. "
+            "Each tab has a label and markdown content."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Title displayed above the tabs",
+                },
+                "tabs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {
+                                "type": "string",
+                                "description": "Tab header label",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Tab body content (markdown)",
+                            },
+                        },
+                        "required": ["label", "content"],
+                    },
+                    "description": "Tab definitions with label and content",
+                },
+            },
+            "required": ["title", "tabs"],
+        },
+    },
+}
+
+SHOW_MODAL_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "show_modal",
+        "description": (
+            "Display important information in a modal overlay. "
+            "Use this when highlighting important details, disclaimers, "
+            "summaries, or content that deserves focused attention."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Modal title in header",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Modal body content (markdown)",
+                },
+            },
+            "required": ["title", "content"],
+        },
+    },
+}
+
+CREATE_TABLE_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "create_table",
+        "description": (
+            "Display structured tabular data with headers and rows. "
+            "Use this when presenting comparisons, specifications, "
+            "pricing tables, or any data that fits a row/column layout."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Table title displayed above the table",
+                },
+                "headers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Column header names",
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "description": "Table rows as arrays of cell values",
+                },
+                "caption": {
+                    "type": "string",
+                    "description": "Optional description displayed below the title",
+                },
+            },
+            "required": ["title", "headers", "rows"],
+        },
+    },
+}
+
+CREATE_CALLOUT_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "create_callout",
+        "description": (
+            "Display a styled callout box for important notes, warnings, tips, "
+            "or success messages. Supports markdown content."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "Callout body content (supports markdown)",
+                },
+                "variant": {
+                    "type": "string",
+                    "enum": ["default", "info", "success", "warning"],
+                    "description": "Visual style variant (default: 'default')",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Optional bold title above the content",
+                },
+            },
+            "required": ["content"],
+        },
+    },
+}
+
+CREATE_CODE_BLOCK_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "create_code_block",
+        "description": (
+            "Display a syntax-highlighted code block for the user. Use this when "
+            "showing code examples, implementations, snippets, or programming solutions. "
+            "The code is rendered with syntax highlighting in an ObCodeBlock component."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "The source code to display",
+                },
+                "language": {
+                    "type": "string",
+                    "description": (
+                        "Programming language for syntax highlighting "
+                        "(e.g. 'python', 'javascript', 'typescript', 'sql', 'bash')"
+                    ),
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Optional title displayed above the code block",
+                },
+            },
+            "required": ["code", "language"],
         },
     },
 }
