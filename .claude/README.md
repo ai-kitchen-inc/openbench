@@ -11,11 +11,18 @@ This directory contains configuration for Claude Code when working with OpenBenc
 ├── commands/               # Slash commands (user-invocable)
 │   ├── test.md            # /test - Run tests
 │   ├── lint.md            # /lint - Run linting
+│   ├── check.md           # /check - Run all quality checks
+│   ├── coverage.md        # /coverage - Run tests with coverage
 │   └── example.md         # /example - Run examples
 └── skills/                 # Auto-invoked skills (Claude can invoke)
+    ├── adapters/SKILL.md
+    ├── chat-layer/SKILL.md
+    ├── chat-ui/SKILL.md
     ├── composing-workflows/SKILL.md
     ├── creating-abstractions/SKILL.md
     ├── data-layer/SKILL.md
+    ├── intelligence-layer/SKILL.md
+    ├── output-layer/SKILL.md
     └── testing-openbench/SKILL.md
 ```
 
@@ -27,6 +34,8 @@ Commands use `disable-model-invocation: true` - only you can invoke them.
 |---------|-------------|
 | `/test [options]` | Run the test suite |
 | `/lint [options]` | Run code formatting and linting |
+| `/check [options]` | Run all quality checks (lint + type check + tests) |
+| `/coverage` | Run tests with coverage report |
 | `/example [name]` | Run an example workflow |
 
 ## Skills (Auto-Invoked by Claude)
@@ -35,9 +44,14 @@ Skills are automatically loaded when Claude detects relevant context.
 
 | Skill | Triggers |
 |-------|----------|
+| `adapters` | LangChain, CrewAI, AG2, E2B, Google ADK framework adapters |
+| `chat-layer` | ChatEngine, A2UI v0.10, content renderers, AG-UI transport |
+| `chat-ui` | @openbench/chat-ui React SDK, A2UI components, hooks, styles |
 | `composing-workflows` | Creating workflows, DAG patterns, L1/L2 composition |
 | `creating-abstractions` | Implementing DataSource, Agent, OutputGenerator, DataStore, FrameworkAdapter |
 | `data-layer` | PineconeStore, chunking, embeddings, RAG patterns, vector search |
+| `intelligence-layer` | BaseAgent, LLM providers, tools, memory, RAG agents |
+| `output-layer` | PDF, PPTX, Dashboard, Audio, Markdown generators |
 | `testing-openbench` | Writing tests, test patterns |
 
 ## Frontmatter Reference

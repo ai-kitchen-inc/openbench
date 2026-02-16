@@ -214,6 +214,11 @@ class ChatSession:
         return session
 
     def __len__(self) -> int:
+        """Return message count.
+
+        Warning: Empty sessions return 0 (falsy). Use ``x is not None``
+        instead of ``x or default`` when accepting optional ChatSession.
+        """
         return len(self.messages)
 
     def __repr__(self) -> str:

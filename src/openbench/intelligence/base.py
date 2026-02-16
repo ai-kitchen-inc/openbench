@@ -114,6 +114,14 @@ class AgentMemory:
                         break
                 else:
                     break
+            # Warn if still over budget (system message alone exceeds limit)
+            if self._estimate_tokens() > self.max_tokens:
+                logger.warning(
+                    "System message alone (~%d tokens) exceeds max_tokens (%d). "
+                    "Consider increasing max_tokens or shortening the system prompt.",
+                    self._estimate_tokens(),
+                    self.max_tokens,
+                )
 
     def add_system(self, content: str) -> None:
         """Add system message."""
@@ -260,20 +268,21 @@ class ToolExecutor:
             raise ValueError(f"Tool not found: {name}")
 
         import contextvars
+        from queue import Empty, SimpleQueue
 
-        result = [None]
-        exception = [None]
+        # Use a queue for thread-safe result passing (one per call).
+        q: SimpleQueue = SimpleQueue()
 
         def _run():
             try:
                 if isinstance(tool, Tool):
-                    result[0] = tool.execute(**params)
+                    q.put(("ok", tool.execute(**params)))
                 elif callable(tool):
-                    result[0] = tool(**params)
+                    q.put(("ok", tool(**params)))
                 else:
-                    exception[0] = ValueError(f"Invalid tool type: {type(tool)}")
+                    q.put(("err", ValueError(f"Invalid tool type: {type(tool)}")))
             except Exception as e:
-                exception[0] = e
+                q.put(("err", e))
 
         # Propagate ContextVar values so tool functions can access
         # per-request state (e.g. render items, attachments).
@@ -285,10 +294,14 @@ class ToolExecutor:
         if thread.is_alive():
             raise TimeoutError(f"Tool '{name}' exceeded {timeout}s timeout")
 
-        if exception[0] is not None:
-            raise exception[0]
+        try:
+            status, value = q.get_nowait()
+        except Empty:
+            raise TimeoutError(f"Tool '{name}' finished but produced no result") from None
+        if status == "err":
+            raise value
 
-        return result[0]
+        return value
 
     def execute_parallel(
         self, calls: list[dict[str, Any]], timeout: int = 30
@@ -555,7 +568,14 @@ class BaseAgent(Agent):
             )
 
         # Initialize memory (persistent or in-memory)
-        if memory_store is not None and session_id is not None:
+        if memory_store is not None or session_id is not None:
+            if memory_store is None or session_id is None:
+                raise ValueError(
+                    f"Both 'memory_store' and 'session_id' must be provided together "
+                    f"for persistent memory. Got memory_store="
+                    f"{type(memory_store).__name__ if memory_store else None!r}, "
+                    f"session_id={session_id!r}."
+                )
             from openbench.intelligence.memory import PersistentMemory
 
             self.memory = PersistentMemory(store=memory_store, session_id=session_id)
@@ -697,7 +717,7 @@ Provide clear, actionable responses."""
             for q in queries:
                 results = self.store.search(Query(text=q, limit=self.retrieval_top_k))
 
-                for item, score in zip(results.items, results.scores, strict=False):
+                for item, score in zip(results.items, results.scores, strict=True):
                     if score < self.retrieval_threshold:
                         continue
                     item_id = item.get("id", item.get("content", "")[:100])
@@ -886,7 +906,7 @@ Provide clear, actionable responses."""
                 gen_kwargs: dict[str, Any] = {
                     "prompt": self.memory.get_messages(),
                     "model": self.model,
-                    "tools": self.tools.get_schemas() if len(self.tools) > 0 else None,
+                    "tools": self.tools.get_schemas() or None,
                     "temperature": self.temperature,
                 }
 

@@ -87,8 +87,11 @@ export const ObChart: A2UIComponentRenderer = ({ component, surface }) => {
               outerRadius={Math.min(height / 3, 120)}
               label
             >
-              {data.map((_entry, i) => (
-                <Cell key={i} fill={DEFAULT_COLORS[i % DEFAULT_COLORS.length]} />
+              {data.map((entry, i) => (
+                <Cell
+                  key={String(entry[xKey] ?? i)}
+                  fill={DEFAULT_COLORS[i % DEFAULT_COLORS.length]}
+                />
               ))}
             </Pie>
             <Tooltip />

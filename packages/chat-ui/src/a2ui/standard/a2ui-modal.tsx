@@ -44,7 +44,7 @@ export const A2UIModal: A2UIComponentRenderer = ({ component, surface, children 
         role="dialog"
         aria-label={title}
         style={{
-          backgroundColor: "var(--a2ui-card-bg, #ffffff)",
+          backgroundColor: "var(--ob-card-bg, #ffffff)",
           borderRadius: "12px",
           padding: "24px",
           maxWidth: "600px",

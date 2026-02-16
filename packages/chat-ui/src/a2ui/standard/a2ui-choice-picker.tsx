@@ -50,11 +50,14 @@ export const A2UIChoicePicker: A2UIComponentRenderer = ({ component, surface, on
           onChange={handleChange}
         >
           <option value="">{placeholder}</option>
-          {options.map((opt, i) => (
-            <option key={i} value={resolveString(opt.value, surface)}>
-              {resolveString(opt.label, surface)}
-            </option>
-          ))}
+          {options.map((opt) => {
+            const optValue = resolveString(opt.value, surface);
+            return (
+              <option key={optValue} value={optValue}>
+                {resolveString(opt.label, surface)}
+              </option>
+            );
+          })}
         </select>
         <svg
           className="a2ui-choice-picker__chevron"
