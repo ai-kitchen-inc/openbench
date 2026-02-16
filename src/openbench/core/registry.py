@@ -532,7 +532,9 @@ class PluginRegistry(Generic[T]):
 # Pre-defined Registries for OpenBench Core Abstractions
 # ============================================================================
 
-# Import base classes for type hints
+# Import base classes for registry type constraints.
+# Placed after PluginRegistry definition to avoid circular import
+# (abstractions.py imports from chainable.py which is independent of registry).
 from openbench.core.abstractions import (  # noqa: E402
     Agent,
     DataSource,
@@ -629,9 +631,6 @@ def discover_plugins(packages: list[str] | None = None) -> dict[str, int]:
 
     results = {}
     for package in packages:
-        # Try to import and discover
-        package.split(".")[-1]
-
         # Find matching registry
         for name, registry in PluginRegistry._all_registries.items():
             try:

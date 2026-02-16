@@ -20,6 +20,7 @@ from openbench.intelligence.base import (
     Message,
     MessageRole,
     ProgressEvent,
+    QueryRewriter,
     SimpleAgent,
     StructuredOutputAgent,
     ToolExecutor,
@@ -42,6 +43,12 @@ from openbench.intelligence.layer import AgentFactory
 # LLM providers
 from openbench.intelligence.llm_providers import GeminiLLMProvider
 
+# Memory (persistent conversation memory)
+from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
+
+# Planning (task decomposition)
+from openbench.intelligence.planning import TaskPlan, TaskPlanner
+
 __all__ = [
     # L2 Orchestrator
     "IntelligenceLayer",
@@ -61,11 +68,18 @@ __all__ = [
     "AgentMemory",
     "AgentConfig",
     "ProgressEvent",
+    "QueryRewriter",
     "ToolExecutor",
     "Message",
     "MessageRole",
     # LLM providers
     "GeminiLLMProvider",
+    # Memory
+    "PersistentMemory",
+    "SQLiteMemoryStore",
+    # Planning
+    "TaskPlan",
+    "TaskPlanner",
     # Embedding providers
     "OpenAIEmbeddingProvider",
     "GoogleEmbeddingProvider",

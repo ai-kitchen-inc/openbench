@@ -292,17 +292,32 @@ class LocalStateStore(StateStore):
         return self.base_path / f"{workflow_id}.json"
 
     def save(self, state: WorkflowState) -> None:
-        """Save workflow state to JSON file (atomic write)."""
+        """Save workflow state to JSON file (atomic write).
+
+        Note: Concurrent saves of the same workflow_id from multiple
+        processes are NOT safe. Use a database-backed StateStore for
+        multi-process scenarios.
+        """
+        import fcntl
+
         path = self._get_path(state.workflow_id)
-        fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        lock_path = path.with_suffix(".lock")
+        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
         try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(state.to_dict(), f, indent=2)
-            os.replace(tmp_path, path)  # Atomic on POSIX
-        except Exception:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(state.to_dict(), f, indent=2)
+                os.replace(tmp_path, path)  # Atomic on POSIX
+            except Exception:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_path)
+                raise
+        finally:
             with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
-            raise
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
     def load(self, workflow_id: str) -> WorkflowState | None:
         """Load workflow state from JSON file."""
