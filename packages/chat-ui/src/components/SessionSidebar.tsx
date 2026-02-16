@@ -76,6 +76,7 @@ export function SessionSidebar({ className = "" }: SessionSidebarProps) {
             aria-label="New chat"
           >
             <svg
+              aria-hidden="true"
               width="16"
               height="16"
               viewBox="0 0 24 24"
@@ -95,6 +96,7 @@ export function SessionSidebar({ className = "" }: SessionSidebarProps) {
             aria-label="Close sidebar"
           >
             <svg
+              aria-hidden="true"
               width="16"
               height="16"
               viewBox="0 0 24 24"
@@ -167,6 +169,7 @@ export function SessionSidebar({ className = "" }: SessionSidebarProps) {
                   aria-label={`Delete ${session.title}`}
                 >
                   <svg
+                    aria-hidden="true"
                     width="14"
                     height="14"
                     viewBox="0 0 24 24"

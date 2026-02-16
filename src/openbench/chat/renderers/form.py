@@ -186,11 +186,19 @@ class FormRenderer(ContentRenderer):
             elif field_type == "password":
                 props["inputType"] = "password"
             elif field_type == "textarea":
-                props["multiline"] = True
+                props["inputType"] = "textarea"
+
+        elif component_type == "CheckBox":
+            # CheckBox uses "checked" for data binding, not "value"
+            props.pop("value", None)
+            props["checked"] = {"path": data_path}
 
         elif component_type == "ChoicePicker":
-            options = field_def.get("options", [])
-            props["options"] = options
+            # Frontend expects [{label, value}] objects, not plain strings
+            raw_options = field_def.get("options", [])
+            props["options"] = [
+                {"label": opt, "value": opt} if isinstance(opt, str) else opt for opt in raw_options
+            ]
 
         elif component_type == "Slider":
             if "min" in field_def:
@@ -201,12 +209,13 @@ class FormRenderer(ContentRenderer):
                 props["step"] = field_def["step"]
 
         elif component_type == "DateTimeInput":
+            # Frontend reads "inputType", not "mode"
             if field_type == "date":
-                props["mode"] = "date"
+                props["inputType"] = "date"
             elif field_type == "time":
-                props["mode"] = "time"
+                props["inputType"] = "time"
             else:
-                props["mode"] = "datetime"
+                props["inputType"] = "datetime"
 
         # Validation checks
         checks = self._build_checks(field_def, data_path)

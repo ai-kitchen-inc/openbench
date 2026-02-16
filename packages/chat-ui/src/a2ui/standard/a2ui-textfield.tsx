@@ -1,14 +1,14 @@
 /**
  * A2UI TextField component.
  *
- * Supports types: text, number, email, password, date, multiline.
- * Writes to data model via onAction.
+ * Supports types: text, number, email, password, date, multiline/textarea.
+ * Writes to data model via onAction. Evaluates checks for validation.
  */
 
 import { useState } from "react";
 import { nowISO } from "../../core/utils";
 import type { A2UIComponentRenderer } from "../../types";
-import { resolveBoolean, resolveString } from "../data-binding";
+import { evaluateChecks, resolveBoolean, resolveString } from "../data-binding";
 
 export const A2UITextField: A2UIComponentRenderer = ({ component, surface, onAction }) => {
   const label = resolveString(component.label, surface);
@@ -19,6 +19,11 @@ export const A2UITextField: A2UIComponentRenderer = ({ component, surface, onAct
   const initialValue = resolveString(component.value ?? "", surface);
 
   const [value, setValue] = useState(initialValue);
+  const [touched, setTouched] = useState(false);
+
+  const checks = Array.isArray(component.checks) ? component.checks : [];
+  const errors = touched ? evaluateChecks(checks, value, surface) : [];
+  const hasError = errors.length > 0;
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const newValue = e.target.value;
@@ -35,10 +40,13 @@ export const A2UITextField: A2UIComponentRenderer = ({ component, surface, onAct
     }
   };
 
+  const handleBlur = () => setTouched(true);
+
   const isMultiline = inputType === "multiline" || inputType === "textarea";
+  const wrapperClass = `a2ui-textfield${hasError ? " a2ui-textfield--error" : ""}`;
 
   return (
-    <div className="a2ui-textfield" data-component-id={component.id}>
+    <div className={wrapperClass} data-component-id={component.id}>
       {label && (
         <label className="a2ui-textfield__label">
           {label}
@@ -52,6 +60,7 @@ export const A2UITextField: A2UIComponentRenderer = ({ component, surface, onAct
           disabled={disabled}
           value={value}
           onChange={handleChange}
+          onBlur={handleBlur}
           rows={4}
         />
       ) : (
@@ -62,8 +71,14 @@ export const A2UITextField: A2UIComponentRenderer = ({ component, surface, onAct
           disabled={disabled}
           value={value}
           onChange={handleChange}
+          onBlur={handleBlur}
         />
       )}
+      {errors.map((msg, i) => (
+        <div key={i} className="a2ui-field-error">
+          {msg}
+        </div>
+      ))}
     </div>
   );
 };

@@ -119,13 +119,13 @@ A2UI is transport-agnostic. Supports: A2A, AG-UI, WebSocket, SSE, REST, MCP.
 |  |                    A2UI Layer                                  |    |
 |  |  SurfaceRenderer: adjacency list -> React component tree      |    |
 |  |  +---------------------------+------------------------------+  |    |
-|  |  | Standard Catalog (18)     | Custom Catalog (OpenBench)   |  |    |
+|  |  | Standard Catalog (18)     | Custom Catalog (OpenBench 6) |  |    |
 |  |  | Text, Image, Icon, Video, | ObChart (Recharts)           |  |    |
 |  |  | AudioPlayer, Row, Column, | ObFileCard                   |  |    |
 |  |  | List, Card, Tabs, Modal,  | ObCodeBlock (Shiki)          |  |    |
 |  |  | Divider, Button, TextField| ObMarkdown (react-markdown)  |  |    |
-|  |  | CheckBox, ChoicePicker,   |                              |  |    |
-|  |  | Slider, DateTimeInput     |                              |  |    |
+|  |  | CheckBox, ChoicePicker,   | ObTable                      |  |    |
+|  |  | Slider, DateTimeInput     | ObCallout                    |  |    |
 |  |  +---------------------------+------------------------------+  |    |
 |  +---------------------------+-----------------------------------+    |
 |                               |                                       |
@@ -154,8 +154,9 @@ A2UI is transport-agnostic. Supports: A2A, AG-UI, WebSocket, SSE, REST, MCP.
 |  +----------------------------+----------------------------------+  |
 |                                |                                      |
 |  +----------------------------v----------------------------------+  |
-|  |  Content Renderers -> A2UI Builder -> JSONL                    |  |
-|  |  TextRenderer, ChartRenderer, FormRenderer, FileRenderer      |  |
+|  |  Content Renderers (11) -> A2UI Builder -> JSONL               |  |
+|  |  Text, Chart, Code, Form, File, Media, List, Tabs,           |  |
+|  |  Modal, Table, Callout                                        |  |
 |  +----------------------------+----------------------------------+  |
 |                                |                                      |
 |  +----------------------------v----------------------------------+  |
@@ -186,8 +187,15 @@ src/openbench/chat/
 │   ├── base.py                 # ContentRenderer abstract base
 │   ├── text.py                 # TextRenderer (markdown, code, rich text)
 │   ├── chart.py                # ChartRenderer (bar, line, pie, scatter)
+│   ├── code.py                 # CodeRenderer (syntax-highlighted code)
 │   ├── form.py                 # FormRenderer (dynamic form generation)
-│   └── file.py                 # FileRenderer (file preview/download)
+│   ├── file.py                 # FileRenderer (file preview/download)
+│   ├── media.py                # MediaRenderer (images, video, audio)
+│   ├── list.py                 # ListRenderer (ordered/unordered lists)
+│   ├── tabs.py                 # TabsRenderer (tabbed content)
+│   ├── modal.py                # ModalRenderer (modal overlays)
+│   ├── table.py                # TableRenderer (structured tables)
+│   └── callout.py              # CalloutRenderer (styled callout boxes)
 ├── transport/                    # AG-UI protocol transport
 │   ├── __init__.py
 │   ├── agui.py                 # AGUIHandler -- AG-UI SSE event streaming
@@ -372,7 +380,7 @@ Custom catalog extending the 18 standard A2UI components with OpenBench-specific
 # Card, Tabs, Modal, Divider, Button, TextField, CheckBox,
 # ChoicePicker, Slider, DateTimeInput
 
-# OpenBench custom catalog (4 additional components):
+# OpenBench custom catalog (6 additional components):
 OPENBENCH_CATALOG_ID = "https://openbench.dev/catalog/v1"
 
 OPENBENCH_CATALOG = {
@@ -410,6 +418,21 @@ OPENBENCH_CATALOG = {
                 "allowHtml": "boolean",
             }
         },
+        "ObTable": {
+            "properties": {
+                "headers": "array",
+                "rows": "array",
+                "striped": "boolean",
+                "compact": "boolean",
+            }
+        },
+        "ObCallout": {
+            "properties": {
+                "content": "string",
+                "variant": "string",      # default, info, success, warning
+                "title": "string",
+            }
+        },
     },
     # Includes all 14 standard functions
     "functions": "inherit_from_standard",
@@ -427,7 +450,7 @@ class ContentRenderer(ABC):
     @property
     @abstractmethod
     def content_type(self) -> str:
-        """'text', 'chart', 'form', 'file'"""
+        """'text', 'chart', 'code', 'form', 'file', 'media', 'list', 'tabs', 'modal', 'table', 'callout'"""
 
     @abstractmethod
     def detect(self, content: Any) -> bool:
@@ -441,16 +464,21 @@ class ContentRenderer(ABC):
 ContentRendererRegistry = PluginRegistry[ContentRenderer]("content_renderer")
 ```
 
-4 implementations:
+11 implementations:
 
 | Renderer | Input | A2UI Output |
 |----------|-------|-------------|
 | `TextRenderer` | str / markdown | `Text` components with variant hints |
 | `ChartRenderer` | `{"type":"bar","data":{...}}` | `ObChart` custom component |
+| `CodeRenderer` | `{"code":"...","language":"..."}` | `ObCodeBlock` custom component |
 | `FormRenderer` | `{"fields":[...]}` | `TextField + CheckBox + ChoicePicker + Button` with data binding |
 | `FileRenderer` | `{"name":"...","url":"..."}` | `ObFileCard` custom component |
-
-Note: Audio and video are handled by the standard `AudioPlayer` and `Video` components directly via the A2UI builder -- no custom renderer needed.
+| `MediaRenderer` | `{"src":"...","mediaType":"image"}` | `Image`, `Video`, or `AudioPlayer` standard components |
+| `ListRenderer` | `{"items":[...],"listType":"ordered"}` | `List + Text` components |
+| `TabsRenderer` | `{"tabs":[...]}` | `Tabs + ObMarkdown` components |
+| `ModalRenderer` | `{"modalContent":"..."}` | `Modal + ObMarkdown` components |
+| `TableRenderer` | `{"headers":[...],"rows":[...]}` | `ObTable` custom component |
+| `CalloutRenderer` | `{"calloutContent":"..."}` | `ObCallout` custom component |
 
 #### A2UIMessageBuilder (a2ui/builder.py)
 
@@ -708,7 +736,7 @@ Client (@openbench/chat-ui)              Server (Python)
 |------|----------|
 | `tests/test_chat_session.py` | ChatMessage, Attachment, ChatSession CRUD, serialization |
 | `tests/test_a2ui_builder.py` | A2UI v0.10 JSONL generation, all 4 message types, validation |
-| `tests/test_content_renderers.py` | All 4 renderers: detect + render |
+| `tests/test_content_renderers.py` | All 11 renderers: detect + render |
 | `tests/test_chat_engine.py` | ChatEngine invoke, stream, compose with layers |
 | `tests/test_chat_layer.py` | ChatLayer L2 composition: DataLayer \| ChatLayer \| OutputLayer |
 
@@ -759,12 +787,14 @@ packages/chat-ui/
 │   │   │   ├── a2ui-choice-picker.tsx
 │   │   │   ├── a2ui-slider.tsx
 │   │   │   └── a2ui-datetime-input.tsx
-│   │   └── custom/                 # 4 OpenBench extended components
+│   │   └── custom/                 # 6 OpenBench extended components
 │   │       ├── index.ts
 │   │       ├── ob-chart.tsx        # Recharts wrapper
 │   │       ├── ob-file-card.tsx
 │   │       ├── ob-code-block.tsx   # Shiki syntax highlighting
-│   │       └── ob-markdown.tsx     # react-markdown
+│   │       ├── ob-markdown.tsx     # react-markdown
+│   │       ├── ob-table.tsx        # Structured tables
+│   │       └── ob-callout.tsx      # Styled callout boxes
 │   │
 │   ├── components/                 # Pre-built chat UI
 │   │   ├── ChatProvider.tsx        # React context (config, transport, store)
@@ -1161,7 +1191,7 @@ transport.onEvent() -> for each AG-UI event:
 | `Slider` | Numeric range | `label`, `value` (DynamicNumber), `min`, `max`, `checks` |
 | `DateTimeInput` | Date/time input | `value` (DynamicString), `enableDate`, `enableTime`, `min`, `max` |
 
-### Custom (4 OpenBench extensions)
+### Custom (6 OpenBench extensions)
 
 | Component | Library | Purpose |
 |-----------|---------|---------|
@@ -1169,6 +1199,8 @@ transport.onEvent() -> for each AG-UI event:
 | `ObFileCard` | Custom | File preview card with download |
 | `ObCodeBlock` | Shiki | Syntax-highlighted code blocks |
 | `ObMarkdown` | react-markdown | Rich markdown rendering |
+| `ObTable` | Custom | Structured tabular data display |
+| `ObCallout` | Custom + react-markdown | Styled callout boxes (info, success, warning) |
 
 ### Standard Functions (14)
 

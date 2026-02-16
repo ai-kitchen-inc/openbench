@@ -20,6 +20,7 @@ export function WelcomeScreen({
     <div className="chat-welcome">
       <div className="chat-welcome__icon">
         <svg
+          aria-hidden="true"
           width="48"
           height="48"
           viewBox="0 0 24 24"

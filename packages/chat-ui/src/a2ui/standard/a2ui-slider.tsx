@@ -2,12 +2,13 @@
  * A2UI Slider component.
  *
  * Custom styled range slider with value badge.
+ * Evaluates checks for validation.
  */
 
 import { useState } from "react";
 import { nowISO } from "../../core/utils";
 import type { A2UIComponentRenderer } from "../../types";
-import { resolveBoolean, resolveNumber, resolveString } from "../data-binding";
+import { evaluateChecks, resolveBoolean, resolveNumber, resolveString } from "../data-binding";
 
 export const A2UISlider: A2UIComponentRenderer = ({ component, surface, onAction }) => {
   const label = resolveString(component.label ?? "", surface);
@@ -19,10 +20,15 @@ export const A2UISlider: A2UIComponentRenderer = ({ component, surface, onAction
   const initialValue = resolveNumber(component.value ?? min, surface);
 
   const [value, setValue] = useState(initialValue);
+  const [touched, setTouched] = useState(false);
+
+  const checks = Array.isArray(component.checks) ? component.checks : [];
+  const errors = touched ? evaluateChecks(checks, value, surface) : [];
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newVal = Number(e.target.value);
     setValue(newVal);
+    setTouched(true);
 
     if (onAction) {
       onAction({
@@ -66,6 +72,11 @@ export const A2UISlider: A2UIComponentRenderer = ({ component, surface, onAction
         <span className="a2ui-slider__min">{min}</span>
         <span className="a2ui-slider__max">{max}</span>
       </div>
+      {errors.map((msg, i) => (
+        <div key={i} className="a2ui-field-error">
+          {msg}
+        </div>
+      ))}
     </div>
   );
 };

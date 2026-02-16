@@ -40,6 +40,7 @@ function MessageAttachment({ attachment }: { attachment: Attachment }) {
   return (
     <div className="chat-message__attachment chat-message__attachment--file">
       <svg
+        aria-hidden="true"
         className="chat-message__attachment-icon"
         width="16"
         height="16"

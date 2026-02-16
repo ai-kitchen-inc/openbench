@@ -147,14 +147,21 @@ openbench/
 │   │   ├── layer.py             # ChatLayer (L2) + ChatFactory
 │   │   ├── a2ui/                # A2UI v0.10 message building
 │   │   │   ├── builder.py       # A2UIMessageBuilder -- A2UI v0.10 JSONL generator
-│   │   │   ├── catalog.py       # Custom catalog (ObChart, ObFileCard, ObCodeBlock, ObMarkdown)
+│   │   │   ├── catalog.py       # Custom catalog (ObChart, ObFileCard, ObCodeBlock, ObMarkdown, ObTable, ObCallout)
 │   │   │   └── schema.py        # A2UI v0.10 message types and validation
-│   │   ├── renderers/           # Content -> A2UI component renderers
+│   │   ├── renderers/           # Content -> A2UI component renderers (11 total)
 │   │   │   ├── base.py          # ContentRenderer ABC + Registry
 │   │   │   ├── text.py          # TextRenderer
 │   │   │   ├── chart.py         # ChartRenderer
+│   │   │   ├── code.py          # CodeRenderer
 │   │   │   ├── form.py          # FormRenderer
-│   │   │   └── file.py          # FileRenderer
+│   │   │   ├── file.py          # FileRenderer
+│   │   │   ├── media.py         # MediaRenderer
+│   │   │   ├── list.py          # ListRenderer
+│   │   │   ├── tabs.py          # TabsRenderer
+│   │   │   ├── modal.py         # ModalRenderer
+│   │   │   ├── table.py         # TableRenderer
+│   │   │   └── callout.py       # CalloutRenderer
 │   │   └── transport/           # AG-UI protocol transport
 │   │       ├── agui.py          # AGUIHandler -- AG-UI SSE event streaming
 │   │       └── agui_actions.py  # AGUIActionHandler -- REST for A2UI actions
@@ -423,7 +430,7 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/chat/session.py` | ChatSession, ChatMessage, Attachment |
 | `src/openbench/chat/layer.py` | ChatLayer (L2) composable with other layers |
 | `src/openbench/chat/a2ui/builder.py` | A2UIMessageBuilder -- JSONL generator |
-| `src/openbench/chat/a2ui/catalog.py` | Custom A2UI catalog (ObChart, ObFileCard, ObCodeBlock, ObMarkdown) |
+| `src/openbench/chat/a2ui/catalog.py` | Custom A2UI catalog (ObChart, ObFileCard, ObCodeBlock, ObMarkdown, ObTable, ObCallout) |
 | `src/openbench/chat/renderers/base.py` | ContentRenderer ABC + ContentRendererRegistry |
 | `src/openbench/chat/transport/agui.py` | AGUIHandler -- AG-UI SSE event streaming |
 | `src/openbench/chat/transport/agui_actions.py` | AGUIActionHandler -- REST for A2UI actions |
@@ -453,7 +460,7 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | **intelligence-layer** | BaseAgent, LLM providers, tools, memory, RAG agents |
 | **output-layer** | PDF, PPTX, Dashboard, Audio, Markdown generators |
 | **chat-layer** | ChatEngine, A2UI v0.10 builder, content renderers, AG-UI transport, ChatLayer L2 |
-| **chat-ui** | @openbench/chat-ui React SDK, A2UI v0.10 components (18 standard + 4 custom), hooks, design system |
+| **chat-ui** | @openbench/chat-ui React SDK, A2UI v0.10 components (18 standard + 6 custom), hooks, design system |
 | **adapters** | LangChain, CrewAI, AG2, E2B, Google ADK adapters |
 | **testing-openbench** | Writing tests, test patterns, coverage |
 
