@@ -380,6 +380,12 @@ class ProviderService:
 
         registry = registry_map.get(provider_type)
         if not registry:
+            reserved = {ProviderType.EMBEDDING, ProviderType.STORAGE, ProviderType.VOICE}
+            if provider_type in reserved:
+                raise NotImplementedError(
+                    f"Provider type '{provider_type.value}' is reserved but not yet "
+                    f"implemented. Use the provider directly (e.g. EmbeddingProvider)."
+                )
             raise ValueError(f"No registry for provider type: {provider_type.value}")
 
         kwargs = {**config.credentials, **config.settings, **override_kwargs}

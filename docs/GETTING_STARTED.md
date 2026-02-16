@@ -26,7 +26,7 @@ pip install -e ".[security]"     # Credential encryption
 
 ```bash
 python -m unittest discover tests -v
-# Expected: 850+ Python tests + 171 TypeScript tests
+# Expected: 955 Python tests + 193 TypeScript tests
 ```
 
 ---
@@ -64,9 +64,9 @@ result = workflow.invoke({"query": "analyze sustainability"})
 ## Run the Examples
 
 ```bash
-python examples/core_abstractions_demo.py      # Core abstractions, registry, composition
-python examples/orchestration_demo.py          # L1/L2 two-level composition
-python examples/sustainability_report.py       # Complete E2E workflow
+python examples/core/core_abstractions_demo.py       # Core abstractions, registry, composition
+python examples/core/orchestration_demo.py           # L1/L2 two-level composition
+python examples/workflows/reports/sustainability_report.py  # Complete E2E workflow
 ```
 
 ---
@@ -176,7 +176,7 @@ python -m unittest discover tests -v
 python -m unittest tests.test_abstractions -v  # Specific file
 ```
 
-**Test coverage (896+ Python, 167 TypeScript):**
+**Test coverage (955 Python, 193 TypeScript):**
 - Core abstractions (16), Registry (45), Chainable (18)
 - L2 layers (17), Workflow (15), Provider service (32)
 - Config (20), Intelligence base (31)

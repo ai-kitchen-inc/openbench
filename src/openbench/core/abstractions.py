@@ -29,7 +29,9 @@ class DataSource(ABC):
 
     Implementation-agnostic: Could be YouTube, PDF, URL, Google Docs, etc.
 
-    DataSource is Chainable (L1): Can be composed with other DataSources.
+    Supports Chainable composition (L1) via duck-typing: implements
+    ``invoke()`` so it works with ``|`` and ``&`` operators through the
+    Chainable machinery, without inheriting from Chainable directly.
     """
 
     @property
