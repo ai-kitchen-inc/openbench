@@ -21,7 +21,7 @@ Four message types, every message has `"version": "v0.10"`:
 Components are flat objects: `{"id": "root", "component": "Column", "children": ["t1", "c1"]}`
 Root component must have `id: "root"`. Properties are NOT nested.
 
-Standard catalog: 18 components. Custom (OpenBench): 4 extensions.
+Standard catalog: 18 components. Custom (OpenBench): 6 extensions.
 
 ## Architecture
 
@@ -37,8 +37,15 @@ src/openbench/chat/
 │   ├── base.py         # ContentRenderer ABC + Registry
 │   ├── text.py         # TextRenderer (markdown, code)
 │   ├── chart.py        # ChartRenderer (bar, line, pie, scatter)
+│   ├── code.py         # CodeRenderer (syntax-highlighted code)
 │   ├── form.py         # FormRenderer (dynamic forms)
-│   └── file.py         # FileRenderer (file preview/download)
+│   ├── file.py         # FileRenderer (file preview/download)
+│   ├── media.py        # MediaRenderer (images, video, audio)
+│   ├── list.py         # ListRenderer (ordered/unordered lists)
+│   ├── tabs.py         # TabsRenderer (tabbed content)
+│   ├── modal.py        # ModalRenderer (modal overlays)
+│   ├── table.py        # TableRenderer (structured tables)
+│   └── callout.py      # CalloutRenderer (styled callout boxes)
 ├── transport/
 │   ├── agui.py         # AGUIHandler -- AG-UI SSE event streaming
 │   └── agui_actions.py # AGUIActionHandler -- REST for A2UI actions
@@ -243,7 +250,7 @@ Sync Thread (BaseAgent)           Async Event Loop (AGUIHandler)
 
 ## Custom A2UI Catalog
 
-4 custom components beyond the 18 standard A2UI v0.10 components:
+6 custom components beyond the 18 standard A2UI v0.10 components:
 
 | Component | Properties |
 |-----------|------------|
@@ -251,6 +258,8 @@ Sync Thread (BaseAgent)           Async Event Loop (AGUIHandler)
 | `ObFileCard` | `fileName`, `fileUrl`, `fileSize`, `mimeType`, `previewUrl` |
 | `ObCodeBlock` | `code`, `language`, `showLineNumbers`, `maxHeight` |
 | `ObMarkdown` | `content`, `allowHtml` |
+| `ObTable` | `headers`, `rows`, `striped`, `compact` |
+| `ObCallout` | `content`, `variant`, `title` |
 
 Note: `AudioPlayer` and `Video` are standard A2UI components -- no custom wrappers needed.
 

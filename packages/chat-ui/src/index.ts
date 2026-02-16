@@ -11,6 +11,7 @@ export {
   resolveComponent,
 } from "./a2ui/catalog";
 export {
+  evaluateChecks,
   resolveBoolean,
   resolveNumber,
   resolvePointer,

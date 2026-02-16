@@ -20,11 +20,18 @@ from openbench.chat.a2ui import (
 from openbench.chat.engine import ChatEngine
 from openbench.chat.layer import ChatFactory, ChatLayer
 from openbench.chat.renderers import (
+    CalloutRenderer,
     ChartRenderer,
+    CodeRenderer,
     ContentRenderer,
     ContentRendererRegistry,
     FileRenderer,
     FormRenderer,
+    ListRenderer,
+    MediaRenderer,
+    ModalRenderer,
+    TableRenderer,
+    TabsRenderer,
     TextRenderer,
 )
 from openbench.chat.session import (
@@ -55,6 +62,13 @@ __all__ = [
     "ContentRendererRegistry",
     "TextRenderer",
     "ChartRenderer",
+    "CodeRenderer",
     "FormRenderer",
     "FileRenderer",
+    "MediaRenderer",
+    "ListRenderer",
+    "TabsRenderer",
+    "ModalRenderer",
+    "TableRenderer",
+    "CalloutRenderer",
 ]

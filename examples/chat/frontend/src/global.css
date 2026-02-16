@@ -20,16 +20,52 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* ── CSS Variable Override Demo ──
+ *
+ * Override --ob-* custom properties to customize branding.
+ * Uncomment any line below to see the effect:
+ *
+ * :root {
+ *   --ob-primary: #2563eb;
+ *   --ob-primary-hover: #1d4ed8;
+ *   --ob-primary-text: #ffffff;
+ *   --ob-radius: 16px;
+ *   --ob-radius-sm: 10px;
+ *   --ob-user-bubble: #dbeafe;
+ *   --ob-user-text: #1e3a5f;
+ * }
+ */
+
 /* Fullscreen layout: sidebar + chat panel */
 .chat-layout {
   display: flex;
   height: 100vh;
   width: 100vw;
-  /* overflow: hidden; */
 }
 
 .chat-layout .chat-panel {
   flex: 1;
   min-width: 0;
   height: 100%;
+}
+
+/* ── Theme Toggle Button ── */
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--ob-text-secondary);
+  transition: background 0.15s, color 0.15s;
+}
+
+.theme-toggle:hover {
+  background: var(--ob-border);
+  color: var(--ob-text);
 }

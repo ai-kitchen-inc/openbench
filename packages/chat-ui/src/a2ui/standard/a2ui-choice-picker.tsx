@@ -2,12 +2,13 @@
  * A2UI ChoicePicker component.
  *
  * Custom styled dropdown select with chevron icon.
+ * Evaluates checks for validation.
  */
 
 import { useState } from "react";
 import { nowISO } from "../../core/utils";
 import type { A2UIComponentRenderer } from "../../types";
-import { resolveBoolean, resolveString } from "../data-binding";
+import { evaluateChecks, resolveBoolean, resolveString } from "../data-binding";
 
 export const A2UIChoicePicker: A2UIComponentRenderer = ({ component, surface, onAction }) => {
   const label = resolveString(component.label ?? "", surface);
@@ -18,10 +19,16 @@ export const A2UIChoicePicker: A2UIComponentRenderer = ({ component, surface, on
   const placeholder = resolveString(component.placeholder ?? "Select...", surface);
 
   const [value, setValue] = useState(initialValue);
+  const [touched, setTouched] = useState(false);
+
+  const checks = Array.isArray(component.checks) ? component.checks : [];
+  const errors = touched ? evaluateChecks(checks, value, surface) : [];
+  const hasError = errors.length > 0;
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newVal = e.target.value;
     setValue(newVal);
+    setTouched(true);
 
     if (onAction) {
       onAction({
@@ -34,8 +41,10 @@ export const A2UIChoicePicker: A2UIComponentRenderer = ({ component, surface, on
     }
   };
 
+  const wrapperClass = `a2ui-choice-picker${hasError ? " a2ui-choice-picker--error" : ""}`;
+
   return (
-    <div className="a2ui-choice-picker" data-component-id={component.id}>
+    <div className={wrapperClass} data-component-id={component.id}>
       {label && (
         <label className="a2ui-choice-picker__label">
           {label}
@@ -76,6 +85,11 @@ export const A2UIChoicePicker: A2UIComponentRenderer = ({ component, surface, on
           />
         </svg>
       </div>
+      {errors.map((msg, i) => (
+        <div key={i} className="a2ui-field-error">
+          {msg}
+        </div>
+      ))}
     </div>
   );
 };

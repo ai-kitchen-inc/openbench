@@ -26,7 +26,7 @@ pip install -e ".[security]"     # Credential encryption
 
 ```bash
 python -m unittest discover tests -v
-# Expected: 955 Python tests + 193 TypeScript tests
+# Expected: 1214 Python tests + 231 TypeScript tests
 ```
 
 ---
@@ -176,7 +176,7 @@ python -m unittest discover tests -v
 python -m unittest tests.test_abstractions -v  # Specific file
 ```
 
-**Test coverage (955 Python, 193 TypeScript):**
+**Test coverage (1214 Python, 231 TypeScript):**
 - Core abstractions (16), Registry (45), Chainable (18)
 - L2 layers (17), Workflow (15), Provider service (32)
 - Config (20), Intelligence base (31)
@@ -189,9 +189,9 @@ python -m unittest tests.test_abstractions -v  # Specific file
 
 **Core SDK Complete:** Core abstractions, plugin registry, chainable composition, L2 layers, workflows, Provider Service, Config system, Agent interface, framework adapters, embeddings.
 
-**Chat Layer Complete:** ChatEngine, A2UI v0.10 builder, content renderers (text, chart, form, file), SSE + REST transport, ChatLayer L2.
+**Chat Layer Complete:** ChatEngine, A2UI v0.10 builder, 11 content renderers (text, chart, code, form, file, media, list, tabs, modal, table, callout), SSE + REST transport, ChatLayer L2.
 
-**Chat UI SDK Complete:** @openbench/chat-ui React SDK — 18 standard + 4 custom A2UI components, hooks, SSE transport, Zustand store, Notion-inspired design system.
+**Chat UI SDK Complete:** @openbench/chat-ui React SDK — 18 standard + 6 custom A2UI components, hooks, SSE transport, Zustand store, Notion-inspired design system.
 
 ---
 

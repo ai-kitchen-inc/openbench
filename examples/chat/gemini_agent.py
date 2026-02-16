@@ -12,6 +12,12 @@ Uses BaseAgent with GeminiLLMProvider + tools:
   - create_form: Generate interactive forms (A2UI TextField/CheckBox/etc.)
   - show_file: Display file cards (A2UI ObFileCard)
   - generate_file: Generate downloadable files (text, markdown, CSV, JSON, HTML)
+  - show_media: Display inline images, videos, or audio players (A2UI Image/Video/AudioPlayer)
+  - create_list: Display structured lists of items (A2UI List)
+  - create_tabs: Create tabbed interfaces for categorized content (A2UI Tabs)
+  - show_modal: Display important info in modal overlays (A2UI Modal)
+  - create_table: Display structured tabular data (A2UI ObTable)
+  - create_callout: Display styled callout boxes (A2UI ObCallout)
 
 Phase 2 Agentic AI features (optional, enabled via factory params):
   - Task Planning: LLM decomposes complex queries into steps
@@ -37,14 +43,21 @@ from prompt import SYSTEM_PROMPT
 from schemas import (
     ANALYZE_FILE_SCHEMA,
     CALCULATE_SCHEMA,
+    CREATE_CALLOUT_SCHEMA,
     CREATE_CHART_SCHEMA,
+    CREATE_CODE_BLOCK_SCHEMA,
     CREATE_FORM_SCHEMA,
+    CREATE_LIST_SCHEMA,
+    CREATE_TABLE_SCHEMA,
+    CREATE_TABS_SCHEMA,
     EXTRACT_ENTITIES_SCHEMA,
     GENERATE_FILE_SCHEMA,
     GET_DATETIME_SCHEMA,
     KNOWLEDGE_LOOKUP_SCHEMA,
     SEARCH_WEB_SCHEMA,
     SHOW_FILE_SCHEMA,
+    SHOW_MEDIA_SCHEMA,
+    SHOW_MODAL_SCHEMA,
 )
 
 from openbench.core.chainable import Chain
@@ -443,6 +456,123 @@ def generate_file(filename: str, content: str, mime_type: str = "") -> str:
     return f"File generated: {filename} ({size} bytes)"
 
 
+def show_media(url: str, media_type: str, title: str = "", caption: str = "") -> str:
+    """Display inline media (image, video, or audio) by pushing to the render queue.
+
+    If media with the same URL already exists, it is replaced.
+    """
+    item: dict[str, Any] = {"src": url, "mediaType": media_type}
+    if title:
+        item["title"] = title
+    if caption:
+        item["caption"] = caption
+    # Replace same URL
+    items = _get_render_list()
+    items[:] = [i for i in items if not (i.get("src") == url and "mediaType" in i)]
+    items.append(item)
+    return f"Media displayed: {media_type} from {url}"
+
+
+def create_list(title: str, items: list, ordered: bool = False) -> str:
+    """Display a structured list by pushing to the render queue.
+
+    Only one list per response — if the agent refines the list, previous is replaced.
+    """
+    item: dict[str, Any] = {
+        "listType": "ordered" if ordered else "unordered",
+        "title": title,
+        "items": items,
+    }
+    # Replace any existing list item
+    items_list = _get_render_list()
+    items_list[:] = [i for i in items_list if not ("items" in i and "listType" in i)]
+    items_list.append(item)
+    return f"List created: '{title}' with {len(items)} items."
+
+
+def create_tabs(title: str, tabs: list[dict]) -> str:
+    """Create a tabbed interface by pushing tab data to the render queue.
+
+    Only one tabs component per response -- last one wins.
+    """
+    item: dict[str, Any] = {"tabs": tabs}
+    if title:
+        item["title"] = title
+    # Replace any existing tabs item
+    items = _get_render_list()
+    items[:] = [i for i in items if not ("tabs" in i and isinstance(i.get("tabs"), list))]
+    items.append(item)
+    labels = ", ".join(t.get("label", "?") for t in tabs)
+    return f"Tabs created: '{title}' with tabs: {labels}."
+
+
+def show_modal(title: str, content: str) -> str:
+    """Display content in a modal overlay.
+
+    Only one modal per response -- last one wins.
+    """
+    item: dict[str, Any] = {"modalContent": content, "modalTitle": title}
+    # Replace any existing modal item
+    items = _get_render_list()
+    items[:] = [i for i in items if "modalContent" not in i]
+    items.append(item)
+    return f"Modal displayed: '{title}'."
+
+
+def create_table(title: str, headers: list[str], rows: list[list[str]], caption: str = "") -> str:
+    """Display structured tabular data by pushing to the render queue.
+
+    If a table with the same title already exists (agent refinement), it is replaced.
+    Multiple tables with different titles are kept.
+    """
+    item: dict[str, Any] = {"headers": headers, "rows": rows, "title": title}
+    if caption:
+        item["caption"] = caption
+    # Replace table with same title (like charts)
+    items = _get_render_list()
+    items[:] = [
+        i for i in items if not (i.get("title") == title and "headers" in i and "rows" in i)
+    ]
+    items.append(item)
+    return f"Table created: '{title}' with {len(headers)} columns and {len(rows)} rows."
+
+
+def create_callout(content: str, variant: str = "default", title: str = "") -> str:
+    """Display a styled callout box by pushing to the render queue.
+
+    Only one callout per response — last one wins.
+    """
+    item: dict[str, Any] = {"calloutContent": content, "variant": variant}
+    if title:
+        item["title"] = title
+    # Replace any existing callout item
+    items = _get_render_list()
+    items[:] = [i for i in items if "calloutContent" not in i]
+    items.append(item)
+    return f"Callout displayed: '{title or variant}' variant."
+
+
+def create_code_block(code: str, language: str = "python", title: str = "") -> str:
+    """Display a syntax-highlighted code block by pushing to the render queue.
+
+    If a code block with the same title already exists (agent refinement), it is replaced.
+    Multiple untitled code blocks are kept (valid multi-block scenario).
+    """
+    item: dict[str, Any] = {"code": code, "language": language}
+    if title:
+        item["title"] = title
+        # Replace code block with same title (don't show same block twice)
+        items = _get_render_list()
+        items[:] = [
+            i for i in items if not (i.get("title") == title and "code" in i and "language" in i)
+        ]
+        items.append(item)
+    else:
+        items = _get_render_list()
+        items.append(item)
+    return f"Code block created: {language}, {len(code.splitlines())} lines."
+
+
 # ── Agent factory ──
 
 
@@ -506,5 +636,12 @@ def create_gemini_agent(
     agent.tools.register("create_form", create_form, schema=CREATE_FORM_SCHEMA)
     agent.tools.register("show_file", show_file, schema=SHOW_FILE_SCHEMA)
     agent.tools.register("generate_file", generate_file, schema=GENERATE_FILE_SCHEMA)
+    agent.tools.register("create_code_block", create_code_block, schema=CREATE_CODE_BLOCK_SCHEMA)
+    agent.tools.register("show_media", show_media, schema=SHOW_MEDIA_SCHEMA)
+    agent.tools.register("create_list", create_list, schema=CREATE_LIST_SCHEMA)
+    agent.tools.register("create_tabs", create_tabs, schema=CREATE_TABS_SCHEMA)
+    agent.tools.register("show_modal", show_modal, schema=SHOW_MODAL_SCHEMA)
+    agent.tools.register("create_table", create_table, schema=CREATE_TABLE_SCHEMA)
+    agent.tools.register("create_callout", create_callout, schema=CREATE_CALLOUT_SCHEMA)
 
     return agent
