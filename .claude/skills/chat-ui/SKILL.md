@@ -48,9 +48,7 @@ packages/chat-ui/
 │   ├── a2ui/                 # A2UI rendering
 │   │   ├── surface-renderer.tsx
 │   │   ├── catalog.ts        # Component registry
-│   │   ├── data-binding.ts   # JSON Pointer resolver
-│   │   ├── functions.ts      # 14 standard function evaluators
-│   │   ├── checks.ts         # Validation check runner
+│   │   ├── data-binding.ts   # JSON Pointer resolver + function evaluator
 │   │   ├── standard/         # 18 standard A2UI components
 │   │   └── custom/           # 4 OpenBench extensions
 │   ├── components/           # Pre-built chat UI
@@ -187,8 +185,7 @@ pnpm vitest           # Run tests
 - Use `"type"` on components -- the correct A2UI field is `"component"`
 - Nest properties inside a `"properties"` dict -- A2UI properties are flat
 - Use invented message types like `surfaceUpdate` or `beginRendering`
-- Forget to implement all 14 standard functions in the functions evaluator
-- Skip the `checks` system for input components -- it's part of the A2UI spec
+- Forget to implement standard functions in the data-binding evaluator
 
 ## Cross-References
 

@@ -33,9 +33,9 @@ export function WelcomeScreen({
       <h2 className="chat-welcome__greeting">{greeting}</h2>
       {suggestions.length > 0 && (
         <div className="chat-welcome__suggestions">
-          {suggestions.map((suggestion, i) => (
+          {suggestions.map((suggestion) => (
             <button
-              key={i}
+              key={suggestion}
               className="chat-welcome__suggestion"
               onClick={() => onSuggestionClick?.(suggestion)}
               type="button"

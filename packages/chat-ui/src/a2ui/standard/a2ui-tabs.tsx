@@ -18,18 +18,21 @@ export const A2UITabs: A2UIComponentRenderer = ({ component, surface, children }
   return (
     <div className="a2ui-tabs" data-component-id={component.id}>
       <div className="a2ui-tabs__header" role="tablist">
-        {tabs.map((tab, i) => (
-          <button
-            key={i}
-            role="tab"
-            className={`a2ui-tabs__tab ${i === activeIndex ? "a2ui-tabs__tab--active" : ""}`}
-            aria-selected={i === activeIndex}
-            onClick={() => setActiveIndex(i)}
-            type="button"
-          >
-            {resolveString(tab.label, surface)}
-          </button>
-        ))}
+        {tabs.map((tab, i) => {
+          const tabLabel = resolveString(tab.label, surface);
+          return (
+            <button
+              key={tabLabel}
+              role="tab"
+              className={`a2ui-tabs__tab ${i === activeIndex ? "a2ui-tabs__tab--active" : ""}`}
+              aria-selected={i === activeIndex}
+              onClick={() => setActiveIndex(i)}
+              type="button"
+            >
+              {tabLabel}
+            </button>
+          );
+        })}
       </div>
       <div className="a2ui-tabs__content" role="tabpanel">
         {childArray[activeIndex] ?? null}

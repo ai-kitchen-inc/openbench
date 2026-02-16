@@ -494,7 +494,6 @@ pnpm vitest               # Run tests
 - [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) - Installation and first workflow
 - [docs/API.md](docs/API.md) - Complete API reference
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Architecture overview
-- [docs/AGENTIC_AI_RAG.md](docs/AGENTIC_AI_RAG.md) - Agentic AI & RAG comprehensive guide
 - [docs/CHAT_UI_ARCHITECTURE.md](docs/CHAT_UI_ARCHITECTURE.md) - Chat UI SDK architecture
 - [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) - Design tokens and visual language
 - [examples/README.md](examples/README.md) - Example usage patterns

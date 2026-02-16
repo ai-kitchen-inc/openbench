@@ -228,9 +228,9 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
         alignItems: "center",
         gap: "12px",
         padding: "12px 16px",
-        border: "1px solid var(--a2ui-divider-color, rgba(55,53,47,0.09))",
+        border: "1px solid var(--ob-divider-color, rgba(55,53,47,0.09))",
         borderRadius: "8px",
-        backgroundColor: "var(--a2ui-card-bg, #ffffff)",
+        backgroundColor: "var(--ob-card-bg, #ffffff)",
       }}
     >
       {previewUrl ? (
@@ -241,7 +241,7 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
         />
       ) : (
         <span
-          style={{ display: "flex", flexShrink: 0, color: "var(--chat-text-secondary, #787774)" }}
+          style={{ display: "flex", flexShrink: 0, color: "var(--ob-text-secondary, #787774)" }}
         >
           <IconComponent />
         </span>
@@ -271,7 +271,7 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
           gap: "4px",
           padding: "6px 12px",
           borderRadius: "4px",
-          border: "1px solid var(--a2ui-divider-color, rgba(55,53,47,0.09))",
+          border: "1px solid var(--ob-divider-color, rgba(55,53,47,0.09))",
           textDecoration: "none",
           fontSize: "0.85em",
           color: "inherit",

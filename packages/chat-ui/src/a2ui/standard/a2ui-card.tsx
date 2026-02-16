@@ -21,7 +21,7 @@ export const A2UICard: A2UIComponentRenderer = ({ component, children }) => {
         padding,
         borderRadius: "8px",
         boxShadow: shadow,
-        backgroundColor: "var(--a2ui-card-bg, #ffffff)",
+        backgroundColor: "var(--ob-card-bg, #ffffff)",
       }}
     >
       {children}

@@ -2,7 +2,7 @@
  * ChatInput — text input with file upload and send button.
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { generateId } from "../core/utils";
 import type { Attachment } from "../types";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -22,6 +22,19 @@ export function ChatInput({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+
+  // Revoke blob URLs on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      for (const att of attachmentsRef.current) {
+        if (att.url.startsWith("blob:")) {
+          URL.revokeObjectURL(att.url);
+        }
+      }
+    };
+  }, []);
 
   const handleSend = useCallback(() => {
     const content = text.trim();
