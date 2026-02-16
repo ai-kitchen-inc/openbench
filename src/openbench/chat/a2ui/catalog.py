@@ -1,11 +1,13 @@
 """
 OpenBench custom A2UI catalog definition.
 
-Extends the 18 standard A2UI v0.10 components with 4 OpenBench-specific components:
+Extends the 18 standard A2UI v0.10 components with 6 OpenBench-specific components:
 - ObChart: Recharts-based chart rendering (bar, line, pie, scatter, area)
 - ObFileCard: File preview card with download
 - ObCodeBlock: Syntax-highlighted code (Shiki)
 - ObMarkdown: Rich markdown rendering (react-markdown)
+- ObTable: Structured tabular data display
+- ObCallout: Styled callout box with variant colors
 
 Note: AudioPlayer and Video are standard A2UI components -- no custom wrappers needed.
 """
@@ -56,7 +58,7 @@ STANDARD_FUNCTIONS = (
     "not",
 )
 
-# OpenBench custom catalog: 4 additional components
+# OpenBench custom catalog: 6 additional components
 OPENBENCH_CATALOG: dict = {
     "catalogId": OPENBENCH_CATALOG_ID,
     "components": {
@@ -97,6 +99,26 @@ OPENBENCH_CATALOG: dict = {
             "properties": {
                 "content": {"type": "string"},
                 "allowHtml": {"type": "boolean"},
+            },
+        },
+        "ObTable": {
+            "description": "Structured tabular data display",
+            "properties": {
+                "headers": {"type": "array"},
+                "rows": {"type": "array"},
+                "striped": {"type": "boolean"},
+                "compact": {"type": "boolean"},
+            },
+        },
+        "ObCallout": {
+            "description": "Styled callout box with variant colors",
+            "properties": {
+                "content": {"type": "string"},
+                "variant": {
+                    "type": "string",
+                    "enum": ["default", "info", "success", "warning"],
+                },
+                "title": {"type": "string"},
             },
         },
     },

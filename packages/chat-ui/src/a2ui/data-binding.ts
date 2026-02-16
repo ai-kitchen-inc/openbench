@@ -107,8 +107,11 @@ const BUILTIN_FUNCTIONS: Record<string, FnImpl> = {
 
   numeric: (args) => {
     const value = args.value;
-    if (typeof value === "number") return true;
-    return !Number.isNaN(Number(value));
+    const num = typeof value === "number" ? value : Number(value);
+    if (Number.isNaN(num)) return false;
+    if (typeof args.min === "number" && num < args.min) return false;
+    if (typeof args.max === "number" && num > args.max) return false;
+    return true;
   },
 
   email: (args) => {
@@ -227,4 +230,52 @@ function executeFunctionCall(
   }
 
   return fn(resolvedArgs, surface);
+}
+
+// ── Checks Evaluation ──
+
+interface CheckDef {
+  condition: unknown;
+  message: string;
+}
+
+/**
+ * Evaluate A2UI check rules against the current field value.
+ *
+ * Each check has a condition (FunctionCall) and a message.
+ * Data bindings in condition args are replaced with `currentValue`
+ * so validation runs against the live input, not stale dataModel.
+ *
+ * Returns an array of error messages for failed checks.
+ */
+export function evaluateChecks(
+  checks: unknown[],
+  currentValue: unknown,
+  surface: A2UISurface,
+): string[] {
+  if (!Array.isArray(checks) || checks.length === 0) return [];
+
+  const errors: string[] = [];
+  const dummySurface: A2UISurface = { ...surface };
+
+  for (const raw of checks) {
+    const check = raw as CheckDef;
+    if (!check?.condition || !check?.message) continue;
+
+    const cond = check.condition as { call?: string; args?: Record<string, unknown> };
+    if (!cond?.call) continue;
+
+    // Substitute data bindings in args with the current value
+    const resolvedArgs: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(cond.args ?? {})) {
+      resolvedArgs[k] = isDataBinding(v) ? currentValue : v;
+    }
+
+    const fn = BUILTIN_FUNCTIONS[cond.call];
+    if (fn && !fn(resolvedArgs, dummySurface)) {
+      errors.push(check.message);
+    }
+  }
+
+  return errors;
 }

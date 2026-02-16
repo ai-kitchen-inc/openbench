@@ -108,6 +108,7 @@ export function ChatInput({
           aria-label="Attach file"
         >
           <svg
+            aria-hidden="true"
             width="20"
             height="20"
             viewBox="0 0 24 24"
@@ -136,6 +137,7 @@ export function ChatInput({
           aria-label="Send message"
         >
           <svg
+            aria-hidden="true"
             width="20"
             height="20"
             viewBox="0 0 24 24"

@@ -380,7 +380,11 @@ class ProviderService:
 
         registry = registry_map.get(provider_type)
         if not registry:
-            reserved = {ProviderType.EMBEDDING, ProviderType.STORAGE, ProviderType.VOICE}
+            reserved = {
+                ProviderType.EMBEDDING,
+                ProviderType.STORAGE,
+                ProviderType.VOICE,
+            }
             if provider_type in reserved:
                 raise NotImplementedError(
                     f"Provider type '{provider_type.value}' is reserved but not yet "

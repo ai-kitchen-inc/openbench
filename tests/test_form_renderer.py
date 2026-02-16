@@ -148,7 +148,7 @@ class TestFormRenderer(unittest.TestCase):
         content = {"fields": [{"name": "bio", "type": "textarea", "label": "Bio"}]}
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "TextField")
-        self.assertTrue(field.properties["multiline"])
+        self.assertEqual(field.properties["inputType"], "textarea")
 
     # -- render other field types --
 
@@ -157,6 +157,9 @@ class TestFormRenderer(unittest.TestCase):
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "CheckBox")
         self.assertEqual(field.properties["label"], "I agree")
+        # CheckBox uses "checked" for data binding, not "value"
+        self.assertEqual(field.properties["checked"], {"path": "/form/agree"})
+        self.assertNotIn("value", field.properties)
 
     def test_render_select(self):
         content = {
@@ -171,7 +174,13 @@ class TestFormRenderer(unittest.TestCase):
         }
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "ChoicePicker")
-        self.assertEqual(field.properties["options"], ["Admin", "User", "Guest"])
+        # Options are converted to {label, value} objects for frontend
+        expected = [
+            {"label": "Admin", "value": "Admin"},
+            {"label": "User", "value": "User"},
+            {"label": "Guest", "value": "Guest"},
+        ]
+        self.assertEqual(field.properties["options"], expected)
 
     def test_render_slider(self):
         content = {
@@ -196,13 +205,19 @@ class TestFormRenderer(unittest.TestCase):
         content = {"fields": [{"name": "dob", "type": "date", "label": "Date of Birth"}]}
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "DateTimeInput")
-        self.assertEqual(field.properties["mode"], "date")
+        self.assertEqual(field.properties["inputType"], "date")
 
     def test_render_datetime_field(self):
         content = {"fields": [{"name": "ts", "type": "datetime", "label": "Timestamp"}]}
         components = self.renderer.render(content, surface_id="s1")
         field = _find_one(components, "DateTimeInput")
-        self.assertEqual(field.properties["mode"], "datetime")
+        self.assertEqual(field.properties["inputType"], "datetime")
+
+    def test_render_time_field(self):
+        content = {"fields": [{"name": "alarm", "type": "time", "label": "Alarm Time"}]}
+        components = self.renderer.render(content, surface_id="s1")
+        field = _find_one(components, "DateTimeInput")
+        self.assertEqual(field.properties["inputType"], "time")
 
     # -- required indicator --
 
