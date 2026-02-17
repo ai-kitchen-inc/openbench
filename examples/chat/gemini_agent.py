@@ -12,6 +12,7 @@ Uses BaseAgent with GeminiLLMProvider + tools:
   - create_form: Generate interactive forms (A2UI TextField/CheckBox/etc.)
   - show_file: Display file cards (A2UI ObFileCard)
   - generate_file: Generate downloadable files (text, markdown, CSV, JSON, HTML)
+  - generate_pdf: Generate professionally formatted PDF reports (ReportLab)
   - show_media: Display inline images, videos, or audio players (A2UI Image/Video/AudioPlayer)
   - create_list: Display structured lists of items (A2UI List)
   - create_tabs: Create tabbed interfaces for categorized content (A2UI Tabs)
@@ -52,6 +53,7 @@ from schemas import (
     CREATE_TABS_SCHEMA,
     EXTRACT_ENTITIES_SCHEMA,
     GENERATE_FILE_SCHEMA,
+    GENERATE_PDF_SCHEMA,
     GET_DATETIME_SCHEMA,
     KNOWLEDGE_LOOKUP_SCHEMA,
     SEARCH_WEB_SCHEMA,
@@ -64,6 +66,7 @@ from openbench.core.chainable import Chain
 from openbench.core.providers import ProviderType, configure_provider
 from openbench.data.sources import GroundedSearchSource, LangExtractSource, PDFSource
 from openbench.intelligence.base import BaseAgent
+from openbench.output.generators import PDFGenerator
 from openbench.workflows import Workflow
 
 # ── Per-request context (ContextVar for async isolation) ──
@@ -413,6 +416,7 @@ _MIME_TYPES: dict[str, str] = {
     ".sql": "text/x-sql",
     ".sh": "text/x-shellscript",
     ".log": "text/plain",
+    ".pdf": "application/pdf",
 }
 
 
@@ -454,6 +458,53 @@ def generate_file(filename: str, content: str, mime_type: str = "") -> str:
     items.append(item)
 
     return f"File generated: {filename} ({size} bytes)"
+
+
+def generate_pdf(
+    content: str,
+    title: str = "Report",
+    filename: str = "",
+    template: str = "report",
+    author: str = "",
+) -> str:
+    """Generate a real PDF report using ReportLab via PDFGenerator.
+
+    Creates a properly formatted PDF with headings, paragraphs, and
+    bullet points from markdown content. Saved to ./uploads/ for download.
+    """
+    if not filename:
+        safe = title.lower().replace(" ", "_")[:40]
+        filename = f"{safe}.pdf"
+    if not filename.endswith(".pdf"):
+        filename += ".pdf"
+
+    file_id = f"file-{uuid.uuid4().hex[:8]}"
+    upload_dir = Path("./uploads") / file_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    output_path = str(upload_dir / filename)
+
+    generator = PDFGenerator(template=template)
+    result = generator.generate(
+        content=content,
+        output_path=output_path,
+        title=title,
+        author=author or None,
+    )
+
+    url = f"/uploads/{file_id}/{filename}"
+    item: dict[str, Any] = {
+        "name": filename,
+        "url": url,
+        "mimeType": "application/pdf",
+        "size": result.size_bytes,
+    }
+    items = _get_render_list()
+    items[:] = [
+        i for i in items if not (i.get("name") == filename and "url" in i and "fields" not in i)
+    ]
+    items.append(item)
+
+    return f"PDF generated: {filename} ({result.size_bytes} bytes)"
 
 
 def show_media(url: str, media_type: str, title: str = "", caption: str = "") -> str:
@@ -636,6 +687,7 @@ def create_gemini_agent(
     agent.tools.register("create_form", create_form, schema=CREATE_FORM_SCHEMA)
     agent.tools.register("show_file", show_file, schema=SHOW_FILE_SCHEMA)
     agent.tools.register("generate_file", generate_file, schema=GENERATE_FILE_SCHEMA)
+    agent.tools.register("generate_pdf", generate_pdf, schema=GENERATE_PDF_SCHEMA)
     agent.tools.register("create_code_block", create_code_block, schema=CREATE_CODE_BLOCK_SCHEMA)
     agent.tools.register("show_media", show_media, schema=SHOW_MEDIA_SCHEMA)
     agent.tools.register("create_list", create_list, schema=CREATE_LIST_SCHEMA)

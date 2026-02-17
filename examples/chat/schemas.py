@@ -347,6 +347,53 @@ GENERATE_FILE_SCHEMA: dict[str, Any] = {
     },
 }
 
+GENERATE_PDF_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "generate_pdf",
+        "description": (
+            "Generate a professionally formatted PDF report from content. "
+            "Use this when the user asks to create, export, or download a PDF document. "
+            "Supports markdown formatting: headings (#, ##, ###), bullet points (- or *), "
+            "numbered lists, bold (**text**), italic (*text*), and code blocks. "
+            "Produces a real PDF file (not a text file), downloadable by the user."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": (
+                        "The report content in markdown format. "
+                        "Use # for title, ## for sections, - for bullets."
+                    ),
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Document title shown at the top of the PDF",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": (
+                        "Output filename (e.g. 'quarterly_report.pdf'). "
+                        "Auto-generated from title if omitted."
+                    ),
+                },
+                "template": {
+                    "type": "string",
+                    "enum": ["default", "report", "corporate"],
+                    "description": "PDF template style (default: 'report')",
+                },
+                "author": {
+                    "type": "string",
+                    "description": "Author name shown in the document metadata (optional)",
+                },
+            },
+            "required": ["content", "title"],
+        },
+    },
+}
+
 SHOW_MEDIA_SCHEMA: dict[str, Any] = {
     "type": "function",
     "function": {
