@@ -240,5 +240,125 @@ class TestAGUIActionHandlerRegistry(unittest.TestCase):
         self.assertIs(handler._handlers["test"], my_func)
 
 
+class TestAGUIActionHandlerErrorHandling(unittest.TestCase):
+    """Tests for handler error handling."""
+
+    def test_handler_exception_returns_error_response(self):
+        """When handler raises, return error callout instead of crashing."""
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        @handler.on("broken")
+        def handle_broken(action: ActionData):
+            raise ValueError("Something went wrong")
+
+        request = MockRequest({"name": "broken", "surfaceId": "s-1"})
+        messages = _run(handler.handle(request))
+
+        self.assertEqual(len(messages), 1)
+        msg = messages[0]
+        self.assertEqual(msg["version"], "v0.10")
+        components = msg["updateComponents"]["components"]
+        # Error response includes callout + root (so error actually renders)
+        self.assertEqual(len(components), 2)
+        callout = components[0]
+        self.assertEqual(callout["component"], "ObCallout")
+        self.assertEqual(callout["variant"], "error")
+        root = components[1]
+        self.assertEqual(root["component"], "Column")
+        self.assertEqual(root["children"], ["action-error"])
+
+    def test_async_handler_exception_returns_error_response(self):
+        """Async handler errors are caught too."""
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        @handler.on("async_broken")
+        async def handle_broken(action: ActionData):
+            raise RuntimeError("Async failure")
+
+        request = MockRequest({"name": "async_broken", "surfaceId": "s-2"})
+        messages = _run(handler.handle(request))
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["version"], "v0.10")
+
+
+class TestAGUIActionHandlerNewFields(unittest.TestCase):
+    """Tests for data_model and thread_id in ActionData."""
+
+    def test_data_model_parsed_from_body(self):
+        """dataModel from request body is available on ActionData."""
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        received = []
+
+        @handler.on("submit")
+        def capture(action: ActionData):
+            received.append(action)
+            return []
+
+        request = MockRequest(
+            {
+                "name": "submit",
+                "surfaceId": "s-1",
+                "context": {},
+                "dataModel": {"form": {"name": "Alice"}},
+                "threadId": "session-42",
+            }
+        )
+
+        _run(handler.handle(request))
+
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0].data_model, {"form": {"name": "Alice"}})
+        self.assertEqual(received[0].thread_id, "session-42")
+
+    def test_missing_data_model_defaults_to_none(self):
+        """Missing dataModel and threadId default to None."""
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        received = []
+
+        @handler.on("click")
+        def capture(action: ActionData):
+            received.append(action)
+            return []
+
+        request = MockRequest({"name": "click", "surfaceId": "s-1"})
+        _run(handler.handle(request))
+
+        self.assertIsNone(received[0].data_model)
+        self.assertIsNone(received[0].thread_id)
+
+
+class TestAGUIActionHandlerSchema(unittest.TestCase):
+    """Tests for get_registered_actions() schema endpoint."""
+
+    def test_get_registered_actions_empty(self):
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+        self.assertEqual(handler.get_registered_actions(), [])
+
+    def test_get_registered_actions_returns_names(self):
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        @handler.on("submit_form")
+        def h1(action):
+            return []
+
+        @handler.on("delete_item")
+        def h2(action):
+            return []
+
+        actions = handler.get_registered_actions()
+        self.assertIn("submit_form", actions)
+        self.assertIn("delete_item", actions)
+        self.assertEqual(len(actions), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

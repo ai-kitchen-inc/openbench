@@ -122,14 +122,14 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         extra_items = self._render_items_fn() if self._render_items_fn else None
 
         # 5. Render content to A2UI components
-        components = self._render_content(agent_output, extra_items)
+        components, data_model = self._render_content(agent_output, extra_items)
 
         # 6. Ensure root component
         components = self._ensure_root(components)
 
         # 7. Build A2UI JSONL messages
         surface_id = f"s-{uuid.uuid4().hex[:8]}"
-        messages = self.builder.build_surface(surface_id, components)
+        messages = self.builder.build_surface(surface_id, components, data_model=data_model)
 
         # 8. Build text content for session history
         text_content = self._extract_text_content(agent_output)
@@ -190,10 +190,10 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             # ── Step 3: Rendering response ──
             sid = _step_id()
             yield json.dumps(StepStartMessage(sid, "Rendering response", message_id).to_dict())
-            components = self._render_content(agent_output, extra_items)
+            components, data_model = self._render_content(agent_output, extra_items)
             components = self._ensure_root(components)
             surface_id = f"s-{uuid.uuid4().hex[:8]}"
-            messages = self.builder.build_surface(surface_id, components)
+            messages = self.builder.build_surface(surface_id, components, data_model=data_model)
 
             # Yield each A2UI message individually
             for msg in messages:
@@ -270,10 +270,10 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             # ── Step 3: Rendering response ──
             sid = _step_id()
             yield json.dumps(StepStartMessage(sid, "Rendering response", message_id).to_dict())
-            components = self._render_content(agent_output, extra_items)
+            components, data_model = self._render_content(agent_output, extra_items)
             components = self._ensure_root(components)
             surface_id = f"s-{uuid.uuid4().hex[:8]}"
-            messages = self.builder.build_surface(surface_id, components)
+            messages = self.builder.build_surface(surface_id, components, data_model=data_model)
 
             for msg in messages:
                 yield json.dumps(msg)
@@ -445,7 +445,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
 
     def _render_content(
         self, content: Any, extra_items: list[dict] | None = None
-    ) -> list[A2UIComponent]:
+    ) -> tuple[list[A2UIComponent], dict[str, Any] | None]:
         """Auto-detect content type and render to A2UI components.
 
         Args:
@@ -453,13 +453,21 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             extra_items: Additional structured items from render queue
                 (visualization tools). Each item is rendered through the
                 renderer pipeline independently and combined with main content.
+
+        Returns:
+            Tuple of (components, data_model). data_model is None if no
+            renderer provides initial values.
         """
         # Render main content (skip when content is None — text already streamed)
         main_components: list[A2UIComponent] = []
+        data_model: dict[str, Any] | None = None
         if content is not None:
             for renderer in self.renderers:
                 if renderer.detect(content):
                     main_components = renderer.render(content, surface_id="")
+                    dm = renderer.get_data_model(content)
+                    if dm:
+                        data_model = dm
                     break
             if not main_components:
                 main_components = [
@@ -472,7 +480,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
 
         # Render extra items from render queue
         if not extra_items:
-            return main_components
+            return main_components, data_model
 
         # Deduplicate: agents may call visualization tools multiple times in
         # reasoning loops. Keep only the last item per content type to avoid
@@ -485,15 +493,20 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             for renderer in self.renderers:
                 if renderer.detect(item):
                     extra_components.extend(renderer.render(item, surface_id=""))
+                    dm = renderer.get_data_model(item)
+                    if dm:
+                        if data_model is None:
+                            data_model = {}
+                        data_model.update(dm)
                     rendered = True
                     break
             if not rendered:
                 logger.warning(f"No renderer matched render item: {list(item.keys())}")
 
         if not extra_components:
-            return main_components
+            return main_components, data_model
 
-        return main_components + extra_components
+        return main_components + extra_components, data_model
 
     def _ensure_root(self, components: list[A2UIComponent]) -> list[A2UIComponent]:
         """Ensure there's a component with id='root'.

@@ -110,6 +110,8 @@ export class AGUITransport {
     sourceComponentId: string;
     timestamp: string;
     context: Record<string, unknown>;
+    dataModel?: Record<string, unknown>;
+    threadId?: string;
   }): Promise<Record<string, unknown>[]> {
     const url = this.config.actionUrl ?? "/chat/action";
 
@@ -145,7 +147,7 @@ export class AGUITransport {
     } catch (err) {
       console.error("[AGUITransport] Action error:", err);
       this.setStatus("error");
-      return [];
+      throw err;
     }
   }
 

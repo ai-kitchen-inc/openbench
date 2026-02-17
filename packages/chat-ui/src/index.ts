@@ -17,6 +17,7 @@ export {
   resolvePointer,
   resolveString,
   resolveValue,
+  setAtPath,
 } from "./a2ui/data-binding";
 export type { SurfaceRendererProps } from "./a2ui/surface-renderer";
 // ── A2UI (rendering layer) ──

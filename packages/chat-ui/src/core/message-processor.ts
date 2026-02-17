@@ -5,6 +5,7 @@
  * No React dependency -- pure state management.
  */
 
+import { setAtPath } from "../a2ui/data-binding";
 import type { A2UIComponent, A2UISurface } from "../types";
 
 const A2UI_VERSION = "v0.10";
@@ -42,12 +43,14 @@ export class A2UIMessageProcessor {
     return this.surfaces.get(surfaceId);
   }
 
-  /** Get all surfaces that have a root component (renderable). */
+  /** Get all surfaces that have a root component (renderable).
+   *  Returns shallow clones so React detects prop changes after in-place mutations.
+   */
   getRenderableSurfaces(): A2UISurface[] {
     const result: A2UISurface[] = [];
     for (const surface of this.surfaces.values()) {
       if (surface.components.has("root")) {
-        result.push(surface);
+        result.push({ ...surface, components: new Map(surface.components) });
       }
     }
     return result;
@@ -100,6 +103,14 @@ export class A2UIMessageProcessor {
     }
 
     const components = payload.components as A2UIComponent[];
+
+    // If the update contains a new root, do a full replacement (clear old components)
+    // so orphaned form fields don't linger in the Map
+    const hasNewRoot = components.some((c) => c.id === "root");
+    if (hasNewRoot) {
+      surface.components.clear();
+    }
+
     for (const comp of components) {
       surface.components.set(comp.id, comp);
     }
@@ -162,25 +173,6 @@ function parsePointer(path: string): string[] {
     .substring(1)
     .split("/")
     .map((s) => s.replace(/~1/g, "/").replace(/~0/g, "~"));
-}
-
-/**
- * Set a value at a JSON Pointer path in an object.
- */
-function setAtPath(obj: Record<string, unknown>, path: string, value: unknown): void {
-  const segments = parsePointer(path);
-  let current: Record<string, unknown> = obj;
-
-  for (let i = 0; i < segments.length - 1; i++) {
-    const seg = segments[i]!;
-    if (!(seg in current) || typeof current[seg] !== "object") {
-      current[seg] = {};
-    }
-    current = current[seg] as Record<string, unknown>;
-  }
-
-  const lastSeg = segments[segments.length - 1]!;
-  current[lastSeg] = value;
 }
 
 /**
