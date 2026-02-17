@@ -43,7 +43,7 @@ export interface UseChatReturn {
 
   // A2UI surfaces (kept for backward compat — per-message surfaces are in message.surfaces)
   surfaces: A2UISurface[];
-  sendAction: (action: A2UIAction) => void;
+  sendAction: (action: A2UIAction) => Promise<void>;
 
   // UI
   sidebarOpen: boolean;
@@ -164,27 +164,50 @@ export function useChat(config: ChatConfig): UseChatReturn {
 
   // Send A2UI action — routes response to correct message's processor
   const sendAction = useCallback(
-    (action: A2UIAction) => {
-      (async () => {
-        try {
-          const messages = await transport.sendAction({
-            name: action.name,
-            surfaceId: action.surfaceId,
-            sourceComponentId: action.sourceComponentId,
-            timestamp: action.timestamp,
-            context: action.context,
-          });
+    async (action: A2UIAction) => {
+      // Find surface to check sendDataModel flag
+      const state = store.getState();
+      const allMessages = state.messages;
+      let surface: A2UISurface | undefined;
+      for (const msg of allMessages) {
+        surface = msg.surfaces?.find((s) => s.surfaceId === action.surfaceId);
+        if (surface) break;
+      }
 
-          // Route A2UI response to the processor that owns the surface
-          if (messages.length > 0) {
-            streamManager.processActionResponse(action.surfaceId, messages);
-          }
-        } catch (err) {
-          console.error("[useChat] Action error:", err);
-        }
-      })();
+      const payload: {
+        name: string;
+        surfaceId: string;
+        sourceComponentId: string;
+        timestamp: string;
+        context: Record<string, unknown>;
+        dataModel?: Record<string, unknown>;
+        threadId?: string;
+      } = {
+        name: action.name,
+        surfaceId: action.surfaceId,
+        sourceComponentId: action.sourceComponentId,
+        timestamp: action.timestamp,
+        context: action.context,
+      };
+
+      // Attach full dataModel when surface has sendDataModel flag
+      if (surface?.sendDataModel) {
+        payload.dataModel = surface.dataModel;
+      }
+
+      // Attach threadId from active session
+      if (state.activeSessionId) {
+        payload.threadId = state.activeSessionId;
+      }
+
+      const messages = await transport.sendAction(payload);
+
+      // Route A2UI response to the processor that owns the surface
+      if (messages.length > 0) {
+        streamManager.processActionResponse(action.surfaceId, messages);
+      }
     },
-    [transport, streamManager],
+    [transport, streamManager, store],
   );
 
   // Session actions (delegate to store)

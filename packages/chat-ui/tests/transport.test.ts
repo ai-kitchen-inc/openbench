@@ -266,20 +266,46 @@ describe("AGUITransport REST actions", () => {
     t.dispose();
   });
 
-  it("sendAction() sets status to error on failure", async () => {
+  it("sendAction() includes dataModel and threadId when provided", async () => {
+    createMockAgent([]);
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const t = new AGUITransport(config);
+
+    await t.sendAction({
+      name: "submit",
+      surfaceId: "s1",
+      sourceComponentId: "btn-1",
+      timestamp: "2026-01-01T00:00:00Z",
+      context: { value: "test" },
+      dataModel: { form: { name: "Alice" } },
+      threadId: "session-123",
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.dataModel).toEqual({ form: { name: "Alice" } });
+    expect(body.threadId).toBe("session-123");
+
+    t.dispose();
+  });
+
+  it("sendAction() throws and sets status to error on failure", async () => {
     createMockAgent([]);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 500 })));
 
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const t = new AGUITransport(config);
-    await t.sendAction({
-      name: "click",
-      surfaceId: "s1",
-      sourceComponentId: "btn-1",
-      timestamp: "2026-01-01T00:00:00Z",
-      context: {},
-    });
+    await expect(
+      t.sendAction({
+        name: "click",
+        surfaceId: "s1",
+        sourceComponentId: "btn-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        context: {},
+      }),
+    ).rejects.toThrow("Action request failed: 500");
 
     expect(t.status).toBe("error");
 

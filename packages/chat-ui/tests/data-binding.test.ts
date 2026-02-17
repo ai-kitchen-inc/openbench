@@ -9,6 +9,7 @@ import {
   resolvePointer,
   resolveString,
   resolveValue,
+  setAtPath,
 } from "../src/a2ui/data-binding";
 import type { A2UISurface } from "../src/types";
 
@@ -298,5 +299,51 @@ describe("built-in functions", () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("nonexistent"));
       warn.mockRestore();
     });
+  });
+});
+
+// ── setAtPath ──
+
+describe("setAtPath", () => {
+  it("sets a top-level key", () => {
+    const obj: Record<string, unknown> = {};
+    setAtPath(obj, "/name", "Alice");
+    expect(obj.name).toBe("Alice");
+  });
+
+  it("sets a nested key, creating intermediates", () => {
+    const obj: Record<string, unknown> = {};
+    setAtPath(obj, "/user/address/city", "NYC");
+    expect((obj as any).user.address.city).toBe("NYC");
+  });
+
+  it("overwrites existing value", () => {
+    const obj: Record<string, unknown> = { form: { email: "old@test.com" } };
+    setAtPath(obj, "/form/email", "new@test.com");
+    expect((obj as any).form.email).toBe("new@test.com");
+  });
+
+  it("sets boolean value", () => {
+    const obj: Record<string, unknown> = {};
+    setAtPath(obj, "/form/agree", true);
+    expect((obj as any).form.agree).toBe(true);
+  });
+
+  it("sets numeric value", () => {
+    const obj: Record<string, unknown> = {};
+    setAtPath(obj, "/form/volume", 75);
+    expect((obj as any).form.volume).toBe(75);
+  });
+
+  it("handles path without leading slash", () => {
+    const obj: Record<string, unknown> = {};
+    setAtPath(obj, "key", "value");
+    expect(obj.key).toBe("value");
+  });
+
+  it("roundtrips with resolvePointer", () => {
+    const obj: Record<string, unknown> = {};
+    setAtPath(obj, "/form/name", "Bob");
+    expect(resolvePointer(obj, "/form/name")).toBe("Bob");
   });
 });

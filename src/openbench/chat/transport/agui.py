@@ -270,10 +270,12 @@ class AGUIHandler:
                 yield encoder.encode(StepStartedEvent(step_name="Rendering response"))
 
                 # Render only extra_items — skip text to avoid duplication
-                components = self.engine._render_content(None, extra_items)
+                components, data_model = self.engine._render_content(None, extra_items)
                 components = self.engine._ensure_root(components)
                 surface_id = f"s-{uuid.uuid4().hex[:8]}"
-                messages = self.engine.builder.build_surface(surface_id, components)
+                messages = self.engine.builder.build_surface(
+                    surface_id, components, data_model=data_model
+                )
 
                 for msg in messages:
                     yield encoder.encode(CustomEvent(name="a2ui", value=msg))

@@ -41,6 +41,17 @@ class ContentRenderer(ABC):
             True if this renderer can handle the content.
         """
 
+    def get_data_model(self, content: Any) -> dict[str, Any] | None:
+        """Return initial data model entries for the content.
+
+        Override in subclasses that need to seed the data model with
+        default values (e.g. form fields). Keys are JSON Pointer paths.
+
+        Returns:
+            Dict of {path: value} or None if no data model needed.
+        """
+        return None
+
     @abstractmethod
     def render(self, content: Any, surface_id: str) -> list[A2UIComponent]:
         """Convert content to A2UI component definitions.
