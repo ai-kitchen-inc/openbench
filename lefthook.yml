@@ -2,6 +2,7 @@ pre-commit:
   parallel: true
   commands:
     biome:
+      root: "packages/chat-ui/"
       glob: "*.{ts,tsx,js,jsx}"
       run: npx @biomejs/biome check --write {staged_files}
       stage_fixed: true
