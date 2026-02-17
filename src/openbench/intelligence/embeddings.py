@@ -390,7 +390,7 @@ def get_embedding_provider(provider: str, model: str | None = None, **kwargs) ->
     provider_class = EMBEDDING_PROVIDERS[provider]
 
     if model:
-        return provider_class(model=model, **kwargs)
+        return provider_class(model=model, **kwargs)  # type: ignore[call-arg]
     return provider_class(**kwargs)
 
 

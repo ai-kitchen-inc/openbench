@@ -196,7 +196,7 @@ class Config:
             else:
                 base[key] = value
 
-    def get(self, key: str, default: T = None) -> Any | T:
+    def get(self, key: str, default: T | None = None) -> Any | T | None:
         """
         Get config value by dot-notation key.
 
@@ -595,7 +595,7 @@ def get_config() -> Config:
 
 def get_default_model() -> str:
     """Get the default LLM model from config."""
-    return get_config().get("llm.default_model", "gpt-4o")
+    return str(get_config().get("llm.default_model", "gpt-4o"))
 
 
 def invalidate_embedding_cache() -> None:

@@ -289,7 +289,7 @@ class GeminiLLMProvider(LLMProvider):
         Returns:
             List of tool call dicts with id, name, arguments.
         """
-        tool_calls = []
+        tool_calls: list[dict[str, Any]] = []
         if not hasattr(response, "candidates") or not response.candidates:
             return tool_calls
 

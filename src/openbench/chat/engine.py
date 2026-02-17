@@ -412,7 +412,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                     # Agent might not support on_progress; retry with on_chunk only
                     if on_chunk:
                         try:
-                            return active_agent.execute(context, on_chunk=on_chunk)
+                            return active_agent.execute(context, on_chunk=on_chunk)  # type: ignore[call-arg]
                         except TypeError:
                             pass
                     return active_agent.execute(context)
