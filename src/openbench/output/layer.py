@@ -92,7 +92,7 @@ class OutputFactory:
             },
         }
 
-        config = generator_config.get(format)
+        config: dict[str, Any] | None = generator_config.get(format)
         if config:
             generator_class = config["class"]
 
