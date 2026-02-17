@@ -28,6 +28,8 @@ class ActionData:
     surface_id: str
     source_component_id: str | None = None
     context: dict[str, Any] = field(default_factory=dict)
+    data_model: dict[str, Any] | None = None
+    thread_id: str | None = None
 
 
 class AGUIActionHandler:
@@ -112,18 +114,28 @@ class AGUIActionHandler:
             surface_id=body.get("surfaceId", ""),
             source_component_id=body.get("sourceComponentId"),
             context=body.get("context", {}),
+            data_model=body.get("dataModel"),
+            thread_id=body.get("threadId"),
         )
 
         logger.info(f"Action received: {action.name} on surface {action.surface_id}")
 
         handler = self._handlers.get(action.name)
         if handler:
-            result = handler(action)
-            if asyncio.iscoroutine(result):
-                result = await result
-            return result
+            try:
+                result = handler(action)
+                if asyncio.iscoroutine(result):
+                    result = await result
+                return result
+            except Exception:
+                logger.exception(f"Handler error for action '{action.name}'")
+                return self._error_response(action, "Action handler failed")
 
         return self._default_response(action)
+
+    def get_registered_actions(self) -> list[str]:
+        """Return list of registered action names (for schema endpoint)."""
+        return list(self._handlers.keys())
 
     def _default_response(self, action: ActionData) -> list[dict[str, Any]]:
         """Default handler: no-op for unregistered actions.
@@ -135,3 +147,34 @@ class AGUIActionHandler:
         """
         logger.debug(f"No handler for action '{action.name}', ignoring")
         return []
+
+    def _error_response(self, action: ActionData, message: str) -> list[dict[str, Any]]:
+        """Return an A2UI updateComponents with an error callout.
+
+        Includes a root component so the error actually renders.
+        Without root, the callout would be orphaned (in Map but not
+        in any parent's children list) and never visible.
+        """
+        return [
+            {
+                "version": "v0.10",
+                "updateComponents": {
+                    "surfaceId": action.surface_id,
+                    "components": [
+                        {
+                            "id": "action-error",
+                            "component": "ObCallout",
+                            "variant": "error",
+                            "title": "Error",
+                            "message": message,
+                        },
+                        {
+                            "id": "root",
+                            "component": "Column",
+                            "children": ["action-error"],
+                            "gap": "12px",
+                        },
+                    ],
+                },
+            }
+        ]

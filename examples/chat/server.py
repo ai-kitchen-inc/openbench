@@ -126,28 +126,64 @@ action_handler = AGUIActionHandler(engine=engine)
 
 @action_handler.on("submit_form")
 def handle_form_submit(action: ActionData):
-    """Replace form with submission confirmation."""
-    data = action.context
-    summary_items = [f"{k}: {v}" for k, v in data.items() if v]
-    summary = "\n".join(summary_items) if summary_items else "No data submitted"
+    """Replace form with submission confirmation.
 
-    components = [
-        A2UIComponent(
-            id="confirm-text",
-            component="Text",
-            properties={"text": "Form submitted successfully", "variant": "h4"},
-        ),
-        A2UIComponent(
-            id="confirm-data",
-            component="ObMarkdown",
-            properties={"content": f"**Submitted data:**\n\n{summary}"},
-        ),
-        A2UIComponent(
-            id="root",
-            component="Column",
-            properties={"children": ["confirm-text", "confirm-data"], "gap": "12px"},
-        ),
-    ]
+    Uses ObCallout (success) + ObTable for a clear visual confirmation.
+    Includes root so handleUpdateComponents does a full replacement.
+    """
+    data = action.context
+    filled = {k: v for k, v in data.items() if v}
+
+    if not filled:
+        components = [
+            A2UIComponent(
+                id="confirm-callout",
+                component="ObCallout",
+                properties={
+                    "variant": "warning",
+                    "title": "No data submitted",
+                    "message": "The form was submitted without any values.",
+                },
+            ),
+            A2UIComponent(
+                id="root",
+                component="Column",
+                properties={"children": ["confirm-callout"], "gap": "12px"},
+            ),
+        ]
+    else:
+        headers = ["Field", "Value"]
+        rows = [[k, str(v)] for k, v in filled.items()]
+
+        components = [
+            A2UIComponent(
+                id="confirm-callout",
+                component="ObCallout",
+                properties={
+                    "variant": "success",
+                    "title": "Form submitted successfully",
+                    "message": f"{len(filled)} field(s) received.",
+                },
+            ),
+            A2UIComponent(
+                id="confirm-table",
+                component="ObTable",
+                properties={
+                    "headers": headers,
+                    "rows": rows,
+                    "compact": True,
+                },
+            ),
+            A2UIComponent(
+                id="root",
+                component="Column",
+                properties={
+                    "children": ["confirm-callout", "confirm-table"],
+                    "gap": "12px",
+                },
+            ),
+        ]
+
     return [engine.builder.build_update_components(action.surface_id, components)]
 
 
@@ -235,6 +271,12 @@ async def agent_endpoint(request: Request):
 async def chat_action(request: Request):
     """REST endpoint for A2UI actions (button clicks, form submits)."""
     return await action_handler.handle(request)
+
+
+@app.get("/chat/actions")
+async def list_actions():
+    """Schema endpoint: list registered action names."""
+    return {"actions": action_handler.get_registered_actions()}
 
 
 # Mount static files AFTER route definitions so routes take priority

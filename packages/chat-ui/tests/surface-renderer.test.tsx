@@ -2,7 +2,7 @@
  * Tests for SurfaceRenderer — A2UI surface → React component tree.
  */
 
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import type React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -160,6 +160,69 @@ describe("SurfaceRenderer", () => {
       expect(action.context).toEqual({ form: "test" });
     });
 
+    it("Button shows loading state during async action", async () => {
+      let resolveAction!: () => void;
+      const onAction = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveAction = resolve;
+          }),
+      );
+
+      const surface = makeSurface([
+        {
+          id: "root",
+          component: "Button",
+          label: "Submit",
+          action: { event: { name: "submit", context: {} } },
+        },
+      ]);
+
+      const { container } = render(<SurfaceRenderer surface={surface} onAction={onAction} />);
+
+      const button = screen.getByText("Submit").closest("button")!;
+      await userEvent.click(button);
+
+      // Button should be disabled during loading
+      expect(button.disabled).toBe(true);
+      expect(container.querySelector(".a2ui-button--loading")).not.toBeNull();
+      expect(container.querySelector(".a2ui-button__spinner")).not.toBeNull();
+
+      // Resolve the action inside act() to avoid React warning
+      await act(async () => {
+        resolveAction();
+      });
+      expect(button.disabled).toBe(false);
+    });
+
+    it("Button prevents double-submit while loading", async () => {
+      const onAction = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, 100);
+          }),
+      );
+
+      const surface = makeSurface([
+        {
+          id: "root",
+          component: "Button",
+          label: "Go",
+          action: { event: { name: "click", context: {} } },
+        },
+      ]);
+
+      render(<SurfaceRenderer surface={surface} onAction={onAction} />);
+
+      const button = screen.getByText("Go").closest("button")!;
+      await userEvent.click(button);
+      // Try clicking again while loading
+      await userEvent.click(button);
+
+      // Should only have been called once (second click ignored)
+      expect(onAction).toHaveBeenCalledTimes(1);
+    });
+
     it("Image renders with src", () => {
       const surface = makeSurface([
         { id: "root", component: "Image", src: "https://example.com/img.png", alt: "Test" },
@@ -221,6 +284,130 @@ describe("SurfaceRenderer", () => {
 
       render(<SurfaceRenderer surface={surface} />);
       expect(screen.getByTestId("my-widget").textContent).toBe("Custom!");
+    });
+  });
+
+  // ── Form validation ──
+
+  describe("form validation", () => {
+    it("Button blocks submit when required fields are empty", async () => {
+      const onAction = vi.fn();
+      const surface = makeSurface(
+        [
+          { id: "root", component: "Column", children: ["field1", "btn1"] },
+          {
+            id: "field1",
+            component: "TextField",
+            label: "Name",
+            required: true,
+            value: { path: "/form/name" },
+            checks: [
+              {
+                condition: { call: "required", args: { value: { path: "/form/name" } } },
+                message: "Name is required",
+              },
+            ],
+          },
+          {
+            id: "btn1",
+            component: "Button",
+            label: "Submit",
+            fullWidth: true,
+            action: {
+              event: {
+                name: "submit_form",
+                context: { name: { path: "/form/name" } },
+              },
+            },
+          },
+        ],
+        { form: { name: "" } },
+      );
+
+      const { container } = render(<SurfaceRenderer surface={surface} onAction={onAction} />);
+
+      const button = screen.getByText("Submit");
+      await userEvent.click(button);
+
+      // onAction should NOT have been called (validation failed)
+      expect(onAction).not.toHaveBeenCalled();
+
+      // Error message should appear on the button
+      expect(container.querySelector(".a2ui-button__error")).not.toBeNull();
+      expect(container.querySelector(".a2ui-button__error")?.textContent).toBe("Name is required");
+
+      // Field should show error (a2ui-validate event dispatched)
+      expect(container.querySelector(".a2ui-field-error")?.textContent).toBe("Name is required");
+    });
+
+    it("Button allows submit when required fields are filled", async () => {
+      const onAction = vi.fn();
+      const surface = makeSurface(
+        [
+          { id: "root", component: "Column", children: ["field1", "btn1"] },
+          {
+            id: "field1",
+            component: "TextField",
+            label: "Name",
+            required: true,
+            value: { path: "/form/name" },
+            checks: [
+              {
+                condition: { call: "required", args: { value: { path: "/form/name" } } },
+                message: "Name is required",
+              },
+            ],
+          },
+          {
+            id: "btn1",
+            component: "Button",
+            label: "Submit",
+            action: {
+              event: {
+                name: "submit_form",
+                context: { name: { path: "/form/name" } },
+              },
+            },
+          },
+        ],
+        { form: { name: "Alice" } },
+      );
+
+      render(<SurfaceRenderer surface={surface} onAction={onAction} />);
+
+      // Type value in the field to update dataModel
+      const input = screen.getByDisplayValue("Alice");
+      await userEvent.clear(input);
+      await userEvent.type(input, "Bob");
+
+      const button = screen.getByText("Submit");
+      await userEvent.click(button);
+
+      // onAction SHOULD have been called (validation passed)
+      expect(onAction).toHaveBeenCalledTimes(1);
+      expect(onAction.mock.calls[0][0].context.name).toBe("Bob");
+    });
+
+    it("Button shows error when onAction throws", async () => {
+      const onAction = vi.fn().mockRejectedValue(new Error("Server error"));
+
+      const surface = makeSurface([
+        {
+          id: "root",
+          component: "Button",
+          label: "Submit",
+          action: { event: { name: "click", context: {} } },
+        },
+      ]);
+
+      const { container } = render(<SurfaceRenderer surface={surface} onAction={onAction} />);
+
+      await act(async () => {
+        await userEvent.click(screen.getByText("Submit"));
+      });
+
+      expect(container.querySelector(".a2ui-button__error")).not.toBeNull();
+      expect(container.querySelector(".a2ui-button__error")?.textContent).toBe("Server error");
     });
   });
 

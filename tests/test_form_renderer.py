@@ -416,5 +416,80 @@ class TestFormRenderer(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
 
 
+class TestFormRendererDataModel(unittest.TestCase):
+    """Tests for FormRenderer.get_data_model()."""
+
+    def setUp(self):
+        self.renderer = FormRenderer()
+
+    def test_text_field_default_empty(self):
+        content = {"fields": [{"name": "email", "type": "email"}]}
+        dm = self.renderer.get_data_model(content)
+        self.assertIsNotNone(dm)
+        self.assertEqual(dm["/form/email"], "")
+
+    def test_checkbox_default_false(self):
+        content = {"fields": [{"name": "agree", "type": "checkbox"}]}
+        dm = self.renderer.get_data_model(content)
+        self.assertIsNotNone(dm)
+        self.assertEqual(dm["/form/agree"], False)
+
+    def test_slider_default_min(self):
+        content = {"fields": [{"name": "vol", "type": "slider", "min": 10}]}
+        dm = self.renderer.get_data_model(content)
+        self.assertIsNotNone(dm)
+        self.assertEqual(dm["/form/vol"], 10)
+
+    def test_slider_default_zero_no_min(self):
+        content = {"fields": [{"name": "val", "type": "slider"}]}
+        dm = self.renderer.get_data_model(content)
+        self.assertIsNotNone(dm)
+        self.assertEqual(dm["/form/val"], 0)
+
+    def test_custom_default_values(self):
+        content = {
+            "fields": [
+                {"name": "name", "type": "text", "default": "John"},
+                {"name": "agree", "type": "checkbox", "default": True},
+                {"name": "vol", "type": "slider", "default": 50},
+            ]
+        }
+        dm = self.renderer.get_data_model(content)
+        self.assertIsNotNone(dm)
+        self.assertEqual(dm["/form/name"], "John")
+        self.assertEqual(dm["/form/agree"], True)
+        self.assertEqual(dm["/form/vol"], 50)
+
+    def test_multiple_fields(self):
+        content = {
+            "fields": [
+                {"name": "email", "type": "email"},
+                {"name": "name", "type": "text"},
+                {"name": "agree", "type": "checkbox"},
+            ]
+        }
+        dm = self.renderer.get_data_model(content)
+        self.assertIsNotNone(dm)
+        self.assertEqual(len(dm), 3)
+        self.assertIn("/form/email", dm)
+        self.assertIn("/form/name", dm)
+        self.assertIn("/form/agree", dm)
+
+    def test_returns_none_for_non_dict(self):
+        self.assertIsNone(self.renderer.get_data_model("not a dict"))
+
+    def test_returns_none_for_empty_fields(self):
+        self.assertIsNone(self.renderer.get_data_model({"fields": []}))
+
+    def test_returns_none_for_no_fields(self):
+        self.assertIsNone(self.renderer.get_data_model({"title": "form"}))
+
+    def test_range_type_uses_slider_default(self):
+        content = {"fields": [{"name": "x", "type": "range", "min": 5}]}
+        dm = self.renderer.get_data_model(content)
+        self.assertIsNotNone(dm)
+        self.assertEqual(dm["/form/x"], 5)
+
+
 if __name__ == "__main__":
     unittest.main()
