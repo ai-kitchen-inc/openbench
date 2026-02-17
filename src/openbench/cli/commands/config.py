@@ -178,8 +178,8 @@ def validate():
     """Validate configuration."""
     console.print("\n[bold cyan]Validating Configuration[/bold cyan]\n")
 
-    errors = []
-    warnings = []
+    errors: list[str] = []
+    warnings: list[str] = []
 
     # Check local config file
     local_path = Path("openbench.yaml")
