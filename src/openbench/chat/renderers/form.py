@@ -58,6 +58,28 @@ class FormRenderer(ContentRenderer):
     def content_type(self) -> str:
         return "form"
 
+    def get_data_model(self, content: Any) -> dict[str, Any] | None:
+        """Return initial data model values for form fields."""
+        if not isinstance(content, dict):
+            return None
+        fields = content.get("fields")
+        if not isinstance(fields, list) or not fields:
+            return None
+        data: dict[str, Any] = {}
+        for f in fields:
+            if not isinstance(f, dict) or "name" not in f:
+                continue
+            name = f["name"]
+            ftype = f.get("type", "text")
+            path = f"/form/{name}"
+            if ftype == "checkbox":
+                data[path] = f.get("default", False)
+            elif ftype in ("slider", "range"):
+                data[path] = f.get("default", f.get("min", 0))
+            else:
+                data[path] = f.get("default", "")
+        return data if data else None
+
     def detect(self, content: Any) -> bool:
         """Detect if content is a form definition."""
         if not isinstance(content, dict):

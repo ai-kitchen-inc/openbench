@@ -883,6 +883,36 @@
   padding: 10px 16px;
 }
 
+.a2ui-button--loading {
+  gap: 6px;
+}
+
+.a2ui-button__spinner {
+  display: inline-flex;
+  animation: a2ui-spin 0.6s linear infinite;
+}
+
+.a2ui-button__label--loading {
+  opacity: 0.7;
+}
+
+@keyframes a2ui-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.a2ui-button-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.a2ui-button__error {
+  color: var(--ob-error, #dc3545);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 /* ── TextField ── */
 
 .a2ui-textfield {
@@ -1209,10 +1239,45 @@
   padding: 12px 0;
 }
 
+.a2ui-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 0;
+}
+
 .a2ui-modal__title {
   font-size: 1.125rem;
   font-weight: 600;
-  margin: 0 0 16px;
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.a2ui-modal__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--ob-text-secondary, rgba(55, 53, 47, 0.5));
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 8px;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.a2ui-modal__close:hover {
+  background: var(--ob-hover-bg, rgba(55, 53, 47, 0.08));
+  color: var(--ob-text-primary, #37352f);
+}
+
+.a2ui-modal__body {
+  padding: 16px 24px 24px;
 }
 
 .a2ui-image {

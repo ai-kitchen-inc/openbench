@@ -77,6 +77,28 @@ function parsePointer(path: string): string[] {
     .map((s) => s.replace(/~1/g, "/").replace(/~0/g, "~"));
 }
 
+// ── JSON Pointer Write ──
+
+/**
+ * Set a value at a JSON Pointer path in an object.
+ * Write counterpart to `resolvePointer`.
+ */
+export function setAtPath(obj: Record<string, unknown>, path: string, value: unknown): void {
+  const segments = parsePointer(path);
+  let current: Record<string, unknown> = obj;
+
+  for (let i = 0; i < segments.length - 1; i++) {
+    const seg = segments[i]!;
+    if (!(seg in current) || typeof current[seg] !== "object" || current[seg] === null) {
+      current[seg] = {};
+    }
+    current = current[seg] as Record<string, unknown>;
+  }
+
+  const lastSeg = segments[segments.length - 1]!;
+  current[lastSeg] = value;
+}
+
 // ── Built-in A2UI Functions ──
 
 type FnImpl = (args: Record<string, unknown>, surface: A2UISurface) => unknown;

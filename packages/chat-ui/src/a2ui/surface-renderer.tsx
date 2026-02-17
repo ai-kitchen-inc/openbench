@@ -20,7 +20,7 @@ export interface SurfaceRendererProps {
   /** The A2UI surface to render. */
   surface: A2UISurface;
   /** Callback when a user action occurs (button click, form submit, etc.). */
-  onAction?: (action: A2UIAction) => void;
+  onAction?: (action: A2UIAction) => void | Promise<void>;
 }
 
 /**
@@ -44,7 +44,7 @@ export const SurfaceRenderer: React.FC<SurfaceRendererProps> = ({ surface, onAct
 interface ComponentNodeProps {
   component: A2UIComponent;
   surface: A2UISurface;
-  onAction?: (action: A2UIAction) => void;
+  onAction?: (action: A2UIAction) => void | Promise<void>;
 }
 
 const ComponentNode: React.FC<ComponentNodeProps> = ({ component, surface, onAction }) => {

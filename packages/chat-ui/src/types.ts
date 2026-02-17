@@ -168,7 +168,7 @@ export type A2UIComponentRenderer = React.ComponentType<{
   component: A2UIComponent;
   surface: A2UISurface;
   children?: React.ReactNode;
-  onAction?: (action: A2UIAction) => void;
+  onAction?: (action: A2UIAction) => void | Promise<void>;
 }>;
 
 export type ComponentCatalog = Record<string, A2UIComponentRenderer>;
