@@ -629,7 +629,7 @@ def discover_plugins(packages: list[str] | None = None) -> dict[str, int]:
             "openbench.plugins.output",
         ]
 
-    results = {}
+    results: dict[str, int] = {}
     for package in packages:
         # Find matching registry
         for name, registry in PluginRegistry._all_registries.items():
