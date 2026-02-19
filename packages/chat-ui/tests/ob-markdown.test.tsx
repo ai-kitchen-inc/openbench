@@ -45,15 +45,20 @@ describe("ObMarkdown", () => {
     expect(h1?.textContent).toBe("Title");
   });
 
-  it("renders inline math ($...$) without crashing", () => {
-    const component = makeComponent("The formula is $E = mc^2$ here.");
+  it("renders single-dollar signs as literal text (not math)", () => {
+    const component = makeComponent("The cost is $100 and $200 total.");
     const surface = makeSurface();
 
     const { container } = render(<ObMarkdown component={component} surface={surface} />);
 
-    // KaTeX wraps math in .katex spans
+    // Single-dollar should NOT trigger KaTeX (singleDollarTextMath: false)
     const katexEl = container.querySelector(".katex");
-    expect(katexEl).not.toBeNull();
+    expect(katexEl).toBeNull();
+
+    // Dollar signs should appear as literal text
+    const text = container.textContent ?? "";
+    expect(text).toContain("$100");
+    expect(text).toContain("$200");
   });
 
   it("renders display math ($$...$$) without crashing", () => {
