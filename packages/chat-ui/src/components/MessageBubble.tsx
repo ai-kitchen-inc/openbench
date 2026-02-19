@@ -89,7 +89,7 @@ export function MessageBubble({ message, onAction }: MessageBubbleProps) {
         {message.content && (
           <div className="chat-message__text ob-markdown">
             <ReactMarkdown
-              remarkPlugins={[remarkGfm, remarkMath]}
+              remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
               rehypePlugins={[rehypeRaw, rehypeKatex]}
             >
               {message.content}
