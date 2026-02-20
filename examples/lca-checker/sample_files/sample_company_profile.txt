@@ -1,0 +1,72 @@
+================================================================
+           COMPANY SUSTAINABILITY PROFILE
+           PT Green Packaging Indonesia
+================================================================
+
+Company ID: CP-001
+Industry: Packaging (corrugated cardboard)
+
+GENERAL INFORMATION
+================================================================
+Company Name:     PT Green Packaging Indonesia
+Established:      2005
+Location:         Jl. Industri Raya No. 45, Tangerang, Banten 15135
+Employees:        350
+Annual Revenue:   IDR 180 billion (approx. USD 11.5 million)
+Production:       25,000 tonnes corrugated products per year
+
+PRODUCTS
+================================================================
+1. Corrugated cardboard boxes (3-layer, 5-layer)
+   - B-flute, C-flute, E-flute configurations
+   - Standard and custom dimensions
+   - Used for: food, electronics, consumer goods shipping
+
+2. Recycled paper bags
+   - Brown kraft paper, 80 gsm
+   - Retail and industrial applications
+
+RAW MATERIALS
+================================================================
+- Virgin pulpwood: sourced from FSC-certified plantations (Sumatera)
+- Recycled fiber: OCC (Old Corrugated Containers) from local collection
+  Recycled content: 55% average across products
+- Starch adhesive: corn-based, locally sourced
+- Printing inks: water-based, low-VOC
+
+CERTIFICATIONS
+================================================================
+1. ISO 14001:2015 - Environmental Management System
+   Certified since: 2012
+   Certification body: SGS Indonesia
+
+2. FSC Chain of Custody (FSC-C123456)
+   Certified since: 2015
+   Scope: corrugated products using virgin fiber
+
+3. PROPER Hijau (KLHK)
+   Rating: Green (above compliance)
+   Year: 2023-2024
+
+SUSTAINABILITY INITIATIVES
+================================================================
+- Solar panel installation (2023): 200 kWp, covering 15% of electricity
+- Wastewater treatment plant upgrade (2022)
+- Zero waste to landfill target by 2026
+- Carbon footprint reduction: -18% since 2020 baseline
+
+LCA STUDIES
+================================================================
+Study ID: LCA-2024-001
+Product: Corrugated cardboard box (1 kg)
+Scope: Cradle-to-gate
+Status: Completed (all 4 phases)
+Purpose: EPD publication
+Software: SimaPro 9.5
+Reviewer: Dr. Budi Santoso, ITB (independent)
+
+CONTACT
+================================================================
+Environmental Manager: Ibu Sari Wijaya
+Email: sari.wijaya@greenpackaging.co.id
+Phone: +62 21 5555 1234
