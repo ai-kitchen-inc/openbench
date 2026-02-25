@@ -3,7 +3,7 @@
 Each schema follows the OpenAI function-calling format used by BaseAgent's
 ToolExecutor to describe tool parameters to the LLM.
 
-19 tools grouped by domain area.
+22 tools grouped by domain area (19 core + 3 RAG).
 """
 
 from typing import Any
@@ -528,6 +528,93 @@ CREATE_CALLOUT_SCHEMA: dict[str, Any] = {
                 },
             },
             "required": ["content"],
+        },
+    },
+}
+
+# ── RAG Tools (optional, enabled when Pinecone is configured) ──
+
+SEARCH_STANDARDS_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "search_standards",
+        "description": (
+            "Semantic search across ISO 14044 requirements, PCR templates, "
+            "Pedoman KLH requirements, and impact categories. Use for conceptual "
+            "questions like 'what does ISO say about allocation?' or 'requirements "
+            "for functional unit'. Returns ranked results with relevance scores."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query about LCA standards",
+                },
+                "source_type": {
+                    "type": "string",
+                    "enum": ["iso", "pcr", "klh", "impact_category"],
+                    "description": (
+                        "Filter by source type. If omitted, searches across all sources."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default: 5, max: 10)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+SEARCH_DOCUMENTS_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "search_documents",
+        "description": (
+            "Semantic search across uploaded LCA documents (reports, company profiles). "
+            "Documents must be indexed first via index_document. Returns relevant "
+            "passages with scores and document names."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query about document content",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default: 5, max: 10)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+INDEX_DOCUMENT_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "index_document",
+        "description": (
+            "Index an uploaded document into the vector store for semantic search. "
+            "Call this before search_documents to make file content searchable. "
+            "Supports PDF and text files."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": (
+                        "Name of the uploaded file to index. "
+                        "If omitted, indexes all uploaded files."
+                    ),
+                },
+            },
+            "required": [],
         },
     },
 }

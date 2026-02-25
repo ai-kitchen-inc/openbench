@@ -17,6 +17,10 @@ install: ## Install all dependencies
 	pip install -e "../../.[chat]"
 	cd frontend && pnpm install
 
+install-rag: ## Install with RAG support (Pinecone + Google embeddings)
+	pip install -e "../../.[chat,vector,google]"
+	cd frontend && pnpm install
+
 # ── Utilities ──
 
 test: ## Run lca_engine standalone tests

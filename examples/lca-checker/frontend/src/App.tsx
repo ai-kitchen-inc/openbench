@@ -21,12 +21,12 @@ const STREAM_URL = "/awp";
 const SUGGESTIONS = [
   "Check ISO 14044 compliance for LCA-2024-001",
   "Compare impact results with packaging benchmarks",
-  "Review company CP-001 compliance status",
-  "What are PCR requirements for construction products?",
-  "Check data quality for LCA-2024-003",
-  "Explain ISO 14044 Section 4.4 LCIA requirements",
-  "Run full compliance review for LCA-2024-002",
-  "Check Pedoman KLH compliance for LCA-2024-001",
+  "What does ISO say about allocation procedures for co-products?",
+  "How does Japfa implement LCA for aquaculture operations?",
+  "What is Japfa's Sustainability-Linked Bond (SLB) commitment?",
+  "Search Japfa report for greenhouse gas emission reduction targets",
+  "What are Japfa's water recycling and conservation initiatives?",
+  "How does Japfa address animal welfare in their sustainability report?",
 ];
 
 // ── Dark mode hook ──
@@ -94,7 +94,7 @@ function ChatLayout() {
       <ChatPanel
         title="LCA Compliance Checker"
         suggestions={SUGGESTIONS}
-        placeholder="Ask about ISO 14044 compliance, PCR requirements, or Pedoman KLH..."
+        placeholder="Ask about ISO 14044, Japfa sustainability report, or Pedoman KLH..."
         greeting="Welcome to LCA Compliance Checker"
         headerRight={
           <button
