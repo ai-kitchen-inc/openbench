@@ -1,10 +1,10 @@
 """
 LCA compliance agent for the LCA Checker demo.
 
-Uses BaseAgent with GeminiLLMProvider + up to 22 domain-specific tools for
+Uses BaseAgent with GeminiLLMProvider + up to 24 domain-specific tools for
 ISO 14040/14044, PCR, and Pedoman KLH Indonesia compliance checking.
 
-Core: 19 tools (always available)
+Core: 21 tools (always available)
 RAG:  3 tools (optional, enabled when Pinecone is configured)
 
 Follows the same pattern as examples/lighthouser/semap_agent.py:
@@ -52,11 +52,13 @@ from schemas import (
     CREATE_COMPLIANCE_REVIEW_FORM_SCHEMA,
     CREATE_TABLE_SCHEMA,
     GENERATE_COMPLIANCE_REPORT_SCHEMA,
+    GENERATE_MARKDOWN_REPORT_SCHEMA,
     INDEX_DOCUMENT_SCHEMA,
     LIST_PCR_CATEGORIES_SCHEMA,
     LOOKUP_COMPANY_PROFILE_SCHEMA,
     LOOKUP_LCA_STUDY_SCHEMA,
     LOOKUP_STANDARD_REFERENCE_SCHEMA,
+    READ_EXCEL_SCHEMA,
     SEARCH_DOCUMENTS_SCHEMA,
     SEARCH_STANDARDS_SCHEMA,
 )
@@ -829,6 +831,28 @@ def analyze_document(filename: str = "") -> str:
             raw = PDFSource(path=file_path).extract()
             pages = raw.metadata.get("total_pages", "?")
             parts.append(f"**{name}** ({pages} pages)\n\n{raw.content}")
+        elif mime in (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+        ):
+            try:
+                import pandas as pd
+
+                sheets = pd.read_excel(file_path, sheet_name=None)
+                sheet_parts = []
+                for sheet_name, df in sheets.items():
+                    total = len(df)
+                    preview = df.head(50)
+                    md = preview.to_markdown(index=False)
+                    header = f"### Sheet: {sheet_name} ({total} rows)"
+                    if total > 50:
+                        header += " — showing first 50"
+                    sheet_parts.append(f"{header}\n\n{md}")
+                parts.append(f"**{name}** ({len(sheets)} sheet(s))\n\n" + "\n\n".join(sheet_parts))
+            except ImportError:
+                parts.append(f"[{name}] Excel support requires pandas + openpyxl")
+            except Exception as exc:
+                parts.append(f"[{name}] Excel read failed: {exc}")
         elif mime.startswith("text/"):
             content = Path(file_path).read_text(encoding="utf-8")
             parts.append(f"**{name}**\n\n{content}")
@@ -836,6 +860,69 @@ def analyze_document(filename: str = "") -> str:
             parts.append(f"[{name}] ({mime}) -- binary file, text extraction not supported")
 
     return "\n\n---\n\n".join(parts)
+
+
+def read_excel(
+    filename: str,
+    sheet_name: str = "",
+    columns: list[str] | None = None,
+    limit: int = 100,
+) -> str:
+    """Read Excel file with optional sheet/column filtering, render as ObTable."""
+    attachments = _current_attachments_var.get()
+    if not attachments:
+        return "No files have been uploaded in this message."
+
+    att = _resolve_attachment(filename)
+    if not att:
+        available = ", ".join(a["name"] for a in attachments)
+        return f"File '{filename}' not found. Available: {available}"
+
+    file_path = att["path"]
+    mime = att.get("mime_type", "")
+    if mime not in (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+    ):
+        return f"'{filename}' is not an Excel file (MIME: {mime}). Use analyze_document instead."
+
+    try:
+        import pandas as pd
+
+        target_sheet = sheet_name if sheet_name else 0
+        df = pd.read_excel(file_path, sheet_name=target_sheet)
+    except ImportError:
+        return "Excel support requires pandas + openpyxl. Install with: pip install pandas openpyxl"
+    except Exception as exc:
+        return f"Failed to read Excel file: {exc}"
+
+    if columns:
+        missing = [c for c in columns if c not in df.columns]
+        if missing:
+            return (
+                f"Columns not found: {', '.join(missing)}. "
+                f"Available: {', '.join(str(c) for c in df.columns)}"
+            )
+        df = df[columns]
+
+    total = len(df)
+    df = df.head(limit)
+    headers = [str(c) for c in df.columns]
+    rows = [[str(v) for v in row] for row in df.values.tolist()]
+
+    actual_sheet = sheet_name if sheet_name else "Sheet1"
+    caption = f"{total} total rows"
+    if total > limit:
+        caption += f" — showing first {limit}"
+
+    items = _get_render_list()
+    title = f"{att['name']} — {actual_sheet}"
+    items[:] = [
+        i for i in items if not (i.get("title") == title and "headers" in i and "rows" in i)
+    ]
+    items.append({"headers": headers, "rows": rows, "title": title, "caption": caption})
+
+    return f"Excel data loaded: {len(headers)} columns, {len(rows)} rows from '{actual_sheet}'."
 
 
 def create_compliance_review_form(study_id: str) -> str:
@@ -1041,6 +1128,139 @@ def generate_compliance_report(
     )
 
     return f"Compliance report generated: {filename} ({result.size_bytes} bytes)"
+
+
+def generate_markdown_report(
+    study_id: str,
+    include_pcr: bool = True,
+    include_klh: bool = True,
+    include_benchmarks: bool = True,
+) -> str:
+    """Generate a Markdown compliance report for an LCA study."""
+    study = _get_study(study_id)
+    if not study:
+        return _format_not_found("Study", study_id, list(LCA_STUDIES.keys()))
+
+    company_id = study.get("company_id")
+    company = _get_company(company_id) if company_id else None
+    industry = company["industry"] if company else ""
+
+    # Build report content (same logic as PDF)
+    lines = [
+        "# LCA Compliance Report",
+        f"## Study: {study_id}",
+        "",
+        f"**Product:** {study['product']}",
+        f"**Functional Unit:** {study['functional_unit']}",
+        f"**System Boundary:** {study['system_boundary']}",
+    ]
+    if company:
+        lines.append(f"**Company:** {company['company_name']}")
+    lines.append("")
+
+    # ISO 14044 Compliance
+    iso_result = check_iso_compliance(study, "all")
+    lines.append("## ISO 14044 Compliance")
+    lines.append("")
+    for phase, checks in iso_result.items():
+        phase_title = ISO_REQUIREMENTS.get(phase, {}).get("title", phase)
+        p = sum(1 for c in checks if c["status"] == "pass")
+        lines.append(f"### {phase_title} ({p}/{len(checks)} passed)")
+        for c in checks:
+            icon = _status_icon(c["status"])
+            lines.append(f"- {icon} [{c['id']}] {c['requirement']}")
+            lines.append(f"  *{c['detail']}*")
+        lines.append("")
+
+    # PCR Compliance
+    pcr_result = None
+    if include_pcr and industry:
+        pcr_result = check_pcr_compliance(study, industry)
+        if "details" in pcr_result:
+            lines.append(f"## PCR Compliance: {pcr_result.get('pcr_name', industry)}")
+            lines.append(
+                f"Pass rate: {pcr_result['pass_rate']}% "
+                f"({pcr_result['passed']}/{pcr_result['total_requirements']})"
+            )
+            lines.append("")
+            for c in pcr_result["details"]:
+                icon = _status_icon(c["status"])
+                lines.append(f"- {icon} {c['check']}: {c['detail']}")
+            lines.append("")
+
+    # Pedoman KLH
+    klh_result = None
+    if include_klh:
+        klh_result = check_pedoman_klh_compliance(study)
+        lines.append("## Pedoman KLH Indonesia")
+        lines.append(
+            f"Pass rate: {klh_result['pass_rate']}% "
+            f"({klh_result['passed']}/{klh_result['total_checks']})"
+        )
+        lines.append("")
+        for c in klh_result["details"]:
+            icon = _status_icon(c["status"])
+            lines.append(f"- {icon} [{c['id']}] {c['check']}: {c['detail']}")
+        lines.append("")
+
+    # Benchmark comparison
+    if include_benchmarks and industry:
+        bench = compare_with_benchmarks(study.get("impact_results", {}), industry)
+        if "comparisons" in bench:
+            lines.append(f"## Benchmark Comparison ({industry})")
+            for cat, comp in bench["comparisons"].items():
+                lines.append(
+                    f"- **{cat}**: {comp['value']} {comp['unit']} "
+                    f"(median: {comp['benchmark_median']}) -> {comp['assessment']}"
+                )
+            lines.append("")
+
+    # Overall summary
+    summary = generate_compliance_summary(iso_result, pcr_result, klh_result)
+    lines.append("## Overall Summary")
+    lines.append(f"**Score:** {summary['overall_score']}% ({summary['status']})")
+    lines.append(f"**Passed:** {summary['passed']}/{summary['total_checks']}")
+    if summary["critical_gaps"]:
+        lines.append("")
+        lines.append("**Critical Gaps:**")
+        lines.extend(f"- {gap}" for gap in summary["critical_gaps"])
+    if summary["recommendations"]:
+        lines.append("")
+        lines.append("**Recommendations:**")
+        lines.extend(f"- {rec}" for rec in summary["recommendations"])
+
+    content = "\n".join(lines)
+
+    # Render as ObCodeBlock (markdown preview)
+    items = _get_render_list()
+    items.append(
+        {
+            "code": content,
+            "language": "markdown",
+            "title": f"Compliance Report: {study_id}",
+        }
+    )
+
+    # Save as .md file
+    md_filename = f"lca_compliance_{study_id.lower().replace('-', '_')}.md"
+    file_id = f"file-{uuid.uuid4().hex[:8]}"
+    upload_dir = Path("./uploads") / file_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    output_path = upload_dir / md_filename
+    output_path.write_text(content, encoding="utf-8")
+    size_bytes = output_path.stat().st_size
+
+    url = f"/uploads/{file_id}/{md_filename}"
+    items.append(
+        {
+            "name": md_filename,
+            "url": url,
+            "mimeType": "text/markdown",
+            "size": size_bytes,
+        }
+    )
+
+    return f"Markdown report generated: {md_filename} ({size_bytes} bytes)"
 
 
 # ── Visualization Tools ──
@@ -1365,6 +1585,7 @@ def create_lca_agent(
         schema=LOOKUP_STANDARD_REFERENCE_SCHEMA,
     )
     agent.tools.register("analyze_document", analyze_document, schema=ANALYZE_DOCUMENT_SCHEMA)
+    agent.tools.register("read_excel", read_excel, schema=READ_EXCEL_SCHEMA)
     agent.tools.register(
         "create_compliance_review_form",
         create_compliance_review_form,
@@ -1374,6 +1595,11 @@ def create_lca_agent(
         "generate_compliance_report",
         generate_compliance_report,
         schema=GENERATE_COMPLIANCE_REPORT_SCHEMA,
+    )
+    agent.tools.register(
+        "generate_markdown_report",
+        generate_markdown_report,
+        schema=GENERATE_MARKDOWN_REPORT_SCHEMA,
     )
 
     # Visualization

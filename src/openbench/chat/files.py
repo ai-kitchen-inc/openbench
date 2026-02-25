@@ -129,11 +129,18 @@ class FileStore:
         )
 
 
+_EXCEL_MIMES = {
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+}
+
+
 class FileContentExtractor:
     """Extract text content from uploaded files.
 
     Supports:
     - application/pdf: Uses PDFSource for extraction
+    - Excel (.xlsx/.xls): Converts sheets to markdown tables (first 10 rows)
     - text/*: Direct file read
     - image/*: Returns metadata description
     - other: Returns metadata description
@@ -152,6 +159,9 @@ class FileContentExtractor:
 
         if mime == "application/pdf":
             return self._extract_pdf(stored_file)
+
+        if mime in _EXCEL_MIMES:
+            return self._extract_excel(stored_file)
 
         if mime.startswith("text/"):
             return self._extract_text(stored_file)
@@ -183,6 +193,28 @@ class FileContentExtractor:
             except Exception as e:
                 return f"[Text file: {stored_file.name}] (read failed: {e})"
 
+    def _extract_excel(self, stored_file: StoredFile, max_rows: int = 10) -> str:
+        """Extract Excel sheets as markdown tables (preview)."""
+        try:
+            import pandas as pd
+
+            sheets = pd.read_excel(stored_file.path, sheet_name=None)
+            parts: list[str] = []
+            for name, df in sheets.items():
+                total = len(df)
+                preview = df.head(max_rows)
+                md = preview.to_markdown(index=False)
+                header = f"### Sheet: {name} ({total} rows)"
+                if total > max_rows:
+                    header += f" — showing first {max_rows}"
+                parts.append(f"{header}\n\n{md}")
+            return "\n\n".join(parts)
+        except ImportError:
+            return f"[Excel: {stored_file.name}] (install pandas + openpyxl for Excel support)"
+        except Exception as e:
+            logger.warning(f"Excel extraction failed for {stored_file.name}: {e}")
+            return f"[Excel: {stored_file.name}] (extraction failed: {e})"
+
 
 def _guess_mime_type(filename: str) -> str:
     """Guess MIME type from filename extension."""
@@ -200,6 +232,8 @@ def _guess_mime_type(filename: str) -> str:
         ".svg": "image/svg+xml",
         ".mp3": "audio/mpeg",
         ".wav": "audio/wav",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xls": "application/vnd.ms-excel",
         ".mp4": "video/mp4",
         ".webm": "video/webm",
     }

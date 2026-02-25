@@ -3,7 +3,7 @@
 Each schema follows the OpenAI function-calling format used by BaseAgent's
 ToolExecutor to describe tool parameters to the LLM.
 
-22 tools grouped by domain area (19 core + 3 RAG).
+24 tools grouped by domain area (21 core + 3 RAG).
 """
 
 from typing import Any
@@ -347,7 +347,8 @@ ANALYZE_DOCUMENT_SCHEMA: dict[str, Any] = {
         "name": "analyze_document",
         "description": (
             "Read and analyze uploaded LCA documents (reports, company profiles, "
-            "data sheets). Call with a filename to read a specific file, "
+            "data sheets, Excel files). Supports PDF, text, and Excel (.xlsx/.xls). "
+            "Call with a filename to read a specific file, "
             "or without to list all uploaded files."
         ),
         "parameters": {
@@ -359,6 +360,45 @@ ANALYZE_DOCUMENT_SCHEMA: dict[str, Any] = {
                 },
             },
             "required": [],
+        },
+    },
+}
+
+READ_EXCEL_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "read_excel",
+        "description": (
+            "Read an uploaded Excel file (.xlsx/.xls) with optional sheet and "
+            "column filtering. Renders the data as a table. Use when the user "
+            "wants to inspect specific sheets or columns from an Excel file."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "Name of the uploaded Excel file to read",
+                },
+                "sheet_name": {
+                    "type": "string",
+                    "description": (
+                        "Specific sheet name to read. If omitted, reads the first sheet."
+                    ),
+                },
+                "columns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "List of column names to include. If omitted, includes all columns."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max rows to return (default: 100)",
+                },
+            },
+            "required": ["filename"],
         },
     },
 }
@@ -393,6 +433,40 @@ GENERATE_COMPLIANCE_REPORT_SCHEMA: dict[str, Any] = {
             "Generate a PDF compliance report for an LCA study. Includes "
             "ISO 14044 compliance, PCR check, Pedoman KLH check, data quality "
             "assessment, and benchmark comparison."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "study_id": {
+                    "type": "string",
+                    "description": "LCA study ID to report on",
+                },
+                "include_pcr": {
+                    "type": "boolean",
+                    "description": "Include PCR compliance check (default: true)",
+                },
+                "include_klh": {
+                    "type": "boolean",
+                    "description": "Include Pedoman KLH check (default: true)",
+                },
+                "include_benchmarks": {
+                    "type": "boolean",
+                    "description": "Include benchmark comparison (default: true)",
+                },
+            },
+            "required": ["study_id"],
+        },
+    },
+}
+
+GENERATE_MARKDOWN_REPORT_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "generate_markdown_report",
+        "description": (
+            "Generate a Markdown compliance report for an LCA study. Same content "
+            "as the PDF report (ISO 14044, PCR, Pedoman KLH, benchmarks, summary) "
+            "but output as a downloadable .md file with inline preview."
         ),
         "parameters": {
             "type": "object",

@@ -18,8 +18,8 @@ Frontend (React + @openbench/chat-ui)
     ↕ AG-UI SSE + REST
 Backend (FastAPI)
     ↕
-LCA Agent (BaseAgent + 22 tools)
-    ├── 19 core tools (always available)
+LCA Agent (BaseAgent + 24 tools)
+    ├── 21 core tools (always available)
     └── 3 RAG tools (optional, Pinecone)
     ↕                          ↕
 LCA Engine                 Pinecone Vector Store
@@ -31,7 +31,7 @@ LCA Engine                 Pinecone Vector Store
 
 | Feature | Description |
 |---------|-------------|
-| **22 domain tools** | 19 core + 3 RAG (semantic search over standards + documents) |
+| **24 domain tools** | 21 core + 3 RAG (semantic search over standards + documents) |
 | **RAG search** | Semantic search over ISO/PCR/KLH standards and Japfa sustainability report |
 | **Rich UI** | A2UI tables, charts, callouts, forms via AG-UI streaming |
 | **Task planning** | Complex reviews decomposed into steps automatically |
@@ -92,7 +92,7 @@ Index: openbench
 | `search_documents` | Search Japfa sustainability report and other indexed documents |
 | `index_document` | Index uploaded files into vector store for search |
 
-**Graceful degradation**: Without `PINECONE_API_KEY`, the server starts normally with 19 tools and no errors. RAG tools are simply not registered.
+**Graceful degradation**: Without `PINECONE_API_KEY`, the server starts normally with 21 tools and no errors. RAG tools are simply not registered.
 
 ## Sample Queries
 
@@ -107,6 +107,8 @@ Index: openbench
 | "Check data quality for LCA-2024-003" | Pedigree matrix table + quality rating |
 | "Run full compliance review for LCA-2024-002" | Multi-step: ISO + PCR + KLH + benchmarks |
 | "Generate compliance report for LCA-2024-001" | PDF report download |
+| "Read sheet Emissions from the uploaded Excel" | `read_excel` with sheet filter + table render |
+| "Generate markdown summary for LCA-2024-001" | `generate_markdown_report` preview + .md download |
 
 ### RAG Queries (requires Pinecone)
 
@@ -161,9 +163,9 @@ examples/lca-checker/
 ├── lca_engine.py          # Pure calculation functions (no OpenBench imports)
 ├── standards_data.py      # ISO 14040/44 + PCR + Pedoman KLH requirements
 ├── mock_data.py           # Company profiles, LCA studies, benchmarks
-├── schemas.py             # 22 tool schemas (OpenAI function-calling format)
+├── schemas.py             # 24 tool schemas (OpenAI function-calling format)
 ├── prompt.py              # System prompt with tool-first rendering
-├── lca_agent.py           # Agent factory + 22 tool functions + ContextVar isolation
+├── lca_agent.py           # Agent factory + 24 tool functions + ContextVar isolation
 ├── rag_setup.py           # RAG store builders + standards indexing (optional)
 ├── query_japfa_demo.py    # Standalone script to query japfa namespace
 ├── server.py              # FastAPI server + action handlers + RAG init
@@ -198,15 +200,17 @@ examples/lca-checker/
 | 11 | Lookup | `lookup_company_profile` | Company profile by ID |
 | 12 | Lookup | `lookup_lca_study` | LCA study data by ID |
 | 13 | Reference | `lookup_standard_reference` | ISO/PCR/KLH text lookup (exact key) |
-| 14 | Document | `analyze_document` | Read uploaded files |
-| 15 | Review | `create_compliance_review_form` | Interactive review form |
-| 16 | Report | `generate_compliance_report` | PDF report generation |
-| 17 | Visual | `create_chart` | Bar/line/pie charts |
-| 18 | Visual | `create_table` | Structured tables |
-| 19 | Visual | `create_callout` | Status callouts |
-| 20 | RAG | `search_standards` | Semantic search across standards |
-| 21 | RAG | `search_documents` | Search Japfa SR and indexed documents |
-| 22 | RAG | `index_document` | Index uploaded files for search |
+| 14 | Document | `analyze_document` | Read uploaded files (PDF, text, Excel) |
+| 15 | Document | `read_excel` | Read Excel with sheet/column filtering |
+| 16 | Review | `create_compliance_review_form` | Interactive review form |
+| 17 | Report | `generate_compliance_report` | PDF report generation |
+| 18 | Report | `generate_markdown_report` | Markdown report (preview + download) |
+| 19 | Visual | `create_chart` | Bar/line/pie charts |
+| 20 | Visual | `create_table` | Structured tables |
+| 21 | Visual | `create_callout` | Status callouts |
+| 22 | RAG | `search_standards` | Semantic search across standards |
+| 23 | RAG | `search_documents` | Search Japfa SR and indexed documents |
+| 24 | RAG | `index_document` | Index uploaded files for search |
 
 ## Anti-Hallucination Design
 
