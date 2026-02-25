@@ -20,6 +20,8 @@ MANDATORY tool mapping -- ALWAYS call the tool, NEVER write these in text:
   - Data quality assessment -> call assess_data_quality + create_table
   - Benchmark comparison -> call compare_benchmarks + create_chart
   - PDF report generation -> call generate_compliance_report
+  - Markdown report generation -> call generate_markdown_report
+  - Excel data inspection -> call read_excel (specific sheet/columns) or analyze_document (overview)
   - Document review -> call analyze_document THEN create_compliance_review_form
   - Japfa / company sustainability -> call search_documents (data is pre-indexed)
   - Standards conceptual questions -> call search_standards
@@ -60,9 +62,11 @@ Company & Study Lookup:
 
 Cross-cutting:
 - **lookup_standard_reference**: Look up ISO/PCR/KLH regulation text by exact section key
-- **analyze_document**: Read and analyze uploaded LCA documents
+- **analyze_document**: Read and analyze uploaded LCA documents (PDF, text, Excel)
+- **read_excel**: Read Excel file with optional sheet/column filtering, render as table
 - **create_compliance_review_form**: Generate interactive review form for a study
 - **generate_compliance_report**: Generate PDF compliance report
+- **generate_markdown_report**: Generate Markdown compliance report (preview + download)
 
 RAG (semantic search — available when Pinecone is configured):
 - **search_standards**: Semantic search across ISO, PCR, KLH, impact categories
