@@ -1,8 +1,11 @@
 """
 LCA compliance agent for the LCA Checker demo.
 
-Uses BaseAgent with GeminiLLMProvider + 19 domain-specific tools for
+Uses BaseAgent with GeminiLLMProvider + up to 22 domain-specific tools for
 ISO 14040/14044, PCR, and Pedoman KLH Indonesia compliance checking.
+
+Core: 19 tools (always available)
+RAG:  3 tools (optional, enabled when Pinecone is configured)
 
 Follows the same pattern as examples/lighthouser/semap_agent.py:
   - ContextVar render isolation
@@ -12,9 +15,12 @@ Follows the same pattern as examples/lighthouser/semap_agent.py:
 Requires:
     - GOOGLE_API_KEY environment variable
     - pip install google-genai
+    - (RAG) PINECONE_API_KEY environment variable
+    - (RAG) pip install openbench[vector,google]
 """
 
 import contextvars
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -46,10 +52,13 @@ from schemas import (
     CREATE_COMPLIANCE_REVIEW_FORM_SCHEMA,
     CREATE_TABLE_SCHEMA,
     GENERATE_COMPLIANCE_REPORT_SCHEMA,
+    INDEX_DOCUMENT_SCHEMA,
     LIST_PCR_CATEGORIES_SCHEMA,
     LOOKUP_COMPANY_PROFILE_SCHEMA,
     LOOKUP_LCA_STUDY_SCHEMA,
     LOOKUP_STANDARD_REFERENCE_SCHEMA,
+    SEARCH_DOCUMENTS_SCHEMA,
+    SEARCH_STANDARDS_SCHEMA,
 )
 from standards_data import IMPACT_CATEGORIES, ISO_REQUIREMENTS, PCR_TEMPLATES, PEDOMAN_KLH
 
@@ -1081,6 +1090,180 @@ def create_callout(content: str, variant: str = "default", title: str = "") -> s
     return f"Callout displayed: '{title or variant}' variant."
 
 
+# ── RAG Store References (module-level, set by server.py) ──
+
+logger = logging.getLogger(__name__)
+
+_standards_store: Any = None
+_documents_store: Any = None
+
+
+def set_rag_stores(
+    standards_store: Any = None,
+    documents_store: Any = None,
+) -> None:
+    """Set PineconeStore references for RAG tools.
+
+    Called by server.py during startup when PINECONE_API_KEY is available.
+    """
+    global _standards_store, _documents_store
+    _standards_store = standards_store
+    _documents_store = documents_store
+
+
+# ── RAG Tools ──
+
+
+def search_standards(
+    query: str,
+    source_type: str = "",
+    limit: int = 5,
+) -> str:
+    """Semantic search across LCA standards (ISO, PCR, KLH, impact categories)."""
+    if _standards_store is None:
+        return "RAG not available. Standards search requires Pinecone configuration."
+
+    from openbench.core.abstractions import Query
+
+    limit = min(max(limit, 1), 10)
+    filters = {"source_type": source_type} if source_type else None
+
+    try:
+        result = _standards_store.search(Query(text=query, limit=limit, filters=filters))
+    except Exception as e:
+        logger.exception("Standards search failed")
+        return f"Standards search error: {e}"
+
+    if not result.items:
+        return f"No standards found matching '{query}'."
+
+    # Render as table
+    headers = ["Score", "Source", "ID", "Content"]
+    rows = []
+    for item in result.items:
+        meta = item.get("metadata", {})
+        score = f"{item.get('score', 0):.3f}"
+        source = meta.get("source_type", "?")
+        req_id = meta.get("req_id", meta.get("pcr_category", meta.get("category_code", "-")))
+        content = meta.get("content", "")[:120]
+        rows.append([score, source, req_id, content])
+
+    items = _get_render_list()
+    title = f"Standards Search: {query[:50]}"
+    items[:] = [
+        i for i in items if not (i.get("title") == title and "headers" in i and "rows" in i)
+    ]
+    items.append(
+        {
+            "headers": headers,
+            "rows": rows,
+            "title": title,
+            "caption": f"{len(result.items)} results | filter: {source_type or 'all'}",
+        }
+    )
+
+    return f"Found {len(result.items)} standards matching '{query}'."
+
+
+def search_documents(query: str, limit: int = 5) -> str:
+    """Semantic search across uploaded LCA documents."""
+    if _documents_store is None:
+        return "RAG not available. Document search requires Pinecone configuration."
+
+    from openbench.core.abstractions import Query
+
+    limit = min(max(limit, 1), 10)
+
+    try:
+        result = _documents_store.search(Query(text=query, limit=limit))
+    except Exception as e:
+        logger.exception("Document search failed")
+        return f"Document search error: {e}"
+
+    if not result.items:
+        return f"No documents found matching '{query}'. Have you indexed files with index_document?"
+
+    headers = ["Score", "Document", "Excerpt"]
+    rows = []
+    for item in result.items:
+        meta = item.get("metadata", {})
+        score = f"{item.get('score', 0):.3f}"
+        doc_name = meta.get("source_name", meta.get("filename", "unknown"))
+        content = meta.get("content", "")[:150]
+        rows.append([score, doc_name, content])
+
+    items = _get_render_list()
+    title = f"Document Search: {query[:50]}"
+    items[:] = [
+        i for i in items if not (i.get("title") == title and "headers" in i and "rows" in i)
+    ]
+    items.append(
+        {
+            "headers": headers,
+            "rows": rows,
+            "title": title,
+            "caption": f"{len(result.items)} results",
+        }
+    )
+
+    return f"Found {len(result.items)} passages matching '{query}'."
+
+
+def index_document(filename: str = "") -> str:
+    """Index uploaded documents into the vector store for semantic search."""
+    if _documents_store is None:
+        return "RAG not available. Document indexing requires Pinecone configuration."
+
+    attachments = _current_attachments_var.get()
+    if not attachments:
+        return "No files have been uploaded in this message."
+
+    targets = attachments
+    if filename:
+        att = _resolve_attachment(filename)
+        if not att:
+            available = ", ".join(a["name"] for a in attachments)
+            return f"File '{filename}' not found. Available: {available}"
+        targets = [att]
+
+    from openbench.core.abstractions import RawData
+
+    results = []
+    for a in targets:
+        file_path = a["path"]
+        mime = a.get("mime_type", "")
+        name = a["name"]
+
+        # Extract text content
+        if mime == "application/pdf":
+            raw = PDFSource(path=file_path).extract()
+            content = raw.content
+        elif mime.startswith("text/"):
+            content = Path(file_path).read_text(encoding="utf-8")
+        else:
+            results.append(f"[{name}] Unsupported format ({mime})")
+            continue
+
+        if not content or not content.strip():
+            results.append(f"[{name}] Empty content, skipped")
+            continue
+
+        raw_data = RawData(
+            content=content,
+            content_type="text",
+            metadata={"source_name": name, "filename": name, "mime_type": mime},
+        )
+
+        try:
+            _documents_store.index(raw_data)
+            results.append(f"[{name}] Indexed successfully")
+        except Exception as e:
+            logger.exception("Failed to index document: %s", name)
+            results.append(f"[{name}] Index error: {e}")
+
+    return "\n".join(results)
+
+
 # ── Agent Factory ──
 
 
@@ -1091,6 +1274,7 @@ def create_lca_agent(
     parallel_tool_execution: bool = True,
     memory_store: Any = None,
     session_id: str | None = None,
+    rag_enabled: bool = False,
 ) -> BaseAgent:
     """Create a BaseAgent for LCA compliance checking.
 
@@ -1101,6 +1285,7 @@ def create_lca_agent(
         parallel_tool_execution: Enable concurrent tool calls.
         memory_store: Optional MemoryStore for persistent memory.
         session_id: Session ID for persistent memory.
+        rag_enabled: Register RAG tools (search_standards, search_documents, index_document).
 
     Requires GOOGLE_API_KEY environment variable.
     """
@@ -1195,5 +1380,11 @@ def create_lca_agent(
     agent.tools.register("create_chart", create_chart, schema=CREATE_CHART_SCHEMA)
     agent.tools.register("create_table", create_table, schema=CREATE_TABLE_SCHEMA)
     agent.tools.register("create_callout", create_callout, schema=CREATE_CALLOUT_SCHEMA)
+
+    # RAG (optional)
+    if rag_enabled:
+        agent.tools.register("search_standards", search_standards, schema=SEARCH_STANDARDS_SCHEMA)
+        agent.tools.register("search_documents", search_documents, schema=SEARCH_DOCUMENTS_SCHEMA)
+        agent.tools.register("index_document", index_document, schema=INDEX_DOCUMENT_SCHEMA)
 
     return agent

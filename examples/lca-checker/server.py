@@ -10,8 +10,10 @@ Features:
   - Task Planning: agent decomposes complex reviews into steps
   - Parallel Tool Execution: multiple compliance checks run concurrently
   - Persistent Memory: conversations persist across server restarts (SQLite)
+  - RAG (optional): semantic search over standards + uploaded documents (Pinecone)
 
 Requires GOOGLE_API_KEY for the Gemini agent.
+Optional: PINECONE_API_KEY for RAG features.
 
 Run:
     export GOOGLE_API_KEY=your-key-here
@@ -47,7 +49,28 @@ from lca_agent import (
     create_lca_agent,
     get_render_items,
     set_attachments,
+    set_rag_stores,
 )
+
+# ── RAG Setup (optional — enabled when PINECONE_API_KEY is set) ──
+
+_rag_enabled = False
+_standards_store = None
+_documents_store = None
+
+if os.getenv("PINECONE_API_KEY"):
+    try:
+        from rag_setup import build_documents_store, build_standards_store, index_standards
+
+        _standards_store = build_standards_store()
+        _documents_store = build_documents_store()
+        if _standards_store and _documents_store:
+            set_rag_stores(standards_store=_standards_store, documents_store=_documents_store)
+            _rag_enabled = True
+    except ImportError:
+        print("  WARNING: RAG dependencies not installed. RAG disabled.")
+    except Exception as e:
+        print(f"  WARNING: RAG setup failed ({e}). RAG disabled.")
 
 # ── Persistent Memory Setup ──
 
@@ -109,6 +132,7 @@ agent = create_lca_agent(
     temperature=0.3,
     enable_planning=True,
     parallel_tool_execution=True,
+    rag_enabled=_rag_enabled,
 )
 
 # Wire: Agent -> ChatEngine -> AG-UI Transport
@@ -281,6 +305,8 @@ def handle_form_submit(action: ActionData):
 file_store = FileStore(upload_dir="./uploads")
 extractor = FileContentExtractor()
 
+_background_tasks: list[asyncio.Task] = []
+
 app = FastAPI(title="LCA Compliance Checker")
 
 app.add_middleware(
@@ -293,13 +319,34 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
+    tool_count = len(agent.tools._tools)
+    features = ["planning", "parallel-tools", "persistent-memory"]
+    if _rag_enabled:
+        features.append("rag")
+
     print("\n  LCA Compliance Checker")
     print(f"  Agent: Gemini ({agent.model})")
+    print(f"  Tools: {tool_count}")
     print(f"  Memory DB: {DB_PATH}")
-    print("  Features: planning, parallel-tools, persistent-memory")
+    print(f"  RAG: {'enabled (Pinecone)' if _rag_enabled else 'disabled'}")
+    print(f"  Features: {', '.join(features)}")
     print("  AG-UI: POST http://localhost:8002/awp")
     print("  Action: POST http://localhost:8002/chat/action")
     print("  Upload: POST http://localhost:8002/chat/upload\n")
+
+    # Background: index standards into Pinecone (first time only)
+    if _rag_enabled and _standards_store:
+        _background_tasks.append(asyncio.create_task(_index_standards_background()))
+
+
+async def _index_standards_background():
+    """Index standards documents in background thread."""
+    try:
+        count = await asyncio.to_thread(index_standards, _standards_store)
+        if count > 0:
+            print(f"  Standards indexed: {count} documents")
+    except Exception as e:
+        print(f"  WARNING: Standards indexing failed: {e}")
 
 
 @app.post("/chat/upload")
