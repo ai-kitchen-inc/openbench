@@ -46,17 +46,17 @@ python -m pytest tests/ -q
 pytest tests/ --cov=openbench --cov-report=term-missing
 ```
 
-### TypeScript (packages/chat-ui/)
+### TypeScript (studio/chat-ui/)
 
 ```bash
 # Step 1: Lint + formatting check (biome via npx)
-cd packages/chat-ui && npx @biomejs/biome check src/ tests/
+cd studio/chat-ui && npx @biomejs/biome check src/ tests/
 
 # Step 2: Type checking (skip for 'quick')
-cd packages/chat-ui && pnpm tsc --noEmit
+cd studio/chat-ui && pnpm tsc --noEmit
 
 # Step 3: Tests (skip for 'quick')
-cd packages/chat-ui && pnpm vitest run
+cd studio/chat-ui && pnpm vitest run
 ```
 
 3. Run Python and TypeScript checks in parallel when both are selected

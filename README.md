@@ -226,7 +226,31 @@ Python, Click, Pydantic, Google GenAI, LangChain, CrewAI, AG2, Pinecone, ReportL
 - [ ] **Q3 2026**: Edge deployment for air-gapped environments
 - [ ] **Q4 2026**: Multi-modal agent support (vision, audio, code)
 
+## Frontend SDK
+
+**`@openbench/chat-ui`** is a standalone React component library for building chat interfaces powered by OpenBench.
+
+- 24 A2UI v0.10 components (18 standard + 6 custom) with declarative JSON streaming
+- AG-UI protocol transport (SSE event streaming + REST actions)
+- Headless core (Zustand store, transport, message processor) + pre-built components
+- Notion-inspired design system with Lucide icons
+
+```bash
+cd studio/chat-ui
+pnpm install              # Install dependencies
+pnpm build                # Build library (ESM + .d.ts)
+pnpm dev                  # Dev server
+pnpm tsc --noEmit         # Type check
+pnpm vitest               # Run tests
+```
+
+See [studio/chat-ui/README.md](studio/chat-ui/README.md) for full documentation.
+
+---
+
 ## Development
+
+### Python
 
 ```bash
 # Install with dev dependencies
@@ -245,6 +269,17 @@ python -m unittest discover tests -v
 
 # Run tests with coverage
 pytest tests/ --cov=openbench --cov-report=term-missing
+```
+
+### TypeScript (studio/chat-ui)
+
+```bash
+cd studio/chat-ui
+pnpm install              # Install dependencies
+pnpm build                # Build library
+pnpm tsc --noEmit         # Type check
+pnpm vitest               # Run tests
+npx @biomejs/biome check src/  # Lint
 ```
 
 ## Contributing

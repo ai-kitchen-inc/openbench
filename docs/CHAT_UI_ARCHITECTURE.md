@@ -5,7 +5,7 @@
 The Chat UI system spans two packages:
 
 1. **Python Backend** (`src/openbench/chat/`) -- ChatEngine, A2UI builder, content renderers, AG-UI transport
-2. **TypeScript Frontend** (`packages/chat-ui/`) -- `@openbench/chat-ui` React component library
+2. **TypeScript Frontend** (`studio/chat-ui/`) -- `@openbench/chat-ui` React component library
 
 Both communicate via **AG-UI protocol** (SSE event streaming) and REST (actions). A2UI v0.10 messages are wrapped inside AG-UI `CustomEvent(name="a2ui")` payloads.
 
@@ -747,7 +747,7 @@ Client (@openbench/chat-ui)              Server (Python)
 ### Package Structure
 
 ```
-packages/chat-ui/
+studio/chat-ui/
 ├── package.json                    # @openbench/chat-ui
 ├── tsconfig.json
 ├── vite.config.ts                  # Library mode (ESM + .d.ts)
