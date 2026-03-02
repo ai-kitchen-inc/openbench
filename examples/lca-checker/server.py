@@ -301,9 +301,11 @@ def handle_form_submit(action: ActionData):
     return [engine.builder.build_update_components(action.surface_id, components)]
 
 
-# File upload
+# File upload + per-session file registry
 file_store = FileStore(upload_dir="./uploads")
 extractor = FileContentExtractor()
+_session_files: dict[str, dict[str, dict]] = {}  # session_id -> {file_id -> meta}
+_session_files_lock = threading.Lock()
 
 _background_tasks: list[asyncio.Task] = []
 
@@ -372,11 +374,13 @@ async def agent_endpoint(request: Request):
     """AG-UI protocol endpoint with persistent memory."""
     body = await request.json()
 
-    # Resolve uploaded file paths
+    # Resolve session ID
     forwarded = body.get("forwardedProps") or {}
+    session_id = forwarded.get("sessionId") or body.get("threadId") or ""
+
+    # Resolve uploaded file paths from this request
     attachments_list = forwarded.get("attachments") or body.get("attachments") or []
 
-    file_metas = []
     for att in attachments_list:
         file_id = att.get("id")
         if not file_id:
@@ -384,13 +388,21 @@ async def agent_endpoint(request: Request):
         stored = file_store.get(file_id)
         if not stored:
             continue
-        file_metas.append(
-            {
-                "name": stored.name,
-                "path": stored.path,
-                "mime_type": stored.mime_type,
-            }
-        )
+        meta = {
+            "name": stored.name,
+            "path": stored.path,
+            "mime_type": stored.mime_type,
+        }
+        # Register file in session registry (persists across messages)
+        if session_id:
+            with _session_files_lock:
+                _session_files.setdefault(session_id, {})[file_id] = meta
+
+    # Merge: all session files available to agent (not just current message)
+    file_metas = []
+    if session_id:
+        with _session_files_lock:
+            file_metas = list(_session_files.get(session_id, {}).values())
     set_attachments(file_metas or None)
 
     return await agui_handler.handle(request)
