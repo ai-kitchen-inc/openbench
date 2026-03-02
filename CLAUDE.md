@@ -174,7 +174,7 @@ openbench/
 │   │   ├── main.py              # CLI entry point
 │   │   └── commands/            # CLI command groups (init, data, agent, workflow, provider, models)
 │   └── utils/                   # Utilities
-├── packages/
+├── studio/
 │   └── chat-ui/                 # @openbench/chat-ui (React SDK)
 │       ├── src/
 │       │   ├── core/            # AG-UI transport, JSONL processor, Zustand store
@@ -434,11 +434,11 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/chat/renderers/base.py` | ContentRenderer ABC + ContentRendererRegistry |
 | `src/openbench/chat/transport/agui.py` | AGUIHandler -- AG-UI SSE event streaming |
 | `src/openbench/chat/transport/agui_actions.py` | AGUIActionHandler -- REST for A2UI actions |
-| `packages/chat-ui/src/index.ts` | @openbench/chat-ui public API exports |
-| `packages/chat-ui/src/types.ts` | TypeScript interfaces for chat messages, A2UI, etc. |
-| `packages/chat-ui/src/a2ui/surface-renderer.tsx` | A2UI adjacency list to React tree |
-| `packages/chat-ui/src/a2ui/catalog.ts` | Component registry (standard + custom) |
-| `packages/chat-ui/src/core/chat-store.ts` | Zustand store (sessions, messages, streaming) |
+| `studio/chat-ui/src/index.ts` | @openbench/chat-ui public API exports |
+| `studio/chat-ui/src/types.ts` | TypeScript interfaces for chat messages, A2UI, etc. |
+| `studio/chat-ui/src/a2ui/surface-renderer.tsx` | A2UI adjacency list to React tree |
+| `studio/chat-ui/src/a2ui/catalog.ts` | Component registry (standard + custom) |
+| `studio/chat-ui/src/core/chat-store.ts` | Zustand store (sessions, messages, streaming) |
 
 ## Slash Commands
 
@@ -485,10 +485,10 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 
 Full design tokens: [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)
 
-## Frontend Build (packages/chat-ui)
+## Frontend Build (studio/chat-ui)
 
 ```bash
-cd packages/chat-ui
+cd studio/chat-ui
 pnpm install              # Install dependencies
 pnpm dev                  # Dev server
 pnpm build                # Build library (ESM + .d.ts)

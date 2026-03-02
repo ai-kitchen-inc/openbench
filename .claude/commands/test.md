@@ -55,7 +55,7 @@ python -m unittest tests.test_chat_engine -v
 python -m unittest tests.test_chat_layer -v
 
 # Chat UI TypeScript tests
-cd packages/chat-ui && pnpm vitest --run
+cd studio/chat-ui && pnpm vitest --run
 
 # With coverage (requires pytest-cov)
 pytest tests/ --cov=openbench --cov-report=term-missing
