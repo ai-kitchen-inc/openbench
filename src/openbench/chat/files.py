@@ -134,6 +134,15 @@ _EXCEL_MIMES = {
     "application/vnd.ms-excel",
 }
 
+_TEXT_LIKE_MIMES = {
+    "application/json",
+    "application/xml",
+    "application/yaml",
+    "application/x-yaml",
+    "application/javascript",
+    "application/typescript",
+}
+
 
 class FileContentExtractor:
     """Extract text content from uploaded files.
@@ -141,7 +150,7 @@ class FileContentExtractor:
     Supports:
     - application/pdf: Uses PDFSource for extraction
     - Excel (.xlsx/.xls): Converts sheets to markdown tables (first 10 rows)
-    - text/*: Direct file read
+    - text/* and text-like (JSON, XML, YAML, JS, TS): Direct file read
     - image/*: Returns metadata description
     - other: Returns metadata description
     """
@@ -163,7 +172,7 @@ class FileContentExtractor:
         if mime in _EXCEL_MIMES:
             return self._extract_excel(stored_file)
 
-        if mime.startswith("text/"):
+        if mime.startswith("text/") or mime in _TEXT_LIKE_MIMES:
             return self._extract_text(stored_file)
 
         if mime.startswith("image/"):

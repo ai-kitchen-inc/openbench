@@ -232,6 +232,7 @@
 .chat-message {
   display: flex;
   max-width: 85%;
+  min-width: 0;
   animation: chat-fade-in 0.2s ease-out;
 }
 
@@ -251,6 +252,9 @@
   line-height: 1.5;
   font-size: 0.9375rem;
   word-break: break-word;
+  overflow-wrap: break-word;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .chat-message--user .chat-message__content {
@@ -278,6 +282,8 @@
 
 .chat-message__surface {
   margin-top: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .chat-message__meta {
@@ -1364,6 +1370,8 @@
   width: 100%;
   border-collapse: collapse;
   margin: 0 0 8px;
+  display: block;
+  overflow-x: auto;
 }
 
 .ob-markdown th,
@@ -1371,6 +1379,7 @@
   padding: 6px 12px;
   border: 1px solid var(--ob-border);
   text-align: left;
+  white-space: nowrap;
 }
 
 .ob-markdown th {
