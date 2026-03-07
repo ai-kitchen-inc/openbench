@@ -130,10 +130,12 @@ def _discover_demos() -> list[dict]:
 
         # Build name from relative path: intelligence/gemini_agent_demo.py → intelligence/gemini-agent
         rel = script.relative_to(examples_dir)
-        name = str(rel.with_suffix(""))
+        stem = rel.stem
         for suffix in ("_demo", "_workflow"):
-            name = name.replace(suffix, "")
-        name = name.replace("_", "-")
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+        stem = stem.replace("_", "-")
+        name = "/".join([*rel.parent.parts, stem])
 
         demos.append(
             {
@@ -242,25 +244,21 @@ def _run_script(info: dict):
     console.print(f"[dim]{script}[/dim]\n")
 
     try:
-        subprocess.run(
+        result = subprocess.run(
             [sys.executable, str(script)],
             cwd=str(info["dir"]),
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
             stdout=sys.stdout,
             stderr=sys.stderr,
         )
+        if result.returncode not in (0, None):
+            console.print(f"\n[red]Script exited with code {result.returncode}.[/red]\n")
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted.[/yellow]\n")
 
 
 def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: bool):
     """Run a server demo (uvicorn + optional frontend)."""
-    # Check GOOGLE_API_KEY
-    if not os.environ.get("GOOGLE_API_KEY"):
-        raise click.ClickException(
-            "GOOGLE_API_KEY not set. Export it first:\n\n  export GOOGLE_API_KEY=your-key-here"
-        )
-
     demo_dir = info["dir"]
     backend_port = port or info["port"]
     has_frontend = info["has_frontend"] and not no_frontend
@@ -368,15 +366,17 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
         # Print summary
         lines = [f"[cyan]Backend:[/cyan]  http://localhost:{backend_port}"]
         if frontend_started:
-            lines.append("[cyan]Frontend:[/cyan] http://localhost:5173")
+            lines.append(
+                "[cyan]Frontend:[/cyan] http://localhost:5173 (check Vite output if port differs)"
+            )
         lines.append("\nPress Ctrl+C to stop.")
 
         console.print()
         console.print(Panel("\n".join(lines), title=f"[bold]{info['name']}[/bold] demo running"))
 
-        # Wait for Ctrl+C
-        for proc in processes:
-            proc.wait()
+        # Wait for Ctrl+C or any process to exit
+        while all(p.poll() is None for p in processes):
+            time.sleep(0.5)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Shutting down...[/yellow]")
