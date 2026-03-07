@@ -4,6 +4,7 @@ from openbench.cli.commands import (
     agent,
     config,
     data,
+    demo,
     generate,
     init,
     models,
@@ -24,4 +25,5 @@ __all__ = [
     "config",
     "provider",
     "project",
+    "demo",
 ]
