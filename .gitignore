@@ -491,3 +491,6 @@ override.tf.json
 *~
 .temp
 uv.lock
+
+# LCI Ignite-X docs
+examples/lci-ignite-x/docs/
