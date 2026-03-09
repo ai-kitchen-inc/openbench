@@ -1,0 +1,3 @@
+Process,Flow,Category,Amount,Unit,Direction
+Single Process,Water,Resources,100.0,L,Input
+Single Process,CO2,Emissions,50.0,kg,Output
