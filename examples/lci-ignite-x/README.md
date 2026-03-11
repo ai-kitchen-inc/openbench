@@ -15,12 +15,54 @@ Helps LCA consultants analyze Life Cycle Inventory data for PROPER 2025 submissi
 
 ## Prerequisites
 
-- Python >= 3.10
-- Node.js >= 18
-- pnpm (`npm install -g pnpm`)
-- Google Gemini API key
+Install the following tools if you don't have them yet.
+
+### 1. Git
+
+| OS | Install |
+|----|---------|
+| **macOS** | Open Terminal, run `xcode-select --install` |
+| **Windows** | Download from [git-scm.com](https://git-scm.com/download/win), run installer (use default settings) |
+
+Verify: `git --version`
+
+### 2. Python (>= 3.10)
+
+| OS | Install |
+|----|---------|
+| **macOS** | Download from [python.org](https://www.python.org/downloads/) or `brew install python@3.12` |
+| **Windows** | Download from [python.org](https://www.python.org/downloads/), check "Add Python to PATH" during install |
+
+Verify: `python3 --version` (macOS) or `python --version` (Windows)
+
+### 3. Node.js (>= 18)
+
+| OS | Install |
+|----|---------|
+| **macOS** | Download from [nodejs.org](https://nodejs.org/) (LTS) or `brew install node` |
+| **Windows** | Download from [nodejs.org](https://nodejs.org/) (LTS), run installer |
+
+Verify: `node --version`
+
+### 4. pnpm
+
+After Node.js is installed:
+
+```bash
+npm install -g pnpm
+```
+
+Verify: `pnpm --version`
+
+### 5. Google Gemini API Key
+
+1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
+2. Click "Create API Key"
+3. Copy the key (you'll need it in step 3 below)
 
 ## Quick Start
+
+Open **Terminal** (macOS) or **Command Prompt / PowerShell** (Windows):
 
 ```bash
 # 1. Clone the repository
@@ -29,22 +71,40 @@ cd openbench
 
 # 2. Install OpenBench SDK
 pip install -e .
+```
 
-# 3. Configure environment
+Configure your API key:
+
+**macOS / Linux:**
+```bash
 cp examples/lci-ignite-x/.env.example examples/lci-ignite-x/.env
-# Edit .env and set your GOOGLE_API_KEY
+```
+Then open `examples/lci-ignite-x/.env` in a text editor and set your `GOOGLE_API_KEY`.
 
+**Windows:**
+```cmd
+copy examples\lci-ignite-x\.env.example examples\lci-ignite-x\.env
+```
+Then open `examples\lci-ignite-x\.env` in Notepad and set your `GOOGLE_API_KEY`.
+
+```bash
 # 4. Run
 openbench demo run lci-ignite-x
 ```
 
 This single command will:
-- Install lci-ignite-x Python dependencies (`pip install -e .`)
-- Build @openbench/chat-ui if not already built (`pnpm install && pnpm build`)
+- Install lci-ignite-x Python dependencies automatically
+- Build @openbench/chat-ui if not already built
 - Start the backend on http://localhost:8003
 - Start the frontend on http://localhost:5173
 
-Open http://localhost:5173 and upload your easyLCA or SimaPro CSV file.
+Open http://localhost:5173 in your browser and upload your easyLCA or SimaPro CSV file.
+
+## Sample Data
+
+`docs/input_easylca.csv` is a pre-converted easyLCA format CSV ready for upload.
+
+`docs/input.xlsx` contains the original PHM (Pertamina Hulu Mahakam) oil & gas LCA dataset with 33 sheets covering 5 operational areas (BSP, SPU, NPU, CPU, CPA).
 
 ## Architecture
 
@@ -58,11 +118,5 @@ Frontend (React)           Backend (FastAPI)           Intelligence
 ```
 
 The coordinator agent dispatches to 11 domain tools that produce A2UI render items (charts, tables, callouts, markdown) streamed to the frontend via AG-UI protocol.
-
-## Sample Data
-
-`docs/input.xlsx` contains a PHM (Pertamina Hulu Mahakam) oil & gas LCA dataset with 33 sheets covering 5 operational areas (BSP, SPU, NPU, CPU, CPA).
-
-`docs/input_easylca.csv` is the pre-converted easyLCA format ready for upload.
 
 See [CLAUDE.md](CLAUDE.md) for detailed project structure and patterns.
