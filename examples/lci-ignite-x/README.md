@@ -54,12 +54,6 @@ npm install -g pnpm
 
 Verify: `pnpm --version`
 
-### 5. Google Gemini API Key
-
-1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
-2. Click "Create API Key"
-3. Copy the key (you'll need it in step 3 below)
-
 ## Quick Start
 
 Open **Terminal** (macOS) or **Command Prompt / PowerShell** (Windows):
