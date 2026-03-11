@@ -44,6 +44,11 @@ examples/
 │   └── reports/                 # End-to-end report generation
 │       ├── sustainability_report.py
 │       └── knowledge_base_workflow.py
+├── lci-ignite-x/                  # Full-stack LCA analysis platform
+│   ├── server.py                  # Demo entry point (:8003)
+│   ├── frontend/                  # React app (@openbench/chat-ui)
+│   ├── src/lci_ignite/            # Python package
+│   └── README.md
 └── README.md
 ```
 
@@ -525,6 +530,32 @@ python examples/workflows/reports/knowledge_base_workflow.py pipeline doc.pdf "S
 
 ---
 
+## LCI Ignite X (`lci-ignite-x/`)
+
+### 24. LCI Ignite X (`lci-ignite-x/`)
+
+Full-stack LCA (Life Cycle Assessment) analysis platform:
+- **Backend**: FastAPI with AG-UI SSE streaming, file upload, persistent memory
+- **Frontend**: React app with @openbench/chat-ui (ChatPanel, SessionSidebar, dark mode)
+- **Intelligence**: Coordinator agent with 11 domain tools (IO table, Pareto hotspot, narrative, DOCX export)
+- **Data**: easyLCA and SimaPro CSV parsers
+- **RAG**: PROPER 2025 document retrieval via Pinecone
+
+**Requires:** Python >= 3.10, Node.js >= 18, pnpm, `GOOGLE_API_KEY`, optionally `PINECONE_API_KEY`
+
+```bash
+openbench demo run lci-ignite-x    # Auto-installs deps, builds chat-ui, starts :8003 + :5173
+# Or manually:
+cd examples/lci-ignite-x
+pip install -e .
+uvicorn server:app --port 8003 --reload
+cd frontend && pnpm install && pnpm dev
+```
+
+See [lci-ignite-x/README.md](lci-ignite-x/README.md) for full details.
+
+---
+
 ## Summary
 
 | # | Example | API Keys | What it demonstrates |
@@ -553,6 +584,7 @@ python examples/workflows/reports/knowledge_base_workflow.py pipeline doc.pdf "S
 | 21 | `workflows/research/hybrid_research_agent.py` | Google + Pinecone | Multi-mode research, openclaw |
 | 22 | `workflows/reports/sustainability_report.py` | None | Full E2E report (mock data) |
 | 23 | `workflows/reports/knowledge_base_workflow.py` | Google + Pinecone | Index → Query RAG pipeline |
+| 24 | `lci-ignite-x/` | Google (+Pinecone) | Full-stack LCA analysis: IO tables, Pareto hotspots, DOCX export, AG-UI streaming |
 
 ## Common Patterns
 

@@ -128,7 +128,7 @@ def _discover_demos() -> list[dict]:
         if script.parent in server_dirs:
             continue
 
-        # Build name from relative path: intelligence/gemini_agent_demo.py → intelligence/gemini-agent
+        # Build name from relative path: intelligence/gemini_agent_demo.py -> intelligence/gemini-agent
         rel = script.relative_to(examples_dir)
         stem = rel.stem
         for suffix in ("_demo", "_workflow"):
@@ -209,7 +209,7 @@ def list_demos():
 @click.argument("name")
 @click.option("--port", type=int, default=None, help="Override backend port")
 @click.option("--no-frontend", is_flag=True, help="Backend only (skip frontend)")
-@click.option("--no-install", is_flag=True, help="Skip pnpm install")
+@click.option("--no-install", is_flag=True, help="Skip pnpm install and auto-setup")
 def run_demo(name, port, no_frontend, no_install):
     """Run a demo by name.
 
@@ -228,12 +228,12 @@ def run_demo(name, port, no_frontend, no_install):
 
     info = demo_map[name]
 
-    # Script demos — just run the script
+    # Script demos -- just run the script
     if info["type"] == "script":
         _run_script(info)
         return
 
-    # Server demos — uvicorn + pnpm
+    # Server demos -- uvicorn + pnpm
     _run_server(info, port, no_frontend, no_install)
 
 
@@ -257,6 +257,79 @@ def _run_script(info: dict):
         console.print("\n[yellow]Interrupted.[/yellow]\n")
 
 
+def _ensure_chat_ui_built(root: Path) -> bool:
+    """Build studio/chat-ui if dist/ doesn't exist. Returns True on success."""
+    chat_ui_dir = root / "studio" / "chat-ui"
+    dist_dir = chat_ui_dir / "dist"
+
+    if dist_dir.exists() and any(dist_dir.iterdir()):
+        return True
+
+    if not chat_ui_dir.exists():
+        console.print("[red]Error:[/red] studio/chat-ui not found.")
+        return False
+
+    console.print("\n[yellow]@openbench/chat-ui not built yet.[/yellow] Building automatically...")
+
+    # Install deps
+    console.print("[green]  pnpm install[/green] (studio/chat-ui)")
+    result = subprocess.run(
+        ["pnpm", "install"],
+        cwd=str(chat_ui_dir),
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+    if result.returncode != 0:
+        console.print("[red]Error:[/red] pnpm install failed for studio/chat-ui.")
+        return False
+
+    # Build
+    console.print("[green]  pnpm build[/green] (studio/chat-ui)")
+    result = subprocess.run(
+        ["pnpm", "build"],
+        cwd=str(chat_ui_dir),
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+    if result.returncode != 0:
+        console.print("[red]Error:[/red] pnpm build failed for studio/chat-ui.")
+        return False
+
+    console.print("[green]  @openbench/chat-ui built successfully.[/green]\n")
+    return True
+
+
+def _ensure_python_deps(demo_dir: Path):
+    """Install Python deps if example has pyproject.toml."""
+    pyproject = demo_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return
+
+    # Check if already installed by looking for .egg-info
+    egg_infos = list(demo_dir.glob("src/*.egg-info"))
+    if not egg_infos:
+        egg_infos = list(demo_dir.glob("*.egg-info"))
+
+    # Quick check: if egg-info exists and has SOURCES.txt, skip
+    if egg_infos and any((e / "SOURCES.txt").exists() for e in egg_infos):
+        return
+
+    console.print(f"\n[yellow]Installing Python deps:[/yellow] pip install -e {demo_dir.name}")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"],
+        cwd=str(demo_dir),
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+    if result.returncode != 0:
+        console.print(
+            f"[yellow]Warning:[/yellow] pip install -e . failed for {demo_dir.name}. "
+            "Some imports may be missing."
+        )
+    else:
+        console.print(f"[green]  {demo_dir.name} deps installed.[/green]\n")
+
+
 def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: bool):
     """Run a server demo (uvicorn + optional frontend)."""
     demo_dir = info["dir"]
@@ -270,6 +343,19 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
             "Frontend won't start. Use --no-frontend to suppress this warning."
         )
         has_frontend = False
+
+    # Auto-build chat-ui if frontend needed and dist/ missing
+    if has_frontend and not no_install:
+        root = _find_project_root()
+        if not _ensure_chat_ui_built(root):
+            console.print(
+                "[yellow]Warning:[/yellow] chat-ui build failed. "
+                "Frontend may not work. Use --no-frontend to skip."
+            )
+
+    # Auto-install Python deps if pyproject.toml exists
+    if not no_install:
+        _ensure_python_deps(demo_dir)
 
     processes: list[subprocess.Popen] = []
 
@@ -286,7 +372,7 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
     # Ensure Python subprocesses flush output immediately
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
 
-    # Use the same Python that runs this CLI — guaranteed to have deps installed
+    # Use the same Python that runs this CLI -- guaranteed to have deps installed
     backend_cmd = [
         sys.executable,
         "-m",
@@ -351,7 +437,7 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
             )
             processes.append(frontend)
 
-            # Brief health check — give Vite a moment to crash or start
+            # Brief health check -- give Vite a moment to crash or start
             time.sleep(2)
             if frontend.poll() is not None:
                 console.print(
