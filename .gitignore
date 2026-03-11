@@ -381,6 +381,7 @@ workflow_state/
 # Data directories
 data/
 !src/openbench/data/
+!examples/*/src/*/data/
 datasets/
 uploads/
 downloads/
