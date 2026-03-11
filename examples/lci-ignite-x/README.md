@@ -94,12 +94,6 @@ This single command will:
 
 Open http://localhost:5173 in your browser and upload your easyLCA or SimaPro CSV file.
 
-## Sample Data
-
-`docs/input_easylca.csv` is a pre-converted easyLCA format CSV ready for upload.
-
-`docs/input.xlsx` contains the original PHM (Pertamina Hulu Mahakam) oil & gas LCA dataset with 33 sheets covering 5 operational areas (BSP, SPU, NPU, CPU, CPA).
-
 ## Architecture
 
 ```
