@@ -11,13 +11,18 @@ AI-powered LCA (Life Cycle Assessment) analysis platform built on OpenBench SDK.
 ## Quick Start
 
 ```bash
-# Install OpenBench (from repo root, one-time)
+# 1. Clone
+git clone -b feat/lci-ignite-x https://github.com/ai-kitchen-inc/openbench.git
+cd openbench
+
+# 2. Install OpenBench SDK
 pip install -e .
 
-# Set environment (copy and fill in .env.example)
-cp .env.example .env
+# 3. Configure environment
+cp examples/lci-ignite-x/.env.example examples/lci-ignite-x/.env
+# Edit .env and set your GOOGLE_API_KEY
 
-# Run via demo CLI (auto-installs Python deps, builds chat-ui, starts backend :8003 + frontend :5173)
+# 4. Run (auto-installs Python deps, builds chat-ui, starts backend :8003 + frontend :5173)
 openbench demo run lci-ignite-x
 ```
 

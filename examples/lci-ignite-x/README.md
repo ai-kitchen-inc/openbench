@@ -18,20 +18,31 @@ Helps LCA consultants analyze Life Cycle Inventory data for PROPER 2025 submissi
 - Python >= 3.10
 - Node.js >= 18
 - pnpm (`npm install -g pnpm`)
+- Google Gemini API key
 
 ## Quick Start
 
 ```bash
-# 1. Install OpenBench (from repo root, one-time)
+# 1. Clone the repository
+git clone -b feat/lci-ignite-x https://github.com/ai-kitchen-inc/openbench.git
+cd openbench
+
+# 2. Install OpenBench SDK
 pip install -e .
 
-# 2. Configure environment
-cp .env.example .env
-# Edit .env with your GOOGLE_API_KEY
+# 3. Configure environment
+cp examples/lci-ignite-x/.env.example examples/lci-ignite-x/.env
+# Edit .env and set your GOOGLE_API_KEY
 
-# 3. Run (auto-installs Python deps, builds chat-ui, starts backend :8003 + frontend :5173)
+# 4. Run
 openbench demo run lci-ignite-x
 ```
+
+This single command will:
+- Install lci-ignite-x Python dependencies (`pip install -e .`)
+- Build @openbench/chat-ui if not already built (`pnpm install && pnpm build`)
+- Start the backend on http://localhost:8003
+- Start the frontend on http://localhost:5173
 
 Open http://localhost:5173 and upload your easyLCA or SimaPro CSV file.
 
