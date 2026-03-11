@@ -276,6 +276,10 @@ examples/
 │   ├── basic_chat_demo.py          # ChatEngine standalone
 │   ├── chat_with_rag_demo.py       # DataLayer | ChatLayer pipeline
 │   └── server.py                   # FastAPI AG-UI server
+├── lci-ignite-x/    # Full-stack LCA analysis app (Backend + React frontend)
+│   ├── server.py                  # Demo entry point (:8003)
+│   ├── frontend/                 # React app (@openbench/chat-ui)
+│   └── src/lci_ignite/          # Python package (data, intelligence, output)
 └── workflows/      # Complete E2E workflow examples
     ├── pdf/        # PDF processing workflows
     │   ├── pdf_google_adk_workflow.py

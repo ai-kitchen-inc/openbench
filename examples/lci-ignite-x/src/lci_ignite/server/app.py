@@ -175,9 +175,9 @@ def create_app(config: LCIConfig | None = None) -> FastAPI:
         print("\n  LCI Ignite X")
         print(f"  Model: {config.model}")
         print(f"  Memory DB: {config.memory_db}")
-        print("  AG-UI: POST http://localhost:8000/awp")
-        print("  Action: POST http://localhost:8000/chat/action")
-        print("  Upload: POST http://localhost:8000/chat/upload\n")
+        print("  AG-UI: POST http://localhost:8003/awp")
+        print("  Action: POST http://localhost:8003/chat/action")
+        print("  Upload: POST http://localhost:8003/chat/upload\n")
 
     @app.get("/health")
     async def health():
