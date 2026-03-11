@@ -545,11 +545,6 @@ Full-stack LCA (Life Cycle Assessment) analysis platform:
 
 ```bash
 openbench demo run lci-ignite-x    # Auto-installs deps, builds chat-ui, starts :8003 + :5173
-# Or manually:
-cd examples/lci-ignite-x
-pip install -e .
-uvicorn server:app --port 8003 --reload
-cd frontend && pnpm install && pnpm dev
 ```
 
 See [lci-ignite-x/README.md](lci-ignite-x/README.md) for full details.
