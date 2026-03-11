@@ -11,16 +11,14 @@ AI-powered LCA (Life Cycle Assessment) analysis platform built on OpenBench SDK.
 ## Quick Start
 
 ```bash
+# Install OpenBench (from repo root, one-time)
+pip install -e .
+
 # Set environment (copy and fill in .env.example)
 cp .env.example .env
 
 # Run via demo CLI (auto-installs Python deps, builds chat-ui, starts backend :8003 + frontend :5173)
 openbench demo run lci-ignite-x
-
-# Or run manually
-pip install -e .                                # Install Python deps
-uvicorn server:app --port 8003 --reload         # Backend
-cd frontend && pnpm install && pnpm dev          # Frontend
 ```
 
 ## Project Structure

@@ -22,11 +22,14 @@ Helps LCA consultants analyze Life Cycle Inventory data for PROPER 2025 submissi
 ## Quick Start
 
 ```bash
-# 1. Configure environment
+# 1. Install OpenBench (from repo root, one-time)
+pip install -e .
+
+# 2. Configure environment
 cp .env.example .env
 # Edit .env with your GOOGLE_API_KEY
 
-# 2. Run (auto-installs deps, builds chat-ui, starts backend :8003 + frontend :5173)
+# 3. Run (auto-installs Python deps, builds chat-ui, starts backend :8003 + frontend :5173)
 openbench demo run lci-ignite-x
 ```
 
@@ -50,21 +53,5 @@ The coordinator agent dispatches to 11 domain tools that produce A2UI render ite
 `docs/input.xlsx` contains a PHM (Pertamina Hulu Mahakam) oil & gas LCA dataset with 33 sheets covering 5 operational areas (BSP, SPU, NPU, CPU, CPA).
 
 `docs/input_easylca.csv` is the pre-converted easyLCA format ready for upload.
-
-## Development
-
-```bash
-# Backend
-uvicorn server:app --port 8003 --reload
-
-# Frontend
-cd frontend
-pnpm install
-pnpm dev
-
-# Tests
-conda activate py312
-python -m pytest tests/ -v
-```
 
 See [CLAUDE.md](CLAUDE.md) for detailed project structure and patterns.

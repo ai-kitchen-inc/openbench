@@ -72,7 +72,7 @@ python examples/workflows/reports/sustainability_report.py  # Complete E2E workf
 Full-stack application example with backend + React frontend:
 
 ```bash
-openbench demo run lci-ignite-x                            # LCA analysis platform (:8003 + :5173)
+openbench demo run lci-ignite-x    # Auto-installs deps, builds chat-ui, starts :8003 + :5173
 ```
 
 ---
