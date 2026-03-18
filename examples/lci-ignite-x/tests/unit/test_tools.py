@@ -19,6 +19,9 @@ from lci_ignite.intelligence.tools import (
     create_pareto_chart,
     export_to_docx,
     get_render_items,
+    get_uploaded_files,
+    set_attachments,
+    set_upload_dir,
     validate_units,
 )
 
@@ -284,16 +287,92 @@ class TestCreateNarrativeCallout:
 
 
 class TestExportToDocx:
-    def test_creates_file_card(self):
-        result = export_to_docx("Report", json.dumps({"sections": []}))
+    def test_creates_file_card(self, tmp_path):
+        set_upload_dir(str(tmp_path))
+        content = json.dumps({"narrative": "Test narrative content."})
+        result = export_to_docx("Report", content)
 
         assert "lca_report.docx" in result
+        assert "bytes" in result
         items = get_render_items()
         assert len(items) == 1
         assert items[0]["name"] == "lca_report.docx"
+        assert items[0]["size"] > 0
+        # Verify actual file was created
+        assert (tmp_path / "lca_report.docx").exists()
 
-    def test_custom_filename(self):
-        export_to_docx("Report", "{}", filename="custom.docx")
+    def test_custom_filename(self, tmp_path):
+        set_upload_dir(str(tmp_path))
+        export_to_docx("Report", json.dumps({"narrative": "test"}), filename="custom.docx")
 
         items = get_render_items()
         assert items[0]["name"] == "custom.docx"
+        assert (tmp_path / "custom.docx").exists()
+
+    def test_generates_with_sections(self, tmp_path):
+        set_upload_dir(str(tmp_path))
+        content = json.dumps(
+            {
+                "io_table": {
+                    "Process A": {
+                        "inputs": [
+                            {"flow": "Water", "category": "Air", "amount": 100, "unit": "L"}
+                        ],
+                        "outputs": [],
+                    }
+                },
+                "narrative": "## Summary\nTest analysis.",
+            }
+        )
+        result = export_to_docx("LCA Report", content)
+
+        assert "bytes" in result
+        assert (tmp_path / "lca_report.docx").exists()
+        assert (tmp_path / "lca_report.docx").stat().st_size > 0
+
+    def test_plain_text_content(self, tmp_path):
+        set_upload_dir(str(tmp_path))
+        result = export_to_docx("Report", "Simple text content")
+
+        assert "bytes" in result
+        assert (tmp_path / "lca_report.docx").exists()
+
+
+class TestGetUploadedFiles:
+    """Tests for get_uploaded_files tool."""
+
+    def test_no_files(self):
+        set_attachments(None)
+        result = json.loads(get_uploaded_files())
+        assert result["files"] == []
+        assert "No files" in result["message"]
+
+    def test_with_files(self):
+        files = [
+            {
+                "name": "test.xlsx",
+                "path": "/uploads/abc_test.xlsx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+        ]
+        set_attachments(files)
+        result = json.loads(get_uploaded_files())
+        assert result["count"] == 1
+        assert result["files"][0]["name"] == "test.xlsx"
+        assert result["files"][0]["path"] == "/uploads/abc_test.xlsx"
+        # Cleanup
+        set_attachments(None)
+
+    def test_multiple_files(self):
+        files = [
+            {
+                "name": "a.xlsx",
+                "path": "/uploads/a.xlsx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+            {"name": "b.csv", "path": "/uploads/b.csv", "mime_type": "text/csv"},
+        ]
+        set_attachments(files)
+        result = json.loads(get_uploaded_files())
+        assert result["count"] == 2
+        set_attachments(None)

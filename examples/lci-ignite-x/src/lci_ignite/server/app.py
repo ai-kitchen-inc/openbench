@@ -20,19 +20,24 @@ from openbench.intelligence.base import BaseAgent
 
 from lci_ignite.config import LCIConfig
 from lci_ignite.data.attachment_handler import ChatAttachmentHandler
+from lci_ignite.intelligence.prompts import COORDINATOR_PROMPT
 from lci_ignite.intelligence.tools import (
+    clear_pipeline_data,
     clear_render_items,
     get_render_items,
     set_attachments,
+    set_pipeline_session,
+    set_upload_dir,
 )
 from lci_ignite.server.handler import LCIAGUIHandler
 
 
 def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
-    """Create the LCI coordinator agent.
+    """Create the LCI coordinator agent with all 20 tools.
 
     The coordinator handles user interaction and dispatches to
-    domain agents (IO Table, Hotspot, Narrative) via tools.
+    domain tools for data processing, IO table building, hotspot
+    analysis, and report generation.
     """
 
     agent = BaseAgent(
@@ -40,28 +45,26 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
             "You are an LCA (Life Cycle Assessment) analysis assistant. "
             "Help users analyze their LCI data by building IO tables, "
             "identifying environmental hotspots, and generating reports. "
-            "Guide users to upload their CSV files (easyLCA or SimaPro format)."
+            "Support Excel LDI (.xlsx), easyLCA CSV, and SimaPro CSV formats."
         ),
         model=config.model,
         temperature=config.temperature,
-        max_iterations=8,
-        system_prompt=(
-            "You are LCI Ignite X, an AI-powered LCA analysis assistant.\n\n"
-            "You help LCA consultants analyze Life Cycle Inventory data for "
-            "PROPER 2025 submissions. You can:\n"
-            "1. Parse easyLCA and SimaPro CSV files\n"
-            "2. Build Input-Output tables\n"
-            "3. Identify environmental hotspots (Pareto analysis)\n"
-            "4. Generate narrative reports with PROPER 2025 references\n"
-            "5. Export analysis to .docx format\n\n"
-            "Ask users to upload their CSV file to get started."
-        ),
+        max_iterations=25,
+        system_prompt=COORDINATOR_PROMPT,
     )
 
-    # Register all tools from the domain agents
+    # Register all tools
     from lci_ignite.intelligence.tools import (
+        # Existing tool schemas
         AGGREGATE_BY_CATEGORY_SCHEMA,
+        # New tool schemas (Phase 3)
+        ANALYZE_EXCEL_STRUCTURE_SCHEMA,
+        APPLY_UNIT_CONVERSIONS_SCHEMA,
+        BUILD_PROPER_IO_TABLE_SCHEMA,
+        CALCULATE_FUNCTIONAL_UNIT_SCHEMA,
         CALCULATE_PARETO_SCHEMA,
+        # Conversational tools (Phase 4)
+        COMPARE_PRODUCTS_SCHEMA,
         CREATE_HOTSPOT_CALLOUT_SCHEMA,
         CREATE_HOTSPOT_TABLE_SCHEMA,
         CREATE_IO_TABLE_CHART_SCHEMA,
@@ -69,10 +72,26 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
         CREATE_NARRATIVE_CALLOUT_SCHEMA,
         CREATE_NARRATIVE_MARKDOWN_SCHEMA,
         CREATE_PARETO_CHART_SCHEMA,
+        EXPLAIN_ANALYSIS_SCHEMA,
+        EXPORT_FILTERED_SCHEMA,
         EXPORT_TO_DOCX_SCHEMA,
+        EXPORT_TO_XLSX_SCHEMA,
+        # File discovery
+        GET_UPLOADED_FILES_SCHEMA,
+        PARSE_LDI_SHEET_SCHEMA,
+        REVISE_PIPELINE_SCHEMA,
+        SELECT_PARETO_ITEMS_SCHEMA,
+        VALIDATE_DATA_QUALITY_SCHEMA,
         VALIDATE_UNITS_SCHEMA,
+        # Existing tool functions
         aggregate_by_category,
+        # New tool functions (Phase 3)
+        analyze_excel_structure,
+        apply_unit_conversions,
+        build_proper_io_table,
+        calculate_functional_unit,
         calculate_pareto,
+        compare_products,
         create_hotspot_callout,
         create_hotspot_table,
         create_io_table,
@@ -80,10 +99,60 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
         create_narrative_callout,
         create_narrative_markdown,
         create_pareto_chart,
+        explain_analysis,
+        export_filtered,
         export_to_docx,
+        export_to_xlsx,
+        # File discovery
+        get_uploaded_files,
+        parse_ldi_sheet,
+        revise_pipeline,
+        select_pareto_items,
+        validate_data_quality,
         validate_units,
     )
 
+    # -- File Discovery Tool --
+    agent.tools.register(
+        "get_uploaded_files",
+        get_uploaded_files,
+        schema=GET_UPLOADED_FILES_SCHEMA,
+    )
+
+    # -- Data Processing Tools (7 NEW) --
+    agent.tools.register(
+        "analyze_excel_structure",
+        analyze_excel_structure,
+        schema=ANALYZE_EXCEL_STRUCTURE_SCHEMA,
+    )
+    agent.tools.register("parse_ldi_sheet", parse_ldi_sheet, schema=PARSE_LDI_SHEET_SCHEMA)
+    agent.tools.register(
+        "apply_unit_conversions",
+        apply_unit_conversions,
+        schema=APPLY_UNIT_CONVERSIONS_SCHEMA,
+    )
+    agent.tools.register(
+        "calculate_functional_unit",
+        calculate_functional_unit,
+        schema=CALCULATE_FUNCTIONAL_UNIT_SCHEMA,
+    )
+    agent.tools.register(
+        "select_pareto_items",
+        select_pareto_items,
+        schema=SELECT_PARETO_ITEMS_SCHEMA,
+    )
+    agent.tools.register(
+        "validate_data_quality",
+        validate_data_quality,
+        schema=VALIDATE_DATA_QUALITY_SCHEMA,
+    )
+    agent.tools.register(
+        "build_proper_io_table",
+        build_proper_io_table,
+        schema=BUILD_PROPER_IO_TABLE_SCHEMA,
+    )
+
+    # -- IO Table Tools (4 existing) --
     agent.tools.register("create_io_table", create_io_table, schema=CREATE_IO_TABLE_SCHEMA)
     agent.tools.register(
         "aggregate_by_category", aggregate_by_category, schema=AGGREGATE_BY_CATEGORY_SCHEMA
@@ -92,6 +161,8 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
     agent.tools.register(
         "create_io_table_chart", create_io_table_chart, schema=CREATE_IO_TABLE_CHART_SCHEMA
     )
+
+    # -- Hotspot Tools (4 existing) --
     agent.tools.register("calculate_pareto", calculate_pareto, schema=CALCULATE_PARETO_SCHEMA)
     agent.tools.register(
         "create_pareto_chart", create_pareto_chart, schema=CREATE_PARETO_CHART_SCHEMA
@@ -102,6 +173,8 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
     agent.tools.register(
         "create_hotspot_callout", create_hotspot_callout, schema=CREATE_HOTSPOT_CALLOUT_SCHEMA
     )
+
+    # -- Output Tools (3 existing) --
     agent.tools.register(
         "create_narrative_markdown",
         create_narrative_markdown,
@@ -113,6 +186,13 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
         schema=CREATE_NARRATIVE_CALLOUT_SCHEMA,
     )
     agent.tools.register("export_to_docx", export_to_docx, schema=EXPORT_TO_DOCX_SCHEMA)
+    agent.tools.register("export_to_xlsx", export_to_xlsx, schema=EXPORT_TO_XLSX_SCHEMA)
+
+    # -- Conversational Tools (4 NEW) --
+    agent.tools.register("explain_analysis", explain_analysis, schema=EXPLAIN_ANALYSIS_SCHEMA)
+    agent.tools.register("compare_products", compare_products, schema=COMPARE_PRODUCTS_SCHEMA)
+    agent.tools.register("revise_pipeline", revise_pipeline, schema=REVISE_PIPELINE_SCHEMA)
+    agent.tools.register("export_filtered", export_filtered, schema=EXPORT_FILTERED_SCHEMA)
 
     return agent
 
@@ -175,6 +255,7 @@ def create_app(config: LCIConfig | None = None) -> FastAPI:
         print("\n  LCI Ignite X")
         print(f"  Model: {config.model}")
         print(f"  Memory DB: {config.memory_db}")
+        print(f"  Tools: {len(agent.tools._tools)} registered")
         print("  AG-UI: POST http://localhost:8003/awp")
         print("  Action: POST http://localhost:8003/chat/action")
         print("  Upload: POST http://localhost:8003/chat/upload\n")
@@ -185,7 +266,7 @@ def create_app(config: LCIConfig | None = None) -> FastAPI:
 
     @app.post("/chat/upload")
     async def upload_file(file: UploadFile = File(...)):
-        """Upload a CSV file for LCA analysis."""
+        """Upload a file for LCA analysis (CSV or Excel)."""
         content = await file.read()
         stored = file_store.store(
             file.filename or "unnamed",
@@ -197,7 +278,7 @@ def create_app(config: LCIConfig | None = None) -> FastAPI:
         attachment = stored.to_attachment(base_url="/uploads")
         result = attachment.to_dict()
 
-        # Detect CSV format
+        # Detect file format
         try:
             fmt = attachment_handler.detect_format(stored.path)
             result["detectedFormat"] = fmt
@@ -248,6 +329,14 @@ def create_app(config: LCIConfig | None = None) -> FastAPI:
                 }
             )
         set_attachments(file_metas or None)
+        set_upload_dir(upload_dir)
+
+        # Restore pipeline data for this session (or clear if new)
+        thread_id = body.get("threadId") or body.get("thread_id") or ""
+        if thread_id:
+            set_pipeline_session(thread_id)
+        else:
+            clear_pipeline_data()
 
         return await agui_handler.handle(request)
 

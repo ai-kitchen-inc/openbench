@@ -39,7 +39,15 @@ class TestIOTableAgentInit:
             assert "aggregate_by_category" in tool_names
             assert "validate_units" in tool_names
             assert "create_io_table_chart" in tool_names
-            assert len(tool_names) == 4
+            # New data processing tools
+            assert "analyze_excel_structure" in tool_names
+            assert "parse_ldi_sheet" in tool_names
+            assert "apply_unit_conversions" in tool_names
+            assert "calculate_functional_unit" in tool_names
+            assert "select_pareto_items" in tool_names
+            assert "validate_data_quality" in tool_names
+            assert "build_proper_io_table" in tool_names
+            assert len(tool_names) == 11
 
     def test_custom_model(self):
         """Test custom model parameter."""
@@ -52,10 +60,10 @@ class TestIOTableAgentInit:
             assert agent.temperature == 0.5
 
     def test_max_iterations(self):
-        """Test max_iterations is set to 5."""
+        """Test max_iterations is set to 8."""
         with (
             patch("openbench.core.providers.get_provider_service"),
             patch("openbench.core.config.get_default_model", return_value="gemini-2.5-flash"),
         ):
             agent = IOTableAgent()
-            assert agent.max_iterations == 5
+            assert agent.max_iterations == 8

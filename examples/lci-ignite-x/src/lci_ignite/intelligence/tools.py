@@ -10,9 +10,44 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import pathlib
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ── Session Pipeline Store (persists across requests) ──
+
+_session_pipelines: dict[str, dict] = {}
+_current_session_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "lci_session_id", default=None
+)
+
+
+def set_pipeline_session(session_id: str) -> None:
+    """Restore pipeline data for this session. Call at start of each request.
+
+    IMPORTANT: Always creates the pipeline container in the current context
+    so that asyncio.to_thread / copy_context() copies will share the same
+    mutable dict. Without this, tool threads would each create their own
+    container and pipeline data from parse_ldi_sheet would be invisible
+    to subsequent tools like export_to_xlsx.
+    """
+    _current_session_var.set(session_id)
+    # Always create the container in the calling context so all thread
+    # copies (via ToolExecutor.execute → copy_context) share the same dict.
+    container = _get_pipeline_container()
+    saved = _session_pipelines.get(session_id)
+    if saved is not None:
+        container["data"] = saved
+
+
+def _save_to_session(data: dict) -> None:
+    """Persist pipeline data to the session store."""
+    session_id = _current_session_var.get()
+    if session_id:
+        _session_pipelines[session_id] = data
+
 
 # ── Per-request ContextVars ──
 
@@ -20,6 +55,10 @@ _render_items_var: contextvars.ContextVar[list[dict]] = contextvars.ContextVar("
 _current_attachments_var: contextvars.ContextVar[list[dict] | None] = contextvars.ContextVar(
     "lci_attachments", default=None
 )
+_upload_dir_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "lci_upload_dir", default="./uploads"
+)
+_pipeline_data_var: contextvars.ContextVar[dict] = contextvars.ContextVar("lci_pipeline_data")
 
 
 def _get_render_list() -> list[dict]:
@@ -45,6 +84,100 @@ def clear_render_items() -> None:
 def set_attachments(attachments: list[dict] | None) -> None:
     """Set file attachments for the current request."""
     _current_attachments_var.set(attachments)
+
+
+def set_upload_dir(upload_dir: str) -> None:
+    """Set the upload directory for the current request."""
+    _upload_dir_var.set(upload_dir)
+
+
+def _get_pipeline_container() -> dict:
+    """Get per-request pipeline data container (mutable dict).
+
+    Uses the same pattern as _get_render_list(): a mutable container
+    shared by reference across tool threads. ToolExecutor copies the
+    ContextVar reference via copy_context(), so mutating the dict
+    is visible to all tool calls within the same request.
+    """
+    try:
+        return _pipeline_data_var.get()
+    except LookupError:
+        container: dict = {"data": None}
+        _pipeline_data_var.set(container)
+        return container
+
+
+def clear_pipeline_data() -> None:
+    """Clear pipeline data. Called before each request."""
+    container = _get_pipeline_container()
+    container["data"] = None
+
+
+def _store_pipeline(data: dict) -> None:
+    """Store processed data for the next pipeline step.
+
+    Mutates the shared container dict (not ContextVar.set) so the
+    value is visible across tool threads within the same request.
+    Also persists to the session store for cross-request access.
+    """
+    container = _get_pipeline_container()
+    container["data"] = data
+    _save_to_session(data)
+
+
+def _read_pipeline() -> dict | None:
+    """Read data from the previous pipeline step."""
+    container = _get_pipeline_container()
+    return container.get("data")
+
+
+def _resolve_data(data: str) -> tuple[Any, str | None]:
+    """Resolve data parameter: 'auto' reads from pipeline state.
+
+    Returns (parsed_data, error_message).
+    """
+    if data == "auto":
+        pipeline = _read_pipeline()
+        if pipeline is None:
+            return None, "Error: No pipeline data available. Run parse_ldi_sheet first."
+        return pipeline, None
+    try:
+        return json.loads(data), None
+    except json.JSONDecodeError as exc:
+        return None, f"Error: Invalid JSON - {exc}"
+
+
+# ── File Discovery Tool ──
+
+GET_UPLOADED_FILES_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_uploaded_files",
+        "description": (
+            "Get the list of files uploaded in the current request. "
+            "Returns file names, disk paths, and MIME types. "
+            "Call this FIRST before analyze_excel_structure or parse_ldi_sheet "
+            "to get the actual file path on disk."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+}
+
+
+def get_uploaded_files() -> str:
+    """Return currently uploaded files with their disk paths.
+
+    The agent must call this to discover file paths before passing
+    them to analyze_excel_structure or parse_ldi_sheet.
+    """
+    attachments = _current_attachments_var.get()
+    if not attachments:
+        return json.dumps({"files": [], "message": "No files uploaded in the current request."})
+    return json.dumps({"files": attachments, "count": len(attachments)})
 
 
 # ── IO Table Tools ──
@@ -585,16 +718,42 @@ EXPORT_TO_DOCX_SCHEMA = {
 
 
 def export_to_docx(title: str, content: str, filename: str = "lca_report.docx") -> str:
-    """Export LCA report to .docx format.
+    """Export LCA report to .docx format using DocxReportGenerator.
 
-    This is a placeholder — actual generation happens via DocxReportGenerator
-    in Sprint 4. For now, pushes a file card with pending status.
+    Generates an actual .docx file in the uploads directory and pushes
+    a file download card to the render items list.
     """
+    from lci_ignite.output.docx_generator import DocxReportGenerator
+
+    upload_dir = _upload_dir_var.get()
+    output_path = str(pathlib.Path(upload_dir) / filename)
+
+    # Parse content JSON
+    try:
+        sections = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        sections = {"narrative": content}
+
+    # Generate the actual .docx file
+    generator = DocxReportGenerator()
+    try:
+        result = generator.generate(
+            content=sections,
+            output_path=output_path,
+            title=title,
+        )
+        file_size = result.size_bytes
+        logger.info("Generated DOCX report: %s (%d bytes)", output_path, file_size)
+    except Exception as e:
+        logger.error("Failed to generate DOCX: %s", e)
+        return f"Error generating report: {e}"
+
+    # Push file card to render items
     item: dict[str, Any] = {
         "name": filename,
         "url": f"/uploads/{filename}",
         "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "size": 0,
+        "size": file_size,
     }
     items = _get_render_list()
     items[:] = [
@@ -602,4 +761,1619 @@ def export_to_docx(title: str, content: str, filename: str = "lca_report.docx") 
     ]
     items.append(item)
 
-    return f"Report export initiated: '{title}' → {filename}"
+    return f"Report generated: '{title}' → {filename} ({file_size:,} bytes)"
+
+
+# ── Excel Export Tool ──
+
+EXPORT_TO_XLSX_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "export_to_xlsx",
+        "description": (
+            "Export the IO Table to an Excel (.xlsx) file in PROPER format. "
+            "Uses pipeline data automatically. Shows a file download card."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to chain from pipeline (default)",
+                    "default": "auto",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Output filename (default: io_table.xlsx)",
+                    "default": "io_table.xlsx",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "IO Table title",
+                    "default": "IO Table PROPER",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def export_to_xlsx(
+    data: str = "auto", filename: str = "io_table.xlsx", title: str = "IO Table PROPER"
+) -> str:
+    """Export IO Table to Excel (.xlsx) matching PROPER template layout.
+
+    Template reference: docs/input.xlsx sheet "IO Table All PHM".
+    Layout (1-indexed columns):
+        A: empty
+        B: Input/Output (flow name or section header)
+        C: Area (process area, e.g. SPU, BSP, CPU)
+        D: Total (amount, sesuai periode kajian)
+        E: Unit
+        F-I per product: Jumlah/FU | Unit | % | Mayoritas Proses
+    """
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    from lci_ignite.data.lci_schema import IO_TABLE_SECTION_ORDER
+
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+
+    # Determine products from pipeline
+    pipeline = _read_pipeline()
+    products: list[dict] = []
+    if pipeline:
+        prod_list = pipeline.get("products", [])
+        if prod_list:
+            if isinstance(prod_list[0], str):
+                products = [{"name": n} for n in prod_list]
+            elif isinstance(prod_list[0], dict):
+                products = prod_list
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "IO Table"
+
+    # ── Column offsets (1-indexed, matching template) ──
+    COL_B = 2  # Input/Output
+    COL_C = 3  # Area
+    COL_D = 4  # Total
+    COL_E = 5  # Unit
+    COL_PROD_START = 6  # First product column (F)
+    COLS_PER_PRODUCT = 4  # Jumlah/FU, Unit, %, Mayoritas Proses
+    total_cols = COL_E + len(products) * COLS_PER_PRODUCT  # last used column
+
+    # ── Styles ──
+    header_font = Font(bold=True, size=11)
+    section_font = Font(bold=True, size=10)
+    section_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    total_font = Font(bold=True, italic=True, size=10)
+    num_align = Alignment(horizontal="right")
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    # ── Row 1: empty ──
+    # (intentionally blank)
+
+    # ── Row 2: product names at their column positions ──
+    for i, product in enumerate(products):
+        name = product.get("name", "Product")
+        col = COL_PROD_START + i * COLS_PER_PRODUCT
+        ws.cell(row=2, column=col, value=name).font = header_font
+
+    # ── Row 3: "ALL PHM" label + total_energy_mj per product ──
+    ws.cell(row=3, column=COL_E, value="ALL PHM").font = header_font
+    for i, product in enumerate(products):
+        energy = product.get("total_energy_mj", "")
+        col = COL_PROD_START + i * COLS_PER_PRODUCT
+        if energy:
+            ws.cell(row=3, column=col, value=energy).alignment = num_align
+
+    # ── Row 4: main header row ──
+    ws.cell(row=4, column=COL_B, value="Input/Output").font = header_font
+    ws.cell(row=4, column=COL_B).alignment = center_align
+    ws.cell(row=4, column=COL_C, value="Area").font = header_font
+    ws.cell(row=4, column=COL_C).alignment = center_align
+    ws.cell(row=4, column=COL_D, value="Total").font = header_font
+    ws.cell(row=4, column=COL_D).alignment = center_align
+    ws.cell(row=4, column=COL_E, value="Unit").font = header_font
+    ws.cell(row=4, column=COL_E).alignment = center_align
+    # Product name headers merged across 4 columns
+    for i, product in enumerate(products):
+        name = product.get("name", "Product")
+        col = COL_PROD_START + i * COLS_PER_PRODUCT
+        ws.cell(row=4, column=col, value=name).font = header_font
+        ws.cell(row=4, column=col).alignment = center_align
+        ws.merge_cells(
+            start_row=4,
+            start_column=col,
+            end_row=4,
+            end_column=col + COLS_PER_PRODUCT - 1,
+        )
+    # Merge vertically: B4:B5, C4:C5, E4:E5
+    ws.merge_cells(start_row=4, start_column=COL_B, end_row=5, end_column=COL_B)
+    ws.merge_cells(start_row=4, start_column=COL_C, end_row=5, end_column=COL_C)
+    ws.merge_cells(start_row=4, start_column=COL_E, end_row=5, end_column=COL_E)
+
+    # ── Row 5: sub-headers ──
+    ws.cell(row=5, column=COL_D, value="(sesuai periode kajian)").font = Font(size=9)
+    for i, _ in enumerate(products):
+        col = COL_PROD_START + i * COLS_PER_PRODUCT
+        ws.cell(row=5, column=col, value="Jumlah/FU").font = header_font
+        ws.cell(row=5, column=col + 1, value="Unit").font = header_font
+        ws.cell(row=5, column=col + 2, value="%").font = header_font
+        mayoritas = "Mayoritas Proses yang Menggunakan / Menghasilkan"
+        ws.cell(row=5, column=col + 3, value=mayoritas).font = Font(bold=True, size=9)
+        ws.cell(row=5, column=col + 3).alignment = Alignment(wrap_text=True)
+
+    # ── Group flows by category ──
+    from collections import defaultdict
+
+    by_category: dict[str, list[dict]] = defaultdict(list)
+    for flow in flows:
+        cat = flow.get("category", "Unknown")
+        by_category[cat].append(flow)
+
+    # Build emission sub-sections from Emisi Udara flows
+    emisi_flows = by_category.pop("Emisi Udara", [])
+    if emisi_flows:
+        emission_sections = _build_emission_subsections(emisi_flows, products)
+        for sec_name, sec_flows in emission_sections.items():
+            by_category[sec_name] = sec_flows
+
+    # Track which sections are emission summary (no % or process)
+    emission_summary_section = "Emisi Udara"
+
+    row_idx = 6  # data starts at row 6
+
+    def _write_xlsx_section(section: str, section_flows: list[dict]) -> None:
+        nonlocal row_idx
+        if not section_flows:
+            return
+
+        is_emission_summary = section == emission_summary_section
+
+        # Section header row — merge B:C
+        ws.merge_cells(
+            start_row=row_idx,
+            start_column=COL_B,
+            end_row=row_idx,
+            end_column=COL_C,
+        )
+        cell = ws.cell(row=row_idx, column=COL_B, value=section)
+        cell.font = section_font
+        cell.fill = section_fill
+        for c in range(COL_B, total_cols + 1):
+            ws.cell(row=row_idx, column=c).fill = section_fill
+        row_idx += 1
+
+        sorted_flows = sorted(section_flows, key=lambda f: abs(f.get("amount", 0)), reverse=True)
+
+        section_total = 0.0
+        for flow in sorted_flows:
+            amount = flow.get("amount", 0.0)
+            section_total += amount
+            ws.cell(row=row_idx, column=COL_B, value=flow.get("flow_name", ""))
+            ws.cell(row=row_idx, column=COL_C, value=flow.get("process", ""))
+            ws.cell(row=row_idx, column=COL_D, value=amount).alignment = num_align
+            ws.cell(row=row_idx, column=COL_E, value=flow.get("unit", ""))
+
+            for i, product in enumerate(products):
+                name = product.get("name", "")
+                fu_key = f"fu_per_mj_{name}"
+                pct_key = f"pct_{name}"
+                fu_val = flow.get(fu_key, 0.0)
+                pct_val = flow.get(pct_key, 0.0)
+                fu_unit = f"{flow.get('unit', '')}/MJ" if flow.get("unit") else ""
+                dominant = flow.get("process", "")
+
+                col = COL_PROD_START + i * COLS_PER_PRODUCT
+                if fu_val:
+                    ws.cell(row=row_idx, column=col, value=fu_val).alignment = num_align
+                ws.cell(row=row_idx, column=col + 1, value=fu_unit)
+                # Emisi Udara summary: no % and no process
+                if not is_emission_summary:
+                    if pct_val:
+                        ws.cell(row=row_idx, column=col + 2, value=pct_val).alignment = num_align
+                    ws.cell(row=row_idx, column=col + 3, value=dominant)
+
+            row_idx += 1
+
+        # Total row — merge B:C
+        if len(sorted_flows) > 1:
+            ws.merge_cells(
+                start_row=row_idx,
+                start_column=COL_B,
+                end_row=row_idx,
+                end_column=COL_C,
+            )
+            cell = ws.cell(row=row_idx, column=COL_B, value="Total")
+            cell.font = total_font
+            ws.cell(row=row_idx, column=COL_D, value=section_total).font = total_font
+            ws.cell(row=row_idx, column=COL_D).alignment = num_align
+            total_unit = sorted_flows[0].get("unit", "")
+            ws.cell(row=row_idx, column=COL_E, value=total_unit).font = total_font
+
+            for i, product in enumerate(products):
+                name = product.get("name", "")
+                fu_key = f"fu_per_mj_{name}"
+                fu_total = sum(f.get(fu_key, 0.0) for f in sorted_flows)
+                fu_unit = f"{sorted_flows[0].get('unit', '')}/MJ"
+                col = COL_PROD_START + i * COLS_PER_PRODUCT
+                ws.cell(row=row_idx, column=col, value=fu_total).font = total_font
+                ws.cell(row=row_idx, column=col, value=fu_total).alignment = num_align
+                ws.cell(row=row_idx, column=col + 1, value=fu_unit).font = total_font
+                # Total row: %=1 (100%) for non-emission-summary sections
+                if not is_emission_summary:
+                    ws.cell(row=row_idx, column=col + 2, value=1).font = total_font
+            row_idx += 1
+
+    for section in IO_TABLE_SECTION_ORDER:
+        _write_xlsx_section(section, by_category.get(section, []))
+
+    # Auto-width columns (skip column A which is intentionally empty)
+    for col_idx in range(COL_B, total_cols + 1):
+        max_len = 10
+        col_letter = get_column_letter(col_idx)
+        for row in ws.iter_rows(min_row=1, max_row=row_idx, min_col=col_idx, max_col=col_idx):
+            for cell in row:
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = min(max_len + 2, 40)
+    # Column A narrow
+    ws.column_dimensions["A"].width = 2
+
+    # Save
+    upload_dir = _upload_dir_var.get()
+    output_path = str(pathlib.Path(upload_dir) / filename)
+    wb.save(output_path)
+    file_size = pathlib.Path(output_path).stat().st_size
+
+    # Push file card to render items
+    item: dict[str, Any] = {
+        "name": filename,
+        "url": f"/uploads/{filename}",
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "size": file_size,
+    }
+    items = _get_render_list()
+    items[:] = [
+        i for i in items if not (i.get("name") == filename and "url" in i and "mimeType" in i)
+    ]
+    items.append(item)
+
+    return (
+        f"Excel IO Table exported: '{title}' -> {filename} "
+        f"({row_idx - 1} rows, {total_cols} columns, {file_size:,} bytes)"
+    )
+
+
+# ── Data Processing Tools (7 NEW) ──
+
+ANALYZE_EXCEL_STRUCTURE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "analyze_excel_structure",
+        "description": (
+            "Extract Excel file structure for column mapping. Returns sheet names, "
+            "headers, sample rows, dimensions, detected units and categories. "
+            "No LLM call -- pure metadata extraction (Layer 2)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the Excel file (.xlsx)",
+                },
+            },
+            "required": ["file_path"],
+        },
+    },
+}
+
+
+def analyze_excel_structure(file_path: str) -> str:
+    """Extract Excel structure for LLM mapping (Layer 2).
+
+    Returns JSON with sheet_names, headers, sample_rows, dimensions,
+    detected_units, detected_categories. Also checks for saved MappingProfile match.
+    """
+    from lci_ignite.data.excel_profile import ExcelProfile
+    from lci_ignite.data.mapping_profiles import match_profile
+
+    try:
+        profile = ExcelProfile.extract(file_path)
+    except (FileNotFoundError, ValueError) as exc:
+        return f"Error: {exc}"
+
+    # Check if a saved profile matches
+    matched = match_profile(profile)
+    if matched:
+        profile["matched_profile"] = matched.get("profile_name", "unknown")
+        profile["message"] = (
+            f"Found matching profile: {matched.get('profile_name')}. "
+            "You can use parse_ldi_sheet with this profile."
+        )
+    else:
+        profile["matched_profile"] = None
+        profile["message"] = (
+            "No matching profile found. Analyze the headers and sample data "
+            "to create a column mapping, then use parse_ldi_sheet."
+        )
+
+    return json.dumps(profile, indent=2, default=str)
+
+
+PARSE_LDI_SHEET_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "parse_ldi_sheet",
+        "description": (
+            "Parse an LDI Master Excel sheet using a MappingProfile. "
+            "Returns structured LCI data in Standard Schema format with flows, "
+            "helper data, and summary. Use analyze_excel_structure first to identify the profile."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the Excel file",
+                },
+                "profile_name": {
+                    "type": "string",
+                    "description": (
+                        "Name of saved MappingProfile to load (e.g., 'pertamina_pep_tanjung'), "
+                        "or 'auto' to auto-detect from file structure"
+                    ),
+                },
+            },
+            "required": ["file_path", "profile_name"],
+        },
+    },
+}
+
+
+def parse_ldi_sheet(file_path: str, profile_name: str) -> str:
+    """Parse LDI Master sheet using a MappingProfile.
+
+    Returns JSON Standard LCI Schema with flows, helper_data, products, summary.
+    """
+    from lci_ignite.data.excel_profile import ExcelProfile
+    from lci_ignite.data.mapping_profiles import load_profile, match_profile
+    from lci_ignite.data.sources.excel_lci import ExcelLCISource
+
+    profile = None
+    if profile_name == "auto":
+        try:
+            excel_profile = ExcelProfile.extract(file_path)
+            profile = match_profile(excel_profile)
+            if profile is None:
+                return (
+                    "Error: No matching profile found for this file. "
+                    "Use analyze_excel_structure to inspect the file, "
+                    "then create a mapping manually."
+                )
+        except Exception as exc:
+            return f"Error extracting profile: {exc}"
+    else:
+        try:
+            profile = load_profile(profile_name)
+        except FileNotFoundError:
+            return f"Error: Profile '{profile_name}' not found."
+
+    source = ExcelLCISource(path=file_path, profile=profile)
+    try:
+        raw_data = source.extract()
+    except ValueError as exc:
+        return f"Error parsing file: {exc}"
+
+    # Store full data in pipeline state for downstream tools
+    _store_pipeline(raw_data.content)
+
+    # Return only summary (not full 366+ flows) to keep LLM context small
+    summary = raw_data.content.get("summary", {})
+    products = raw_data.content.get("products", [])
+    return json.dumps(
+        {
+            "status": "parsed",
+            "total_flows": summary.get("total_flows", 0),
+            "categories": summary.get("categories", []),
+            "processes": summary.get("processes", []),
+            "products": products,
+            "skipped_rows": summary.get("skipped_rows", 0),
+            "message": (
+                f"Parsed {summary.get('total_flows', 0)} flows across "
+                f"{len(summary.get('categories', []))} categories. "
+                "Data stored in pipeline. Use 'auto' for data parameter in next tools."
+            ),
+        },
+        indent=2,
+        default=str,
+    )
+
+
+APPLY_UNIT_CONVERSIONS_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "apply_unit_conversions",
+        "description": (
+            "Apply unit conversions to parsed LCI data. Converts units like "
+            "ton->kg, barrel->L, m3->L. Uses pipeline data automatically."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to chain from previous pipeline step (default)",
+                    "default": "auto",
+                },
+                "conversions": {
+                    "type": "string",
+                    "description": (
+                        "JSON string of conversion rules array "
+                        '[{"from_unit": "ton", "to_unit": "kg", "factor": 1000}]. '
+                        "Default: empty (no conversions)"
+                    ),
+                    "default": "[]",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def _extract_flows(parsed: Any) -> list[dict]:
+    """Extract flows list from either a list or dict with 'flows' key.
+
+    Tools accept data in two formats:
+      - A flat list of flow dicts: [{...}, {...}]
+      - A dict with a 'flows' key: {"flows": [{...}, ...], ...}
+    This helper normalizes both to a plain list.
+    """
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict) and "flows" in parsed:
+        return parsed["flows"]
+    return parsed
+
+
+def apply_unit_conversions(data: str = "auto", conversions: str = "[]") -> str:
+    """Apply unit conversions to parsed LCI flows."""
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+    try:
+        conv_rules = json.loads(conversions)
+    except json.JSONDecodeError as exc:
+        return f"Error: Invalid conversions JSON - {exc}"
+
+    converted = 0
+    for flow in flows:
+        cat = flow.get("category", "")
+        unit = flow.get("unit", "")
+        amount = flow.get("amount", 0.0)
+
+        for rule in conv_rules:
+            from_unit = rule.get("from_unit", "")
+            to_unit = rule.get("to_unit", "")
+            factor = rule.get("factor", 1)
+            applies_to = rule.get("applies_to", [])
+
+            if unit.lower() == from_unit.lower() and (not applies_to or cat in applies_to):
+                flow["amount"] = amount * factor
+                flow["unit"] = to_unit
+                flow["original_amount"] = amount
+                flow["original_unit"] = unit
+                converted += 1
+                break
+
+    result = {
+        "flows": flows,
+        "conversions_applied": converted,
+        "total_flows": len(flows),
+    }
+    _store_pipeline(result)
+    return json.dumps(
+        {
+            "status": "converted",
+            "conversions_applied": converted,
+            "total_flows": len(flows),
+            "message": f"Applied {converted} unit conversions across {len(flows)} flows.",
+        },
+        indent=2,
+    )
+
+
+CALCULATE_FUNCTIONAL_UNIT_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "calculate_functional_unit",
+        "description": (
+            "Calculate per-MJ functional unit values for each product. "
+            "Uses pipeline data and product definitions automatically."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to chain from previous pipeline step (default)",
+                    "default": "auto",
+                },
+                "products": {
+                    "type": "string",
+                    "description": "Use 'auto' to use products from parsed data (default)",
+                    "default": "auto",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def calculate_functional_unit(data: str = "auto", products: str = "auto") -> str:
+    """Calculate per-MJ functional unit values for each product."""
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+
+    # Products can come from pipeline state or explicit parameter
+    if products == "auto":
+        pipeline = _read_pipeline()
+        if pipeline and "products" in pipeline:
+            product_list = pipeline["products"]
+        else:
+            return "Error: No product definitions. Provide products parameter."
+    else:
+        try:
+            product_list = json.loads(products)
+        except json.JSONDecodeError as exc:
+            return f"Error: Invalid products JSON - {exc}"
+
+    if not product_list:
+        return "Error: No product definitions provided"
+
+    for flow in flows:
+        for product in product_list:
+            name = product["name"]
+            energy_mj = product.get("total_energy_mj", 0)
+            if energy_mj == 0:
+                continue
+
+            per_product_key = f"per_product_{name}"
+            per_product_amount = flow.get(per_product_key, 0.0)
+            amount = flow.get("amount", 0.0)
+
+            fu_key = f"fu_per_mj_{name}"
+            if per_product_amount:
+                flow[fu_key] = per_product_amount / energy_mj
+            elif amount:
+                # Fallback: when per-product column is empty/zero, use total amount
+                flow[fu_key] = amount / energy_mj
+            else:
+                flow[fu_key] = 0.0
+
+            pct_key = f"pct_{name}"
+            flow[pct_key] = 0.0
+
+    # Calculate percentage per category per product
+    from collections import defaultdict
+
+    cat_totals: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for flow in flows:
+        cat = flow.get("category", "")
+        for product in product_list:
+            name = product["name"]
+            fu_key = f"fu_per_mj_{name}"
+            cat_totals[cat][name] += abs(flow.get(fu_key, 0.0))
+
+    for flow in flows:
+        cat = flow.get("category", "")
+        for product in product_list:
+            name = product["name"]
+            fu_key = f"fu_per_mj_{name}"
+            pct_key = f"pct_{name}"
+            total = cat_totals[cat][name]
+            if total > 0:
+                flow[pct_key] = round(abs(flow.get(fu_key, 0.0)) / total * 100, 2)
+
+    result = {
+        "flows": flows,
+        "products": [p["name"] for p in product_list],
+        "total_flows": len(flows),
+    }
+    _store_pipeline(result)
+    return json.dumps(
+        {
+            "status": "fu_calculated",
+            "products": [p["name"] for p in product_list],
+            "total_flows": len(flows),
+            "message": (
+                f"Calculated FU/MJ values for {len(product_list)} products"
+                f" across {len(flows)} flows."
+            ),
+        },
+        indent=2,
+    )
+
+
+SELECT_PARETO_ITEMS_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "select_pareto_items",
+        "description": (
+            "Per category: select top N items by amount, aggregate the rest "
+            "into 'Lainnya'. Uses pipeline data automatically."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to chain from previous pipeline step (default)",
+                    "default": "auto",
+                },
+                "top_n": {
+                    "type": "integer",
+                    "description": "Maximum items per category (default: 5)",
+                },
+                "lainnya_label": {
+                    "type": "string",
+                    "description": "Label for aggregated remainder (default: 'Lainnya')",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def select_pareto_items(data: str = "auto", top_n: int = 5, lainnya_label: str = "Lainnya") -> str:
+    """Per category: select top N items, aggregate rest into Lainnya."""
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+
+    from collections import defaultdict
+
+    by_category: dict[str, list[dict]] = defaultdict(list)
+    for flow in flows:
+        cat = flow.get("category", "Unknown")
+        by_category[cat].append(flow)
+
+    selected: list[dict] = []
+    stats: dict[str, dict] = {}
+
+    for cat, cat_flows in by_category.items():
+        sorted_flows = sorted(cat_flows, key=lambda f: abs(f.get("amount", 0)), reverse=True)
+
+        top_items = sorted_flows[:top_n]
+        rest_items = sorted_flows[top_n:]
+
+        selected.extend(top_items)
+
+        if rest_items:
+            lainnya_amount = sum(f.get("amount", 0) for f in rest_items)
+            unit = rest_items[0].get("unit", "")
+            lainnya: dict[str, Any] = {
+                "category": cat,
+                "flow_name": lainnya_label,
+                "amount": lainnya_amount,
+                "unit": unit,
+                "direction": rest_items[0].get("direction", ""),
+                "process": "",
+                "is_aggregated": True,
+                "aggregated_count": len(rest_items),
+            }
+            for key in rest_items[0]:
+                if key.startswith("per_product_") or key.startswith("fu_"):
+                    lainnya[key] = sum(f.get(key, 0) for f in rest_items)
+            selected.append(lainnya)
+
+        stats[cat] = {
+            "total_items": len(cat_flows),
+            "selected": len(top_items),
+            "aggregated": len(rest_items),
+        }
+
+    result = {
+        "flows": selected,
+        "stats": stats,
+        "total_selected": len(selected),
+    }
+    _store_pipeline(result)
+    return json.dumps(
+        {
+            "status": "pareto_selected",
+            "total_selected": len(selected),
+            "categories": len(stats),
+            "stats": stats,
+            "message": f"Selected {len(selected)} items across {len(stats)} categories.",
+        },
+        indent=2,
+    )
+
+
+VALIDATE_DATA_QUALITY_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "validate_data_quality",
+        "description": (
+            "Check for known data quality issues in LCI data. Uses pipeline data automatically."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to chain from previous pipeline step (default)",
+                    "default": "auto",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def validate_data_quality(data: str = "auto") -> str:
+    """Check for known data quality issues in LCI data."""
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+
+    issues: list[dict[str, str]] = []
+
+    # Check 1: Duplicate values across different emission categories
+    emission_flows = [f for f in flows if "Emisi" in f.get("category", "")]
+    emission_amounts: dict[float, list[str]] = {}
+    for flow in emission_flows:
+        amt = round(flow.get("amount", 0), 5)
+        if amt != 0:
+            cat = flow.get("category", "")
+            emission_amounts.setdefault(amt, []).append(cat)
+
+    for amt, cats in emission_amounts.items():
+        unique_cats = set(cats)
+        if len(unique_cats) > 1:
+            issues.append(
+                {
+                    "severity": "CRITICAL",
+                    "category": ", ".join(sorted(unique_cats)),
+                    "description": (
+                        f"Identical value {amt} found across different emission categories: "
+                        f"{', '.join(sorted(unique_cats))}. Possible copy-paste error."
+                    ),
+                    "suggestion": "Verify source data for these emission categories.",
+                }
+            )
+
+    # Check 2: Suspiciously small values that may be missing *1000 conversion
+    for flow in flows:
+        cat = flow.get("category", "")
+        unit = flow.get("unit", "")
+        amount = flow.get("amount", 0)
+        if unit == "kg" and 0 < abs(amount) < 1 and "Emisi" in cat:
+            issues.append(
+                {
+                    "severity": "CRITICAL",
+                    "category": cat,
+                    "description": (
+                        f"Flow '{flow.get('flow_name', '')}' has very small kg value ({amount}). "
+                        "May be missing *1000 conversion from ton."
+                    ),
+                    "suggestion": "Check if original unit was ton and conversion was missed.",
+                }
+            )
+
+    # Check 3: Zero amounts
+    zero_count = sum(1 for f in flows if f.get("amount", 0) == 0)
+    if zero_count > 0:
+        issues.append(
+            {
+                "severity": "MINOR",
+                "category": "All",
+                "description": f"{zero_count} flows have zero amounts.",
+                "suggestion": "Verify if these are intentional or missing data.",
+            }
+        )
+
+    # Check 4: Negative amounts
+    negative_flows = [f for f in flows if f.get("amount", 0) < 0]
+    if negative_flows:
+        names = ", ".join(f.get("flow_name", "") for f in negative_flows[:3])
+        issues.append(
+            {
+                "severity": "MODERATE",
+                "category": "Various",
+                "description": f"{len(negative_flows)} flows have negative amounts: {names}",
+                "suggestion": "Negative values are unusual in LCI. Check direction assignment.",
+            }
+        )
+
+    # Push callout if critical issues found
+    if any(i["severity"] == "CRITICAL" for i in issues):
+        callout_content = "**Data Quality Issues Detected:**\n"
+        for issue in issues:
+            if issue["severity"] == "CRITICAL":
+                callout_content += f"- [{issue['severity']}] {issue['description']}\n"
+        item: dict[str, Any] = {
+            "calloutContent": callout_content,
+            "variant": "warning",
+            "title": "Data Quality Alert",
+        }
+        items = _get_render_list()
+        items.append(item)
+
+    result = {
+        "issues": issues,
+        "total_issues": len(issues),
+        "critical": len([i for i in issues if i["severity"] == "CRITICAL"]),
+        "moderate": len([i for i in issues if i["severity"] == "MODERATE"]),
+        "minor": len([i for i in issues if i["severity"] == "MINOR"]),
+    }
+    return json.dumps(result, indent=2)
+
+
+# ── Emission sub-section classification ──
+
+_EMISSION_POLLUTANTS = [
+    "CO2",
+    "CH4",
+    "CO",
+    "NOx",
+    "N2O",
+    "SOx",
+    "Particulate Material",
+    "nmVOC",
+    "TOC",
+]
+
+# Regex patterns for emission classification.
+# Order matters: longer/more-specific patterns first to avoid "CO2" matching "CO".
+# "PM" is accepted as alias for "Particulate Material".
+_EMISSION_PATTERNS: list[tuple[str, str]] = [
+    (r"(?i)\bCO2\b", "CO2"),
+    (r"(?i)\bCH4\b", "CH4"),
+    (r"(?i)\bNOx\b", "NOx"),
+    (r"(?i)\bN2O\b", "N2O"),
+    (r"(?i)\bSOx\b", "SOx"),
+    (r"(?i)\b(?:PM|Particulate)\b", "Particulate Material"),
+    (r"(?i)\bnmVOC\b", "nmVOC"),
+    (r"(?i)\bTOC\b", "TOC"),
+    # CO must come after CO2 to avoid false matches
+    (r"(?i)\bCO\b(?!2)", "CO"),
+]
+
+
+def _classify_emission(flow_name: str) -> str | None:
+    """Classify an emission flow into a pollutant sub-section.
+
+    Returns pollutant name (e.g. "CO2", "Particulate Material") or None.
+    """
+    name = flow_name.strip()
+    for pattern, pollutant in _EMISSION_PATTERNS:
+        if re.search(pattern, name):
+            return pollutant
+    return None
+
+
+def _build_emission_subsections(
+    emisi_flows: list[dict],
+    products: list[dict],
+    top_n: int = 5,
+) -> dict[str, list[dict]]:
+    """Build emission sub-sections from Emisi Udara flows.
+
+    Returns dict mapping section name -> list of flow rows, including:
+    - "Emisi Udara" summary (8 aggregate rows, one per pollutant)
+    - "Emisi CO2", "Emisi CH4", ... detail sections (top N + Lainnya + Total)
+    """
+    from collections import defaultdict
+
+    # Classify each flow
+    by_pollutant: dict[str, list[dict]] = defaultdict(list)
+    for flow in emisi_flows:
+        pollutant = _classify_emission(flow.get("flow_name", ""))
+        if pollutant:
+            by_pollutant[pollutant].append(flow)
+        else:
+            # Unclassified emissions go into a catch-all
+            by_pollutant["_other"].append(flow)
+
+    sections: dict[str, list[dict]] = {}
+
+    # Summary section: one aggregate row per pollutant
+    summary_flows: list[dict] = []
+    for pollutant in _EMISSION_POLLUTANTS:
+        p_flows = by_pollutant.get(pollutant, [])
+        if not p_flows:
+            continue
+        total_amount = sum(f.get("amount", 0.0) for f in p_flows)
+        unit = p_flows[0].get("unit", "kg")
+        agg: dict[str, Any] = {
+            "flow_name": f"Total {pollutant}",
+            "amount": total_amount,
+            "unit": unit,
+            "direction": "output",
+            "category": "Emisi Udara",
+            "process": "",
+        }
+        # Aggregate FU values
+        for product in products:
+            name = product.get("name", "")
+            fu_key = f"fu_per_mj_{name}"
+            agg[fu_key] = sum(f.get(fu_key, 0.0) for f in p_flows)
+        summary_flows.append(agg)
+
+    if summary_flows:
+        sections["Emisi Udara"] = summary_flows
+
+    # Detail sections per pollutant
+    for pollutant in _EMISSION_POLLUTANTS:
+        p_flows = by_pollutant.get(pollutant, [])
+        if not p_flows:
+            continue
+
+        section_name = f"Emisi {pollutant}"
+        sorted_flows = sorted(p_flows, key=lambda f: abs(f.get("amount", 0)), reverse=True)
+
+        detail_flows: list[dict] = []
+        top_items = sorted_flows[:top_n]
+        rest_items = sorted_flows[top_n:]
+
+        detail_flows.extend(top_items)
+
+        if rest_items:
+            lainnya_amount = sum(f.get("amount", 0) for f in rest_items)
+            unit = rest_items[0].get("unit", "kg")
+            lainnya: dict[str, Any] = {
+                "flow_name": "Lainnya",
+                "amount": lainnya_amount,
+                "unit": unit,
+                "direction": "output",
+                "category": section_name,
+                "process": "",
+                "is_aggregated": True,
+                "aggregated_count": len(rest_items),
+            }
+            for product in products:
+                name = product.get("name", "")
+                fu_key = f"fu_per_mj_{name}"
+                lainnya[fu_key] = sum(f.get(fu_key, 0.0) for f in rest_items)
+            detail_flows.append(lainnya)
+
+        sections[section_name] = detail_flows
+
+    return sections
+
+
+BUILD_PROPER_IO_TABLE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "build_proper_io_table",
+        "description": (
+            "Build a full PROPER-format IO Table with 11 columns. "
+            "Uses pipeline data and product config automatically."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to chain from previous pipeline step (default)",
+                    "default": "auto",
+                },
+                "config": {
+                    "type": "string",
+                    "description": "Use 'auto' to derive from pipeline data (default)",
+                    "default": "auto",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def build_proper_io_table(data: str = "auto", config: str = "auto") -> str:
+    """Build full PROPER-format IO Table with 11 columns.
+
+    Columns: Item | Total | Unit | Product1 FU/MJ | Unit | % | Process |
+             Product2 FU/MJ | Unit | % | Process
+    """
+    from lci_ignite.data.lci_schema import IO_TABLE_SECTION_ORDER
+
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+
+    # Config can come from pipeline state or explicit parameter
+    if config == "auto":
+        pipeline = _read_pipeline()
+        products_from_pipeline = []
+        if pipeline and "products" in pipeline:
+            product_names = pipeline["products"]
+            if product_names and isinstance(product_names[0], str):
+                products_from_pipeline = [{"name": n} for n in product_names]
+            elif product_names and isinstance(product_names[0], dict):
+                products_from_pipeline = product_names
+        table_config = {"products": products_from_pipeline, "title": "IO Table PROPER"}
+    else:
+        try:
+            table_config = json.loads(config)
+        except json.JSONDecodeError as exc:
+            return f"Error: Invalid config JSON - {exc}"
+
+    products = table_config.get("products", [])
+    title = table_config.get("title", "IO Table")
+
+    # Build headers
+    headers = ["Input/Output", "Total", "Unit"]
+    for product in products:
+        name = product.get("name", "Product")
+        headers.extend([f"{name} FU/MJ", "Unit", "%", "Mayoritas Proses"])
+
+    # Group flows by category
+    from collections import defaultdict
+
+    by_category: dict[str, list[dict]] = defaultdict(list)
+    for flow in flows:
+        cat = flow.get("category", "Unknown")
+        by_category[cat].append(flow)
+
+    # Build emission sub-sections from Emisi Udara flows
+    emisi_flows = by_category.pop("Emisi Udara", [])
+    emission_sections: dict[str, list[dict]] = {}
+    if emisi_flows:
+        emission_sections = _build_emission_subsections(emisi_flows, products)
+        # Merge emission sub-sections into by_category for rendering
+        for section_name, section_flows in emission_sections.items():
+            by_category[section_name] = section_flows
+
+    rows: list[list[str]] = []
+    section_count = 0
+
+    def _render_section(section: str, section_flows: list[dict]) -> None:
+        nonlocal section_count
+        if not section_flows:
+            return
+
+        section_count += 1
+
+        # Section header row
+        hdr_row = [f"**{section}**"] + [""] * (len(headers) - 1)
+        rows.append(hdr_row)
+
+        sorted_flows = sorted(section_flows, key=lambda f: abs(f.get("amount", 0)), reverse=True)
+
+        section_total = 0.0
+        for flow in sorted_flows:
+            amount = flow.get("amount", 0.0)
+            section_total += amount
+            unit = flow.get("unit", "")
+            flow_name = flow.get("flow_name", "")
+
+            row = [flow_name, _fmt_number(amount), unit]
+
+            for product in products:
+                name = product.get("name", "")
+                fu_key = f"fu_per_mj_{name}"
+                pct_key = f"pct_{name}"
+                fu_val = flow.get(fu_key, 0.0)
+                pct_val = flow.get(pct_key, 0.0)
+                fu_unit = f"{unit}/MJ" if unit else ""
+                dominant = flow.get("process", "")
+
+                row.extend(
+                    [
+                        _fmt_number(fu_val),
+                        fu_unit,
+                        f"{pct_val:.1f}" if pct_val else "",
+                        dominant,
+                    ]
+                )
+
+            rows.append(row)
+
+        # Section total row
+        if len(sorted_flows) > 1:
+            total_row = [
+                f"Total {section}",
+                _fmt_number(section_total),
+                sorted_flows[0].get("unit", ""),
+            ]
+            for product in products:
+                name = product.get("name", "")
+                fu_key = f"fu_per_mj_{name}"
+                fu_total = sum(f.get(fu_key, 0.0) for f in sorted_flows)
+                total_row.extend([_fmt_number(fu_total), "", "100.0", ""])
+            rows.append(total_row)
+
+    for section in IO_TABLE_SECTION_ORDER:
+        _render_section(section, by_category.get(section, []))
+
+    # Push to render items
+    item = {"headers": headers, "rows": rows, "title": title}
+    items = _get_render_list()
+    items[:] = [
+        i for i in items if not (i.get("title") == title and "headers" in i and "rows" in i)
+    ]
+    items.append(item)
+
+    return (
+        f"PROPER IO Table created: '{title}' with {section_count} sections, "
+        f"{len(rows)} rows, {len(headers)} columns."
+    )
+
+
+def _fmt_number(value: float) -> str:
+    """Format a number for IO Table display."""
+    if value == 0:
+        return "0"
+    if abs(value) >= 1000:
+        return f"{value:,.2f}"
+    if abs(value) >= 1:
+        return f"{value:.2f}"
+    if abs(value) >= 0.01:
+        return f"{value:.4f}"
+    return f"{value:.6e}"
+
+
+# ── Conversational Tools (4 NEW) ──
+
+EXPLAIN_ANALYSIS_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "explain_analysis",
+        "description": (
+            "Explain analysis results by extracting relevant data context. "
+            "Use when the user asks questions like 'kenapa CO2 paling tinggi?' "
+            "or 'jelaskan emisi udara'. Returns structured data for the LLM to narrate."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The user's question about the analysis results",
+                },
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to read from pipeline (default)",
+                    "default": "auto",
+                },
+            },
+            "required": ["question"],
+        },
+    },
+}
+
+
+def explain_analysis(question: str, data: str = "auto") -> str:
+    """Extract relevant pipeline data to answer a user question about results.
+
+    Detects intent from question keywords and returns structured context:
+    - Category drill-down (e.g. "kenapa CO2 paling tinggi?")
+    - Top contributors per category
+    - Process-level analysis
+    """
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+
+    if not flows:
+        return json.dumps({"error": "No pipeline data available. Run the analysis pipeline first."})
+
+    q_lower = question.lower()
+
+    # Detect category focus from question
+    target_category = None
+    category_keywords = {
+        "co2": "Emisi CO2",
+        "ch4": "Emisi CH4",
+        "nox": "Emisi NOx",
+        "n2o": "Emisi N2O",
+        "sox": "Emisi SOx",
+        "pm": "Emisi Particulate Material",
+        "nmvoc": "Emisi nmVOC",
+        "toc": "Emisi TOC",
+        "co": "Emisi CO",
+        "emisi udara": "Emisi Udara",
+        "bahan baku": "Bahan Baku",
+        "energi": "Energi",
+        "air": "Air",
+        "limbah": "Limbah B3",
+    }
+    for keyword, cat in category_keywords.items():
+        if keyword in q_lower:
+            target_category = cat
+            break
+
+    # Filter flows
+    if target_category:
+        relevant = [f for f in flows if f.get("category", "") == target_category]
+    else:
+        relevant = flows
+
+    if not relevant:
+        # Fallback: try partial match
+        for f in flows:
+            cat = f.get("category", "").lower()
+            if any(kw in cat for kw in q_lower.split()):
+                relevant.append(f)
+
+    if not relevant:
+        relevant = flows
+
+    # Sort by amount descending
+    relevant = sorted(relevant, key=lambda f: abs(f.get("amount", 0)), reverse=True)
+
+    # Compute totals and percentages
+    total_amount = sum(abs(f.get("amount", 0)) for f in relevant)
+    result_flows = []
+    for f in relevant[:15]:
+        amount = f.get("amount", 0)
+        pct = (abs(amount) / total_amount * 100) if total_amount else 0
+        result_flows.append(
+            {
+                "flow_name": f.get("flow_name", ""),
+                "amount": amount,
+                "unit": f.get("unit", ""),
+                "category": f.get("category", ""),
+                "process": f.get("process", ""),
+                "percentage": round(pct, 2),
+            }
+        )
+
+    top = result_flows[0] if result_flows else None
+    result = {
+        "question": question,
+        "target_category": target_category,
+        "total_amount": round(total_amount, 4),
+        "unit": top["unit"] if top else "",
+        "flow_count": len(relevant),
+        "top_flows": result_flows,
+        "top_contributor": top["flow_name"] if top else "",
+        "top_contributor_pct": top["percentage"] if top else 0,
+        "top_process": top["process"] if top else "",
+    }
+
+    # Push a callout with the key finding
+    if top:
+        callout = (
+            f"**{target_category or 'Analysis'}**: "
+            f"{top['flow_name']} is the largest contributor "
+            f"({top['percentage']:.1f}% of total {round(total_amount, 2)} {top['unit']})"
+        )
+        item: dict[str, Any] = {
+            "calloutContent": callout,
+            "variant": "info",
+            "title": "Analysis Insight",
+        }
+        items = _get_render_list()
+        items.append(item)
+
+    return json.dumps(result, indent=2)
+
+
+COMPARE_PRODUCTS_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "compare_products",
+        "description": (
+            "Compare products side-by-side across categories. "
+            "Use when the user asks 'bandingkan Gas vs Minyak' or similar. "
+            "Returns per-category FU/MJ comparison with deltas."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "metric": {
+                    "type": "string",
+                    "description": (
+                        "Comparison focus: 'all' for all categories, "
+                        "or a specific category name (e.g. 'Emisi CO2')"
+                    ),
+                    "default": "all",
+                },
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to read from pipeline (default)",
+                    "default": "auto",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def compare_products(metric: str = "all", data: str = "auto") -> str:
+    """Compare products side-by-side with per-category FU/MJ values."""
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+
+    if not flows:
+        return json.dumps({"error": "No pipeline data available."})
+
+    # Detect product names from FU keys
+    product_names = []
+    sample = flows[0] if flows else {}
+    for key in sample:
+        if key.startswith("fu_per_mj_"):
+            product_names.append(key.replace("fu_per_mj_", ""))
+
+    if not product_names:
+        return json.dumps({"error": "No FU/MJ data found. Run calculate_functional_unit first."})
+
+    # Filter by metric
+    if metric != "all":
+        target_flows = [f for f in flows if f.get("category", "") == metric]
+        if not target_flows:
+            # Partial match
+            target_flows = [f for f in flows if metric.lower() in f.get("category", "").lower()]
+        if not target_flows:
+            target_flows = flows
+    else:
+        target_flows = flows
+
+    # Build per-category comparison
+    from collections import defaultdict
+
+    cat_data: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for f in target_flows:
+        cat = f.get("category", "Unknown")
+        for pname in product_names:
+            fu_key = f"fu_per_mj_{pname}"
+            cat_data[cat][pname] += abs(f.get(fu_key, 0.0))
+
+    comparison_rows = []
+    for cat in sorted(cat_data.keys()):
+        row: dict[str, Any] = {"category": cat}
+        values = []
+        for pname in product_names:
+            val = round(cat_data[cat][pname], 6)
+            row[pname] = val
+            values.append(val)
+        # Delta and ratio (only for 2-product case)
+        if len(product_names) == 2 and values[1] != 0:
+            row["delta"] = round(values[0] - values[1], 6)
+            row["ratio"] = round(values[0] / values[1], 4)
+        comparison_rows.append(row)
+
+    # Push ObTable
+    headers = ["Category"] + product_names
+    if len(product_names) == 2:
+        headers += ["Delta", "Ratio"]
+    table_rows = []
+    for r in comparison_rows:
+        table_row = [r["category"]]
+        for pname in product_names:
+            table_row.append(_fmt_number(r[pname]))
+        if len(product_names) == 2:
+            table_row.append(_fmt_number(r.get("delta", 0)))
+            table_row.append(str(r.get("ratio", "")))
+        table_rows.append(table_row)
+
+    table_item = {
+        "headers": headers,
+        "rows": table_rows,
+        "title": f"Product Comparison: {metric}",
+    }
+    items = _get_render_list()
+    items.append(table_item)
+
+    result = {
+        "products": product_names,
+        "metric": metric,
+        "categories_compared": len(comparison_rows),
+        "comparison": comparison_rows,
+    }
+    return json.dumps(result, indent=2)
+
+
+REVISE_PIPELINE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "revise_pipeline",
+        "description": (
+            "Re-run part of the pipeline with revised parameters. "
+            "Use when the user asks 'ubah top N jadi 10' or 'recalculate'. "
+            "Actions: 'set_top_n' (rerun Pareto selection), 'recalculate_fu' (rerun FU calc)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["set_top_n", "recalculate_fu"],
+                    "description": "Which pipeline step to re-run",
+                },
+                "value": {
+                    "type": "integer",
+                    "description": "New parameter value (e.g. top_n=10)",
+                },
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to read from pipeline (default)",
+                    "default": "auto",
+                },
+            },
+            "required": ["action", "value"],
+        },
+    },
+}
+
+
+def revise_pipeline(action: str, value: int, data: str = "auto") -> str:
+    """Re-run a pipeline step with revised parameters."""
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+    if not flows:
+        return json.dumps({"error": "No pipeline data available."})
+
+    if action == "set_top_n":
+        before_count = len(flows)
+        result_str = select_pareto_items(data="auto", top_n=value)
+        after_pipeline = _read_pipeline()
+        after_count = len(_extract_flows(after_pipeline)) if after_pipeline else 0
+        return json.dumps(
+            {
+                "action": "set_top_n",
+                "new_value": value,
+                "before_flow_count": before_count,
+                "after_flow_count": after_count,
+                "pareto_result": json.loads(result_str),
+                "message": f"Re-ran Pareto selection with top_n={value}. "
+                f"Flows: {before_count} -> {after_count}.",
+            },
+            indent=2,
+        )
+
+    elif action == "recalculate_fu":
+        result_str = calculate_functional_unit(data="auto", products="auto")
+        return json.dumps(
+            {
+                "action": "recalculate_fu",
+                "fu_result": json.loads(result_str),
+                "message": "Recalculated functional unit values.",
+            },
+            indent=2,
+        )
+
+    return json.dumps({"error": f"Unknown action: {action}"})
+
+
+EXPORT_FILTERED_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "export_filtered",
+        "description": (
+            "Export a filtered subset of the IO Table to Excel. "
+            "Use when the user asks 'export hanya section Emisi Udara' or similar. "
+            "Accepts section name filters."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sections": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Section names to include (e.g. ['Emisi CO2', 'Emisi CH4']). "
+                        "Shortcuts: 'inputs' = all input sections, "
+                        "'outputs' = all output sections, "
+                        "'emissions' = all Emisi sections."
+                    ),
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Output filename (default: io_table_filtered.xlsx)",
+                    "default": "io_table_filtered.xlsx",
+                },
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to read from pipeline (default)",
+                    "default": "auto",
+                },
+            },
+            "required": ["sections"],
+        },
+    },
+}
+
+
+def export_filtered(
+    sections: list[str],
+    filename: str = "io_table_filtered.xlsx",
+    data: str = "auto",
+) -> str:
+    """Export a filtered subset of pipeline flows to Excel."""
+    from lci_ignite.data.lci_schema import STANDARD_CATEGORIES
+
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+    if not flows:
+        return json.dumps({"error": "No pipeline data available."})
+
+    # Expand shortcuts
+    expanded: set[str] = set()
+    for s in sections:
+        s_lower = s.lower()
+        if s_lower == "inputs":
+            for cat, info in STANDARD_CATEGORIES.items():
+                if info.get("direction") == "input":
+                    expanded.add(cat)
+        elif s_lower == "outputs":
+            for cat, info in STANDARD_CATEGORIES.items():
+                if info.get("direction") == "output":
+                    expanded.add(cat)
+        elif s_lower == "emissions":
+            for cat in STANDARD_CATEGORIES:
+                if "Emisi" in cat:
+                    expanded.add(cat)
+            # Also include generated emission sub-sections
+            for f in flows:
+                cat = f.get("category", "")
+                if "Emisi" in cat:
+                    expanded.add(cat)
+        else:
+            expanded.add(s)
+
+    # Filter flows
+    filtered = [f for f in flows if f.get("category", "") in expanded]
+    if not filtered:
+        return json.dumps(
+            {
+                "error": f"No flows found matching sections: {list(expanded)}",
+                "available_categories": sorted(set(f.get("category", "") for f in flows)),
+            }
+        )
+
+    # Temporarily store filtered data and export
+    original_pipeline = _read_pipeline()
+    filtered_data = {"flows": filtered}
+
+    # Copy products from pipeline
+    if original_pipeline and "products" in original_pipeline:
+        filtered_data["products"] = original_pipeline["products"]
+
+    _store_pipeline(filtered_data)
+    result = export_to_xlsx(data="auto", filename=filename, title="IO Table (Filtered)")
+
+    # Restore original pipeline
+    if original_pipeline:
+        _store_pipeline(original_pipeline)
+
+    return json.dumps(
+        {
+            "exported_sections": sorted(expanded),
+            "filtered_flow_count": len(filtered),
+            "total_flow_count": len(flows),
+            "filename": filename,
+            "export_result": result,
+        },
+        indent=2,
+    )

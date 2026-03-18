@@ -1,0 +1,414 @@
+"""Tests for 7 new LCI data processing tools."""
+
+import json
+from pathlib import Path
+
+import openpyxl
+import pytest
+
+from lci_ignite.intelligence.tools import (
+    _read_pipeline,
+    analyze_excel_structure,
+    apply_unit_conversions,
+    build_proper_io_table,
+    calculate_functional_unit,
+    clear_pipeline_data,
+    clear_render_items,
+    get_render_items,
+    parse_ldi_sheet,
+    select_pareto_items,
+    validate_data_quality,
+)
+
+
+@pytest.fixture(autouse=True)
+def _clear_render():
+    clear_render_items()
+    clear_pipeline_data()
+    yield
+    clear_render_items()
+    clear_pipeline_data()
+
+
+def _create_test_xlsx(path: Path, sheet_name: str = "LDI Master"):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+    ws.append(["Process", "Category", "Material", "Direction", "Unit", "Amount"])
+    ws.append(["Well Op", "Water", "Produced", "Input", "L", 1000.0])
+    ws.append(["NSOP", "Electricity", "Pompa", "Input", "kWh", 500.0])
+    wb.save(str(path))
+
+
+# ---------------------------------------------------------------------------
+# analyze_excel_structure
+# ---------------------------------------------------------------------------
+
+
+class TestAnalyzeExcelStructure:
+    def test_returns_json(self, tmp_path):
+        xlsx = tmp_path / "test.xlsx"
+        _create_test_xlsx(xlsx)
+        result = analyze_excel_structure(str(xlsx))
+        data = json.loads(result)
+        assert "sheet_names" in data
+        assert "sheets" in data
+        assert "message" in data
+
+    def test_file_not_found(self):
+        result = analyze_excel_structure("/nonexistent/file.xlsx")
+        assert "Error" in result
+
+    def test_detects_known_profile(self, tmp_path):
+        xlsx = tmp_path / "test.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "LDI-Pertamina Zona 9-00004"
+        ws.append(["No", "Process Title"])
+        wb.save(str(xlsx))
+
+        result = analyze_excel_structure(str(xlsx))
+        data = json.loads(result)
+        assert data["matched_profile"] == "pertamina_pep_tanjung"
+
+    def test_no_matching_profile(self, tmp_path):
+        xlsx = tmp_path / "test.xlsx"
+        _create_test_xlsx(xlsx, sheet_name="Unknown Company")
+        result = analyze_excel_structure(str(xlsx))
+        data = json.loads(result)
+        assert data["matched_profile"] is None
+
+
+# ---------------------------------------------------------------------------
+# parse_ldi_sheet
+# ---------------------------------------------------------------------------
+
+
+class TestParseLdiSheet:
+    def test_profile_not_found(self, tmp_path):
+        xlsx = tmp_path / "test.xlsx"
+        _create_test_xlsx(xlsx)
+        result = parse_ldi_sheet(str(xlsx), "nonexistent_profile")
+        assert "Error" in result
+
+    def test_auto_no_match(self, tmp_path):
+        xlsx = tmp_path / "test.xlsx"
+        _create_test_xlsx(xlsx, sheet_name="Unknown")
+        result = parse_ldi_sheet(str(xlsx), "auto")
+        assert "No matching profile" in result
+
+
+# ---------------------------------------------------------------------------
+# apply_unit_conversions
+# ---------------------------------------------------------------------------
+
+
+class TestApplyUnitConversions:
+    def test_basic_conversion(self):
+        flows = [
+            {"category": "Emisi Udara", "flow_name": "CO2", "amount": 19.607, "unit": "ton"},
+        ]
+        conversions = [
+            {"from_unit": "ton", "to_unit": "kg", "factor": 1000, "applies_to": ["Emisi Udara"]},
+        ]
+        result = json.loads(apply_unit_conversions(json.dumps(flows), json.dumps(conversions)))
+        assert result["conversions_applied"] == 1
+        pipeline = _read_pipeline()
+        assert pipeline["flows"][0]["amount"] == 19607.0
+        assert pipeline["flows"][0]["unit"] == "kg"
+        assert pipeline["flows"][0]["original_amount"] == 19.607
+
+    def test_no_matching_conversion(self):
+        flows = [{"category": "Listrik", "flow_name": "Pompa", "amount": 500, "unit": "kWh"}]
+        conversions = [{"from_unit": "ton", "to_unit": "kg", "factor": 1000}]
+        result = json.loads(apply_unit_conversions(json.dumps(flows), json.dumps(conversions)))
+        assert result["conversions_applied"] == 0
+        pipeline = _read_pipeline()
+        assert pipeline["flows"][0]["amount"] == 500
+
+    def test_applies_to_filter(self):
+        flows = [
+            {"category": "Air", "flow_name": "Water", "amount": 100, "unit": "barrel"},
+            {"category": "Produk", "flow_name": "Oil", "amount": 100, "unit": "barrel"},
+        ]
+        conversions = [
+            {"from_unit": "barrel", "to_unit": "L", "factor": 158.987, "applies_to": ["Air"]},
+        ]
+        result = json.loads(apply_unit_conversions(json.dumps(flows), json.dumps(conversions)))
+        assert result["conversions_applied"] == 1
+        pipeline = _read_pipeline()
+        assert pipeline["flows"][0]["amount"] == pytest.approx(15898.7)
+        assert pipeline["flows"][1]["amount"] == 100  # Produk not converted
+
+    def test_invalid_json(self):
+        result = apply_unit_conversions("bad json", "[]")
+        assert "Error" in result
+
+    def test_empty_flows(self):
+        result = json.loads(apply_unit_conversions("[]", "[]"))
+        assert result["total_flows"] == 0
+
+
+# ---------------------------------------------------------------------------
+# calculate_functional_unit
+# ---------------------------------------------------------------------------
+
+
+class TestCalculateFunctionalUnit:
+    def test_basic_fu_calculation(self):
+        flows = [
+            {
+                "category": "Air",
+                "flow_name": "Water",
+                "amount": 1000,
+                "unit": "L",
+                "per_product_Gas": 400,
+                "per_product_Oil": 600,
+            },
+        ]
+        products = [
+            {"name": "Gas", "total_energy_mj": 1000},
+            {"name": "Oil", "total_energy_mj": 2000},
+        ]
+        calculate_functional_unit(json.dumps(flows), json.dumps(products))
+        pipeline = _read_pipeline()
+        flow = pipeline["flows"][0]
+        assert flow["fu_per_mj_Gas"] == pytest.approx(0.4)
+        assert flow["fu_per_mj_Oil"] == pytest.approx(0.3)
+
+    def test_percentage_calculation(self):
+        flows = [
+            {"category": "Air", "flow_name": "A", "amount": 100, "per_product_X": 60},
+            {"category": "Air", "flow_name": "B", "amount": 50, "per_product_X": 40},
+        ]
+        products = [{"name": "X", "total_energy_mj": 100}]
+        calculate_functional_unit(json.dumps(flows), json.dumps(products))
+        pipeline = _read_pipeline()
+        assert pipeline["flows"][0]["pct_X"] == 60.0
+        assert pipeline["flows"][1]["pct_X"] == 40.0
+
+    def test_no_products(self):
+        result = calculate_functional_unit("[]", "[]")
+        assert "Error" in result
+
+    def test_zero_energy(self):
+        flows = [{"category": "Air", "flow_name": "W", "amount": 100, "per_product_X": 50}]
+        products = [{"name": "X", "total_energy_mj": 0}]
+        calculate_functional_unit(json.dumps(flows), json.dumps(products))
+        pipeline = _read_pipeline()
+        assert (
+            pipeline["flows"][0].get("fu_per_mj_X") is None
+            or pipeline["flows"][0].get("fu_per_mj_X", 0) == 0
+        )
+
+    def test_invalid_json(self):
+        result = calculate_functional_unit("bad", "[]")
+        assert "Error" in result
+
+
+# ---------------------------------------------------------------------------
+# select_pareto_items
+# ---------------------------------------------------------------------------
+
+
+class TestSelectParetoItems:
+    def test_basic_selection(self):
+        flows = [
+            {"category": "Air", "flow_name": f"Flow{i}", "amount": (10 - i) * 100} for i in range(8)
+        ]
+        result = json.loads(select_pareto_items(json.dumps(flows), top_n=3))
+        assert result["total_selected"] == 4  # 3 top + 1 Lainnya
+
+    def test_lainnya_aggregation(self):
+        flows = [
+            {"category": "Air", "flow_name": "A", "amount": 100, "unit": "L"},
+            {"category": "Air", "flow_name": "B", "amount": 80, "unit": "L"},
+            {"category": "Air", "flow_name": "C", "amount": 10, "unit": "L"},
+            {"category": "Air", "flow_name": "D", "amount": 5, "unit": "L"},
+        ]
+        select_pareto_items(json.dumps(flows), top_n=2)
+        pipeline = _read_pipeline()
+        lainnya = [f for f in pipeline["flows"] if f["flow_name"] == "Lainnya"]
+        assert len(lainnya) == 1
+        assert lainnya[0]["amount"] == 15  # 10 + 5
+        assert lainnya[0]["is_aggregated"] is True
+
+    def test_custom_label(self):
+        flows = [
+            {"category": "Air", "flow_name": f"F{i}", "amount": 100 - i * 10} for i in range(5)
+        ]
+        select_pareto_items(json.dumps(flows), top_n=2, lainnya_label="Others")
+        pipeline = _read_pipeline()
+        others = [f for f in pipeline["flows"] if f["flow_name"] == "Others"]
+        assert len(others) == 1
+
+    def test_no_lainnya_when_within_topn(self):
+        flows = [
+            {"category": "Air", "flow_name": "A", "amount": 100},
+            {"category": "Air", "flow_name": "B", "amount": 80},
+        ]
+        select_pareto_items(json.dumps(flows), top_n=5)
+        pipeline = _read_pipeline()
+        lainnya = [f for f in pipeline["flows"] if f.get("is_aggregated")]
+        assert len(lainnya) == 0
+
+    def test_multiple_categories(self):
+        flows = [
+            {"category": "Air", "flow_name": "W1", "amount": 100},
+            {"category": "Air", "flow_name": "W2", "amount": 50},
+            {"category": "Listrik", "flow_name": "E1", "amount": 200},
+            {"category": "Listrik", "flow_name": "E2", "amount": 100},
+        ]
+        result = json.loads(select_pareto_items(json.dumps(flows), top_n=1))
+        assert result["total_selected"] == 4  # 1 top + 1 lainnya per category
+        assert "Air" in result["stats"]
+        assert "Listrik" in result["stats"]
+
+    def test_invalid_json(self):
+        result = select_pareto_items("bad json")
+        assert "Error" in result
+
+
+# ---------------------------------------------------------------------------
+# validate_data_quality
+# ---------------------------------------------------------------------------
+
+
+class TestValidateDataQuality:
+    def test_clean_data(self):
+        flows = [
+            {"category": "Air", "flow_name": "Water", "amount": 1000, "unit": "L"},
+        ]
+        result = json.loads(validate_data_quality(json.dumps(flows)))
+        assert result["critical"] == 0
+
+    def test_detects_duplicate_emission_values(self):
+        flows = [
+            {"category": "Emisi NOx", "flow_name": "NOx Flaring", "amount": 8287.65, "unit": "kg"},
+            {"category": "Emisi N2O", "flow_name": "N2O Flaring", "amount": 8287.65, "unit": "kg"},
+        ]
+        result = json.loads(validate_data_quality(json.dumps(flows)))
+        assert result["critical"] >= 1
+
+    def test_detects_small_kg_values(self):
+        flows = [
+            {"category": "Emisi TOC", "flow_name": "TOC Total", "amount": 0.31, "unit": "kg"},
+        ]
+        result = json.loads(validate_data_quality(json.dumps(flows)))
+        assert result["critical"] >= 1
+
+    def test_detects_zero_amounts(self):
+        flows = [
+            {"category": "Air", "flow_name": "Water", "amount": 0, "unit": "L"},
+        ]
+        result = json.loads(validate_data_quality(json.dumps(flows)))
+        assert result["minor"] >= 1
+
+    def test_detects_negative_amounts(self):
+        flows = [
+            {"category": "Air", "flow_name": "Water", "amount": -100, "unit": "L"},
+        ]
+        result = json.loads(validate_data_quality(json.dumps(flows)))
+        assert result["moderate"] >= 1
+
+    def test_pushes_callout_for_critical(self):
+        flows = [
+            {"category": "Emisi TOC", "flow_name": "TOC", "amount": 0.31, "unit": "kg"},
+        ]
+        validate_data_quality(json.dumps(flows))
+        items = get_render_items()
+        callouts = [i for i in items if "calloutContent" in i]
+        assert len(callouts) >= 1
+
+    def test_invalid_json(self):
+        result = validate_data_quality("bad json")
+        assert "Error" in result
+
+
+# ---------------------------------------------------------------------------
+# build_proper_io_table
+# ---------------------------------------------------------------------------
+
+
+class TestBuildProperIOTable:
+    def test_basic_table(self):
+        flows = [
+            {
+                "category": "Air",
+                "flow_name": "Water",
+                "amount": 1000,
+                "unit": "L",
+                "process": "Well Op",
+            },
+            {
+                "category": "Listrik",
+                "flow_name": "Pompa",
+                "amount": 500,
+                "unit": "kWh",
+                "process": "NSOP",
+            },
+        ]
+        config = {"products": [], "title": "Test IO Table"}
+        result = build_proper_io_table(json.dumps(flows), json.dumps(config))
+        assert "PROPER IO Table created" in result
+        assert "2 sections" in result
+
+    def test_renders_to_context(self):
+        flows = [
+            {"category": "Air", "flow_name": "Water", "amount": 1000, "unit": "L"},
+        ]
+        config = {"products": [], "title": "Test IO"}
+        build_proper_io_table(json.dumps(flows), json.dumps(config))
+        items = get_render_items()
+        tables = [i for i in items if "headers" in i and "rows" in i]
+        assert len(tables) == 1
+        assert tables[0]["title"] == "Test IO"
+
+    def test_with_products(self):
+        flows = [
+            {
+                "category": "Air",
+                "flow_name": "Water",
+                "amount": 1000,
+                "unit": "L",
+                "fu_per_mj_Gas": 0.004,
+                "pct_Gas": 60.0,
+                "process": "Well Op",
+            },
+        ]
+        config = {"products": [{"name": "Gas"}], "title": "IO with Products"}
+        build_proper_io_table(json.dumps(flows), json.dumps(config))
+        items = get_render_items()
+        table = items[0]
+        assert "Gas FU/MJ" in table["headers"][3]
+
+    def test_section_ordering(self):
+        flows = [
+            {"category": "Listrik", "flow_name": "E1", "amount": 100, "unit": "kWh"},
+            {"category": "Air", "flow_name": "W1", "amount": 200, "unit": "L"},
+            {"category": "Produk", "flow_name": "Oil", "amount": 300, "unit": "Barrel"},
+        ]
+        config = {"products": [], "title": "Order Test"}
+        build_proper_io_table(json.dumps(flows), json.dumps(config))
+        items = get_render_items()
+        rows = items[0]["rows"]
+        # Air should come before Listrik, Produk after both
+        section_headers = [r[0] for r in rows if r[0].startswith("**")]
+        assert section_headers.index("**Air**") < section_headers.index("**Listrik**")
+        assert section_headers.index("**Listrik**") < section_headers.index("**Produk**")
+
+    def test_total_row_added(self):
+        flows = [
+            {"category": "Air", "flow_name": "W1", "amount": 100, "unit": "L"},
+            {"category": "Air", "flow_name": "W2", "amount": 200, "unit": "L"},
+        ]
+        config = {"products": [], "title": "Total Test"}
+        build_proper_io_table(json.dumps(flows), json.dumps(config))
+        items = get_render_items()
+        rows = items[0]["rows"]
+        total_rows = [r for r in rows if r[0].startswith("Total")]
+        assert len(total_rows) >= 1
+
+    def test_invalid_json(self):
+        result = build_proper_io_table("bad", "{}")
+        assert "Error" in result
