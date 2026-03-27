@@ -129,11 +129,24 @@ class ExcelLCISource(DataSource):
             return self._extract_structure()
 
     def _resolve_sheet_name(self, wb: openpyxl.Workbook) -> str:
-        """Determine which sheet to read."""
+        """Determine which sheet to read.
+
+        Priority: explicit override > profile sheet_name > first sheet.
+        Falls back to first sheet if profile's sheet_name doesn't exist.
+        """
         if self._sheet_name:
             return self._sheet_name
         if self._profile and self._profile.get("sheet_name"):
-            return self._profile["sheet_name"]
+            profile_sheet = self._profile["sheet_name"]
+            if profile_sheet in wb.sheetnames:
+                return profile_sheet
+            logger.warning(
+                "Profile sheet '%s' not found in workbook (available: %s), "
+                "falling back to first sheet '%s'",
+                profile_sheet,
+                wb.sheetnames,
+                wb.sheetnames[0],
+            )
         return wb.sheetnames[0]
 
     # ------------------------------------------------------------------

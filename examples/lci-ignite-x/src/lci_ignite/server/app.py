@@ -76,6 +76,10 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
         EXPORT_FILTERED_SCHEMA,
         EXPORT_TO_DOCX_SCHEMA,
         EXPORT_TO_XLSX_SCHEMA,
+        # Chart generation tools (auto-read pipeline)
+        GENERATE_CATEGORY_CHART_SCHEMA,
+        GENERATE_EMISSION_CHART_SCHEMA,
+        GENERATE_PRODUCT_CHART_SCHEMA,
         # File discovery
         GET_UPLOADED_FILES_SCHEMA,
         PARSE_LDI_SHEET_SCHEMA,
@@ -103,6 +107,10 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
         export_filtered,
         export_to_docx,
         export_to_xlsx,
+        # Chart generation tools (auto-read pipeline)
+        generate_category_chart,
+        generate_emission_chart,
+        generate_product_chart,
         # File discovery
         get_uploaded_files,
         parse_ldi_sheet,
@@ -193,6 +201,23 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
     agent.tools.register("compare_products", compare_products, schema=COMPARE_PRODUCTS_SCHEMA)
     agent.tools.register("revise_pipeline", revise_pipeline, schema=REVISE_PIPELINE_SCHEMA)
     agent.tools.register("export_filtered", export_filtered, schema=EXPORT_FILTERED_SCHEMA)
+
+    # -- Chart Generation Tools (3 NEW, auto-read pipeline) --
+    agent.tools.register(
+        "generate_category_chart",
+        generate_category_chart,
+        schema=GENERATE_CATEGORY_CHART_SCHEMA,
+    )
+    agent.tools.register(
+        "generate_emission_chart",
+        generate_emission_chart,
+        schema=GENERATE_EMISSION_CHART_SCHEMA,
+    )
+    agent.tools.register(
+        "generate_product_chart",
+        generate_product_chart,
+        schema=GENERATE_PRODUCT_CHART_SCHEMA,
+    )
 
     return agent
 

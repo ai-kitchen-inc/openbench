@@ -83,7 +83,7 @@ def match_profile(excel_profile: dict[str, Any]) -> dict[str, Any] | None:
 
     Matching heuristic (ordered by specificity):
     1. Exact sheet name match
-    2. Header pattern similarity (>80% overlap)
+    2. Header pattern similarity (>80% overlap) + column position verification
 
     Args:
         excel_profile: Output from ExcelProfile.extract() — must contain
@@ -117,12 +117,54 @@ def match_profile(excel_profile: dict[str, Any]) -> dict[str, Any] | None:
             if not expected_lower:
                 continue
             overlap = len(actual_headers & expected_lower) / len(expected_lower)
-            if overlap > 0.8:
-                logger.info(
-                    "Profile matched by headers (%.0f%% overlap): %s",
-                    overlap * 100,
+            if overlap <= 0.8:
+                continue
+
+            # Verify column positions: headers at mapped indexes must match
+            col_map = profile.get("column_mapping", {})
+            if col_map and not _verify_column_positions(sheet_info.get("headers", []), col_map):
+                logger.debug(
+                    "Profile %s rejected: header overlap %.0f%% but column positions mismatch",
                     path.stem,
+                    overlap * 100,
                 )
-                return profile
+                continue
+
+            logger.info(
+                "Profile matched by headers (%.0f%% overlap): %s",
+                overlap * 100,
+                path.stem,
+            )
+            return profile
 
     return None
+
+
+def _verify_column_positions(
+    actual_headers: list[str | None],
+    column_mapping: dict[str, dict[str, Any]],
+) -> bool:
+    """Check that headers at mapped column indexes match expected header names.
+
+    Returns True if >80% of column positions match (allowing minor drift).
+    """
+    checks = 0
+    matches = 0
+
+    for field_spec in column_mapping.values():
+        idx = field_spec.get("index")
+        expected_header = field_spec.get("header")
+        if idx is None or expected_header is None:
+            continue
+
+        checks += 1
+        if idx < len(actual_headers) and actual_headers[idx] is not None:
+            if actual_headers[idx].lower().strip() == expected_header.lower().strip():
+                matches += 1
+
+    if checks == 0:
+        return True
+
+    ratio = matches / checks
+    logger.debug("Column position verification: %d/%d (%.0f%%)", matches, checks, ratio * 100)
+    return ratio > 0.8

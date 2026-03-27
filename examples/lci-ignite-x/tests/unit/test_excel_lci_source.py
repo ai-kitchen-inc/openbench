@@ -138,18 +138,30 @@ class TestExcelLCISourceValidation:
         source = ExcelLCISource(xlsx, profile=SIMPLE_PROFILE)
         assert source.validate() is True
 
-    def test_sheet_name_mismatch(self, tmp_path):
+    def test_sheet_name_mismatch_falls_back(self, tmp_path):
+        """When profile sheet doesn't exist, falls back to first sheet."""
         xlsx = tmp_path / "test.xlsx"
         _create_ldi_xlsx(xlsx, sheet_name="Other Sheet")
         source = ExcelLCISource(xlsx, profile=SIMPLE_PROFILE)
         # Profile expects "LDI Master" but file has "Other Sheet"
-        assert source.validate() is False
+        # Now falls back to first sheet instead of failing
+        assert source.validate() is True
 
     def test_sheet_name_override(self, tmp_path):
         xlsx = tmp_path / "test.xlsx"
         _create_ldi_xlsx(xlsx, sheet_name="Custom")
         source = ExcelLCISource(xlsx, profile=SIMPLE_PROFILE, sheet_name="Custom")
         assert source.validate() is True
+
+    def test_sheet_fallback_parses_correctly(self, tmp_path):
+        """Fallback to first sheet still parses data correctly."""
+        xlsx = tmp_path / "test.xlsx"
+        _create_ldi_xlsx(xlsx, sheet_name="Actual Data")
+        source = ExcelLCISource(xlsx, profile=SIMPLE_PROFILE)
+        result = source.extract()
+        assert result.content_type == "structured"
+        flows = result.content["flows"]
+        assert len(flows) == 5
 
 
 # ---------------------------------------------------------------------------

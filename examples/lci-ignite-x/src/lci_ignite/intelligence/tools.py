@@ -2377,3 +2377,334 @@ def export_filtered(
         },
         indent=2,
     )
+
+
+# ── Chart Generation Tools (auto-read pipeline data) ──
+
+GENERATE_CATEGORY_CHART_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "generate_category_chart",
+        "description": (
+            "Generate a horizontal bar chart showing total amounts per IO Table category. "
+            "Auto-reads pipeline data — no JSON parameter needed. "
+            "Groups flows by category and direction (input vs output), "
+            "sorted by PROPER section order."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Chart title (default: 'IO Table by Category')",
+                    "default": "IO Table by Category",
+                },
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to read from pipeline (default)",
+                    "default": "auto",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def generate_category_chart(
+    title: str = "IO Table by Category",
+    data: str = "auto",
+) -> str:
+    """Generate a bar chart of total amounts per IO Table category.
+
+    Auto-reads pipeline flows, groups by category + direction, sums amounts,
+    and pushes a Recharts-compatible bar chart render item.
+    """
+    from lci_ignite.data.lci_schema import IO_TABLE_SECTION_ORDER, STANDARD_CATEGORIES
+
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+    if not flows:
+        return json.dumps({"error": "No pipeline data available. Run parse_ldi_sheet first."})
+
+    # Sum amounts per category, split by direction
+    from collections import defaultdict
+
+    cat_input: dict[str, float] = defaultdict(float)
+    cat_output: dict[str, float] = defaultdict(float)
+
+    for flow in flows:
+        cat = flow.get("category", "")
+        amount = abs(float(flow.get("amount", 0)))
+        direction = flow.get("direction", "")
+        if not direction:
+            cat_info = STANDARD_CATEGORIES.get(cat)
+            direction = cat_info["direction"] if cat_info else "input"
+        if direction == "input":
+            cat_input[cat] += amount
+        else:
+            cat_output[cat] += amount
+
+    # Build chart data sorted by PROPER section order
+    all_cats = set(cat_input.keys()) | set(cat_output.keys())
+    ordered = [c for c in IO_TABLE_SECTION_ORDER if c in all_cats]
+    # Append any categories not in standard order
+    ordered += sorted(c for c in all_cats if c not in ordered)
+
+    chart_data = []
+    for cat in ordered:
+        entry: dict[str, Any] = {"category": cat}
+        inp = cat_input.get(cat, 0)
+        out = cat_output.get(cat, 0)
+        if inp > 0:
+            entry["input"] = round(inp, 4)
+        if out > 0:
+            entry["output"] = round(out, 4)
+        chart_data.append(entry)
+
+    if not chart_data:
+        return json.dumps({"error": "No category data to chart."})
+
+    item: dict[str, Any] = {
+        "type": "bar",
+        "title": title,
+        "data": chart_data,
+        "options": {
+            "xKey": "category",
+            "series": [
+                {"dataKey": "input", "name": "Input"},
+                {"dataKey": "output", "name": "Output"},
+            ],
+        },
+    }
+    items = _get_render_list()
+    items[:] = [i for i in items if not (i.get("title") == title and "data" in i)]
+    items.append(item)
+
+    return json.dumps(
+        {
+            "status": "chart_created",
+            "title": title,
+            "categories": len(chart_data),
+            "message": f"Category chart '{title}' created with {len(chart_data)} categories.",
+        }
+    )
+
+
+GENERATE_EMISSION_CHART_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "generate_emission_chart",
+        "description": (
+            "Generate a pie chart showing emission breakdown by pollutant type. "
+            "Auto-reads pipeline data, filters 'Emisi Udara' flows, classifies "
+            "by pollutant (CO2, CH4, NOx, etc.), and shows total kg + percentage."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Chart title (default: 'Emission Breakdown')",
+                    "default": "Emission Breakdown",
+                },
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to read from pipeline (default)",
+                    "default": "auto",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def generate_emission_chart(
+    title: str = "Emission Breakdown",
+    data: str = "auto",
+) -> str:
+    """Generate a pie chart of emission breakdown by pollutant.
+
+    Auto-reads pipeline flows, filters Emisi Udara category, classifies
+    each flow into pollutant types via _classify_emission(), sums per
+    pollutant, and pushes a pie chart render item.
+    """
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+    if not flows:
+        return json.dumps({"error": "No pipeline data available. Run parse_ldi_sheet first."})
+
+    # Filter Emisi Udara flows
+    emisi_flows = [f for f in flows if f.get("category", "") == "Emisi Udara"]
+    if not emisi_flows:
+        return json.dumps(
+            {"error": "No 'Emisi Udara' flows found. Check pipeline data categories."}
+        )
+
+    # Classify and sum per pollutant
+    from collections import defaultdict
+
+    pollutant_totals: dict[str, float] = defaultdict(float)
+    for flow in emisi_flows:
+        pollutant = _classify_emission(flow.get("flow_name", ""))
+        label = pollutant or "Other"
+        pollutant_totals[label] += abs(float(flow.get("amount", 0)))
+
+    grand_total = sum(pollutant_totals.values())
+    if grand_total == 0:
+        return json.dumps({"error": "Total emission amount is zero."})
+
+    # Build pie chart data sorted by value descending
+    chart_data = []
+    for name, value in sorted(pollutant_totals.items(), key=lambda x: x[1], reverse=True):
+        pct = round(value / grand_total * 100, 2)
+        chart_data.append({"name": name, "value": round(value, 4), "percentage": pct})
+
+    item: dict[str, Any] = {
+        "type": "pie",
+        "title": title,
+        "data": chart_data,
+    }
+    items = _get_render_list()
+    items[:] = [i for i in items if not (i.get("title") == title and "data" in i)]
+    items.append(item)
+
+    return json.dumps(
+        {
+            "status": "chart_created",
+            "title": title,
+            "pollutants": len(chart_data),
+            "total_kg": round(grand_total, 4),
+            "message": (
+                f"Emission chart '{title}' created with {len(chart_data)} pollutant types "
+                f"(total {round(grand_total, 2)} kg)."
+            ),
+        }
+    )
+
+
+GENERATE_PRODUCT_CHART_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "generate_product_chart",
+        "description": (
+            "Generate a grouped bar chart comparing products across IO Table categories. "
+            "Auto-reads pipeline data and products list. "
+            "Shows per-product amounts grouped by category."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Chart title (default: 'Product Comparison by Category')",
+                    "default": "Product Comparison by Category",
+                },
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to read from pipeline (default)",
+                    "default": "auto",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def generate_product_chart(
+    title: str = "Product Comparison by Category",
+    data: str = "auto",
+) -> str:
+    """Generate a grouped bar chart comparing products across categories.
+
+    Auto-reads pipeline flows and products list, groups by category,
+    sums per_product_{name} amounts, and pushes a grouped bar chart.
+    """
+    from lci_ignite.data.lci_schema import IO_TABLE_SECTION_ORDER
+
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+    if not flows:
+        return json.dumps({"error": "No pipeline data available. Run parse_ldi_sheet first."})
+
+    # Detect product names from per_product_ keys
+    product_names: list[str] = []
+    sample = flows[0] if flows else {}
+    for key in sorted(sample.keys()):
+        if key.startswith("per_product_"):
+            product_names.append(key.replace("per_product_", ""))
+
+    if not product_names:
+        # Fallback: check pipeline-level products
+        pipeline = _read_pipeline()
+        if pipeline and "products" in pipeline:
+            prod_list = pipeline["products"]
+            if prod_list:
+                if isinstance(prod_list[0], str):
+                    product_names = prod_list
+                elif isinstance(prod_list[0], dict):
+                    product_names = [p["name"] for p in prod_list]
+
+    if not product_names:
+        return json.dumps({"error": "No product data found. Run calculate_functional_unit first."})
+
+    # Sum per_product amounts per category
+    from collections import defaultdict
+
+    cat_products: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for flow in flows:
+        cat = flow.get("category", "")
+        for pname in product_names:
+            key = f"per_product_{pname}"
+            cat_products[cat][pname] += abs(float(flow.get(key, 0)))
+
+    # Order by PROPER section order
+    all_cats = set(cat_products.keys())
+    ordered = [c for c in IO_TABLE_SECTION_ORDER if c in all_cats]
+    ordered += sorted(c for c in all_cats if c not in ordered)
+
+    chart_data = []
+    for cat in ordered:
+        entry: dict[str, Any] = {"category": cat}
+        for pname in product_names:
+            entry[pname] = round(cat_products[cat][pname], 4)
+        chart_data.append(entry)
+
+    if not chart_data:
+        return json.dumps({"error": "No category data to chart."})
+
+    series = [{"dataKey": pname, "name": pname} for pname in product_names]
+
+    item: dict[str, Any] = {
+        "type": "bar",
+        "title": title,
+        "data": chart_data,
+        "options": {
+            "xKey": "category",
+            "series": series,
+        },
+    }
+    items = _get_render_list()
+    items[:] = [i for i in items if not (i.get("title") == title and "data" in i)]
+    items.append(item)
+
+    return json.dumps(
+        {
+            "status": "chart_created",
+            "title": title,
+            "categories": len(chart_data),
+            "products": product_names,
+            "message": (
+                f"Product chart '{title}' created with {len(chart_data)} categories "
+                f"and {len(product_names)} products."
+            ),
+        }
+    )
