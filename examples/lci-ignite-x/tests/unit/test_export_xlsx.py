@@ -320,3 +320,76 @@ class TestFileOutput:
             xlsx_items[0]["mimeType"]
             == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+
+class TestFUUnitPerOutputUnit:
+    """Verify FU unit columns use dynamic labels from fu_unit_labels."""
+
+    def test_fu_unit_column_per_output_unit(self, tmp_path):
+        """With per_output_unit mode, unit column should show /Barrel, not /MJ."""
+        flows = [
+            {
+                "category": "Air",
+                "flow_name": "Water",
+                "amount": 1000,
+                "unit": "L",
+                "process": "SPU",
+                "fu_per_mj_Minyak": 0.004,
+                "pct_Minyak": 100.0,
+            }
+        ]
+        products = [
+            {
+                "name": "Minyak",
+                "total_energy_mj": 2212001236,
+                "fu_unit_factor": 5992.74,
+                "output_unit": "Barrel",
+            }
+        ]
+        _set_pipeline(flows, products)
+        # Inject fu_unit_labels and fu_mode into pipeline
+        from lci_ignite.intelligence.tools import _store_pipeline
+
+        pipeline_data = {
+            "flows": flows,
+            "products": products,
+            "fu_mode": "per_output_unit",
+            "fu_unit_labels": {"Minyak": "Barrel"},
+        }
+        _store_pipeline(pipeline_data)
+
+        export_to_xlsx(filename="io_table.xlsx")
+        ws = _open_output(tmp_path)
+        # Data row: col 7 should be "L/Barrel" not "L/MJ"
+        for row in range(6, ws.max_row + 1):
+            if ws.cell(row=row, column=2).value == "Water":
+                assert ws.cell(row=row, column=7).value == "L/Barrel"
+                break
+        else:
+            pytest.fail("Water row not found")
+
+    def test_row3_output_quantity_per_output_unit(self, tmp_path):
+        """Row 3 should show total output quantity, not total_energy_mj."""
+        flows = [{"category": "Air", "flow_name": "W", "amount": 1, "unit": "L"}]
+        products = [
+            {
+                "name": "Gas",
+                "total_energy_mj": 93776048,
+                "fu_unit_factor": 1055055.85,
+                "output_unit": "MMSCF",
+            }
+        ]
+        from lci_ignite.intelligence.tools import _store_pipeline
+
+        pipeline_data = {
+            "flows": flows,
+            "products": products,
+            "fu_mode": "per_output_unit",
+            "fu_unit_labels": {"Gas": "MMSCF"},
+        }
+        _store_pipeline(pipeline_data)
+
+        export_to_xlsx(filename="io_table.xlsx")
+        ws = _open_output(tmp_path)
+        expected = 93776048 / 1055055.85
+        assert ws.cell(row=3, column=6).value == pytest.approx(expected)

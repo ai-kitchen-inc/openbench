@@ -289,3 +289,62 @@ class TestExportFiltered:
         # Pipeline should still have all 4 flows
         result = json.loads(explain_analysis("all"))
         assert result["flow_count"] == 4
+
+
+class TestRevisePipelineWithFUMode:
+    """Test revise_pipeline recalculate_fu with fu_mode parameter."""
+
+    def test_recalculate_fu_default_mode(self):
+        """Default recalculate_fu should use per_mj mode."""
+        pipeline = {
+            "flows": [
+                {
+                    "flow_name": "Water",
+                    "amount": 1000,
+                    "unit": "L",
+                    "category": "Air",
+                    "per_product_Gas": 400,
+                }
+            ],
+            "products": [
+                {
+                    "name": "Gas",
+                    "total_energy_mj": 1000,
+                    "fu_unit_factor": 10,
+                    "output_unit": "MMSCF",
+                }
+            ],
+        }
+        _store_pipeline(pipeline)
+        result = json.loads(revise_pipeline("recalculate_fu", 0))
+        assert result["action"] == "recalculate_fu"
+        fu_result = result["fu_result"]
+        assert fu_result["fu_mode"] == "per_mj"
+        assert fu_result["fu_unit_labels"]["Gas"] == "MJ"
+
+    def test_recalculate_fu_per_output_unit(self):
+        """recalculate_fu with fu_mode=per_output_unit should switch mode."""
+        pipeline = {
+            "flows": [
+                {
+                    "flow_name": "Water",
+                    "amount": 1000,
+                    "unit": "L",
+                    "category": "Air",
+                    "per_product_Gas": 400,
+                }
+            ],
+            "products": [
+                {
+                    "name": "Gas",
+                    "total_energy_mj": 1000,
+                    "fu_unit_factor": 10,
+                    "output_unit": "MMSCF",
+                }
+            ],
+        }
+        _store_pipeline(pipeline)
+        result = json.loads(revise_pipeline("recalculate_fu", 0, fu_mode="per_output_unit"))
+        fu_result = result["fu_result"]
+        assert fu_result["fu_mode"] == "per_output_unit"
+        assert fu_result["fu_unit_labels"]["Gas"] == "MMSCF"

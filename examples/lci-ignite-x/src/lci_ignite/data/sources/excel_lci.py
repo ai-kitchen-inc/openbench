@@ -271,14 +271,16 @@ class ExcelLCISource(DataSource):
         # Extract product definitions
         products = []
         for p in profile.get("products", []):
-            products.append(
-                {
-                    "name": p["name"],
-                    "total_energy_mj": p.get("total_energy_mj", 0),
-                    "fu_unit_factor": p.get("fu_unit_factor", 0),
-                    "output_unit": p.get("output_unit", ""),
-                }
-            )
+            entry = {
+                "name": p["name"],
+                "total_energy_mj": p.get("total_energy_mj", 0),
+                "fu_unit_factor": p.get("fu_unit_factor", 0),
+                "output_unit": p.get("output_unit", ""),
+            }
+            # Compute total output quantity (e.g. barrels, MMSCF)
+            if entry["fu_unit_factor"] and entry["total_energy_mj"]:
+                entry["total_output_quantity"] = entry["total_energy_mj"] / entry["fu_unit_factor"]
+            products.append(entry)
 
         content: dict[str, Any] = {
             "flows": flows,

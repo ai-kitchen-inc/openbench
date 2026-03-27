@@ -8,6 +8,7 @@ import pytest
 
 from lci_ignite.intelligence.tools import (
     _read_pipeline,
+    _store_pipeline,
     analyze_excel_structure,
     apply_unit_conversions,
     build_proper_io_table,
@@ -412,3 +413,148 @@ class TestBuildProperIOTable:
     def test_invalid_json(self):
         result = build_proper_io_table("bad", "{}")
         assert "Error" in result
+
+
+# ---------------------------------------------------------------------------
+# Configurable Functional Unit (fu_mode) tests
+# ---------------------------------------------------------------------------
+
+
+class TestFUPerOutputUnit:
+    """Test per_output_unit FU mode."""
+
+    PRODUCTS = [
+        {
+            "name": "Gas",
+            "total_energy_mj": 93776048,
+            "fu_unit_factor": 1055055.85,
+            "output_unit": "MMSCF",
+        },
+        {
+            "name": "Minyak",
+            "total_energy_mj": 2212001236,
+            "fu_unit_factor": 5992.74,
+            "output_unit": "Barrel",
+        },
+    ]
+
+    FLOWS = [
+        {
+            "category": "Air",
+            "flow_name": "Water",
+            "amount": 1000,
+            "unit": "L",
+            "per_product_Gas": 400,
+            "per_product_Minyak": 600,
+        },
+    ]
+
+    def test_fu_per_output_unit(self):
+        """Divisor should be total_energy_mj / fu_unit_factor."""
+        calculate_functional_unit(
+            json.dumps(self.FLOWS),
+            json.dumps(self.PRODUCTS),
+            fu_mode="per_output_unit",
+        )
+        pipeline = _read_pipeline()
+        flow = pipeline["flows"][0]
+        # Gas: 400 / (93776048 / 1055055.85) = 400 / 88.883...
+        gas_divisor = 93776048 / 1055055.85
+        assert flow["fu_per_mj_Gas"] == pytest.approx(400 / gas_divisor)
+        # Minyak: 600 / (2212001236 / 5992.74) = 600 / 369178.7...
+        minyak_divisor = 2212001236 / 5992.74
+        assert flow["fu_per_mj_Minyak"] == pytest.approx(600 / minyak_divisor)
+
+    def test_fu_mode_default_per_mj(self):
+        """Default mode should divide by total_energy_mj."""
+        calculate_functional_unit(
+            json.dumps(self.FLOWS),
+            json.dumps(self.PRODUCTS),
+        )
+        pipeline = _read_pipeline()
+        flow = pipeline["flows"][0]
+        assert flow["fu_per_mj_Gas"] == pytest.approx(400 / 93776048)
+        assert flow["fu_per_mj_Minyak"] == pytest.approx(600 / 2212001236)
+
+    def test_fu_per_output_unit_fallback(self):
+        """When fu_unit_factor is 0, should fall back to per MJ."""
+        products = [
+            {
+                "name": "X",
+                "total_energy_mj": 1000,
+                "fu_unit_factor": 0,
+                "output_unit": "Barrel",
+            },
+        ]
+        flows = [{"category": "Air", "flow_name": "W", "amount": 100, "per_product_X": 50}]
+        calculate_functional_unit(
+            json.dumps(flows),
+            json.dumps(products),
+            fu_mode="per_output_unit",
+        )
+        pipeline = _read_pipeline()
+        # Falls back to per MJ since fu_unit_factor == 0
+        assert pipeline["fu_unit_labels"]["X"] == "MJ"
+        assert pipeline["flows"][0]["fu_per_mj_X"] == pytest.approx(50 / 1000)
+
+    def test_fu_mode_stored_in_pipeline(self):
+        """fu_mode and fu_unit_labels should be stored in pipeline state."""
+        calculate_functional_unit(
+            json.dumps(self.FLOWS),
+            json.dumps(self.PRODUCTS),
+            fu_mode="per_output_unit",
+        )
+        pipeline = _read_pipeline()
+        assert pipeline["fu_mode"] == "per_output_unit"
+        assert pipeline["fu_unit_labels"]["Gas"] == "MMSCF"
+        assert pipeline["fu_unit_labels"]["Minyak"] == "Barrel"
+
+    def test_products_stored_as_full_dicts(self):
+        """Products in pipeline should be full dicts (not just names)."""
+        calculate_functional_unit(
+            json.dumps(self.FLOWS),
+            json.dumps(self.PRODUCTS),
+        )
+        pipeline = _read_pipeline()
+        assert isinstance(pipeline["products"][0], dict)
+        assert "total_energy_mj" in pipeline["products"][0]
+
+
+class TestProductsPropagation:
+    """Test that products survive through pipeline steps."""
+
+    def test_products_propagated_through_conversions(self):
+        """Products should survive apply_unit_conversions."""
+        data = {
+            "flows": [
+                {"category": "Air", "flow_name": "W", "amount": 100, "unit": "barrel"},
+            ],
+            "products": [{"name": "Gas", "total_energy_mj": 1000}],
+        }
+        _store_pipeline(data)
+        apply_unit_conversions(
+            data="auto",
+            conversions=json.dumps(
+                [{"from_unit": "barrel", "to_unit": "L", "factor": 158.987, "applies_to": ["Air"]}]
+            ),
+        )
+        pipeline = _read_pipeline()
+        assert "products" in pipeline
+        assert pipeline["products"][0]["name"] == "Gas"
+
+    def test_products_propagated_through_pareto(self):
+        """Products + fu_mode + fu_unit_labels should survive select_pareto_items."""
+        data = {
+            "flows": [
+                {"category": "Air", "flow_name": f"F{i}", "amount": 100 - i * 10} for i in range(5)
+            ],
+            "products": [{"name": "Gas", "total_energy_mj": 1000}],
+            "fu_mode": "per_output_unit",
+            "fu_unit_labels": {"Gas": "MMSCF"},
+        }
+        _store_pipeline(data)
+        select_pareto_items(data="auto", top_n=3)
+        pipeline = _read_pipeline()
+        assert "products" in pipeline
+        assert pipeline["fu_mode"] == "per_output_unit"
+        assert pipeline["fu_unit_labels"]["Gas"] == "MMSCF"

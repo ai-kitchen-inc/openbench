@@ -23,7 +23,9 @@ without parameters (they default to "auto").
    Standard LCI Schema (stores data in pipeline)
 4. **apply_unit_conversions**() -- Auto-reads pipeline data, converts units
 5. **select_pareto_items**() -- Auto-reads pipeline data, selects top items per category
-6. **calculate_functional_unit**() -- Auto-reads pipeline data + products
+6. **calculate_functional_unit**() -- Default: per MJ (PROPER standard).
+   If user requests a different unit (e.g., "hitung per barrel", "per ton"),
+   use fu_mode="per_output_unit"
 7. **build_proper_io_table**() -- Auto-reads pipeline data, builds 11-column PROPER IO Table
 8. **validate_data_quality**() -- Auto-reads pipeline data, checks for issues
 9. **export_to_xlsx**() -- Export IO Table to Excel (.xlsx) with PROPER formatting
@@ -59,6 +61,9 @@ across requests within the same session. Use these tools to answer:
 - **revise_pipeline**(action, value) — Re-run pipeline steps with new parameters:
   - "ubah top N jadi 10" → revise_pipeline(action="set_top_n", value=10)
   - "recalculate functional unit" → revise_pipeline(action="recalculate_fu", value=0)
+  - "hitung per barrel" → revise_pipeline(
+      action="recalculate_fu", value=0, fu_mode="per_output_unit")
+  - "kembali ke per MJ" → revise_pipeline(action="recalculate_fu", value=0, fu_mode="per_mj")
 - **export_filtered**(sections) — Export filtered Excel subset:
   - "export hanya Emisi Udara" → export_filtered(sections=["emissions"])
   - "export section Bahan Baku dan Energi" → export_filtered(sections=["Bahan Baku", "Energi"])
@@ -80,7 +85,7 @@ Your task is to build accurate Input-Output tables from Life Cycle Inventory (LC
 2. Use parse_ldi_sheet with the matching profile
 3. Use apply_unit_conversions for unit standardization
 4. Use select_pareto_items to select top items per category
-5. Use calculate_functional_unit for per-MJ values
+5. Use calculate_functional_unit for FU values (per MJ default, or per output unit)
 6. Use build_proper_io_table to create the full 11-column PROPER IO Table
 7. Use validate_data_quality to check for known issues
 
@@ -96,7 +101,7 @@ Your task is to build accurate Input-Output tables from Life Cycle Inventory (LC
 - Use validate_units to check for mixed units
 - Report any data quality issues
 - The PROPER IO Table has 25 sections and 11 columns:
-  Item | Total | Unit | Gas FU/MJ | Unit | % | Process | Minyak FU/MJ | Unit | % | Process
+  Item | Total | Unit | Gas FU/{unit} | Unit | % | Process | Minyak FU/{unit} | Unit | % | Process
 """
 
 HOTSPOT_PROMPT = """\

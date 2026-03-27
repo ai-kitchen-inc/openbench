@@ -824,9 +824,11 @@ def export_to_xlsx(
         return err
     flows = _extract_flows(parsed)
 
-    # Determine products from pipeline
+    # Determine products and FU config from pipeline
     pipeline = _read_pipeline()
     products: list[dict] = []
+    fu_unit_labels: dict[str, str] = {}
+    fu_mode = "per_mj"
     if pipeline:
         prod_list = pipeline.get("products", [])
         if prod_list:
@@ -834,6 +836,8 @@ def export_to_xlsx(
                 products = [{"name": n} for n in prod_list]
             elif isinstance(prod_list[0], dict):
                 products = prod_list
+        fu_unit_labels = pipeline.get("fu_unit_labels", {})
+        fu_mode = pipeline.get("fu_mode", "per_mj")
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -865,13 +869,18 @@ def export_to_xlsx(
         col = COL_PROD_START + i * COLS_PER_PRODUCT
         ws.cell(row=2, column=col, value=name).font = header_font
 
-    # ── Row 3: "ALL PHM" label + total_energy_mj per product ──
+    # ── Row 3: "ALL PHM" label + reference value per product ──
     ws.cell(row=3, column=COL_E, value="ALL PHM").font = header_font
     for i, product in enumerate(products):
-        energy = product.get("total_energy_mj", "")
+        if fu_mode == "per_output_unit":
+            fu_factor = product.get("fu_unit_factor", 0)
+            energy = product.get("total_energy_mj", 0)
+            ref_val = energy / fu_factor if fu_factor else energy
+        else:
+            ref_val = product.get("total_energy_mj", "")
         col = COL_PROD_START + i * COLS_PER_PRODUCT
-        if energy:
-            ws.cell(row=3, column=col, value=energy).alignment = num_align
+        if ref_val:
+            ws.cell(row=3, column=col, value=ref_val).alignment = num_align
 
     # ── Row 4: main header row ──
     ws.cell(row=4, column=COL_B, value="Input/Output").font = header_font
@@ -968,7 +977,8 @@ def export_to_xlsx(
                 pct_key = f"pct_{name}"
                 fu_val = flow.get(fu_key, 0.0)
                 pct_val = flow.get(pct_key, 0.0)
-                fu_unit = f"{flow.get('unit', '')}/MJ" if flow.get("unit") else ""
+                fu_label = fu_unit_labels.get(name, "MJ")
+                fu_unit = f"{flow.get('unit', '')}/{fu_label}" if flow.get("unit") else ""
                 dominant = flow.get("process", "")
 
                 col = COL_PROD_START + i * COLS_PER_PRODUCT
@@ -1002,7 +1012,8 @@ def export_to_xlsx(
                 name = product.get("name", "")
                 fu_key = f"fu_per_mj_{name}"
                 fu_total = sum(f.get(fu_key, 0.0) for f in sorted_flows)
-                fu_unit = f"{sorted_flows[0].get('unit', '')}/MJ"
+                fu_label = fu_unit_labels.get(name, "MJ")
+                fu_unit = f"{sorted_flows[0].get('unit', '')}/{fu_label}"
                 col = COL_PROD_START + i * COLS_PER_PRODUCT
                 ws.cell(row=row_idx, column=col, value=fu_total).font = total_font
                 ws.cell(row=row_idx, column=col, value=fu_total).alignment = num_align
@@ -1281,6 +1292,9 @@ def apply_unit_conversions(data: str = "auto", conversions: str = "[]") -> str:
         "conversions_applied": converted,
         "total_flows": len(flows),
     }
+    # Carry forward products from pipeline state
+    if isinstance(parsed, dict) and "products" in parsed:
+        result["products"] = parsed["products"]
     _store_pipeline(result)
     return json.dumps(
         {
@@ -1314,6 +1328,16 @@ CALCULATE_FUNCTIONAL_UNIT_SCHEMA = {
                     "description": "Use 'auto' to use products from parsed data (default)",
                     "default": "auto",
                 },
+                "fu_mode": {
+                    "type": "string",
+                    "enum": ["per_mj", "per_output_unit"],
+                    "description": (
+                        "FU mode. 'per_mj' (default PROPER) = divide by total energy MJ. "
+                        "'per_output_unit' = divide by total output quantity "
+                        "(per barrel, per MMSCF, per ton)."
+                    ),
+                    "default": "per_mj",
+                },
             },
             "required": [],
         },
@@ -1321,8 +1345,18 @@ CALCULATE_FUNCTIONAL_UNIT_SCHEMA = {
 }
 
 
-def calculate_functional_unit(data: str = "auto", products: str = "auto") -> str:
-    """Calculate per-MJ functional unit values for each product."""
+def calculate_functional_unit(
+    data: str = "auto",
+    products: str = "auto",
+    fu_mode: str = "per_mj",
+) -> str:
+    """Calculate functional unit values for each product.
+
+    Modes:
+        per_mj (default): divide per-product amount by total_energy_mj
+        per_output_unit: divide per-product amount by total output quantity
+            (total_energy_mj / fu_unit_factor = output in barrels, MMSCF, etc.)
+    """
     parsed, err = _resolve_data(data)
     if err:
         return err
@@ -1344,11 +1378,29 @@ def calculate_functional_unit(data: str = "auto", products: str = "auto") -> str
     if not product_list:
         return "Error: No product definitions provided"
 
+    # Build per-product divisor and unit labels based on fu_mode
+    fu_unit_labels: dict[str, str] = {}
+    divisors: dict[str, float] = {}
+    for product in product_list:
+        name = product["name"]
+        energy_mj = product.get("total_energy_mj", 0)
+        fu_unit_factor = product.get("fu_unit_factor", 0)
+        output_unit = product.get("output_unit", "")
+
+        if fu_mode == "per_output_unit" and fu_unit_factor and energy_mj:
+            # total output quantity = total_energy_mj / fu_unit_factor
+            divisors[name] = energy_mj / fu_unit_factor
+            fu_unit_labels[name] = output_unit or "unit"
+        else:
+            # Default: per MJ
+            divisors[name] = energy_mj
+            fu_unit_labels[name] = "MJ"
+
     for flow in flows:
         for product in product_list:
             name = product["name"]
-            energy_mj = product.get("total_energy_mj", 0)
-            if energy_mj == 0:
+            divisor = divisors.get(name, 0)
+            if divisor == 0:
                 continue
 
             per_product_key = f"per_product_{name}"
@@ -1357,10 +1409,10 @@ def calculate_functional_unit(data: str = "auto", products: str = "auto") -> str
 
             fu_key = f"fu_per_mj_{name}"
             if per_product_amount:
-                flow[fu_key] = per_product_amount / energy_mj
+                flow[fu_key] = per_product_amount / divisor
             elif amount:
                 # Fallback: when per-product column is empty/zero, use total amount
-                flow[fu_key] = amount / energy_mj
+                flow[fu_key] = amount / divisor
             else:
                 flow[fu_key] = 0.0
 
@@ -1390,17 +1442,23 @@ def calculate_functional_unit(data: str = "auto", products: str = "auto") -> str
 
     result = {
         "flows": flows,
-        "products": [p["name"] for p in product_list],
+        "products": product_list,
+        "fu_mode": fu_mode,
+        "fu_unit_labels": fu_unit_labels,
         "total_flows": len(flows),
     }
     _store_pipeline(result)
+
+    mode_desc = "per MJ" if fu_mode == "per_mj" else "per output unit"
     return json.dumps(
         {
             "status": "fu_calculated",
             "products": [p["name"] for p in product_list],
+            "fu_mode": fu_mode,
+            "fu_unit_labels": fu_unit_labels,
             "total_flows": len(flows),
             "message": (
-                f"Calculated FU/MJ values for {len(product_list)} products"
+                f"Calculated FU values ({mode_desc}) for {len(product_list)} products"
                 f" across {len(flows)} flows."
             ),
         },
@@ -1493,6 +1551,12 @@ def select_pareto_items(data: str = "auto", top_n: int = 5, lainnya_label: str =
         "stats": stats,
         "total_selected": len(selected),
     }
+    # Carry forward products, fu_mode, fu_unit_labels from pipeline
+    pipeline = _read_pipeline()
+    if pipeline:
+        for key in ("products", "fu_mode", "fu_unit_labels"):
+            if key in pipeline:
+                result[key] = pipeline[key]
     _store_pipeline(result)
     return json.dumps(
         {
@@ -1803,8 +1867,8 @@ def build_proper_io_table(data: str = "auto", config: str = "auto") -> str:
     flows = _extract_flows(parsed)
 
     # Config can come from pipeline state or explicit parameter
+    pipeline = _read_pipeline()
     if config == "auto":
-        pipeline = _read_pipeline()
         products_from_pipeline = []
         if pipeline and "products" in pipeline:
             product_names = pipeline["products"]
@@ -1822,11 +1886,17 @@ def build_proper_io_table(data: str = "auto", config: str = "auto") -> str:
     products = table_config.get("products", [])
     title = table_config.get("title", "IO Table")
 
+    # Read FU unit labels from pipeline
+    fu_unit_labels: dict[str, str] = {}
+    if pipeline:
+        fu_unit_labels = pipeline.get("fu_unit_labels", {})
+
     # Build headers
     headers = ["Input/Output", "Total", "Unit"]
     for product in products:
         name = product.get("name", "Product")
-        headers.extend([f"{name} FU/MJ", "Unit", "%", "Mayoritas Proses"])
+        fu_label = fu_unit_labels.get(name, "MJ")
+        headers.extend([f"{name} FU/{fu_label}", "Unit", "%", "Mayoritas Proses"])
 
     # Group flows by category
     from collections import defaultdict
@@ -1876,7 +1946,8 @@ def build_proper_io_table(data: str = "auto", config: str = "auto") -> str:
                 pct_key = f"pct_{name}"
                 fu_val = flow.get(fu_key, 0.0)
                 pct_val = flow.get(pct_key, 0.0)
-                fu_unit = f"{unit}/MJ" if unit else ""
+                fu_label = fu_unit_labels.get(name, "MJ")
+                fu_unit = f"{unit}/{fu_label}" if unit else ""
                 dominant = flow.get("process", "")
 
                 row.extend(
@@ -2159,8 +2230,18 @@ def compare_products(metric: str = "all", data: str = "auto") -> str:
             row["ratio"] = round(values[0] / values[1], 4)
         comparison_rows.append(row)
 
-    # Push ObTable
-    headers = ["Category"] + product_names
+    # Read FU unit labels from pipeline for headers
+    pipeline = _read_pipeline()
+    fu_unit_labels: dict[str, str] = {}
+    if pipeline:
+        fu_unit_labels = pipeline.get("fu_unit_labels", {})
+
+    # Push ObTable with dynamic FU unit labels
+    display_names = []
+    for pname in product_names:
+        fu_label = fu_unit_labels.get(pname, "MJ")
+        display_names.append(f"{pname} (/{fu_label})")
+    headers = ["Category"] + display_names
     if len(product_names) == 2:
         headers += ["Delta", "Ratio"]
     table_rows = []
@@ -2216,6 +2297,16 @@ REVISE_PIPELINE_SCHEMA = {
                     "description": "Use 'auto' to read from pipeline (default)",
                     "default": "auto",
                 },
+                "fu_mode": {
+                    "type": "string",
+                    "enum": ["per_mj", "per_output_unit"],
+                    "description": (
+                        "FU mode for recalculate_fu action. "
+                        "'per_mj' = per MJ (default), "
+                        "'per_output_unit' = per output unit (barrel, MMSCF, etc.)"
+                    ),
+                    "default": "per_mj",
+                },
             },
             "required": ["action", "value"],
         },
@@ -2223,7 +2314,7 @@ REVISE_PIPELINE_SCHEMA = {
 }
 
 
-def revise_pipeline(action: str, value: int, data: str = "auto") -> str:
+def revise_pipeline(action: str, value: int, data: str = "auto", fu_mode: str = "per_mj") -> str:
     """Re-run a pipeline step with revised parameters."""
     parsed, err = _resolve_data(data)
     if err:
@@ -2251,7 +2342,7 @@ def revise_pipeline(action: str, value: int, data: str = "auto") -> str:
         )
 
     elif action == "recalculate_fu":
-        result_str = calculate_functional_unit(data="auto", products="auto")
+        result_str = calculate_functional_unit(data="auto", products="auto", fu_mode=fu_mode)
         return json.dumps(
             {
                 "action": "recalculate_fu",
