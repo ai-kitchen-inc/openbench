@@ -21,15 +21,16 @@ without parameters (they default to "auto").
 2. **analyze_excel_structure**(file_path=...) -- Detect format and matching profile
 3. **parse_ldi_sheet**(file_path=..., profile_name=...) -- Parse into
    Standard LCI Schema (stores data in pipeline)
-4. **apply_unit_conversions**() -- Auto-reads pipeline data, converts units
-5. **select_pareto_items**() -- Auto-reads pipeline data, selects top items per category
-6. **calculate_functional_unit**() -- Default: per MJ (PROPER standard).
+4. **aggregate_flows**() -- Merge duplicate flows (same category + name + unit)
+5. **apply_unit_conversions**() -- Auto-reads pipeline data, converts units
+6. **select_pareto_items**() -- Auto-reads pipeline data, selects top items per category
+7. **calculate_functional_unit**() -- Default: per MJ (PROPER standard).
    If user requests a different unit (e.g., "hitung per barrel", "per ton"),
    use fu_mode="per_output_unit"
-7. **build_proper_io_table**() -- Auto-reads pipeline data, builds 11-column PROPER IO Table
-8. **validate_data_quality**() -- Auto-reads pipeline data, checks for issues
-9. **export_to_xlsx**() -- Export IO Table to Excel (.xlsx) with PROPER formatting
-10. **export_to_docx** -- Export narrative report to .docx (optional, on request)
+8. **build_proper_io_table**() -- Auto-reads pipeline data, builds 11-column PROPER IO Table
+9. **validate_data_quality**() -- Auto-reads pipeline data, checks for issues
+10. **export_to_xlsx**() -- Export IO Table to Excel (.xlsx) with PROPER formatting
+11. **export_to_docx** -- Export narrative report to .docx (optional, on request)
 
 ### For CSV files (easyLCA/SimaPro):
 1. Parse the CSV data
@@ -38,7 +39,7 @@ without parameters (they default to "auto").
 
 ## Important Rules
 - ALWAYS call get_uploaded_files FIRST to get the file path
-- Run ALL pipeline steps (1-8) in a SINGLE turn -- do NOT stop between steps
+- Run ALL pipeline steps (1-9) in a SINGLE turn -- do NOT stop between steps
 - Tools auto-chain: after parse_ldi_sheet, just call each tool with NO parameters
 - Only respond to the user AFTER all steps are complete
 - Use the matched MappingProfile if one exists (e.g., pertamina_pep_tanjung)
@@ -83,11 +84,12 @@ Your task is to build accurate Input-Output tables from Life Cycle Inventory (LC
 ## For Excel LDI files (PROPER format):
 1. Use analyze_excel_structure to inspect the file
 2. Use parse_ldi_sheet with the matching profile
-3. Use apply_unit_conversions for unit standardization
-4. Use select_pareto_items to select top items per category
-5. Use calculate_functional_unit for FU values (per MJ default, or per output unit)
-6. Use build_proper_io_table to create the full 11-column PROPER IO Table
-7. Use validate_data_quality to check for known issues
+3. Use aggregate_flows to merge duplicate flows (same category + name + unit)
+4. Use apply_unit_conversions for unit standardization
+5. Use select_pareto_items to select top items per category
+6. Use calculate_functional_unit for FU values (per MJ default, or per output unit)
+7. Use build_proper_io_table to create the full 11-column PROPER IO Table
+8. Use validate_data_quality to check for known issues
 
 ## For CSV files (easyLCA/SimaPro):
 1. Create clear IO tables separating inputs from outputs

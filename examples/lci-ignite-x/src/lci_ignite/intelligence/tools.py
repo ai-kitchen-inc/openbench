@@ -1209,6 +1209,110 @@ def parse_ldi_sheet(file_path: str, profile_name: str) -> str:
     )
 
 
+AGGREGATE_FLOWS_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "aggregate_flows",
+        "description": (
+            "Merge duplicate flows that share the same category, flow_name, and unit. "
+            "Sums numeric fields (amount, per_product_*, fu_*) and combines process names. "
+            "Uses pipeline data automatically."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to chain from previous pipeline step (default)",
+                    "default": "auto",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+def aggregate_flows(data: str = "auto") -> str:
+    """Merge duplicate flows that share the same (category, flow_name, unit).
+
+    For each group:
+    - Sums: amount, per_product_*, fu_*
+    - Combines unique process names (sorted, comma-separated)
+    - Keeps direction and original_category from first flow
+    """
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+
+    from collections import OrderedDict
+
+    groups: OrderedDict[tuple[str, str, str], dict] = OrderedDict()
+    for flow in flows:
+        key = (
+            flow.get("category", ""),
+            flow.get("flow_name", ""),
+            flow.get("unit", ""),
+        )
+        if key not in groups:
+            # First occurrence -- copy all fields as base
+            groups[key] = dict(flow)
+            # Track process names as a set for dedup
+            groups[key]["_processes"] = {flow.get("process", "")} - {""}
+        else:
+            merged = groups[key]
+            # Sum amount
+            merged["amount"] = merged.get("amount", 0) + flow.get("amount", 0)
+            # Sum per_product_* and fu_* fields
+            for k, v in flow.items():
+                if (k.startswith("per_product_") or k.startswith("fu_")) and isinstance(
+                    v, (int, float)
+                ):
+                    merged[k] = merged.get(k, 0) + v
+            # Collect process names
+            proc = flow.get("process", "")
+            if proc:
+                merged["_processes"].add(proc)
+
+    # Finalize: combine process names, remove temp field
+    total_before = len(flows)
+    aggregated: list[dict] = []
+    for merged in groups.values():
+        processes = merged.pop("_processes", set())
+        if processes:
+            merged["process"] = ", ".join(sorted(processes))
+        aggregated.append(merged)
+
+    total_after = len(aggregated)
+    duplicates_merged = total_before - total_after
+
+    # Build result carrying forward pipeline metadata
+    result: dict[str, Any] = {"flows": aggregated}
+    if isinstance(parsed, dict):
+        for key in ("products", "helper_data", "summary", "fu_mode", "fu_unit_labels"):
+            if key in parsed:
+                result[key] = parsed[key]
+    # Update summary counts if present
+    if "summary" in result and isinstance(result["summary"], dict):
+        result["summary"]["total_flows"] = total_after
+
+    _store_pipeline(result)
+    return json.dumps(
+        {
+            "status": "aggregated",
+            "total_before": total_before,
+            "total_after": total_after,
+            "duplicates_merged": duplicates_merged,
+            "message": (
+                f"Merged {duplicates_merged} duplicate flows: "
+                f"{total_before} \u2192 {total_after} unique flows."
+            ),
+        },
+        indent=2,
+    )
+
+
 APPLY_UNIT_CONVERSIONS_SCHEMA = {
     "type": "function",
     "function": {

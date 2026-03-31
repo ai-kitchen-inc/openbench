@@ -42,12 +42,13 @@ class TestIOTableAgentInit:
             # New data processing tools
             assert "analyze_excel_structure" in tool_names
             assert "parse_ldi_sheet" in tool_names
+            assert "aggregate_flows" in tool_names
             assert "apply_unit_conversions" in tool_names
             assert "calculate_functional_unit" in tool_names
             assert "select_pareto_items" in tool_names
             assert "validate_data_quality" in tool_names
             assert "build_proper_io_table" in tool_names
-            assert len(tool_names) == 11
+            assert len(tool_names) == 12
 
     def test_custom_model(self):
         """Test custom model parameter."""

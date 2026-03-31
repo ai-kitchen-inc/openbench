@@ -57,6 +57,7 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
     from lci_ignite.intelligence.tools import (
         # Existing tool schemas
         AGGREGATE_BY_CATEGORY_SCHEMA,
+        AGGREGATE_FLOWS_SCHEMA,
         # New tool schemas (Phase 3)
         ANALYZE_EXCEL_STRUCTURE_SCHEMA,
         APPLY_UNIT_CONVERSIONS_SCHEMA,
@@ -89,6 +90,7 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
         VALIDATE_UNITS_SCHEMA,
         # Existing tool functions
         aggregate_by_category,
+        aggregate_flows,
         # New tool functions (Phase 3)
         analyze_excel_structure,
         apply_unit_conversions,
@@ -134,6 +136,7 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
         schema=ANALYZE_EXCEL_STRUCTURE_SCHEMA,
     )
     agent.tools.register("parse_ldi_sheet", parse_ldi_sheet, schema=PARSE_LDI_SHEET_SCHEMA)
+    agent.tools.register("aggregate_flows", aggregate_flows, schema=AGGREGATE_FLOWS_SCHEMA)
     agent.tools.register(
         "apply_unit_conversions",
         apply_unit_conversions,

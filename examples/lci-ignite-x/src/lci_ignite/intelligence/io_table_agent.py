@@ -9,6 +9,7 @@ from lci_ignite.intelligence.prompts import IO_TABLE_PROMPT
 from lci_ignite.intelligence.tools import (
     # Existing IO table tools
     AGGREGATE_BY_CATEGORY_SCHEMA,
+    AGGREGATE_FLOWS_SCHEMA,
     # New data processing tools (Phase 3)
     ANALYZE_EXCEL_STRUCTURE_SCHEMA,
     APPLY_UNIT_CONVERSIONS_SCHEMA,
@@ -21,6 +22,7 @@ from lci_ignite.intelligence.tools import (
     VALIDATE_DATA_QUALITY_SCHEMA,
     VALIDATE_UNITS_SCHEMA,
     aggregate_by_category,
+    aggregate_flows,
     analyze_excel_structure,
     apply_unit_conversions,
     build_proper_io_table,
@@ -70,6 +72,7 @@ class IOTableAgent(BaseAgent):
             schema=ANALYZE_EXCEL_STRUCTURE_SCHEMA,
         )
         self.tools.register("parse_ldi_sheet", parse_ldi_sheet, schema=PARSE_LDI_SHEET_SCHEMA)
+        self.tools.register("aggregate_flows", aggregate_flows, schema=AGGREGATE_FLOWS_SCHEMA)
         self.tools.register(
             "apply_unit_conversions",
             apply_unit_conversions,

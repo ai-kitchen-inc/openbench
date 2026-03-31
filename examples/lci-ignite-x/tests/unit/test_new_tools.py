@@ -9,6 +9,7 @@ import pytest
 from lci_ignite.intelligence.tools import (
     _read_pipeline,
     _store_pipeline,
+    aggregate_flows,
     analyze_excel_structure,
     apply_unit_conversions,
     build_proper_io_table,
@@ -558,3 +559,150 @@ class TestProductsPropagation:
         assert "products" in pipeline
         assert pipeline["fu_mode"] == "per_output_unit"
         assert pipeline["fu_unit_labels"]["Gas"] == "MMSCF"
+
+
+# ---------------------------------------------------------------------------
+# aggregate_flows
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateFlows:
+    def test_merges_same_flow(self):
+        """3 CO2 rows with same category/name/unit -> 1 with summed amount."""
+        flows = [
+            {
+                "category": "Emisi Udara",
+                "flow_name": "CO2",
+                "amount": 100,
+                "unit": "kg",
+                "process": "NSOP",
+            },
+            {
+                "category": "Emisi Udara",
+                "flow_name": "CO2",
+                "amount": 200,
+                "unit": "kg",
+                "process": "NSOP",
+            },
+            {
+                "category": "Emisi Udara",
+                "flow_name": "CO2",
+                "amount": 50,
+                "unit": "kg",
+                "process": "Warehouse",
+            },
+        ]
+        result = json.loads(aggregate_flows(json.dumps(flows)))
+        assert result["total_before"] == 3
+        assert result["total_after"] == 1
+        assert result["duplicates_merged"] == 2
+        pipeline = _read_pipeline()
+        assert len(pipeline["flows"]) == 1
+        assert pipeline["flows"][0]["amount"] == 350
+
+    def test_combines_processes(self):
+        """Process names from different rows should be joined sorted."""
+        flows = [
+            {
+                "category": "Air",
+                "flow_name": "PDAM",
+                "amount": 10,
+                "unit": "L",
+                "process": "Warehouse",
+            },
+            {"category": "Air", "flow_name": "PDAM", "amount": 20, "unit": "L", "process": "NSOP"},
+            {
+                "category": "Air",
+                "flow_name": "PDAM",
+                "amount": 5,
+                "unit": "L",
+                "process": "Warehouse",
+            },
+        ]
+        aggregate_flows(json.dumps(flows))
+        pipeline = _read_pipeline()
+        flow = pipeline["flows"][0]
+        assert flow["amount"] == 35
+        # Should be sorted and deduplicated
+        assert flow["process"] == "NSOP, Warehouse"
+
+    def test_sums_per_product_fields(self):
+        """per_product_* fields should be summed across duplicates."""
+        flows = [
+            {
+                "category": "Emisi Udara",
+                "flow_name": "CO2",
+                "amount": 100,
+                "unit": "kg",
+                "per_product_Gas": 40,
+                "per_product_Oil": 60,
+            },
+            {
+                "category": "Emisi Udara",
+                "flow_name": "CO2",
+                "amount": 200,
+                "unit": "kg",
+                "per_product_Gas": 80,
+                "per_product_Oil": 120,
+            },
+        ]
+        aggregate_flows(json.dumps(flows))
+        pipeline = _read_pipeline()
+        flow = pipeline["flows"][0]
+        assert flow["per_product_Gas"] == 120
+        assert flow["per_product_Oil"] == 180
+        assert flow["amount"] == 300
+
+    def test_no_duplicates_passthrough(self):
+        """Unique flows should pass through unchanged."""
+        flows = [
+            {"category": "Air", "flow_name": "PDAM", "amount": 10, "unit": "L"},
+            {"category": "Listrik", "flow_name": "PLN", "amount": 500, "unit": "kWh"},
+            {"category": "Emisi Udara", "flow_name": "CO2", "amount": 100, "unit": "kg"},
+        ]
+        result = json.loads(aggregate_flows(json.dumps(flows)))
+        assert result["total_before"] == 3
+        assert result["total_after"] == 3
+        assert result["duplicates_merged"] == 0
+
+    def test_preserves_products(self):
+        """products and helper_data should be carried forward."""
+        data = {
+            "flows": [
+                {"category": "Air", "flow_name": "W", "amount": 100, "unit": "L"},
+            ],
+            "products": [{"name": "Gas", "total_energy_mj": 1000}],
+            "helper_data": {"some": "info"},
+            "summary": {"total_flows": 1, "categories": ["Air"]},
+        }
+        _store_pipeline(data)
+        aggregate_flows(data="auto")
+        pipeline = _read_pipeline()
+        assert "products" in pipeline
+        assert pipeline["products"][0]["name"] == "Gas"
+        assert pipeline["helper_data"]["some"] == "info"
+
+    def test_auto_reads_pipeline(self):
+        """data='auto' should read from pipeline state."""
+        data = {
+            "flows": [
+                {"category": "Air", "flow_name": "W", "amount": 50, "unit": "L", "process": "A"},
+                {"category": "Air", "flow_name": "W", "amount": 70, "unit": "L", "process": "B"},
+            ],
+        }
+        _store_pipeline(data)
+        result = json.loads(aggregate_flows(data="auto"))
+        assert result["total_before"] == 2
+        assert result["total_after"] == 1
+        pipeline = _read_pipeline()
+        assert pipeline["flows"][0]["amount"] == 120
+
+    def test_no_pipeline_data_error(self):
+        """Should return error when no pipeline data and data='auto'."""
+        result = aggregate_flows(data="auto")
+        assert "Error" in result
+
+    def test_invalid_json(self):
+        """Should return error for invalid JSON."""
+        result = aggregate_flows(data="bad json")
+        assert "Error" in result
