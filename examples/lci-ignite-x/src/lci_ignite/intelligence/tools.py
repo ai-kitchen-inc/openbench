@@ -2513,22 +2513,15 @@ def explain_analysis(question: str, data: str = "auto") -> str:
     # Sort by amount descending
     relevant = sorted(relevant, key=lambda f: abs(f.get("amount", 0)), reverse=True)
 
-    # Compute totals and percentages
+    # Compute totals and percentages — return ALL fields per flow
     total_amount = sum(abs(f.get("amount", 0)) for f in relevant)
     result_flows = []
-    for f in relevant[:15]:
+    for f in relevant[:30]:
         amount = f.get("amount", 0)
         pct = (abs(amount) / total_amount * 100) if total_amount else 0
-        result_flows.append(
-            {
-                "flow_name": f.get("flow_name", ""),
-                "amount": amount,
-                "unit": f.get("unit", ""),
-                "category": f.get("category", ""),
-                "process": f.get("process", ""),
-                "percentage": round(pct, 2),
-            }
-        )
+        entry = dict(f)  # Copy all fields
+        entry["percentage"] = round(pct, 2)
+        result_flows.append(entry)
 
     top = result_flows[0] if result_flows else None
     result = {
@@ -3077,39 +3070,28 @@ def query_flows(field: str, value: str = "*", mode: str = "filter", data: str = 
             indent=2,
         )
 
-    # Build summary of matched flows
-    result_flows = []
-    for f in matched[:30]:
-        entry = {
-            "flow_name": f.get("flow_name", ""),
-            "category": f.get("category", ""),
-            "amount": f.get("amount", 0),
-            "unit": f.get("unit", ""),
-            "process": f.get("process", ""),
-        }
-        # Include the queried field if it's an extra field
-        val = _find_field(f, field_lower)
-        if val is not None:
-            entry[field] = val
-        result_flows.append(entry)
+    # Return ALL fields per flow so LLM can reason over complete data
+    result_flows = matched[:50]
 
-    # Push table render item
+    # Push table render item (UI shows key columns only)
     headers = ["Flow", "Category", "Amount", "Unit", "Process", field]
     rows = [
         [
-            e["flow_name"],
-            e["category"],
-            _fmt_number(e["amount"]),
-            e["unit"],
-            e["process"],
-            str(e.get(field, "")),
+            f.get("flow_name", ""),
+            f.get("category", ""),
+            _fmt_number(f.get("amount", 0)),
+            f.get("unit", ""),
+            f.get("process", ""),
+            str(_find_field(f, field_lower) or ""),
         ]
-        for e in result_flows
+        for f in result_flows
     ]
     items = _get_render_list()
     items.append(
         {
-            "title": f"Flows where {field} = '{value}'" if value != "*" else f"All flows ({field})",
+            "title": (
+                f"Flows where {field} = '{value}'" if value != "*" else f"All flows ({field})"
+            ),
             "headers": headers,
             "rows": rows,
         }
@@ -3124,6 +3106,7 @@ def query_flows(field: str, value: str = "*", mode: str = "filter", data: str = 
             "flows": result_flows,
         },
         indent=2,
+        default=str,
     )
 
 
