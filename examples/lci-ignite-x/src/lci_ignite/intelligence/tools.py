@@ -1700,26 +1700,43 @@ def _extract_flows(parsed: Any) -> list[dict]:
 
 
 def apply_unit_conversions(data: str = "auto", conversions: str = "[]") -> str:
-    """Apply unit conversions to parsed LCI flows."""
+    """Apply unit conversions to parsed LCI flows.
+
+    Always applies baseline conversions from lci_schema.py (STANDARD_CATEGORIES)
+    first, then applies any additional profile-specific rules on top.
+    This ensures mixed units (barrel + liter + m3) within a category are
+    always normalized to the category's default unit.
+    """
+    from lci_ignite.data.lci_schema import STANDARD_CATEGORIES
+
     parsed, err = _resolve_data(data)
     if err:
         return err
     flows = _extract_flows(parsed)
     try:
-        conv_rules = json.loads(conversions)
+        profile_rules = json.loads(conversions)
     except json.JSONDecodeError as exc:
         return f"Error: Invalid conversions JSON - {exc}"
+
+    # Build baseline conversion rules from lci_schema.py
+    baseline_rules = _build_baseline_conversions(STANDARD_CATEGORIES)
+
+    # Merge: profile rules override baseline for same from_unit+category
+    merged_rules = _merge_conversion_rules(baseline_rules, profile_rules)
 
     converted = 0
     for flow in flows:
         cat = flow.get("category", "")
-        unit = flow.get("unit", "")
+        unit = flow.get("unit", "").strip()
         amount = flow.get("amount", 0.0)
 
-        for rule in conv_rules:
-            from_unit = rule.get("from_unit", "")
-            to_unit = rule.get("to_unit", "")
-            factor = rule.get("factor", 1)
+        if not unit or amount == 0:
+            continue
+
+        for rule in merged_rules:
+            from_unit = rule["from_unit"]
+            to_unit = rule["to_unit"]
+            factor = rule["factor"]
             applies_to = rule.get("applies_to", [])
 
             if unit.lower() == from_unit.lower() and (not applies_to or cat in applies_to):
@@ -1744,10 +1761,68 @@ def apply_unit_conversions(data: str = "auto", conversions: str = "[]") -> str:
             "status": "converted",
             "conversions_applied": converted,
             "total_flows": len(flows),
+            "baseline_rules": len(baseline_rules),
+            "profile_rules": len(profile_rules),
             "message": f"Applied {converted} unit conversions across {len(flows)} flows.",
         },
         indent=2,
     )
+
+
+def _build_baseline_conversions(
+    categories: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build conversion rules from STANDARD_CATEGORIES definitions.
+
+    Reads the unit_conversions dict from each category and converts to
+    the flat rule format: {from_unit, to_unit, factor, applies_to}.
+    """
+    rules: list[dict[str, Any]] = []
+    for cat_name, cat_info in categories.items():
+        default_unit = cat_info.get("default_unit")
+        unit_convs = cat_info.get("unit_conversions")
+        if not unit_convs or not default_unit:
+            continue
+        for from_unit, factor in unit_convs.items():
+            if not isinstance(factor, (int, float)):
+                continue  # skip special rules like "multiply_by_study_over_lifetime"
+            rules.append(
+                {
+                    "from_unit": from_unit,
+                    "to_unit": default_unit,
+                    "factor": factor,
+                    "applies_to": [cat_name],
+                }
+            )
+    return rules
+
+
+def _merge_conversion_rules(
+    baseline: list[dict[str, Any]],
+    profile: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge baseline and profile conversion rules.
+
+    Profile rules override baseline for the same (from_unit, category) pair.
+    """
+    # Index profile rules by (from_unit_lower, category)
+    profile_keys: set[tuple[str, str]] = set()
+    for rule in profile:
+        from_lower = rule.get("from_unit", "").lower()
+        for cat in rule.get("applies_to", [""]):
+            profile_keys.add((from_lower, cat))
+
+    # Add baseline rules that are NOT overridden by profile
+    merged = list(profile)
+    for rule in baseline:
+        from_lower = rule["from_unit"].lower()
+        applies_to = rule.get("applies_to", [])
+        # Check if any of this rule's categories are overridden
+        overridden = any((from_lower, cat) in profile_keys for cat in applies_to)
+        if not overridden:
+            merged.append(rule)
+
+    return merged
 
 
 CALCULATE_FUNCTIONAL_UNIT_SCHEMA = {

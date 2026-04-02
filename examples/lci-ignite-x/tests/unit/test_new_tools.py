@@ -179,6 +179,85 @@ class TestApplyUnitConversions:
         result = json.loads(apply_unit_conversions("[]", "[]"))
         assert result["total_flows"] == 0
 
+    def test_baseline_barrel_to_liter(self):
+        """Baseline conversion: barrel → L for Air category (no profile rules needed)."""
+        flows = [
+            {"category": "Air", "flow_name": "Water Injection", "amount": 100, "unit": "barrel"},
+        ]
+        result = json.loads(apply_unit_conversions(json.dumps(flows)))  # no conversions param
+        assert result["conversions_applied"] == 1
+        pipeline = _read_pipeline()
+        assert pipeline["flows"][0]["unit"] == "L"
+        assert pipeline["flows"][0]["amount"] == pytest.approx(15898.7)
+        assert pipeline["flows"][0]["original_unit"] == "barrel"
+
+    def test_baseline_m3_to_liter(self):
+        """Baseline conversion: m3 → L for Air category."""
+        flows = [
+            {"category": "Air", "flow_name": "River Water", "amount": 147.66, "unit": "m3"},
+        ]
+        result = json.loads(apply_unit_conversions(json.dumps(flows)))
+        assert result["conversions_applied"] == 1
+        pipeline = _read_pipeline()
+        assert pipeline["flows"][0]["unit"] == "L"
+        assert pipeline["flows"][0]["amount"] == pytest.approx(147660.0)
+
+    def test_baseline_ton_to_kg_emissions(self):
+        """Baseline conversion: ton → kg for Emisi Udara."""
+        flows = [
+            {"category": "Emisi Udara", "flow_name": "CO2", "amount": 19.607, "unit": "ton"},
+        ]
+        result = json.loads(apply_unit_conversions(json.dumps(flows)))
+        assert result["conversions_applied"] == 1
+        pipeline = _read_pipeline()
+        assert pipeline["flows"][0]["unit"] == "kg"
+        assert pipeline["flows"][0]["amount"] == pytest.approx(19607.0)
+
+    def test_baseline_mixed_units_same_category(self):
+        """Mixed units in Air category all convert to L via baseline."""
+        flows = [
+            {"category": "Air", "flow_name": "PDAM", "amount": 86100, "unit": "liter"},
+            {"category": "Air", "flow_name": "Injection", "amount": 546901.2, "unit": "barrel"},
+            {"category": "Air", "flow_name": "Air Tanah", "amount": 14.23, "unit": "m3"},
+        ]
+        result = json.loads(apply_unit_conversions(json.dumps(flows)))
+        # liter has no conversion rule (already L) → only barrel and m3 converted
+        assert result["conversions_applied"] == 2
+        pipeline = _read_pipeline()
+        # PDAM stays liter (already the default unit)
+        assert pipeline["flows"][0]["unit"] == "liter"
+        assert pipeline["flows"][0]["amount"] == 86100
+        # Injection: barrel → L
+        assert pipeline["flows"][1]["unit"] == "L"
+        assert pipeline["flows"][1]["amount"] == pytest.approx(546901.2 * 158.987)
+        # Air Tanah: m3 → L
+        assert pipeline["flows"][2]["unit"] == "L"
+        assert pipeline["flows"][2]["amount"] == pytest.approx(14230.0)
+
+    def test_baseline_no_conversion_for_non_matching_category(self):
+        """barrel in Produk should NOT be converted (no baseline rule for Produk)."""
+        flows = [
+            {"category": "Produk", "flow_name": "Crude Oil", "amount": 50000, "unit": "barrel"},
+        ]
+        result = json.loads(apply_unit_conversions(json.dumps(flows)))
+        assert result["conversions_applied"] == 0
+        pipeline = _read_pipeline()
+        assert pipeline["flows"][0]["unit"] == "barrel"
+
+    def test_profile_overrides_baseline(self):
+        """Profile rule should override baseline for same from_unit+category."""
+        flows = [
+            {"category": "Air", "flow_name": "Water", "amount": 100, "unit": "barrel"},
+        ]
+        # Profile says barrel → gallon (overrides baseline barrel → L)
+        profile_rules = [
+            {"from_unit": "barrel", "to_unit": "gallon", "factor": 42, "applies_to": ["Air"]},
+        ]
+        apply_unit_conversions(json.dumps(flows), json.dumps(profile_rules))
+        pipeline = _read_pipeline()
+        assert pipeline["flows"][0]["unit"] == "gallon"
+        assert pipeline["flows"][0]["amount"] == pytest.approx(4200.0)
+
 
 # ---------------------------------------------------------------------------
 # calculate_functional_unit
