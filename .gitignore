@@ -493,5 +493,6 @@ override.tf.json
 .temp
 uv.lock
 
-# LCI Ignite-X docs
+# LCI Ignite-X
 examples/lci-ignite-x/docs/
+examples/lci-ignite-x/src/lci_ignite/data/mapping_profiles/*.json
