@@ -18,6 +18,38 @@ logger = logging.getLogger(__name__)
 PROFILES_DIR = Path(__file__).parent
 
 
+def _normalize_column_mapping(profile: dict[str, Any]) -> dict[str, Any]:
+    """Normalize column_mapping values from int to {"index": int}.
+
+    LLM-generated profiles may use shorthand ``{"process": 0}`` instead of
+    the canonical ``{"process": {"index": 0, "header": "Process Title"}}``.
+    This function converts the shorthand form so downstream code that calls
+    ``col_spec.get("index")`` does not crash.
+    """
+    col_map = profile.get("column_mapping")
+    if not isinstance(col_map, dict):
+        return profile
+
+    normalized: dict[str, Any] = {}
+    changed = False
+    for key, spec in col_map.items():
+        if isinstance(spec, int):
+            normalized[key] = {"index": spec}
+            changed = True
+        elif not isinstance(spec, dict):
+            try:
+                normalized[key] = {"index": int(spec)}
+                changed = True
+            except (ValueError, TypeError):
+                normalized[key] = spec
+        else:
+            normalized[key] = spec
+
+    if changed:
+        profile["column_mapping"] = normalized
+    return profile
+
+
 def list_profiles() -> list[dict[str, Any]]:
     """List all saved profiles with their metadata.
 
@@ -56,7 +88,8 @@ def load_profile(name: str) -> dict[str, Any]:
     path = PROFILES_DIR / f"{name}.json"
     if not path.exists():
         raise FileNotFoundError(f"Profile not found: {name} (looked at {path})")
-    return json.loads(path.read_text(encoding="utf-8"))
+    profile = json.loads(path.read_text(encoding="utf-8"))
+    return _normalize_column_mapping(profile)
 
 
 def save_profile(name: str, profile: dict[str, Any]) -> Path:
@@ -104,7 +137,7 @@ def match_profile(excel_profile: dict[str, Any]) -> dict[str, Any] | None:
         target_sheet = profile.get("sheet_name", "")
         if target_sheet and target_sheet in sheet_names:
             logger.info("Profile matched by sheet name: %s -> %s", target_sheet, path.stem)
-            return profile
+            return _normalize_column_mapping(profile)
 
         # Strategy 2: Header overlap with profile's expected columns
         expected_headers = set(profile.get("expected_headers", []))
@@ -135,7 +168,7 @@ def match_profile(excel_profile: dict[str, Any]) -> dict[str, Any] | None:
                 overlap * 100,
                 path.stem,
             )
-            return profile
+            return _normalize_column_mapping(profile)
 
     return None
 
@@ -152,6 +185,11 @@ def _verify_column_positions(
     matches = 0
 
     for field_spec in column_mapping.values():
+        # Handle both {"index": N, "header": "..."} and shorthand int format
+        if isinstance(field_spec, int):
+            continue  # No header to verify, skip
+        if not isinstance(field_spec, dict):
+            continue
         idx = field_spec.get("index")
         expected_header = field_spec.get("header")
         if idx is None or expected_header is None:

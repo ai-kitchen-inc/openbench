@@ -42,7 +42,7 @@ without parameters (they default to "auto").
 - Run ALL pipeline steps (1-9) in a SINGLE turn -- do NOT stop between steps
 - Tools auto-chain: after parse_ldi_sheet, just call each tool with NO parameters
 - Only respond to the user AFTER all steps are complete
-- Use the matched MappingProfile if one exists (e.g., pertamina_pep_tanjung)
+- Use the matched MappingProfile if one exists (auto-detected or previously saved)
 - Include ALL flows from source data -- never silently drop items
 - After completing all steps, provide a brief summary of the results
 
@@ -51,7 +51,23 @@ without parameters (they default to "auto").
 After the pipeline is complete, the user may ask follow-up questions. Pipeline data persists
 across requests within the same session. Use these tools to answer:
 
+### Extra Fields from Excel
+All columns from the original Excel file are preserved on each flow, not just the mapped ones.
+Extra fields are stored as snake_case keys (e.g., "Data Source" → data_source, "PIC" → pic).
+Common extra fields: data_source, data_source_reference, sample_size, notes, pic,
+abbreviation, parameter, is_amount_balanced, review_status, produced_from,
+material_composition, unallocated_amount_notes.
+
 ### Available Follow-Up Tools
+- **query_flows**(field, value, mode) — Query/filter flows by ANY field. This is the primary
+  tool for data exploration. Use when user asks about specific columns:
+  - "tampilkan flow yang data_source = Measured"
+    → query_flows(field="data_source", value="Measured")
+  - "siapa PIC untuk emisi udara?" → query_flows(field="pic", value="*", mode="filter")
+    then filter by category in the result
+  - "group by data_source" → query_flows(field="data_source", mode="group")
+  - "list unique review_status" → query_flows(field="review_status", mode="unique")
+  - "field apa saja yang tersedia?" → query_flows(field="", mode="list_fields")
 - **explain_analysis**(question) — Answer questions about results. Use when user asks:
   - "kenapa CO2 paling tinggi?"
   - "jelaskan emisi udara"

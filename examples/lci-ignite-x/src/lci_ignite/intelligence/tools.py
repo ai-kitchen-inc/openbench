@@ -1063,6 +1063,311 @@ def export_to_xlsx(
     )
 
 
+# ── LLM Auto-Mapping Tool (Layer 3) ──
+
+# ContextVar to pass the LLM model name to the tool
+_llm_model_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "lci_llm_model", default="gemini-2.5-flash"
+)
+
+
+def set_llm_model(model: str) -> None:
+    """Set the LLM model name for generate_mapping_profile."""
+    _llm_model_var.set(model)
+
+
+_MAPPING_PROFILE_PROMPT = """\
+You are an LCA data expert. Given the Excel file structure below, generate a MappingProfile JSON \
+that maps the columns to the Standard LCI Schema.
+
+## Excel File Structure
+
+{excel_profile_json}
+
+## Standard LCI Categories (Indonesian)
+
+INPUTS: Bahan Baku, Air, Bahan Pendukung Cairan, Bahan Pendukung Padatan, \
+Transportasi Bahan Bakar dan Bahan Pendukung, Fuel Gas, Bahan Bakar Cair, Listrik, \
+Infrastruktur, Lahan Digunakan, Lahan Ditransformasi
+
+OUTPUTS: Produk, Sampah, Limbah B3, Limbah Cair, Kandungan Limbah Cair, Emisi Udara
+
+EXCLUDED (skip these): Raw Material from Processes, Other Supporting Material
+HELPER (extract as helper_data): Projected Lifetime of Infrastructure, Projected Lifetime of Land
+
+## English ↔ Indonesian Category Mapping
+
+Raw Material from Nature → Bahan Baku
+Water → Air
+Liquid Supporting Material → Bahan Pendukung Cairan
+Solid Supporting Material → Bahan Pendukung Padatan
+Transport of Supporting Material → Transportasi Bahan Bakar dan Bahan Pendukung
+Transportation of Supporting Material → Transportasi Bahan Bakar dan Bahan Pendukung
+Fuel Gas → Fuel Gas
+Liquid Fuels → Bahan Bakar Cair
+Electricity → Listrik
+Infrastructure → Infrastruktur
+Land / Land Used → Lahan Digunakan
+Product → Produk
+Co-Product → Co-Product
+Non-Hazardous Waste → Limbah Non-B3
+Hazardous Waste → Limbah B3
+Liquid Waste → Limbah Cair
+Liquid Waste Substances → Kandungan Limbah Cair
+Air Emissions → Emisi Udara
+
+## Unit Conversions (standard)
+
+- ton → kg (factor: 1000) for: Bahan Pendukung Padatan,
+  Limbah Non-B3, Limbah B3, Emisi Udara, Infrastruktur
+- barrel → L (factor: 158.987) for: Air
+- m3 → L (factor: 1000) for: Air
+
+## Instructions
+
+Analyze the headers and sample data to produce a MappingProfile JSON with these fields:
+
+1. **profile_name**: A slug derived from company/sheet name (lowercase, underscores)
+2. **company**: Company name (from sheet name or data)
+3. **scope**: Scope/zone from sheet name or data
+4. **sheet_name**: Exact sheet name to parse
+5. **expected_headers**: First ~19 common headers from the header row
+6. **column_mapping**: Map each semantic field to its 0-based column index:
+   - process, category, flow_name, direction, unit (REQUIRED)
+   - scope_value (the main amount column, usually named after the company/scope)
+   - total_bulk (if present)
+   - For each product: per_product_<name> and fu_<name> columns
+7. **header_row**: 1-based row number of the header row
+8. **products**: Array of product objects detected from
+   "Total per Product *" and "Functional Unit *" columns:
+   - name: Product name (from column header)
+   - column: Key in column_mapping for per-product amount
+   - fu_column: Key in column_mapping for functional unit value
+   - total_energy_mj: 0 (unknown, user must provide later)
+   - fu_unit_factor: 0 (unknown, user must provide later)
+   - output_unit: Product unit (from Product rows in data)
+9. **category_mapping**: Map English LDI categories found in data → Indonesian standard names \
+(use the mapping above, set null for excluded/helper categories)
+10. **unit_conversions**: Standard conversions (see above), only include categories present in data
+11. **study_period**: {{"years": 1, "description": "Annual study period"}}
+
+## Rules
+
+- Look at the "LDI Category" or similar column in sample data to find category names used
+- The amount column is usually named after the company scope (e.g., "Pusri IB", "Semberah EP")
+- "Total per Product *" columns contain per-product amounts
+- "Functional Unit *" columns contain per-MJ functional unit values
+- Some files have a "No" column at index 0, some don't — check the headers
+- Set total_energy_mj and fu_unit_factor to 0 for products (unknown without external data)
+- Only include unit_conversions for categories actually present in the data
+
+Return ONLY valid JSON, no markdown fences, no explanations.
+"""
+
+
+def _call_llm_for_profile(prompt: str) -> tuple[str, str | None]:
+    """Call Gemini LLM to generate a MappingProfile.
+
+    Returns (response_text, error). If error is not None, response_text is empty.
+    Extracted as a function for easy mocking in tests.
+    """
+    import os
+
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        return "", "google-genai package not installed. Install with: pip install google-genai"
+
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    if not api_key:
+        return "", "GOOGLE_API_KEY not set. Cannot generate profile."
+
+    try:
+        client = genai.Client(api_key=api_key)
+        model = _llm_model_var.get()
+
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.1,
+            ),
+        )
+        return response.text.strip(), None
+    except Exception as exc:
+        return "", f"LLM call failed: {exc}"
+
+
+GENERATE_MAPPING_PROFILE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "generate_mapping_profile",
+        "description": (
+            "Generate a MappingProfile for an unknown Excel LDI file using LLM. "
+            "Reads the file structure (headers, sample rows) and produces a column mapping. "
+            "The profile is saved for reuse with future uploads of the same format. "
+            "Call this when analyze_excel_structure shows no matching profile."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the Excel file (.xlsx)",
+                },
+            },
+            "required": ["file_path"],
+        },
+    },
+}
+
+
+def generate_mapping_profile(file_path: str) -> str:
+    """Generate a MappingProfile using LLM from Excel structure (Layer 3).
+
+    1. Extract ExcelProfile (Layer 2)
+    2. Call LLM with structured prompt
+    3. Validate and save the generated profile
+    4. Return profile name for use with parse_ldi_sheet
+    """
+    from lci_ignite.data.excel_profile import ExcelProfile
+    from lci_ignite.data.mapping_profiles import save_profile
+
+    # Step 1: Extract Excel structure
+    try:
+        excel_profile = ExcelProfile.extract(file_path)
+    except (FileNotFoundError, ValueError) as exc:
+        return json.dumps({"error": f"Failed to read Excel file: {exc}"})
+
+    # Step 2: Build prompt with Excel profile data
+    profile_json = json.dumps(excel_profile, indent=2, default=str)
+    prompt = _MAPPING_PROFILE_PROMPT.format(excel_profile_json=profile_json)
+
+    # Step 3: Call LLM
+    response_text, error = _call_llm_for_profile(prompt)
+    if error:
+        return json.dumps({"error": error})
+
+    # Step 4: Parse and validate the generated profile
+    try:
+        generated_profile = json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        return json.dumps(
+            {
+                "error": f"LLM returned invalid JSON: {exc}",
+                "raw_response": response_text[:500],
+            }
+        )
+
+    # Normalize column_mapping: LLM may return {key: int} instead of {key: {index: int}}
+    generated_profile = _normalize_generated_profile(generated_profile)
+
+    # Basic validation
+    validation_errors = _validate_generated_profile(generated_profile)
+    if validation_errors:
+        return json.dumps(
+            {
+                "error": "Generated profile has validation errors",
+                "validation_errors": validation_errors,
+                "generated_profile": generated_profile,
+            }
+        )
+
+    # Step 5: Save profile
+    profile_name = generated_profile.get("profile_name", "auto_generated")
+    try:
+        save_profile(profile_name, generated_profile)
+    except Exception as exc:
+        return json.dumps({"error": f"Failed to save profile: {exc}"})
+
+    return json.dumps(
+        {
+            "status": "profile_generated",
+            "profile_name": profile_name,
+            "company": generated_profile.get("company", ""),
+            "sheet_name": generated_profile.get("sheet_name", ""),
+            "products": [p.get("name", "") for p in generated_profile.get("products", [])],
+            "categories_mapped": len(generated_profile.get("category_mapping", {})),
+            "message": (
+                f"MappingProfile '{profile_name}' generated and saved. "
+                "You can now use parse_ldi_sheet with this profile or 'auto'."
+            ),
+        }
+    )
+
+
+def _normalize_generated_profile(profile: dict) -> dict:
+    """Normalize LLM-generated profile to expected format.
+
+    LLMs sometimes produce shorthand forms:
+    - column_mapping values as int instead of {"index": int}
+    - column_mapping values as {"index": int} without "header"
+
+    This function normalizes these to the canonical format.
+    """
+    if not isinstance(profile, dict):
+        return profile
+
+    # Normalize column_mapping (shared logic with mapping_profiles module)
+    from lci_ignite.data.mapping_profiles import _normalize_column_mapping
+
+    profile = _normalize_column_mapping(profile)
+
+    # Ensure products have default fields
+    products = profile.get("products", [])
+    if isinstance(products, list):
+        for p in products:
+            if isinstance(p, dict):
+                p.setdefault("total_energy_mj", 0)
+                p.setdefault("fu_unit_factor", 0)
+                p.setdefault("output_unit", "")
+
+    return profile
+
+
+def _validate_generated_profile(profile: dict) -> list[str]:
+    """Validate a generated MappingProfile. Returns list of error messages."""
+    errors: list[str] = []
+
+    if not isinstance(profile, dict):
+        return ["Profile must be a JSON object"]
+
+    # Required top-level fields
+    for field in ("profile_name", "sheet_name", "column_mapping"):
+        if field not in profile:
+            errors.append(f"Missing required field: {field}")
+
+    # column_mapping must have core fields
+    col_map = profile.get("column_mapping", {})
+    if isinstance(col_map, dict):
+        required_cols = {"process", "category", "flow_name", "direction", "unit"}
+        missing_cols = required_cols - set(col_map.keys())
+        if missing_cols:
+            errors.append(f"column_mapping missing required fields: {missing_cols}")
+
+        # Each column spec must have an index
+        for key, spec in col_map.items():
+            if isinstance(spec, dict) and "index" not in spec:
+                errors.append(f"column_mapping['{key}'] missing 'index'")
+    else:
+        errors.append("column_mapping must be a dict")
+
+    # Products must be a list of dicts with 'name'
+    products = profile.get("products", [])
+    if not isinstance(products, list):
+        errors.append("products must be a list")
+    else:
+        for i, p in enumerate(products):
+            if not isinstance(p, dict):
+                errors.append(f"products[{i}] must be a dict")
+            elif "name" not in p:
+                errors.append(f"products[{i}] missing 'name'")
+
+    return errors
+
+
 # ── Data Processing Tools (7 NEW) ──
 
 ANALYZE_EXCEL_STRUCTURE_SCHEMA = {
@@ -1113,8 +1418,8 @@ def analyze_excel_structure(file_path: str) -> str:
     else:
         profile["matched_profile"] = None
         profile["message"] = (
-            "No matching profile found. Analyze the headers and sample data "
-            "to create a column mapping, then use parse_ldi_sheet."
+            "No matching profile found. Use generate_mapping_profile to auto-create one, "
+            "or use parse_ldi_sheet with 'auto' which will trigger auto-generation."
         )
 
     return json.dumps(profile, indent=2, default=str)
@@ -1139,7 +1444,7 @@ PARSE_LDI_SHEET_SCHEMA = {
                 "profile_name": {
                     "type": "string",
                     "description": (
-                        "Name of saved MappingProfile to load (e.g., 'pertamina_pep_tanjung'), "
+                        "Name of saved MappingProfile to load, "
                         "or 'auto' to auto-detect from file structure"
                     ),
                 },
@@ -1165,11 +1470,20 @@ def parse_ldi_sheet(file_path: str, profile_name: str) -> str:
             excel_profile = ExcelProfile.extract(file_path)
             profile = match_profile(excel_profile)
             if profile is None:
-                return (
-                    "Error: No matching profile found for this file. "
-                    "Use analyze_excel_structure to inspect the file, "
-                    "then create a mapping manually."
-                )
+                # Layer 3: auto-generate profile via LLM
+                logger.info("No matching profile found, triggering LLM auto-mapping...")
+                gen_result = generate_mapping_profile(file_path)
+                gen_data = json.loads(gen_result)
+                if "error" in gen_data:
+                    return (
+                        f"Error: No matching profile found and auto-generation failed: "
+                        f"{gen_data['error']}"
+                    )
+                # Load the newly generated profile
+                generated_name = gen_data.get("profile_name", "")
+                if not generated_name:
+                    return "Error: Profile was generated but has no name."
+                profile = load_profile(generated_name)
         except Exception as exc:
             return f"Error extracting profile: {exc}"
     else:
@@ -2572,6 +2886,257 @@ def export_filtered(
         },
         indent=2,
     )
+
+
+# ── Query / Filter Tool ──
+
+QUERY_FLOWS_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "query_flows",
+        "description": (
+            "Query and filter pipeline flows by any field. "
+            "Use when the user asks to filter, search, or aggregate by any column, "
+            "including extra columns from the original Excel file like: "
+            "data_source, pic, notes, review_status, produced_from, "
+            "material_composition, sample_size, abbreviation, parameter, etc. "
+            "Examples: 'tampilkan flow yang data_source = Measured', "
+            "'siapa PIC untuk emisi udara?', "
+            "'filter review_status = C', "
+            "'group by data_source'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string",
+                    "description": (
+                        "Field name to filter/query by (snake_case). "
+                        "Common fields: category, flow_name, process, direction, unit, "
+                        "data_source, pic, review_status, produced_from, "
+                        "material_composition, notes, sample_size, abbreviation, parameter, "
+                        "is_amount_balanced, data_source_reference"
+                    ),
+                },
+                "value": {
+                    "type": "string",
+                    "description": (
+                        "Value to match (case-insensitive partial match). "
+                        "Use '*' or omit for all values (group-by mode)."
+                    ),
+                    "default": "*",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["filter", "group", "unique", "list_fields"],
+                    "description": (
+                        "'filter' = show flows matching field=value, "
+                        "'group' = aggregate amounts by field values, "
+                        "'unique' = list all unique values for a field, "
+                        "'list_fields' = show all available fields in pipeline data"
+                    ),
+                    "default": "filter",
+                },
+                "data": {
+                    "type": "string",
+                    "description": "Use 'auto' to read from pipeline (default)",
+                    "default": "auto",
+                },
+            },
+            "required": ["field"],
+        },
+    },
+}
+
+
+def query_flows(field: str, value: str = "*", mode: str = "filter", data: str = "auto") -> str:
+    """Query and filter pipeline flows by any field.
+
+    Supports filtering, grouping, and listing unique values for any field
+    including extra columns extracted from the original Excel file.
+    """
+    parsed, err = _resolve_data(data)
+    if err:
+        return err
+    flows = _extract_flows(parsed)
+    if not flows:
+        return json.dumps({"error": "No pipeline data available. Run the analysis pipeline first."})
+
+    # Mode: list_fields — show all available field names
+    if mode == "list_fields":
+        all_keys: set[str] = set()
+        for f in flows:
+            all_keys.update(f.keys())
+        return json.dumps(
+            {
+                "available_fields": sorted(all_keys),
+                "total_flows": len(flows),
+                "message": "Use any of these fields with query_flows to filter or aggregate.",
+            },
+            indent=2,
+        )
+
+    field_lower = field.lower().strip()
+
+    # Mode: unique — list all distinct values for a field
+    if mode == "unique":
+        values: list[str] = []
+        for f in flows:
+            val = _find_field(f, field_lower)
+            if val is not None:
+                val_str = str(val).strip()
+                if val_str and val_str not in values:
+                    values.append(val_str)
+        return json.dumps(
+            {
+                "field": field,
+                "unique_values": sorted(values),
+                "count": len(values),
+            },
+            indent=2,
+        )
+
+    # Mode: group — aggregate amounts by field values
+    if mode == "group":
+        groups: dict[str, dict] = {}
+        for f in flows:
+            val = _find_field(f, field_lower)
+            group_key = str(val).strip() if val is not None else "(empty)"
+            if group_key not in groups:
+                groups[group_key] = {"count": 0, "total_amount": 0.0, "categories": set()}
+            groups[group_key]["count"] += 1
+            groups[group_key]["total_amount"] += abs(f.get("amount", 0))
+            groups[group_key]["categories"].add(f.get("category", ""))
+
+        result_groups = []
+        for key, info in sorted(groups.items(), key=lambda x: x[1]["total_amount"], reverse=True):
+            result_groups.append(
+                {
+                    "value": key,
+                    "flow_count": info["count"],
+                    "total_amount": round(info["total_amount"], 4),
+                    "categories": sorted(info["categories"]),
+                }
+            )
+
+        # Push table render item
+        headers = [field, "Flow Count", "Total Amount", "Categories"]
+        rows = [
+            [
+                g["value"],
+                str(g["flow_count"]),
+                _fmt_number(g["total_amount"]),
+                ", ".join(g["categories"][:5]),
+            ]
+            for g in result_groups[:20]
+        ]
+        items = _get_render_list()
+        items.append(
+            {
+                "title": f"Group by: {field}",
+                "headers": headers,
+                "rows": rows,
+            }
+        )
+
+        return json.dumps(
+            {
+                "field": field,
+                "groups": result_groups,
+                "total_groups": len(result_groups),
+            },
+            indent=2,
+        )
+
+    # Mode: filter — show flows matching field=value
+    if value == "*":
+        matched = flows
+    else:
+        value_lower = value.lower().strip()
+        matched = []
+        for f in flows:
+            val = _find_field(f, field_lower)
+            if val is not None and value_lower in str(val).lower():
+                matched.append(f)
+
+    if not matched:
+        # Suggest available values
+        available = set()
+        for f in flows:
+            val = _find_field(f, field_lower)
+            if val is not None:
+                available.add(str(val).strip())
+        return json.dumps(
+            {
+                "field": field,
+                "filter_value": value,
+                "matched": 0,
+                "available_values": sorted(available)[:20],
+                "message": f"No flows found with {field} matching '{value}'.",
+            },
+            indent=2,
+        )
+
+    # Build summary of matched flows
+    result_flows = []
+    for f in matched[:30]:
+        entry = {
+            "flow_name": f.get("flow_name", ""),
+            "category": f.get("category", ""),
+            "amount": f.get("amount", 0),
+            "unit": f.get("unit", ""),
+            "process": f.get("process", ""),
+        }
+        # Include the queried field if it's an extra field
+        val = _find_field(f, field_lower)
+        if val is not None:
+            entry[field] = val
+        result_flows.append(entry)
+
+    # Push table render item
+    headers = ["Flow", "Category", "Amount", "Unit", "Process", field]
+    rows = [
+        [
+            e["flow_name"],
+            e["category"],
+            _fmt_number(e["amount"]),
+            e["unit"],
+            e["process"],
+            str(e.get(field, "")),
+        ]
+        for e in result_flows
+    ]
+    items = _get_render_list()
+    items.append(
+        {
+            "title": f"Flows where {field} = '{value}'" if value != "*" else f"All flows ({field})",
+            "headers": headers,
+            "rows": rows,
+        }
+    )
+
+    return json.dumps(
+        {
+            "field": field,
+            "filter_value": value,
+            "matched": len(matched),
+            "total_flows": len(flows),
+            "flows": result_flows,
+        },
+        indent=2,
+    )
+
+
+def _find_field(flow: dict, field_lower: str) -> Any:
+    """Find a field value in a flow dict (case-insensitive key match)."""
+    # Exact match first
+    if field_lower in flow:
+        return flow[field_lower]
+    # Case-insensitive search
+    for k, v in flow.items():
+        if k.lower() == field_lower:
+            return v
+    return None
 
 
 # ── Chart Generation Tools (auto-read pipeline data) ──

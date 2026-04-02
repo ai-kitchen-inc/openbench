@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import openpyxl
 import pytest
@@ -42,6 +43,18 @@ def _create_test_xlsx(path: Path, sheet_name: str = "LDI Master"):
     wb.save(str(path))
 
 
+_TEST_PROFILE_FOR_TOOLS = {
+    "profile_name": "test_tools_profile",
+    "company": "Test Tools Corp",
+    "sheet_name": "LDI-Test Tools-00001",
+    "expected_headers": ["No", "Process Title"],
+    "column_mapping": {},
+    "products": [],
+    "category_mapping": {},
+    "unit_conversions": [],
+}
+
+
 # ---------------------------------------------------------------------------
 # analyze_excel_structure
 # ---------------------------------------------------------------------------
@@ -62,21 +75,32 @@ class TestAnalyzeExcelStructure:
         assert "Error" in result
 
     def test_detects_known_profile(self, tmp_path):
+        # Create a profile in a temp dir
+        profile_dir = tmp_path / "profiles"
+        profile_dir.mkdir()
+        (profile_dir / "test_tools_profile.json").write_text(
+            json.dumps(_TEST_PROFILE_FOR_TOOLS, indent=2), encoding="utf-8"
+        )
+
         xlsx = tmp_path / "test.xlsx"
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.title = "LDI-Pertamina Zona 9-00004"
+        ws.title = "LDI-Test Tools-00001"
         ws.append(["No", "Process Title"])
         wb.save(str(xlsx))
 
-        result = analyze_excel_structure(str(xlsx))
+        with patch("lci_ignite.data.mapping_profiles.PROFILES_DIR", profile_dir):
+            result = analyze_excel_structure(str(xlsx))
         data = json.loads(result)
-        assert data["matched_profile"] == "pertamina_pep_tanjung"
+        assert data["matched_profile"] == "test_tools_profile"
 
     def test_no_matching_profile(self, tmp_path):
         xlsx = tmp_path / "test.xlsx"
         _create_test_xlsx(xlsx, sheet_name="Unknown Company")
-        result = analyze_excel_structure(str(xlsx))
+        # Patch to empty dir so no profiles exist
+        with patch("lci_ignite.data.mapping_profiles.PROFILES_DIR", tmp_path / "empty_profiles"):
+            (tmp_path / "empty_profiles").mkdir()
+            result = analyze_excel_structure(str(xlsx))
         data = json.loads(result)
         assert data["matched_profile"] is None
 
@@ -90,13 +114,18 @@ class TestParseLdiSheet:
     def test_profile_not_found(self, tmp_path):
         xlsx = tmp_path / "test.xlsx"
         _create_test_xlsx(xlsx)
-        result = parse_ldi_sheet(str(xlsx), "nonexistent_profile")
+        with patch("lci_ignite.data.mapping_profiles.PROFILES_DIR", tmp_path):
+            result = parse_ldi_sheet(str(xlsx), "nonexistent_profile")
         assert "Error" in result
 
     def test_auto_no_match(self, tmp_path):
         xlsx = tmp_path / "test.xlsx"
         _create_test_xlsx(xlsx, sheet_name="Unknown")
-        result = parse_ldi_sheet(str(xlsx), "auto")
+        # Patch to empty dir so no profiles match
+        empty_dir = tmp_path / "empty_profiles"
+        empty_dir.mkdir()
+        with patch("lci_ignite.data.mapping_profiles.PROFILES_DIR", empty_dir):
+            result = parse_ldi_sheet(str(xlsx), "auto")
         assert "No matching profile" in result
 
 

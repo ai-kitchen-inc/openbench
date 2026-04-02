@@ -336,3 +336,172 @@ class TestHelpers:
 
     def test_get_numeric_none(self):
         assert ExcelLCISource._get_numeric([None], {"index": 0}) is None
+
+    def test_header_to_field_simple(self):
+        assert ExcelLCISource._header_to_field("Data Source") == "data_source"
+
+    def test_header_to_field_multi_word(self):
+        assert ExcelLCISource._header_to_field("Material Composition") == "material_composition"
+
+    def test_header_to_field_boolean(self):
+        assert ExcelLCISource._header_to_field("Is Amount Balanced") == "is_amount_balanced"
+
+    def test_header_to_field_short(self):
+        assert ExcelLCISource._header_to_field("PIC") == "pic"
+
+    def test_header_to_field_abbreviation(self):
+        assert ExcelLCISource._header_to_field("TeR") == "te_r"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Extra column extraction
+# ---------------------------------------------------------------------------
+
+
+class TestExtraColumnExtraction:
+    """Test that unmapped Excel columns are preserved on flow dicts."""
+
+    def _create_xlsx_with_extras(self, path: Path):
+        """Create Excel with both mapped and unmapped columns."""
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "LDI Master"
+        ws.append(
+            [
+                "Process",
+                "Category",
+                "Material",
+                "Direction",
+                "Unit",
+                "Amount",
+                "Data Source",
+                "PIC",
+                "Notes",
+                "Review Status",
+            ]
+        )
+        ws.append(
+            [
+                "Well Op",
+                "Water",
+                "PDAM",
+                "Input",
+                "L",
+                1000.0,
+                "Measured",
+                "Budi",
+                "Test note",
+                "C",
+            ]
+        )
+        ws.append(
+            [
+                "NSOP",
+                "Electricity",
+                "PLN",
+                "Input",
+                "kWh",
+                500.0,
+                "Estimated",
+                "Andi",
+                None,
+                "P",
+            ]
+        )
+        wb.save(str(path))
+
+    def test_extra_columns_present(self, tmp_path):
+        """Unmapped columns should appear as extra fields on flows."""
+        xlsx = tmp_path / "test.xlsx"
+        self._create_xlsx_with_extras(xlsx)
+        source = ExcelLCISource(xlsx, profile=SIMPLE_PROFILE)
+        result = source.extract()
+        flows = result.content["flows"]
+
+        water_flow = next(f for f in flows if f["flow_name"] == "PDAM")
+        assert water_flow["data_source"] == "Measured"
+        assert water_flow["pic"] == "Budi"
+        assert water_flow["notes"] == "Test note"
+        assert water_flow["review_status"] == "C"
+
+    def test_none_extra_columns_skipped(self, tmp_path):
+        """None values in extra columns should not be included."""
+        xlsx = tmp_path / "test.xlsx"
+        self._create_xlsx_with_extras(xlsx)
+        source = ExcelLCISource(xlsx, profile=SIMPLE_PROFILE)
+        result = source.extract()
+        flows = result.content["flows"]
+
+        elec_flow = next(f for f in flows if f["flow_name"] == "PLN")
+        assert "notes" not in elec_flow  # None was skipped
+        assert elec_flow["review_status"] == "P"
+
+    def test_core_fields_unchanged(self, tmp_path):
+        """Core mapped fields should work exactly as before."""
+        xlsx = tmp_path / "test.xlsx"
+        self._create_xlsx_with_extras(xlsx)
+        source = ExcelLCISource(xlsx, profile=SIMPLE_PROFILE)
+        result = source.extract()
+        flows = result.content["flows"]
+
+        water_flow = next(f for f in flows if f["flow_name"] == "PDAM")
+        assert water_flow["category"] == "Air"
+        assert water_flow["process"] == "Well Op"
+        assert water_flow["direction"] == "input"
+        assert water_flow["amount"] == 1000.0
+        assert water_flow["unit"] == "L"
+
+    def test_no_extra_columns(self, tmp_path):
+        """Files with no extra columns should still parse correctly."""
+        xlsx = tmp_path / "test.xlsx"
+        _create_ldi_xlsx(xlsx)  # Only 6 columns, all mapped
+        source = ExcelLCISource(xlsx, profile=SIMPLE_PROFILE)
+        result = source.extract()
+        assert len(result.content["flows"]) == 5
+
+    def test_downstream_tools_unaffected(self, tmp_path):
+        """Extra fields should pass through aggregate_flows without issues."""
+        import json
+
+        from lci_ignite.intelligence.tools import (
+            _read_pipeline,
+            aggregate_flows,
+            clear_pipeline_data,
+            clear_render_items,
+        )
+
+        clear_render_items()
+        clear_pipeline_data()
+
+        flows = [
+            {
+                "category": "Air",
+                "flow_name": "PDAM",
+                "amount": 100,
+                "unit": "L",
+                "process": "A",
+                "data_source": "Measured",
+                "pic": "Budi",
+            },
+            {
+                "category": "Air",
+                "flow_name": "PDAM",
+                "amount": 200,
+                "unit": "L",
+                "process": "B",
+                "data_source": "Estimated",
+                "pic": "Andi",
+            },
+        ]
+        aggregate_flows(json.dumps(flows))
+        pipeline = _read_pipeline()
+        merged = pipeline["flows"][0]
+
+        # Core fields aggregated correctly
+        assert merged["amount"] == 300
+        assert merged["process"] == "A, B"
+        # Extra fields preserved from first occurrence
+        assert "data_source" in merged or "pic" in merged
+
+        clear_render_items()
+        clear_pipeline_data()

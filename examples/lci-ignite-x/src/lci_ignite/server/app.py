@@ -26,6 +26,7 @@ from lci_ignite.intelligence.tools import (
     clear_render_items,
     get_render_items,
     set_attachments,
+    set_llm_model,
     set_pipeline_session,
     set_upload_dir,
 )
@@ -80,10 +81,14 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
         # Chart generation tools (auto-read pipeline)
         GENERATE_CATEGORY_CHART_SCHEMA,
         GENERATE_EMISSION_CHART_SCHEMA,
+        # LLM auto-mapping (Layer 3)
+        GENERATE_MAPPING_PROFILE_SCHEMA,
         GENERATE_PRODUCT_CHART_SCHEMA,
         # File discovery
         GET_UPLOADED_FILES_SCHEMA,
         PARSE_LDI_SHEET_SCHEMA,
+        # Query/filter tool
+        QUERY_FLOWS_SCHEMA,
         REVISE_PIPELINE_SCHEMA,
         SELECT_PARETO_ITEMS_SCHEMA,
         VALIDATE_DATA_QUALITY_SCHEMA,
@@ -112,10 +117,13 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
         # Chart generation tools (auto-read pipeline)
         generate_category_chart,
         generate_emission_chart,
+        # LLM auto-mapping (Layer 3)
+        generate_mapping_profile,
         generate_product_chart,
-        # File discovery
+        # File discovery + query
         get_uploaded_files,
         parse_ldi_sheet,
+        query_flows,
         revise_pipeline,
         select_pareto_items,
         validate_data_quality,
@@ -127,6 +135,13 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
         "get_uploaded_files",
         get_uploaded_files,
         schema=GET_UPLOADED_FILES_SCHEMA,
+    )
+
+    # -- LLM Auto-Mapping Tool (Layer 3) --
+    agent.tools.register(
+        "generate_mapping_profile",
+        generate_mapping_profile,
+        schema=GENERATE_MAPPING_PROFILE_SCHEMA,
     )
 
     # -- Data Processing Tools (7 NEW) --
@@ -199,11 +214,12 @@ def create_lci_coordinator_agent(config: LCIConfig) -> BaseAgent:
     agent.tools.register("export_to_docx", export_to_docx, schema=EXPORT_TO_DOCX_SCHEMA)
     agent.tools.register("export_to_xlsx", export_to_xlsx, schema=EXPORT_TO_XLSX_SCHEMA)
 
-    # -- Conversational Tools (4 NEW) --
+    # -- Conversational Tools (5) --
     agent.tools.register("explain_analysis", explain_analysis, schema=EXPLAIN_ANALYSIS_SCHEMA)
     agent.tools.register("compare_products", compare_products, schema=COMPARE_PRODUCTS_SCHEMA)
     agent.tools.register("revise_pipeline", revise_pipeline, schema=REVISE_PIPELINE_SCHEMA)
     agent.tools.register("export_filtered", export_filtered, schema=EXPORT_FILTERED_SCHEMA)
+    agent.tools.register("query_flows", query_flows, schema=QUERY_FLOWS_SCHEMA)
 
     # -- Chart Generation Tools (3 NEW, auto-read pipeline) --
     agent.tools.register(
@@ -247,6 +263,9 @@ def create_app(config: LCIConfig | None = None) -> FastAPI:
         settings={"model": config.model},
         is_default=True,
     )
+
+    # Set LLM model for auto-mapping tool
+    set_llm_model(config.model)
 
     # Create coordinator agent
     agent = create_lci_coordinator_agent(config)

@@ -158,6 +158,7 @@ class ExcelLCISource(DataSource):
 
         The profile maps column indices to semantic fields (process, category,
         flow_name, direction, unit, scope_value, per_product amounts).
+        All unmapped columns are preserved as extra fields on each flow dict.
         """
         if not self.validate():
             raise ValueError(f"Invalid Excel file: {self._path}")
@@ -172,14 +173,25 @@ class ExcelLCISource(DataSource):
 
         header_row = profile.get("header_row", 1)
 
+        # Collect mapped column indices so we can identify unmapped columns
+        mapped_indices: set[int] = set()
+        for spec in col_map.values():
+            if isinstance(spec, dict):
+                idx = spec.get("index")
+                if idx is not None:
+                    mapped_indices.add(idx)
+
         flows: list[dict[str, Any]] = []
         helper_data: dict[str, list[dict[str, Any]]] = {}
         categories_seen: set[str] = set()
         processes_seen: set[str] = set()
         skipped_rows = 0
+        headers: list[str | None] = []
 
         for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
             if row_idx <= header_row:
+                if row_idx == header_row:
+                    headers = [str(v).strip() if v is not None else None for v in row]
                 continue
 
             row_list = list(row)
@@ -260,6 +272,19 @@ class ExcelLCISource(DataSource):
                 if fu_col and fu_col in col_map:
                     fu_value = self._get_numeric(row_list, col_map[fu_col])
                     flow[f"fu_{product['name']}"] = fu_value or 0.0
+
+            # ── Extract all unmapped columns as extra fields ──
+            for col_idx, val in enumerate(row_list):
+                if col_idx in mapped_indices:
+                    continue  # Already extracted above
+                if col_idx >= len(headers) or headers[col_idx] is None:
+                    continue  # No header for this column
+                if val is None:
+                    continue  # Skip empty cells
+                header_name = headers[col_idx]
+                # Convert header to snake_case field name
+                field_key = self._header_to_field(header_name)
+                flow[field_key] = val
 
             flows.append(flow)
             categories_seen.add(standard_cat)
@@ -416,3 +441,23 @@ class ExcelLCISource(DataSource):
 
         # Other Co-Product rows -> skip
         return None
+
+    @staticmethod
+    def _header_to_field(header: str) -> str:
+        """Convert an Excel header name to a snake_case field key.
+
+        Examples:
+            "Data Source" -> "data_source"
+            "Material Composition" -> "material_composition"
+            "Is Amount Balanced" -> "is_amount_balanced"
+            "TeR" -> "ter"
+        """
+        import re as _re
+
+        s = header.strip()
+        # Replace non-alphanumeric chars with underscore
+        s = _re.sub(r"[^a-zA-Z0-9]+", "_", s)
+        # CamelCase -> snake_case (e.g., "TeR" stays as-is since it's short)
+        s = _re.sub(r"([a-z])([A-Z])", r"\1_\2", s)
+        s = s.lower().strip("_")
+        return s

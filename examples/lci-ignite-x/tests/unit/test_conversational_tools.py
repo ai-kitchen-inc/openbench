@@ -15,6 +15,7 @@ from lci_ignite.intelligence.tools import (
     explain_analysis,
     export_filtered,
     get_render_items,
+    query_flows,
     revise_pipeline,
     set_pipeline_session,
     set_upload_dir,
@@ -348,3 +349,115 @@ class TestRevisePipelineWithFUMode:
         fu_result = result["fu_result"]
         assert fu_result["fu_mode"] == "per_output_unit"
         assert fu_result["fu_unit_labels"]["Gas"] == "MMSCF"
+
+
+# ── Tests: query_flows ──
+
+FLOWS_WITH_EXTRAS = [
+    {
+        "flow_name": "Catalyst",
+        "amount": 2673.0,
+        "unit": "ton",
+        "category": "Bahan Pendukung Padatan",
+        "process": "Feed Treating",
+        "data_source": "Measured and verified data",
+        "pic": "Gede",
+        "review_status": "C",
+        "produced_from": "CoMo, ZnO",
+    },
+    {
+        "flow_name": "Natural Gas",
+        "amount": 186614.0,
+        "unit": "Ton/year",
+        "category": "Bahan Baku",
+        "process": "Feed Treating",
+        "data_source": "Measured and verified data",
+        "pic": "Gede",
+        "review_status": "C",
+    },
+    {
+        "flow_name": "Lube Oil",
+        "amount": 440.0,
+        "unit": "liter",
+        "category": "Bahan Pendukung Cairan",
+        "process": "Feed Treating",
+        "data_source": "Estimated",
+        "pic": "Andi",
+        "review_status": "P",
+    },
+]
+
+
+class TestQueryFlows:
+    """Tests for query_flows tool."""
+
+    def test_filter_by_data_source(self):
+        _store_pipeline({"flows": FLOWS_WITH_EXTRAS})
+        result = json.loads(query_flows(field="data_source", value="Measured"))
+        assert result["matched"] == 2
+        for f in result["flows"]:
+            assert "Measured" in f.get("data_source", "")
+
+    def test_filter_by_pic(self):
+        _store_pipeline({"flows": FLOWS_WITH_EXTRAS})
+        result = json.loads(query_flows(field="pic", value="Gede"))
+        assert result["matched"] == 2
+
+    def test_filter_by_review_status(self):
+        _store_pipeline({"flows": FLOWS_WITH_EXTRAS})
+        result = json.loads(query_flows(field="review_status", value="P"))
+        assert result["matched"] == 1
+        assert result["flows"][0]["flow_name"] == "Lube Oil"
+
+    def test_filter_no_match(self):
+        _store_pipeline({"flows": FLOWS_WITH_EXTRAS})
+        result = json.loads(query_flows(field="pic", value="Nobody"))
+        assert result["matched"] == 0
+        assert "available_values" in result
+
+    def test_group_by_data_source(self):
+        _store_pipeline({"flows": FLOWS_WITH_EXTRAS})
+        result = json.loads(query_flows(field="data_source", mode="group"))
+        assert result["total_groups"] == 2
+        groups = {g["value"]: g for g in result["groups"]}
+        assert groups["Measured and verified data"]["flow_count"] == 2
+        assert groups["Estimated"]["flow_count"] == 1
+
+    def test_group_renders_table(self):
+        _store_pipeline({"flows": FLOWS_WITH_EXTRAS})
+        query_flows(field="data_source", mode="group")
+        items = get_render_items()
+        tables = [i for i in items if "headers" in i and "rows" in i]
+        assert len(tables) >= 1
+        assert "data_source" in tables[0]["headers"][0].lower()
+
+    def test_unique_values(self):
+        _store_pipeline({"flows": FLOWS_WITH_EXTRAS})
+        result = json.loads(query_flows(field="review_status", mode="unique"))
+        assert set(result["unique_values"]) == {"C", "P"}
+
+    def test_list_fields(self):
+        _store_pipeline({"flows": FLOWS_WITH_EXTRAS})
+        result = json.loads(query_flows(field="", mode="list_fields"))
+        fields = result["available_fields"]
+        assert "data_source" in fields
+        assert "pic" in fields
+        assert "review_status" in fields
+        assert "category" in fields
+        assert "amount" in fields
+
+    def test_no_pipeline_data(self):
+        result = query_flows(field="data_source")
+        assert "Error" in result or "error" in result
+
+    def test_filter_renders_table(self):
+        _store_pipeline({"flows": FLOWS_WITH_EXTRAS})
+        query_flows(field="pic", value="Gede")
+        items = get_render_items()
+        tables = [i for i in items if "headers" in i and "rows" in i]
+        assert len(tables) >= 1
+
+    def test_filter_case_insensitive(self):
+        _store_pipeline({"flows": FLOWS_WITH_EXTRAS})
+        result = json.loads(query_flows(field="data_source", value="measured"))
+        assert result["matched"] == 2  # partial, case-insensitive
