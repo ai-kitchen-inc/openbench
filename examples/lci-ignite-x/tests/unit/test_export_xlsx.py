@@ -1,4 +1,12 @@
-"""Tests for export_to_xlsx — PROPER template layout."""
+"""Tests for export_to_xlsx — PROPER template layout.
+
+New layout (no Area/Process column):
+    A: empty
+    B(2): Input/Output
+    C(3): Total (amount)
+    D(4): Unit
+    E+(5+): per product: Jumlah/FU | Unit | %  (3 cols per product)
+"""
 
 import openpyxl
 import pytest
@@ -38,14 +46,13 @@ def _open_output(tmp_path, filename="io_table.xlsx"):
 
 
 class TestExportToXlsxLayout:
-    """Verify column layout matches PROPER template."""
+    """Verify column layout — no Area column."""
 
     def test_column_a_empty(self, tmp_path):
         flows = [{"category": "Air", "flow_name": "Water", "amount": 100, "unit": "L"}]
         _set_pipeline(flows)
         export_to_xlsx(filename="io_table.xlsx")
         ws = _open_output(tmp_path)
-        # Column A should be empty for all data rows
         for row in range(1, ws.max_row + 1):
             assert ws.cell(row=row, column=1).value is None, f"Row {row} col A not empty"
 
@@ -54,33 +61,28 @@ class TestExportToXlsxLayout:
         _set_pipeline(flows)
         export_to_xlsx(filename="io_table.xlsx")
         ws = _open_output(tmp_path)
-        # Row 4 col B should be "Input/Output"
         assert ws.cell(row=4, column=2).value == "Input/Output"
 
-    def test_area_column_at_c(self, tmp_path):
+    def test_total_at_c_unit_at_d(self, tmp_path):
+        flows = [{"category": "Air", "flow_name": "Water", "amount": 100, "unit": "L"}]
+        _set_pipeline(flows)
+        export_to_xlsx(filename="io_table.xlsx")
+        ws = _open_output(tmp_path)
+        assert ws.cell(row=4, column=3).value == "Total"
+        assert ws.cell(row=4, column=4).value == "Unit"
+
+    def test_no_area_column(self, tmp_path):
+        """Area/Process column should not exist."""
         flows = [
             {"category": "Air", "flow_name": "Water", "amount": 100, "unit": "L", "process": "SPU"},
         ]
         _set_pipeline(flows)
         export_to_xlsx(filename="io_table.xlsx")
         ws = _open_output(tmp_path)
-        # Row 4 col C should be "Area"
-        assert ws.cell(row=4, column=3).value == "Area"
-        # Data row should have process in col C
-        for row in range(6, ws.max_row + 1):
-            if ws.cell(row=row, column=2).value == "Water":
-                assert ws.cell(row=row, column=3).value == "SPU"
-                break
-        else:
-            pytest.fail("Water row not found")
-
-    def test_total_at_d_unit_at_e(self, tmp_path):
-        flows = [{"category": "Air", "flow_name": "Water", "amount": 100, "unit": "L"}]
-        _set_pipeline(flows)
-        export_to_xlsx(filename="io_table.xlsx")
-        ws = _open_output(tmp_path)
-        assert ws.cell(row=4, column=4).value == "Total"
-        assert ws.cell(row=4, column=5).value == "Unit"
+        # Check that no header cell contains "Area"
+        for col in range(1, 15):
+            val = ws.cell(row=4, column=col).value
+            assert val != "Area", f"Found 'Area' header at column {col}"
 
 
 class TestHeaderRows:
@@ -99,8 +101,9 @@ class TestHeaderRows:
         _set_pipeline(flows, products)
         export_to_xlsx(filename="io_table.xlsx")
         ws = _open_output(tmp_path)
-        assert ws.cell(row=2, column=6).value == "Gas"
-        assert ws.cell(row=2, column=10).value == "Oil"
+        # Products start at col 5, 3 cols per product
+        assert ws.cell(row=2, column=5).value == "Gas"
+        assert ws.cell(row=2, column=8).value == "Oil"
 
     def test_row3_energy_values(self, tmp_path):
         flows = [{"category": "Air", "flow_name": "W", "amount": 1, "unit": "L"}]
@@ -111,9 +114,9 @@ class TestHeaderRows:
         _set_pipeline(flows, products)
         export_to_xlsx(filename="io_table.xlsx")
         ws = _open_output(tmp_path)
-        assert ws.cell(row=3, column=5).value == "ALL PHM"
-        assert ws.cell(row=3, column=6).value == 169594709007
-        assert ws.cell(row=3, column=10).value == 12792363977
+        assert ws.cell(row=3, column=4).value == "ALL PHM"
+        assert ws.cell(row=3, column=5).value == 169594709007
+        assert ws.cell(row=3, column=8).value == 12792363977
 
     def test_row5_subheaders(self, tmp_path):
         flows = [{"category": "Air", "flow_name": "W", "amount": 1, "unit": "L"}]
@@ -121,15 +124,14 @@ class TestHeaderRows:
         _set_pipeline(flows, products)
         export_to_xlsx(filename="io_table.xlsx")
         ws = _open_output(tmp_path)
-        assert ws.cell(row=5, column=4).value == "(sesuai periode kajian)"
-        assert ws.cell(row=5, column=6).value == "Jumlah/FU"
-        assert ws.cell(row=5, column=7).value == "Unit"
-        assert ws.cell(row=5, column=8).value == "%"
-        assert "Mayoritas Proses" in str(ws.cell(row=5, column=9).value)
+        assert ws.cell(row=5, column=3).value == "(sesuai periode kajian)"
+        assert ws.cell(row=5, column=5).value == "Jumlah/FU"
+        assert ws.cell(row=5, column=6).value == "Unit"
+        assert ws.cell(row=5, column=7).value == "%"
 
 
 class TestMergedCells:
-    """Verify merged cells match PROPER template."""
+    """Verify merged cells."""
 
     def test_header_vertical_merges(self, tmp_path):
         flows = [{"category": "Air", "flow_name": "W", "amount": 1, "unit": "L"}]
@@ -139,8 +141,7 @@ class TestMergedCells:
         ws = _open_output(tmp_path)
         merged = [str(m) for m in ws.merged_cells.ranges]
         assert "B4:B5" in merged
-        assert "C4:C5" in merged
-        assert "E4:E5" in merged
+        assert "D4:D5" in merged
 
     def test_product_header_horizontal_merge(self, tmp_path):
         flows = [{"category": "Air", "flow_name": "W", "amount": 1, "unit": "L"}]
@@ -149,32 +150,8 @@ class TestMergedCells:
         export_to_xlsx(filename="io_table.xlsx")
         ws = _open_output(tmp_path)
         merged = [str(m) for m in ws.merged_cells.ranges]
-        assert "F4:I4" in merged
-
-    def test_section_header_merge_bc(self, tmp_path):
-        flows = [{"category": "Air", "flow_name": "W", "amount": 1, "unit": "L"}]
-        _set_pipeline(flows)
-        export_to_xlsx(filename="io_table.xlsx")
-        ws = _open_output(tmp_path)
-        merged = [str(m) for m in ws.merged_cells.ranges]
-        assert "B6:C6" in merged
-
-    def test_total_row_merge_bc(self, tmp_path):
-        flows = [
-            {"category": "Air", "flow_name": "W1", "amount": 100, "unit": "L"},
-            {"category": "Air", "flow_name": "W2", "amount": 200, "unit": "L"},
-        ]
-        _set_pipeline(flows)
-        export_to_xlsx(filename="io_table.xlsx")
-        ws = _open_output(tmp_path)
-        total_row = None
-        for row in range(6, ws.max_row + 1):
-            if ws.cell(row=row, column=2).value == "Total":
-                total_row = row
-                break
-        assert total_row is not None
-        merged = [str(m) for m in ws.merged_cells.ranges]
-        assert f"B{total_row}:C{total_row}" in merged
+        # Product "Gas" at E4:G4 (3 columns)
+        assert "E4:G4" in merged
 
 
 class TestDataContent:
@@ -187,7 +164,6 @@ class TestDataContent:
                 "flow_name": "Water",
                 "amount": 1000,
                 "unit": "L",
-                "process": "SPU",
                 "fu_per_mj_Gas": 0.004,
                 "pct_Gas": 60.0,
             }
@@ -198,13 +174,11 @@ class TestDataContent:
         ws = _open_output(tmp_path)
         # Data row at row 7 (row 6 = section header "Air")
         assert ws.cell(row=7, column=2).value == "Water"
-        assert ws.cell(row=7, column=3).value == "SPU"
-        assert ws.cell(row=7, column=4).value == 1000
-        assert ws.cell(row=7, column=5).value == "L"
-        assert ws.cell(row=7, column=6).value == pytest.approx(0.004)
-        assert ws.cell(row=7, column=7).value == "L/MJ"
-        assert ws.cell(row=7, column=8).value == 60.0
-        assert ws.cell(row=7, column=9).value == "SPU"
+        assert ws.cell(row=7, column=3).value == 1000
+        assert ws.cell(row=7, column=4).value == "L"
+        assert ws.cell(row=7, column=5).value == pytest.approx(0.004)
+        assert ws.cell(row=7, column=6).value == "L/MJ"
+        assert ws.cell(row=7, column=7).value == 60.0
 
     def test_total_row_pct_100(self, tmp_path):
         flows = [
@@ -231,14 +205,14 @@ class TestDataContent:
         ws = _open_output(tmp_path)
         for row in range(6, ws.max_row + 1):
             if ws.cell(row=row, column=2).value == "Total":
-                assert ws.cell(row=row, column=8).value == 1
+                assert ws.cell(row=row, column=7).value == 1
                 break
 
 
 class TestEmissionSummary:
-    """Verify Emisi Udara summary has no % and no process."""
+    """Verify Emisi Udara summary has no %."""
 
-    def test_emission_summary_no_pct_no_process(self, tmp_path):
+    def test_emission_summary_no_pct(self, tmp_path):
         flows = [
             {
                 "category": "Emisi Udara",
@@ -247,7 +221,6 @@ class TestEmissionSummary:
                 "unit": "kg",
                 "fu_per_mj_Gas": 0.01,
                 "pct_Gas": 80.0,
-                "process": "Flaring",
             },
             {
                 "category": "Emisi Udara",
@@ -256,7 +229,6 @@ class TestEmissionSummary:
                 "unit": "kg",
                 "fu_per_mj_Gas": 0.005,
                 "pct_Gas": 20.0,
-                "process": "Engine",
             },
         ]
         products = [{"name": "Gas"}]
@@ -271,8 +243,8 @@ class TestEmissionSummary:
         assert emisi_header_row is not None
         data_row = emisi_header_row + 1
         if ws.cell(row=data_row, column=2).value:
-            assert ws.cell(row=data_row, column=8).value is None
-            assert ws.cell(row=data_row, column=9).value is None
+            # % column (col 7) should be None for emission summary
+            assert ws.cell(row=data_row, column=7).value is None
 
 
 class TestSectionNaming:
@@ -333,7 +305,6 @@ class TestFUUnitPerOutputUnit:
                 "flow_name": "Water",
                 "amount": 1000,
                 "unit": "L",
-                "process": "SPU",
                 "fu_per_mj_Minyak": 0.004,
                 "pct_Minyak": 100.0,
             }
@@ -346,8 +317,6 @@ class TestFUUnitPerOutputUnit:
                 "output_unit": "Barrel",
             }
         ]
-        _set_pipeline(flows, products)
-        # Inject fu_unit_labels and fu_mode into pipeline
         from lci_ignite.intelligence.tools import _store_pipeline
 
         pipeline_data = {
@@ -360,10 +329,10 @@ class TestFUUnitPerOutputUnit:
 
         export_to_xlsx(filename="io_table.xlsx")
         ws = _open_output(tmp_path)
-        # Data row: col 7 should be "L/Barrel" not "L/MJ"
+        # Data row: col 6 should be "L/Barrel" not "L/MJ"
         for row in range(6, ws.max_row + 1):
             if ws.cell(row=row, column=2).value == "Water":
-                assert ws.cell(row=row, column=7).value == "L/Barrel"
+                assert ws.cell(row=row, column=6).value == "L/Barrel"
                 break
         else:
             pytest.fail("Water row not found")
@@ -392,4 +361,4 @@ class TestFUUnitPerOutputUnit:
         export_to_xlsx(filename="io_table.xlsx")
         ws = _open_output(tmp_path)
         expected = 93776048 / 1055055.85
-        assert ws.cell(row=3, column=6).value == pytest.approx(expected)
+        assert ws.cell(row=3, column=5).value == pytest.approx(expected)

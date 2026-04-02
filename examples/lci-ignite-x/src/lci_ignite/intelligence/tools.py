@@ -804,14 +804,13 @@ def export_to_xlsx(
 ) -> str:
     """Export IO Table to Excel (.xlsx) matching PROPER template layout.
 
-    Template reference: docs/input.xlsx sheet "IO Table All PHM".
     Layout (1-indexed columns):
         A: empty
         B: Input/Output (flow name or section header)
-        C: Area (process area, e.g. SPU, BSP, CPU)
-        D: Total (amount, sesuai periode kajian)
-        E: Unit
-        F-I per product: Jumlah/FU | Unit | % | Mayoritas Proses
+        C: Total (amount, sesuai periode kajian)
+        D: Unit
+        E+ per product: Jumlah/FU | Unit | %
+    Flows are already aggregated by material — no Area/Process column.
     """
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -843,14 +842,13 @@ def export_to_xlsx(
     ws = wb.active
     ws.title = "IO Table"
 
-    # ── Column offsets (1-indexed, matching template) ──
+    # ── Column offsets (1-indexed) ──
     COL_B = 2  # Input/Output
-    COL_C = 3  # Area
-    COL_D = 4  # Total
-    COL_E = 5  # Unit
-    COL_PROD_START = 6  # First product column (F)
-    COLS_PER_PRODUCT = 4  # Jumlah/FU, Unit, %, Mayoritas Proses
-    total_cols = COL_E + len(products) * COLS_PER_PRODUCT  # last used column
+    COL_C = 3  # Total
+    COL_D = 4  # Unit
+    COL_PROD_START = 5  # First product column (E)
+    COLS_PER_PRODUCT = 3  # Jumlah/FU, Unit, %
+    total_cols = COL_D + len(products) * COLS_PER_PRODUCT  # last used column
 
     # ── Styles ──
     header_font = Font(bold=True, size=11)
@@ -870,7 +868,7 @@ def export_to_xlsx(
         ws.cell(row=2, column=col, value=name).font = header_font
 
     # ── Row 3: "ALL PHM" label + reference value per product ──
-    ws.cell(row=3, column=COL_E, value="ALL PHM").font = header_font
+    ws.cell(row=3, column=COL_D, value="ALL PHM").font = header_font
     for i, product in enumerate(products):
         if fu_mode == "per_output_unit":
             fu_factor = product.get("fu_unit_factor", 0)
@@ -885,13 +883,11 @@ def export_to_xlsx(
     # ── Row 4: main header row ──
     ws.cell(row=4, column=COL_B, value="Input/Output").font = header_font
     ws.cell(row=4, column=COL_B).alignment = center_align
-    ws.cell(row=4, column=COL_C, value="Area").font = header_font
+    ws.cell(row=4, column=COL_C, value="Total").font = header_font
     ws.cell(row=4, column=COL_C).alignment = center_align
-    ws.cell(row=4, column=COL_D, value="Total").font = header_font
+    ws.cell(row=4, column=COL_D, value="Unit").font = header_font
     ws.cell(row=4, column=COL_D).alignment = center_align
-    ws.cell(row=4, column=COL_E, value="Unit").font = header_font
-    ws.cell(row=4, column=COL_E).alignment = center_align
-    # Product name headers merged across 4 columns
+    # Product name headers merged across 3 columns
     for i, product in enumerate(products):
         name = product.get("name", "Product")
         col = COL_PROD_START + i * COLS_PER_PRODUCT
@@ -903,21 +899,17 @@ def export_to_xlsx(
             end_row=4,
             end_column=col + COLS_PER_PRODUCT - 1,
         )
-    # Merge vertically: B4:B5, C4:C5, E4:E5
+    # Merge vertically: B4:B5, D4:D5
     ws.merge_cells(start_row=4, start_column=COL_B, end_row=5, end_column=COL_B)
-    ws.merge_cells(start_row=4, start_column=COL_C, end_row=5, end_column=COL_C)
-    ws.merge_cells(start_row=4, start_column=COL_E, end_row=5, end_column=COL_E)
+    ws.merge_cells(start_row=4, start_column=COL_D, end_row=5, end_column=COL_D)
 
     # ── Row 5: sub-headers ──
-    ws.cell(row=5, column=COL_D, value="(sesuai periode kajian)").font = Font(size=9)
+    ws.cell(row=5, column=COL_C, value="(sesuai periode kajian)").font = Font(size=9)
     for i, _ in enumerate(products):
         col = COL_PROD_START + i * COLS_PER_PRODUCT
         ws.cell(row=5, column=col, value="Jumlah/FU").font = header_font
         ws.cell(row=5, column=col + 1, value="Unit").font = header_font
         ws.cell(row=5, column=col + 2, value="%").font = header_font
-        mayoritas = "Mayoritas Proses yang Menggunakan / Menghasilkan"
-        ws.cell(row=5, column=col + 3, value=mayoritas).font = Font(bold=True, size=9)
-        ws.cell(row=5, column=col + 3).alignment = Alignment(wrap_text=True)
 
     # ── Group flows by category ──
     from collections import defaultdict
@@ -946,13 +938,7 @@ def export_to_xlsx(
 
         is_emission_summary = section == emission_summary_section
 
-        # Section header row — merge B:C
-        ws.merge_cells(
-            start_row=row_idx,
-            start_column=COL_B,
-            end_row=row_idx,
-            end_column=COL_C,
-        )
+        # Section header row
         cell = ws.cell(row=row_idx, column=COL_B, value=section)
         cell.font = section_font
         cell.fill = section_fill
@@ -967,9 +953,8 @@ def export_to_xlsx(
             amount = flow.get("amount", 0.0)
             section_total += amount
             ws.cell(row=row_idx, column=COL_B, value=flow.get("flow_name", ""))
-            ws.cell(row=row_idx, column=COL_C, value=flow.get("process", ""))
-            ws.cell(row=row_idx, column=COL_D, value=amount).alignment = num_align
-            ws.cell(row=row_idx, column=COL_E, value=flow.get("unit", ""))
+            ws.cell(row=row_idx, column=COL_C, value=amount).alignment = num_align
+            ws.cell(row=row_idx, column=COL_D, value=flow.get("unit", ""))
 
             for i, product in enumerate(products):
                 name = product.get("name", "")
@@ -979,34 +964,24 @@ def export_to_xlsx(
                 pct_val = flow.get(pct_key, 0.0)
                 fu_label = fu_unit_labels.get(name, "MJ")
                 fu_unit = f"{flow.get('unit', '')}/{fu_label}" if flow.get("unit") else ""
-                dominant = flow.get("process", "")
 
                 col = COL_PROD_START + i * COLS_PER_PRODUCT
                 if fu_val:
                     ws.cell(row=row_idx, column=col, value=fu_val).alignment = num_align
                 ws.cell(row=row_idx, column=col + 1, value=fu_unit)
-                # Emisi Udara summary: no % and no process
-                if not is_emission_summary:
-                    if pct_val:
-                        ws.cell(row=row_idx, column=col + 2, value=pct_val).alignment = num_align
-                    ws.cell(row=row_idx, column=col + 3, value=dominant)
+                if not is_emission_summary and pct_val:
+                    ws.cell(row=row_idx, column=col + 2, value=pct_val).alignment = num_align
 
             row_idx += 1
 
-        # Total row — merge B:C
+        # Total row
         if len(sorted_flows) > 1:
-            ws.merge_cells(
-                start_row=row_idx,
-                start_column=COL_B,
-                end_row=row_idx,
-                end_column=COL_C,
-            )
             cell = ws.cell(row=row_idx, column=COL_B, value="Total")
             cell.font = total_font
-            ws.cell(row=row_idx, column=COL_D, value=section_total).font = total_font
-            ws.cell(row=row_idx, column=COL_D).alignment = num_align
+            ws.cell(row=row_idx, column=COL_C, value=section_total).font = total_font
+            ws.cell(row=row_idx, column=COL_C).alignment = num_align
             total_unit = sorted_flows[0].get("unit", "")
-            ws.cell(row=row_idx, column=COL_E, value=total_unit).font = total_font
+            ws.cell(row=row_idx, column=COL_D, value=total_unit).font = total_font
 
             for i, product in enumerate(products):
                 name = product.get("name", "")
@@ -1016,9 +991,8 @@ def export_to_xlsx(
                 fu_unit = f"{sorted_flows[0].get('unit', '')}/{fu_label}"
                 col = COL_PROD_START + i * COLS_PER_PRODUCT
                 ws.cell(row=row_idx, column=col, value=fu_total).font = total_font
-                ws.cell(row=row_idx, column=col, value=fu_total).alignment = num_align
+                ws.cell(row=row_idx, column=col).alignment = num_align
                 ws.cell(row=row_idx, column=col + 1, value=fu_unit).font = total_font
-                # Total row: %=1 (100%) for non-emission-summary sections
                 if not is_emission_summary:
                     ws.cell(row=row_idx, column=col + 2, value=1).font = total_font
             row_idx += 1
