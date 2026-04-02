@@ -385,6 +385,35 @@ class TestGenerateMappingProfile:
         assert "error" in result
         assert "validation_errors" in result
 
+    def test_path_traversal_sanitized(self, tmp_path):
+        """LLM returns profile_name with path traversal → sanitized before save."""
+        xlsx = tmp_path / "test.xlsx"
+        _create_pusri_xlsx(xlsx)
+
+        profile_dir = tmp_path / "profiles"
+        profile_dir.mkdir()
+
+        evil_profile = dict(VALID_PROFILE)
+        evil_profile["profile_name"] = "../../etc/evil_payload"
+
+        with (
+            patch(
+                "lci_ignite.intelligence.tools._call_llm_for_profile",
+                return_value=(json.dumps(evil_profile), None),
+            ),
+            patch("lci_ignite.data.mapping_profiles.PROFILES_DIR", profile_dir),
+        ):
+            result = json.loads(generate_mapping_profile(str(xlsx)))
+
+        assert result["status"] == "profile_generated"
+        # Name should be sanitized — no path separators
+        assert "/" not in result["profile_name"]
+        assert ".." not in result["profile_name"]
+        # File saved inside profile_dir, not escaped
+        saved_files = list(profile_dir.glob("*.json"))
+        assert len(saved_files) == 1
+        assert saved_files[0].parent == profile_dir
+
 
 # ---------------------------------------------------------------------------
 # Tests: parse_ldi_sheet auto-trigger

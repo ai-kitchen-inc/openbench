@@ -1275,8 +1275,12 @@ def generate_mapping_profile(file_path: str) -> str:
             }
         )
 
-    # Step 5: Save profile
-    profile_name = generated_profile.get("profile_name", "auto_generated")
+    # Step 5: Sanitize name and save profile
+    from lci_ignite.data.mapping_profiles import _sanitize_profile_name
+
+    raw_name = generated_profile.get("profile_name", "auto_generated")
+    profile_name = _sanitize_profile_name(raw_name)
+    generated_profile["profile_name"] = profile_name
     try:
         save_profile(profile_name, generated_profile)
     except Exception as exc:
@@ -1588,6 +1592,27 @@ def aggregate_flows(data: str = "auto") -> str:
             proc = flow.get("process", "")
             if proc:
                 merged["_processes"].add(proc)
+            # Collect unique values for extra string fields
+            _CORE_FIELDS = {
+                "category",
+                "original_category",
+                "flow_name",
+                "process",
+                "direction",
+                "amount",
+                "unit",
+                "_processes",
+            }
+            for k, v in flow.items():
+                if k in _CORE_FIELDS or k.startswith("per_product_") or k.startswith("fu_"):
+                    continue
+                if not isinstance(v, str) or not v.strip():
+                    continue
+                existing = merged.get(k)
+                if existing is None:
+                    merged[k] = v
+                elif isinstance(existing, str) and v.strip() not in existing:
+                    merged[k] = f"{existing}, {v.strip()}"
 
     # Finalize: combine process names, remove temp field
     total_before = len(flows)

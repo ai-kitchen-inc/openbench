@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -452,12 +453,10 @@ class ExcelLCISource(DataSource):
             "Is Amount Balanced" -> "is_amount_balanced"
             "TeR" -> "ter"
         """
-        import re as _re
-
         s = header.strip()
         # Replace non-alphanumeric chars with underscore
-        s = _re.sub(r"[^a-zA-Z0-9]+", "_", s)
+        s = re.sub(r"[^a-zA-Z0-9]+", "_", s)
         # CamelCase -> snake_case (e.g., "TeR" stays as-is since it's short)
-        s = _re.sub(r"([a-z])([A-Z])", r"\1_\2", s)
+        s = re.sub(r"([a-z])([A-Z])", r"\1_\2", s)
         s = s.lower().strip("_")
         return s

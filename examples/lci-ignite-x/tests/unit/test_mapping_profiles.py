@@ -7,6 +7,7 @@ import pytest
 
 from lci_ignite.data.mapping_profiles import (
     _normalize_column_mapping,
+    _sanitize_profile_name,
     _verify_column_positions,
     list_profiles,
     load_profile,
@@ -211,6 +212,53 @@ class TestNormalizeColumnMapping:
 
         assert matched is not None
         assert matched["column_mapping"]["process"] == {"index": 0}
+
+
+class TestSanitizeProfileName:
+    """Tests for _sanitize_profile_name() — prevents path traversal."""
+
+    def test_normal_name(self):
+        assert _sanitize_profile_name("pertamina_pep_tanjung") == "pertamina_pep_tanjung"
+
+    def test_path_traversal_dots(self):
+        result = _sanitize_profile_name("../../etc/passwd")
+        assert "/" not in result
+        assert ".." not in result
+
+    def test_path_traversal_backslash(self):
+        result = _sanitize_profile_name("..\\..\\windows\\system32")
+        assert "\\" not in result
+
+    def test_spaces_and_special_chars(self):
+        result = _sanitize_profile_name("PT Pupuk (Pusri) - Zone 1")
+        assert " " not in result
+        assert "(" not in result
+        assert result == "pt_pupuk_pusri_-_zone_1"
+
+    def test_empty_string(self):
+        assert _sanitize_profile_name("") == "auto_generated"
+
+    def test_only_special_chars(self):
+        assert _sanitize_profile_name("../../../") == "auto_generated"
+
+    def test_uppercase_lowered(self):
+        assert _sanitize_profile_name("MyProfile") == "myprofile"
+
+    def test_save_profile_sanitizes_name(self, tmp_path):
+        """save_profile should sanitize the name before writing."""
+        profile = {"profile_name": "../../evil", "column_mapping": {}}
+        with patch("lci_ignite.data.mapping_profiles.PROFILES_DIR", tmp_path):
+            path = save_profile("../../evil", profile)
+        # File should be saved with sanitized name, inside tmp_path
+        assert path.parent == tmp_path
+        assert ".." not in path.name
+
+    def test_save_profile_stays_in_dir(self, tmp_path):
+        """Resolved path must stay within PROFILES_DIR."""
+        profile = {"profile_name": "safe_name", "column_mapping": {}}
+        with patch("lci_ignite.data.mapping_profiles.PROFILES_DIR", tmp_path):
+            path = save_profile("safe_name", profile)
+        assert str(path.resolve()).startswith(str(tmp_path.resolve()))
 
 
 class TestSaveProfile:

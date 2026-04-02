@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,21 @@ def _normalize_column_mapping(profile: dict[str, Any]) -> dict[str, Any]:
     if changed:
         profile["column_mapping"] = normalized
     return profile
+
+
+def _sanitize_profile_name(name: str) -> str:
+    """Sanitize a profile name to prevent path traversal.
+
+    Strips path separators, collapses to lowercase alphanumeric + underscores/hyphens,
+    and ensures the result is a safe filename stem.
+    """
+    # Replace any non-alphanumeric (except underscore/hyphen) with underscore
+    safe = re.sub(r"[^a-z0-9_\-]", "_", name.lower())
+    # Collapse multiple underscores
+    safe = re.sub(r"_+", "_", safe).strip("_")
+    if not safe:
+        safe = "auto_generated"
+    return safe
 
 
 def list_profiles() -> list[dict[str, Any]]:
@@ -101,8 +117,18 @@ def save_profile(name: str, profile: dict[str, Any]) -> Path:
 
     Returns:
         Path to the saved file.
+
+    Raises:
+        ValueError: If the name resolves outside PROFILES_DIR.
     """
-    path = PROFILES_DIR / f"{name}.json"
+    safe_name = _sanitize_profile_name(name)
+    path = PROFILES_DIR / f"{safe_name}.json"
+
+    # Guard: ensure resolved path stays within PROFILES_DIR
+    resolved = path.resolve()
+    if not str(resolved).startswith(str(PROFILES_DIR.resolve())):
+        raise ValueError(f"Invalid profile name: {name!r}")
+
     path.write_text(
         json.dumps(profile, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -150,7 +176,7 @@ def match_profile(excel_profile: dict[str, Any]) -> dict[str, Any] | None:
             if not expected_lower:
                 continue
             overlap = len(actual_headers & expected_lower) / len(expected_lower)
-            if overlap <= 0.8:
+            if overlap < 0.8:
                 continue
 
             # Verify column positions: headers at mapped indexes must match
