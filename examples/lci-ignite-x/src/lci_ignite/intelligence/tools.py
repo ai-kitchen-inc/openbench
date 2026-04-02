@@ -2484,10 +2484,10 @@ BUILD_PROPER_IO_TABLE_SCHEMA = {
 
 
 def build_proper_io_table(data: str = "auto", config: str = "auto") -> str:
-    """Build full PROPER-format IO Table with 11 columns.
+    """Build full PROPER-format IO Table.
 
-    Columns: Item | Total | Unit | Product1 FU/MJ | Unit | % | Process |
-             Product2 FU/MJ | Unit | % | Process
+    Columns per product: Item | Total | Unit | Product FU/{unit} | Unit | %
+    Flows are already aggregated by material (no process/area column).
     """
     from lci_ignite.data.lci_schema import IO_TABLE_SECTION_ORDER
 
@@ -2521,12 +2521,12 @@ def build_proper_io_table(data: str = "auto", config: str = "auto") -> str:
     if pipeline:
         fu_unit_labels = pipeline.get("fu_unit_labels", {})
 
-    # Build headers
+    # Build headers (no Process/Area column — flows are already aggregated by material)
     headers = ["Input/Output", "Total", "Unit"]
     for product in products:
         name = product.get("name", "Product")
         fu_label = fu_unit_labels.get(name, "MJ")
-        headers.extend([f"{name} FU/{fu_label}", "Unit", "%", "Mayoritas Proses"])
+        headers.extend([f"{name} FU/{fu_label}", "Unit", "%"])
 
     # Group flows by category
     from collections import defaultdict
@@ -2578,14 +2578,12 @@ def build_proper_io_table(data: str = "auto", config: str = "auto") -> str:
                 pct_val = flow.get(pct_key, 0.0)
                 fu_label = fu_unit_labels.get(name, "MJ")
                 fu_unit = f"{unit}/{fu_label}" if unit else ""
-                dominant = flow.get("process", "")
 
                 row.extend(
                     [
                         _fmt_number(fu_val),
                         fu_unit,
                         f"{pct_val:.1f}" if pct_val else "",
-                        dominant,
                     ]
                 )
 
@@ -2602,7 +2600,7 @@ def build_proper_io_table(data: str = "auto", config: str = "auto") -> str:
                 name = product.get("name", "")
                 fu_key = f"fu_per_mj_{name}"
                 fu_total = sum(f.get(fu_key, 0.0) for f in sorted_flows)
-                total_row.extend([_fmt_number(fu_total), "", "100.0", ""])
+                total_row.extend([_fmt_number(fu_total), "", "100.0"])
             rows.append(total_row)
 
     for section in IO_TABLE_SECTION_ORDER:
