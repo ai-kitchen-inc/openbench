@@ -243,57 +243,173 @@ class TestCalculateFunctionalUnit:
 
 
 class TestSelectParetoItems:
-    def test_basic_selection(self):
-        flows = [
-            {"category": "Air", "flow_name": f"Flow{i}", "amount": (10 - i) * 100} for i in range(8)
-        ]
-        result = json.loads(select_pareto_items(json.dumps(flows), top_n=3))
-        assert result["total_selected"] == 4  # 3 top + 1 Lainnya
+    """Tests for 80/20 Pareto selection algorithm."""
 
-    def test_lainnya_aggregation(self):
+    def test_80_20_threshold(self):
+        """Items are kept until 80% cumulative contribution is reached."""
+        # A=50%, B=30%, C=15%, D=5% → keep A+B (80%), aggregate C+D
         flows = [
-            {"category": "Air", "flow_name": "A", "amount": 100, "unit": "L"},
-            {"category": "Air", "flow_name": "B", "amount": 80, "unit": "L"},
-            {"category": "Air", "flow_name": "C", "amount": 10, "unit": "L"},
+            {"category": "Air", "flow_name": "A", "amount": 50, "unit": "L"},
+            {"category": "Air", "flow_name": "B", "amount": 30, "unit": "L"},
+            {"category": "Air", "flow_name": "C", "amount": 15, "unit": "L"},
             {"category": "Air", "flow_name": "D", "amount": 5, "unit": "L"},
         ]
-        select_pareto_items(json.dumps(flows), top_n=2)
+        select_pareto_items(json.dumps(flows))
         pipeline = _read_pipeline()
-        lainnya = [f for f in pipeline["flows"] if f["flow_name"] == "Lainnya"]
-        assert len(lainnya) == 1
-        assert lainnya[0]["amount"] == 15  # 10 + 5
-        assert lainnya[0]["is_aggregated"] is True
-
-    def test_custom_label(self):
-        flows = [
-            {"category": "Air", "flow_name": f"F{i}", "amount": 100 - i * 10} for i in range(5)
-        ]
-        select_pareto_items(json.dumps(flows), top_n=2, lainnya_label="Others")
-        pipeline = _read_pipeline()
-        others = [f for f in pipeline["flows"] if f["flow_name"] == "Others"]
+        kept = [f for f in pipeline["flows"] if not f.get("is_aggregated")]
+        others = [f for f in pipeline["flows"] if f.get("is_aggregated")]
+        assert len(kept) == 2  # A(50%) + B(30%) = 80%
         assert len(others) == 1
+        assert others[0]["amount"] == 20  # C(15) + D(5)
+        assert others[0]["flow_name"] == "Others"
 
-    def test_no_lainnya_when_within_topn(self):
+    def test_single_dominant_item(self):
+        """One item = 90% → keep only that, aggregate rest."""
+        flows = [
+            {"category": "Air", "flow_name": "Big", "amount": 900, "unit": "L"},
+            {"category": "Air", "flow_name": "Small1", "amount": 50, "unit": "L"},
+            {"category": "Air", "flow_name": "Small2", "amount": 30, "unit": "L"},
+            {"category": "Air", "flow_name": "Small3", "amount": 20, "unit": "L"},
+        ]
+        select_pareto_items(json.dumps(flows))
+        pipeline = _read_pipeline()
+        kept = [f for f in pipeline["flows"] if not f.get("is_aggregated")]
+        assert len(kept) == 1  # Big alone is 90% > 80%
+        assert kept[0]["flow_name"] == "Big"
+
+    def test_even_distribution_keeps_more(self):
+        """10 items at 10% each → need 8 items to reach 80%."""
+        flows = [{"category": "Air", "flow_name": f"F{i}", "amount": 100} for i in range(10)]
+        select_pareto_items(json.dumps(flows))
+        pipeline = _read_pipeline()
+        kept = [f for f in pipeline["flows"] if not f.get("is_aggregated")]
+        others = [f for f in pipeline["flows"] if f.get("is_aggregated")]
+        assert len(kept) == 8  # 8 × 10% = 80%
+        assert len(others) == 1
+        assert others[0]["aggregated_count"] == 2
+
+    def test_pareto_pct_calculated(self):
+        """Each kept item should have pareto_pct field."""
+        flows = [
+            {"category": "Air", "flow_name": "A", "amount": 80, "unit": "L"},
+            {"category": "Air", "flow_name": "B", "amount": 20, "unit": "L"},
+        ]
+        select_pareto_items(json.dumps(flows))
+        pipeline = _read_pipeline()
+        a = next(f for f in pipeline["flows"] if f["flow_name"] == "A")
+        assert a["pareto_pct"] == 80.0
+
+    def test_others_aggregation(self):
+        """Aggregated 'Others' row sums amounts and per_product fields."""
+        flows = [
+            {
+                "category": "Air",
+                "flow_name": "A",
+                "amount": 100,
+                "unit": "L",
+                "per_product_Gas": 60,
+            },
+            {"category": "Air", "flow_name": "B", "amount": 10, "unit": "L", "per_product_Gas": 5},
+            {"category": "Air", "flow_name": "C", "amount": 5, "unit": "L", "per_product_Gas": 3},
+        ]
+        select_pareto_items(json.dumps(flows))  # A=87% > 80%, aggregate B+C
+        pipeline = _read_pipeline()
+        others = [f for f in pipeline["flows"] if f.get("is_aggregated")]
+        assert len(others) == 1
+        assert others[0]["amount"] == 15  # 10 + 5
+        assert others[0]["per_product_Gas"] == 8  # 5 + 3
+
+    def test_custom_threshold(self):
+        """Custom threshold changes split point."""
+        flows = [
+            {"category": "Air", "flow_name": "A", "amount": 50, "unit": "L"},
+            {"category": "Air", "flow_name": "B", "amount": 30, "unit": "L"},
+            {"category": "Air", "flow_name": "C", "amount": 20, "unit": "L"},
+        ]
+        # 50% threshold → keep only A (50%)
+        select_pareto_items(json.dumps(flows), threshold=50)
+        pipeline = _read_pipeline()
+        kept = [f for f in pipeline["flows"] if not f.get("is_aggregated")]
+        assert len(kept) == 1
+
+    def test_top_n_override(self):
+        """top_n > 0 forces fixed top-N mode (backward compat)."""
+        flows = [
+            {"category": "Air", "flow_name": f"F{i}", "amount": (10 - i) * 100} for i in range(8)
+        ]
+        result = json.loads(select_pareto_items(json.dumps(flows), top_n=3))
+        assert result["total_selected"] == 4  # 3 top + 1 Others
+
+    def test_backward_compat_lainnya_label(self):
+        """Old lainnya_label parameter still works."""
+        flows = [
+            {"category": "Air", "flow_name": "A", "amount": 100, "unit": "L"},
+            {"category": "Air", "flow_name": "B", "amount": 10, "unit": "L"},
+            {"category": "Air", "flow_name": "C", "amount": 5, "unit": "L"},
+        ]
+        select_pareto_items(json.dumps(flows), top_n=1, lainnya_label="Lainnya")
+        pipeline = _read_pipeline()
+        agg = [f for f in pipeline["flows"] if f.get("is_aggregated")]
+        assert agg[0]["flow_name"] == "Lainnya"
+
+    def test_no_others_when_all_within_threshold(self):
+        """If all items are within threshold, no Others row."""
         flows = [
             {"category": "Air", "flow_name": "A", "amount": 100},
             {"category": "Air", "flow_name": "B", "amount": 80},
         ]
-        select_pareto_items(json.dumps(flows), top_n=5)
+        select_pareto_items(json.dumps(flows))
         pipeline = _read_pipeline()
-        lainnya = [f for f in pipeline["flows"] if f.get("is_aggregated")]
-        assert len(lainnya) == 0
+        others = [f for f in pipeline["flows"] if f.get("is_aggregated")]
+        assert len(others) == 0  # A=55.6% + B=44.4% = 100%
 
     def test_multiple_categories(self):
+        """Each category is processed independently."""
         flows = [
             {"category": "Air", "flow_name": "W1", "amount": 100},
             {"category": "Air", "flow_name": "W2", "amount": 50},
             {"category": "Listrik", "flow_name": "E1", "amount": 200},
             {"category": "Listrik", "flow_name": "E2", "amount": 100},
         ]
-        result = json.loads(select_pareto_items(json.dumps(flows), top_n=1))
-        assert result["total_selected"] == 4  # 1 top + 1 lainnya per category
+        result = json.loads(select_pareto_items(json.dumps(flows)))
         assert "Air" in result["stats"]
         assert "Listrik" in result["stats"]
+
+    def test_sorts_by_fu_when_available(self):
+        """When FU fields exist, sort by FU amount (not raw amount)."""
+        flows = [
+            {
+                "category": "Air",
+                "flow_name": "SmallAmount_HighFU",
+                "amount": 10,
+                "fu_per_mj_Gas": 0.5,
+            },
+            {
+                "category": "Air",
+                "flow_name": "BigAmount_LowFU",
+                "amount": 1000,
+                "fu_per_mj_Gas": 0.001,
+            },
+        ]
+        select_pareto_items(json.dumps(flows))
+        pipeline = _read_pipeline()
+        result = json.loads(select_pareto_items(json.dumps(flows)))
+        assert result["sort_key"] == "fu_per_mj_Gas"
+        # SmallAmount_HighFU should be ranked first by FU
+        kept = [f for f in pipeline["flows"] if not f.get("is_aggregated")]
+        assert kept[0]["flow_name"] == "SmallAmount_HighFU"
+
+    def test_zero_amounts(self):
+        """All zero amounts → keep all, no aggregation."""
+        flows = [
+            {"category": "Air", "flow_name": "A", "amount": 0},
+            {"category": "Air", "flow_name": "B", "amount": 0},
+        ]
+        select_pareto_items(json.dumps(flows))
+        pipeline = _read_pipeline()
+        assert len(pipeline["flows"]) == 2
+        others = [f for f in pipeline["flows"] if f.get("is_aggregated")]
+        assert len(others) == 0
 
     def test_invalid_json(self):
         result = select_pareto_items("bad json")

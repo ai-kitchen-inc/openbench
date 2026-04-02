@@ -1914,8 +1914,11 @@ SELECT_PARETO_ITEMS_SCHEMA = {
     "function": {
         "name": "select_pareto_items",
         "description": (
-            "Per category: select top N items by amount, aggregate the rest "
-            "into 'Lainnya'. Uses pipeline data automatically."
+            "80/20 Pareto selection per LDI Category. "
+            "Sorts by Total FU Amount (descending), keeps individual rows "
+            "until 80% cumulative contribution is reached, aggregates the "
+            "remaining ~20% into a single 'Others' row. "
+            "Uses pipeline data automatically."
         ),
         "parameters": {
             "type": "object",
@@ -1925,13 +1928,26 @@ SELECT_PARETO_ITEMS_SCHEMA = {
                     "description": "Use 'auto' to chain from previous pipeline step (default)",
                     "default": "auto",
                 },
+                "threshold": {
+                    "type": "number",
+                    "description": (
+                        "Cumulative % threshold (0-100). Rows are kept until "
+                        "this threshold is reached. Default: 80 (standard Pareto)"
+                    ),
+                    "default": 80,
+                },
                 "top_n": {
                     "type": "integer",
-                    "description": "Maximum items per category (default: 5)",
+                    "description": (
+                        "Optional hard cap on items per category. "
+                        "If set, overrides threshold-based selection. Default: 0 (disabled)"
+                    ),
+                    "default": 0,
                 },
-                "lainnya_label": {
+                "others_label": {
                     "type": "string",
-                    "description": "Label for aggregated remainder (default: 'Lainnya')",
+                    "description": "Label for aggregated remainder (default: 'Others')",
+                    "default": "Others",
                 },
             },
             "required": [],
@@ -1940,12 +1956,30 @@ SELECT_PARETO_ITEMS_SCHEMA = {
 }
 
 
-def select_pareto_items(data: str = "auto", top_n: int = 5, lainnya_label: str = "Lainnya") -> str:
-    """Per category: select top N items, aggregate rest into Lainnya."""
+def select_pareto_items(
+    data: str = "auto",
+    threshold: float = 80,
+    top_n: int = 0,
+    others_label: str = "Others",
+    # Keep backward compat for old callers using lainnya_label
+    lainnya_label: str | None = None,
+) -> str:
+    """80/20 Pareto selection per LDI Category.
+
+    Algorithm:
+    1. Sort items in each category by Total FU Amount (descending)
+    2. Calculate cumulative % contribution
+    3. Keep individual rows until threshold (default 80%) is reached
+    4. Aggregate the rest into a single 'Others' row
+
+    If top_n > 0, uses fixed top-N instead of threshold (backward compat).
+    """
     parsed, err = _resolve_data(data)
     if err:
         return err
     flows = _extract_flows(parsed)
+
+    label = lainnya_label if lainnya_label is not None else others_label
 
     from collections import defaultdict
 
@@ -1954,39 +1988,82 @@ def select_pareto_items(data: str = "auto", top_n: int = 5, lainnya_label: str =
         cat = flow.get("category", "Unknown")
         by_category[cat].append(flow)
 
+    # Detect sort key: prefer FU amount > per_product > amount
+    sort_key = _detect_pareto_sort_key(flows)
+
     selected: list[dict] = []
     stats: dict[str, dict] = {}
 
     for cat, cat_flows in by_category.items():
-        sorted_flows = sorted(cat_flows, key=lambda f: abs(f.get("amount", 0)), reverse=True)
+        sorted_flows = sorted(
+            cat_flows,
+            key=lambda f: abs(_get_sort_value(f, sort_key)),
+            reverse=True,
+        )
 
-        top_items = sorted_flows[:top_n]
-        rest_items = sorted_flows[top_n:]
+        if top_n > 0:
+            # Legacy mode: fixed top-N
+            top_items = sorted_flows[:top_n]
+            rest_items = sorted_flows[top_n:]
+        else:
+            # 80/20 mode: cumulative % threshold
+            total = sum(abs(_get_sort_value(f, sort_key)) for f in sorted_flows)
+            if total == 0:
+                # All zero amounts — keep all
+                top_items = sorted_flows
+                rest_items = []
+            else:
+                cumulative = 0.0
+                split_idx = len(sorted_flows)  # default: keep all
+                for i, f in enumerate(sorted_flows):
+                    cumulative += abs(_get_sort_value(f, sort_key))
+                    pct = (cumulative / total) * 100
+                    if pct >= threshold:
+                        split_idx = i + 1  # include this row
+                        break
+                top_items = sorted_flows[:split_idx]
+                rest_items = sorted_flows[split_idx:]
+
+        # Add percentage to each kept item
+        cat_total = sum(abs(_get_sort_value(f, sort_key)) for f in sorted_flows)
+        for f in top_items:
+            if cat_total > 0:
+                f["pareto_pct"] = round(abs(_get_sort_value(f, sort_key)) / cat_total * 100, 2)
+            else:
+                f["pareto_pct"] = 0.0
 
         selected.extend(top_items)
 
         if rest_items:
-            lainnya_amount = sum(f.get("amount", 0) for f in rest_items)
+            others_amount = sum(f.get("amount", 0) for f in rest_items)
             unit = rest_items[0].get("unit", "")
-            lainnya: dict[str, Any] = {
+            others_entry: dict[str, Any] = {
                 "category": cat,
-                "flow_name": lainnya_label,
-                "amount": lainnya_amount,
+                "flow_name": label,
+                "amount": others_amount,
                 "unit": unit,
                 "direction": rest_items[0].get("direction", ""),
                 "process": "",
                 "is_aggregated": True,
                 "aggregated_count": len(rest_items),
             }
+            # Sum per_product and fu fields
             for key in rest_items[0]:
                 if key.startswith("per_product_") or key.startswith("fu_"):
-                    lainnya[key] = sum(f.get(key, 0) for f in rest_items)
-            selected.append(lainnya)
+                    others_entry[key] = sum(f.get(key, 0) for f in rest_items)
+            # Calculate Others percentage
+            if cat_total > 0:
+                others_sort_val = sum(abs(_get_sort_value(f, sort_key)) for f in rest_items)
+                others_entry["pareto_pct"] = round(others_sort_val / cat_total * 100, 2)
+            else:
+                others_entry["pareto_pct"] = 0.0
+            selected.append(others_entry)
 
         stats[cat] = {
             "total_items": len(cat_flows),
             "selected": len(top_items),
             "aggregated": len(rest_items),
+            "sort_key": sort_key,
         }
 
     result = {
@@ -2001,16 +2078,51 @@ def select_pareto_items(data: str = "auto", top_n: int = 5, lainnya_label: str =
             if key in pipeline:
                 result[key] = pipeline[key]
     _store_pipeline(result)
+
+    mode_desc = f"top_n={top_n}" if top_n > 0 else f"threshold={threshold}%"
     return json.dumps(
         {
             "status": "pareto_selected",
             "total_selected": len(selected),
             "categories": len(stats),
+            "sort_key": sort_key,
+            "mode": mode_desc,
             "stats": stats,
-            "message": f"Selected {len(selected)} items across {len(stats)} categories.",
+            "message": (
+                f"Pareto {mode_desc}: {len(selected)} items across "
+                f"{len(stats)} categories (sorted by {sort_key})."
+            ),
         },
         indent=2,
     )
+
+
+def _detect_pareto_sort_key(flows: list[dict]) -> str:
+    """Detect the best sort key for Pareto ranking.
+
+    Priority: fu_per_mj_* > per_product_* > amount
+    """
+    if not flows:
+        return "amount"
+    sample = flows[0]
+    # Check for FU keys (calculated by calculate_functional_unit)
+    fu_keys = [k for k in sample if k.startswith("fu_per_mj_")]
+    if fu_keys:
+        return fu_keys[0]  # Use first product's FU
+    # Check for per-product keys
+    pp_keys = [k for k in sample if k.startswith("per_product_")]
+    if pp_keys:
+        return pp_keys[0]
+    return "amount"
+
+
+def _get_sort_value(flow: dict, sort_key: str) -> float:
+    """Get the numeric value for Pareto sorting."""
+    val = flow.get(sort_key, 0)
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
 
 
 VALIDATE_DATA_QUALITY_SCHEMA = {
