@@ -496,3 +496,5 @@ uv.lock
 # LCI Ignite-X
 examples/lci-ignite-x/docs/
 examples/lci-ignite-x/src/lci_ignite/data/mapping_profiles/*.json
+examples/lci-ignite-x/tests/fixtures/*.xlsx
+examples/lci-ignite-x/uploads/

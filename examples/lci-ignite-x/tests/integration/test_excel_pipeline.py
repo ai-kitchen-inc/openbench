@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import openpyxl
 import pytest
 
 from lci_ignite.data.attachment_handler import ChatAttachmentHandler
@@ -34,8 +35,143 @@ from lci_ignite.intelligence.tools import (
     validate_data_quality,
 )
 
-FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
-LDI_FIXTURE = FIXTURES_DIR / "ldi_master_pertamina_mini.xlsx"
+
+def _create_ldi_fixture(path: Path) -> Path:
+    """Create a mini LDI Master Excel fixture programmatically.
+
+    Mimics the structure of a real Pertamina LDI Master sheet with
+    representative rows across all major categories.
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "LDI-Pertamina Zona 9-00004"
+
+    # Header row (33 columns matching the profile)
+    headers = [None] * 33
+    headers[0] = "No"
+    headers[1] = "Process Title"
+    headers[2] = "LDI Category"
+    headers[3] = "Material Title"
+    headers[4] = "Produced From"
+    headers[5] = "Material Composition"
+    headers[6] = "Input or Output"
+    headers[11] = "Unit"
+    headers[17] = "Semberah EP"
+    headers[18] = "Total Bulk"
+    headers[29] = "Total per Product Crude Oil"
+    headers[30] = "Total per Product Gas"
+    headers[31] = "Functional Unit EP - Crude Oil"
+    headers[32] = "Functional Unit EP - Gas"
+    ws.append(headers)
+
+    # Data rows covering all major categories
+    _ROWS = [
+        # INPUTS
+        (
+            1,
+            "Well Op",
+            "Raw Material from Nature",
+            "Formation Water",
+            "Input",
+            "barrel",
+            150000,
+            120000,
+            30000,
+        ),
+        (2, "Well Op", "Raw Material from Nature", "Crude Oil", "Input", "barrel", 50000, 50000, 0),
+        (3, "Water Treatment", "Water", "Produced Water", "Input", "barrel", 80000, 60000, 20000),
+        (
+            4,
+            "Chemical",
+            "Liquid Supporting Material",
+            "Corrosion Inhibitor",
+            "Input",
+            "L",
+            500,
+            400,
+            100,
+        ),
+        (5, "Well Maint", "Solid Supporting Material", "Cement", "Input", "ton", 25, 20, 5),
+        (6, "Power Gen", "Electricity", "Grid Electricity", "Input", "kWh", 120000, 100000, 20000),
+        (7, "Transport", "Liquid Fuels", "Solar/Diesel", "Input", "L", 30000, 25000, 5000),
+        (8, "Power Gen", "Fuel Gas", "Associated Gas", "Input", "MMSCF", 2.5, 2, 0.5),
+        (9, "Facility", "Infrastructure", "Steel Pipe", "Input", "ton", 100, 80, 20),
+        (10, "Facility", "Land", "Well Pad Area", "Input", "m2", 5000, 4000, 1000),
+        (
+            11,
+            "Logistics",
+            "Transportation of Supporting Material",
+            "Truck",
+            "Input",
+            "ton.km",
+            15000,
+            12000,
+            3000,
+        ),
+        # Excluded/helper categories
+        (12, "Other", "Raw Material from Processes", "Recycled", "Input", "kg", 500, None, None),
+        (13, "Other", "Other Supporting Material", "Misc", "Input", "kg", 200, None, None),
+        (
+            14,
+            "Facility",
+            "Projected Lifetime of Infrastructure",
+            "Steel Pipe Lifetime",
+            "Input",
+            "year",
+            25,
+            None,
+            None,
+        ),
+        (
+            15,
+            "Facility",
+            "Projected Lifetime of Land",
+            "Well Pad Lifetime",
+            "Input",
+            "year",
+            30,
+            None,
+            None,
+        ),
+        # OUTPUTS
+        (16, "Well Op", "Product", "Crude Oil", "Output", "Barrel", 50000, 50000, 0),
+        (17, "Well Op", "Product", "Natural Gas", "Output", "MMSCF", 3, 0, 3),
+        (18, "Waste", "Hazardous Waste", "Oily Sludge", "Output", "ton", 15, 12, 3),
+        (19, "Waste", "Non-Hazardous Waste", "Drilling Cutting", "Output", "ton", 50, 40, 10),
+        (20, "Flaring", "Air Emissions", "CO2 from Flaring", "Output", "ton", 500, 400, 100),
+        (21, "Engine", "Air Emissions", "NOx from Engines", "Output", "ton", 2.5, 2, 0.5),
+        (22, "Venting", "Air Emissions", "CH4 from Venting", "Output", "ton", 10, 8, 2),
+        (
+            23,
+            "Water Tr",
+            "Liquid Waste",
+            "Produced Water Discharge",
+            "Output",
+            "m3",
+            5000,
+            4000,
+            1000,
+        ),
+    ]
+
+    for row_data in _ROWS:
+        no, process, category, material, direction, unit, amount, per_crude, per_gas = row_data
+        row = [None] * 33
+        row[0] = no
+        row[1] = process
+        row[2] = category
+        row[3] = material
+        row[6] = direction
+        row[11] = unit
+        row[17] = amount
+        row[18] = amount  # Total Bulk = same as amount
+        row[29] = per_crude
+        row[30] = per_gas
+        ws.append(row)
+
+    wb.save(str(path))
+    return path
+
 
 # ---------------------------------------------------------------------------
 # Inline test profile — simulates an LLM-generated MappingProfile
@@ -165,6 +301,12 @@ def _clear():
 
 
 @pytest.fixture
+def ldi_fixture(tmp_path):
+    """Create LDI Master Excel fixture programmatically."""
+    return _create_ldi_fixture(tmp_path / "ldi_master_test.xlsx")
+
+
+@pytest.fixture
 def profile_dir(tmp_path):
     """Save the test profile to a temp dir for profile matching."""
     pdir = tmp_path / "profiles"
@@ -177,16 +319,16 @@ def profile_dir(tmp_path):
 class TestProfileMatchPipeline:
     """Test: Excel upload → profile auto-match → parse → Standard LCI Schema."""
 
-    def test_attachment_handler_detects_excel_profile(self, profile_dir):
+    def test_attachment_handler_detects_excel_profile(self, ldi_fixture, profile_dir):
         """ChatAttachmentHandler detects format as 'excel:test_mini_profile'."""
         handler = ChatAttachmentHandler()
         with patch("lci_ignite.data.mapping_profiles.PROFILES_DIR", profile_dir):
-            fmt = handler.detect_format(str(LDI_FIXTURE))
+            fmt = handler.detect_format(str(ldi_fixture))
         assert fmt == "excel:test_mini_profile"
 
-    def test_profile_match_by_sheet_name(self, profile_dir):
+    def test_profile_match_by_sheet_name(self, ldi_fixture, profile_dir):
         """ExcelProfile extraction + match_profile finds test profile."""
-        excel_profile = ExcelProfile.extract(LDI_FIXTURE)
+        excel_profile = ExcelProfile.extract(ldi_fixture)
         assert "LDI-Pertamina Zona 9-00004" in excel_profile["sheet_names"]
 
         with patch("lci_ignite.data.mapping_profiles.PROFILES_DIR", profile_dir):
@@ -194,9 +336,9 @@ class TestProfileMatchPipeline:
         assert matched is not None
         assert matched["profile_name"] == "test_mini_profile"
 
-    def test_excel_lci_source_parse(self):
+    def test_excel_lci_source_parse(self, ldi_fixture):
         """ExcelLCISource parses fixture into Standard LCI Schema flows."""
-        source = ExcelLCISource(LDI_FIXTURE, profile=TEST_PROFILE)
+        source = ExcelLCISource(ldi_fixture, profile=TEST_PROFILE)
 
         assert source.validate() is True
         raw = source.extract()
@@ -234,16 +376,16 @@ class TestFullPipeline:
     """Test: parse → unit conversion → Pareto → FU → IO Table → DOCX."""
 
     @pytest.fixture
-    def parsed_data(self) -> dict:
+    def parsed_data(self, ldi_fixture) -> dict:
         """Parse the LDI fixture into Standard LCI Schema."""
-        source = ExcelLCISource(LDI_FIXTURE, profile=TEST_PROFILE)
+        source = ExcelLCISource(ldi_fixture, profile=TEST_PROFILE)
         raw = source.extract()
         return raw.content
 
-    def test_parse_ldi_sheet_tool(self, profile_dir):
+    def test_parse_ldi_sheet_tool(self, ldi_fixture, profile_dir):
         """parse_ldi_sheet tool works with the fixture."""
         with patch("lci_ignite.data.mapping_profiles.PROFILES_DIR", profile_dir):
-            result = parse_ldi_sheet(str(LDI_FIXTURE), "test_mini_profile")
+            result = parse_ldi_sheet(str(ldi_fixture), "test_mini_profile")
         summary = json.loads(result)
         assert summary["status"] == "parsed"
         assert summary["total_flows"] > 0
@@ -324,7 +466,7 @@ class TestFullPipeline:
         items = get_render_items()
         assert len(items) >= 1
 
-    def test_full_pipeline_to_docx(self, parsed_data, tmp_path, profile_dir):
+    def test_full_pipeline_to_docx(self, ldi_fixture, parsed_data, tmp_path, profile_dir):
         """Full pipeline: parse → convert → Pareto → FU → IO Table → DOCX.
 
         Uses pipeline auto-chaining (same as live app).
@@ -335,7 +477,7 @@ class TestFullPipeline:
 
         # Step 1: Parse (stores in pipeline)
         with patch("lci_ignite.data.mapping_profiles.PROFILES_DIR", profile_dir):
-            parse_result = parse_ldi_sheet(str(LDI_FIXTURE), "test_mini_profile")
+            parse_result = parse_ldi_sheet(str(ldi_fixture), "test_mini_profile")
         assert "parsed" in parse_result
 
         # Step 2: Unit conversions (auto-reads pipeline)
