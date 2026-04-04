@@ -1,0 +1,40 @@
+{
+  "hosting": {
+    "public": "frontend/dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "/awp",
+        "run": {
+          "serviceId": "lci-ignite-x",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/chat/**",
+        "run": {
+          "serviceId": "lci-ignite-x",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/uploads/**",
+        "run": {
+          "serviceId": "lci-ignite-x",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/health",
+        "run": {
+          "serviceId": "lci-ignite-x",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

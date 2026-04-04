@@ -307,6 +307,10 @@ def create_app(config: LCIConfig | None = None) -> FastAPI:
         print("  Action: POST http://localhost:8003/chat/action")
         print("  Upload: POST http://localhost:8003/chat/upload\n")
 
+    @app.get("/")
+    async def root():
+        return {"service": "lci-ignite-x", "docs": "/health"}
+
     @app.get("/health")
     async def health():
         return {"status": "ok", "service": "lci-ignite-x"}
@@ -396,7 +400,20 @@ def create_app(config: LCIConfig | None = None) -> FastAPI:
     async def list_actions():
         return {"actions": action_handler.get_registered_actions()}
 
-    # Static files
+    # Static files — uploads
     app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
+
+    # Serve frontend static files (Cloud Run: single container serves both API + frontend)
+    static_dir = os.environ.get("LCI_STATIC_DIR")
+    if static_dir and os.path.isdir(static_dir):
+        from fastapi.responses import FileResponse
+
+        # SPA fallback: serve index.html for any unmatched GET route
+        @app.get("/{full_path:path}")
+        async def serve_spa(full_path: str):
+            file_path = os.path.join(static_dir, full_path)
+            if os.path.isfile(file_path):
+                return FileResponse(file_path)
+            return FileResponse(os.path.join(static_dir, "index.html"))
 
     return app
