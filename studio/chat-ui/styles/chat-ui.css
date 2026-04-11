@@ -1442,14 +1442,16 @@
 }
 
 .ob-table__table {
-  width: 100%;
+  /* min-width: 100% fills narrow tables to the bubble width while
+     letting wide tables grow past 100% to their natural content
+     width — the scroll container above handles the overflow.
+     Using `width: 100%` instead would force every column into the
+     container, which previously caused 20-column tables to collapse
+     to ~40px per column and shred header text letter-by-letter. */
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 0.8125rem;
   line-height: 1.45;
-  /* table-layout: auto lets columns size to content, which combined
-     with the wrappable headers below keeps narrow tables narrow and
-     only forces horizontal scroll when content genuinely can't fit. */
-  table-layout: auto;
 }
 
 .ob-table__th {
@@ -1460,11 +1462,9 @@
   text-align: left;
   padding: 8px 12px;
   border-bottom: 2px solid var(--ob-border, rgba(55, 53, 47, 0.09));
-  /* Allow header labels to wrap onto 2 lines — the old `nowrap` rule
-     forced the whole table wider than the bubble when there were many
-     columns (e.g. the 10-column LCI inventory tables). */
-  white-space: normal;
-  word-break: break-word;
+  /* Headers stay on a single line. Letting them wrap combined with
+     many columns previously broke mid-word ("M/a/t/e/r/i/a/l"). */
+  white-space: nowrap;
   vertical-align: bottom;
 }
 
@@ -1472,8 +1472,12 @@
   padding: 8px 12px;
   border-bottom: 1px solid var(--ob-border, rgba(55, 53, 47, 0.09));
   vertical-align: top;
-  word-break: break-word;
-  overflow-wrap: anywhere;
+  /* overflow-wrap: break-word (not word-break) — only wraps at
+     normal soft-break points first, and only breaks mid-word when
+     nothing else fits. This keeps "Verified data partly based on
+     assumption" wrapping cleanly without shredding individual words. */
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .ob-table__table--striped .ob-table__row:nth-child(even) {
