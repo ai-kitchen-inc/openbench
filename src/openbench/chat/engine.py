@@ -121,8 +121,15 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         metadata = self._extract_metadata(agent_result)
         extra_items = self._render_items_fn() if self._render_items_fn else None
 
-        # 5. Render content to A2UI components
-        components, data_model = self._render_content(agent_output, extra_items)
+        # 5. Render content to A2UI components.
+        # If the agent returned a failed ExecutionResult, surface the error
+        # as an ObCallout instead of silently rendering an empty message.
+        failed, err_msg = self._result_failed(agent_result)
+        if failed:
+            components = self._build_error_components(err_msg)
+            data_model = None
+        else:
+            components, data_model = self._render_content(agent_output, extra_items)
 
         # 6. Ensure root component
         components = self._ensure_root(components)
@@ -190,7 +197,12 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             # ── Step 3: Rendering response ──
             sid = _step_id()
             yield json.dumps(StepStartMessage(sid, "Rendering response", message_id).to_dict())
-            components, data_model = self._render_content(agent_output, extra_items)
+            failed, err_msg = self._result_failed(agent_result)
+            if failed:
+                components = self._build_error_components(err_msg)
+                data_model = None
+            else:
+                components, data_model = self._render_content(agent_output, extra_items)
             components = self._ensure_root(components)
             surface_id = f"s-{uuid.uuid4().hex[:8]}"
             messages = self.builder.build_surface(surface_id, components, data_model=data_model)
@@ -270,7 +282,12 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             # ── Step 3: Rendering response ──
             sid = _step_id()
             yield json.dumps(StepStartMessage(sid, "Rendering response", message_id).to_dict())
-            components, data_model = self._render_content(agent_output, extra_items)
+            failed, err_msg = self._result_failed(agent_result)
+            if failed:
+                components = self._build_error_components(err_msg)
+                data_model = None
+            else:
+                components, data_model = self._render_content(agent_output, extra_items)
             components = self._ensure_root(components)
             surface_id = f"s-{uuid.uuid4().hex[:8]}"
             messages = self.builder.build_surface(surface_id, components, data_model=data_model)
@@ -508,6 +525,40 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
 
         return main_components + extra_components, data_model
 
+    def _build_error_components(
+        self, error_message: str, error_title: str = "Agent execution failed"
+    ) -> list[A2UIComponent]:
+        """Build an ObCallout error panel from a failed ExecutionResult.
+
+        This is used when agent.execute() catches an exception internally
+        and returns ExecutionResult(status="failed", output=None). Without
+        this, the UI just shows an empty assistant message (which some
+        frontends render as "." or blank), hiding the real failure from
+        the user. With this, the user sees the actual error text.
+        """
+        return [
+            A2UIComponent(
+                id="error-callout",
+                component="ObCallout",
+                properties={
+                    "variant": "error",
+                    "title": error_title,
+                    "message": error_message,
+                },
+            )
+        ]
+
+    def _result_failed(self, result: Any) -> tuple[bool, str]:
+        """Check if an agent result represents a failed execution.
+
+        Returns (is_failed, error_message). error_message is empty when
+        is_failed is False.
+        """
+        if isinstance(result, ExecutionResult) and result.status == "failed":
+            err = result.metadata.get("error") if result.metadata else None
+            return True, str(err or "Agent execution failed with no error message.")
+        return False, ""
+
     def _ensure_root(self, components: list[A2UIComponent]) -> list[A2UIComponent]:
         """Ensure there's a component with id='root'.
 
@@ -657,7 +708,14 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         return result
 
     def _extract_text_content(self, output: Any) -> str:
-        """Extract plain text content for session history."""
+        """Extract plain text content for session history.
+
+        Returns empty string for None output so that a failed agent
+        execution (output=None) doesn't leave the literal string ``None``
+        in the session history.
+        """
+        if output is None:
+            return ""
         if isinstance(output, str):
             return output
         if isinstance(output, dict):

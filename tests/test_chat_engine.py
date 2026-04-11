@@ -384,6 +384,72 @@ class TestChatEngineAsyncStream(unittest.TestCase):
         self.assertEqual(last["type"], "error")
         self.assertIn("error", last.get("metadata", {}))
 
+    def _collect_components(self, messages):
+        """Pull components out of updateComponents messages.
+
+        A2UI v0.10 flattens property keys onto the component object, so
+        variant/title/message appear as direct keys, not nested in a
+        'properties' dict.
+        """
+        components = []
+        for msg in messages:
+            update = msg.get("updateComponents")
+            if not update:
+                continue
+            components.extend(update.get("components", []))
+        return components
+
+    def test_invoke_failed_result_renders_error_callout(self):
+        """ExecutionResult(status='failed') should render as ObCallout in invoke()."""
+        agent = MockAgent()
+        agent.execute = MagicMock(
+            return_value=ExecutionResult(
+                output=None,
+                status="failed",
+                metadata={"error": "400 INVALID_ARGUMENT: schema is broken"},
+            )
+        )
+        engine = ChatEngine(agent=agent)
+        result = engine.invoke("Hello")
+
+        components = self._collect_components(result["messages"])
+        error_callouts = [
+            c
+            for c in components
+            if c.get("component") == "ObCallout" and c.get("variant") == "error"
+        ]
+        self.assertEqual(len(error_callouts), 1)
+        self.assertIn("400 INVALID_ARGUMENT", error_callouts[0]["message"])
+        self.assertEqual(error_callouts[0]["title"], "Agent execution failed")
+
+    def test_stream_failed_result_renders_error_callout(self):
+        """ExecutionResult(status='failed') should render as ObCallout in stream()."""
+        agent = MockAgent()
+        agent.execute = MagicMock(
+            return_value=ExecutionResult(
+                output=None,
+                status="failed",
+                metadata={"error": "some tool rejected"},
+            )
+        )
+        engine = ChatEngine(agent=agent)
+
+        lines = list(engine.stream("Hello"))
+        parsed = [json.loads(ln) for ln in lines]
+        components = self._collect_components(parsed)
+
+        error_callouts = [
+            c
+            for c in components
+            if c.get("component") == "ObCallout" and c.get("variant") == "error"
+        ]
+        self.assertEqual(len(error_callouts), 1)
+        self.assertIn("some tool rejected", error_callouts[0]["message"])
+
+        # Stream should still complete cleanly
+        last = parsed[-1]
+        self.assertEqual(last["type"], "stream_end")
+
     def test_async_stream_step_names(self):
         """async_stream steps should have correct names."""
         engine = ChatEngine(agent=MockAgent("Reply"))

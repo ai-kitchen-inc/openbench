@@ -539,3 +539,112 @@ def test_xql_catalog_returns_error_when_no_files(monkeypatch):
     assert result["registered"] == []
     assert "error" in result
     assert "attach" in result["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Gemini-shaped JSON schema validation for XQL tool schemas
+# ---------------------------------------------------------------------------
+#
+# Gemini function calling validates tool schemas against an OpenAPI 3.0
+# subset. The two rejection reasons we hit live:
+#   1. arrays missing `items`
+#   2. nested arrays missing inner `items` (items.items)
+#
+# These tests walk every XQL_*_SCHEMA at test time and enforce the same
+# constraints Gemini does, so schema bugs fail fast in CI instead of at
+# runtime when a user makes their first chat request.
+
+
+def _collect_xql_schemas() -> dict:
+    """Import the xql skill module and return every XQL_*_SCHEMA constant."""
+    import os
+    import sys
+
+    # Creating a Lici agent loads the xql skill module into sys.modules
+    # under its namespaced key (openbench_skill_xql).
+    os.environ.setdefault("GOOGLE_API_KEY", "fake-test-key")
+    create_lici_agent()
+
+    xql_mod = sys.modules["openbench_skill_xql"]
+    return {
+        name: getattr(xql_mod, name)
+        for name in dir(xql_mod)
+        if name.startswith("XQL_") and name.endswith("_SCHEMA")
+    }
+
+
+def _walk_schema(node, path: str, errors: list[str]) -> None:
+    """Walk a JSON-schema-ish node and append any Gemini violations.
+
+    Rules enforced:
+        * Every "array" type must have a top-level "items" that itself has "type".
+        * Every "items" that is an array must recursively have its own "items".
+        * Every "object" type should have "properties" (empty dict OK) — free-form
+          objects without properties are a known Gemini rejection path even when
+          it sometimes tolerates them.
+        * Every property in "properties" must declare a "type".
+    """
+    if not isinstance(node, dict):
+        return
+
+    node_type = node.get("type")
+
+    if node_type == "array":
+        items = node.get("items")
+        if items is None:
+            errors.append(f"{path}: array missing 'items'")
+        else:
+            if not isinstance(items, dict):
+                errors.append(f"{path}.items: not a dict")
+            elif "type" not in items:
+                errors.append(f"{path}.items: missing 'type'")
+            else:
+                _walk_schema(items, f"{path}.items", errors)
+
+    if node_type == "object":
+        props = node.get("properties")
+        add_props = node.get("additionalProperties")
+        if props is None and add_props is None:
+            errors.append(f"{path}: object missing 'properties' or 'additionalProperties'")
+        if isinstance(props, dict):
+            for pname, pnode in props.items():
+                if not isinstance(pnode, dict):
+                    errors.append(f"{path}.properties.{pname}: not a dict")
+                    continue
+                if "type" not in pnode:
+                    errors.append(f"{path}.properties.{pname}: missing 'type'")
+                _walk_schema(pnode, f"{path}.properties.{pname}", errors)
+
+
+def _schema_violations(schema: dict, name: str) -> list[str]:
+    """Return a list of Gemini violations in a function-schema dict."""
+    errors: list[str] = []
+    fn = schema.get("function", {})
+    params = fn.get("parameters")
+    if params is None:
+        return [f"{name}: missing function.parameters"]
+    _walk_schema(params, f"{name}.parameters", errors)
+    return errors
+
+
+@pytest.mark.parametrize("schema_name", sorted(_collect_xql_schemas().keys()))
+def test_xql_schema_is_gemini_valid(schema_name):
+    """Every XQL tool schema must pass Gemini's OpenAPI 3.0 subset checks."""
+    schemas = _collect_xql_schemas()
+    schema = schemas[schema_name]
+    violations = _schema_violations(schema, schema_name)
+    assert violations == [], (
+        f"{schema_name} has schema bugs that Gemini would reject:\n  - " + "\n  - ".join(violations)
+    )
+
+
+def test_all_xql_schemas_have_required_fields():
+    """Every XQL schema must declare function.name, description, parameters."""
+    schemas = _collect_xql_schemas()
+    assert schemas, "No XQL_*_SCHEMA constants found — is xql loaded?"
+    for name, schema in schemas.items():
+        assert schema.get("type") == "function", f"{name}: wrong top-level type"
+        fn = schema.get("function", {})
+        assert fn.get("name"), f"{name}: missing function.name"
+        assert fn.get("description"), f"{name}: missing function.description"
+        assert "parameters" in fn, f"{name}: missing function.parameters"

@@ -13,6 +13,7 @@ once and then run many queries against it.
 from __future__ import annotations
 
 import contextvars
+import json
 from pathlib import Path
 from typing import Any
 
@@ -226,26 +227,74 @@ def _get_table(table_id: str) -> _TableMeta:
     return _STATE[table_id]
 
 
+def _coerce_numeric(value: Any) -> float | None:
+    """Try to coerce a value to float. Return None if not possible.
+
+    Used for numeric comparisons where the LLM sends string values
+    (Gemini's tool schema forces strings) but the DataFrame column is
+    numeric.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _apply_condition(df: pd.DataFrame, col: str, op: str, value: Any) -> pd.DataFrame:
-    """Apply a single (col, op, value) filter to a DataFrame."""
+    """Apply a single (col, op, value) filter to a DataFrame.
+
+    String and numeric values are both supported: numeric ops auto-coerce
+    both the column and the value to ``float`` so LLM-supplied strings
+    like ``"100"`` work the same as Python ints.
+    """
     series = df[col]
     op = op.upper() if isinstance(op, str) else op
+
+    numeric_ops = {">", "<", ">=", "<="}
+    if op in numeric_ops:
+        num_series = pd.to_numeric(series, errors="coerce")
+        num_value = _coerce_numeric(value)
+        if num_value is None:
+            raise ValueError(f"Cannot compare {col!r} {op} {value!r}: value is not numeric")
+        if op == ">":
+            return df[num_series > num_value]
+        if op == "<":
+            return df[num_series < num_value]
+        if op == ">=":
+            return df[num_series >= num_value]
+        if op == "<=":
+            return df[num_series <= num_value]
+
     if op == "==":
-        return df[series == value]
+        num_value = _coerce_numeric(value)
+        if num_value is not None:
+            num_series = pd.to_numeric(series, errors="coerce")
+            mask = num_series == num_value
+            if mask.any():
+                return df[mask]
+        return df[series.astype(str) == str(value)]
     if op == "!=":
-        return df[series != value]
-    if op == ">":
-        return df[pd.to_numeric(series, errors="coerce") > value]
-    if op == "<":
-        return df[pd.to_numeric(series, errors="coerce") < value]
-    if op == ">=":
-        return df[pd.to_numeric(series, errors="coerce") >= value]
-    if op == "<=":
-        return df[pd.to_numeric(series, errors="coerce") <= value]
+        num_value = _coerce_numeric(value)
+        if num_value is not None:
+            num_series = pd.to_numeric(series, errors="coerce")
+            return df[num_series != num_value]
+        return df[series.astype(str) != str(value)]
     if op == "IN":
-        return df[series.isin(list(value))]
+        values = (
+            list(value) if not isinstance(value, str) else [v.strip() for v in value.split(",")]
+        )
+        return df[series.isin(values)]
     if op == "NOT IN":
-        return df[~series.isin(list(value))]
+        values = (
+            list(value) if not isinstance(value, str) else [v.strip() for v in value.split(",")]
+        )
+        return df[~series.isin(values)]
     if op == "LIKE":
         pat = str(value).replace("%", ".*")
         return df[series.astype(str).str.contains(pat, case=False, regex=True, na=False)]
@@ -458,22 +507,64 @@ def xql_distinct(table_id: str, columns: list[str]) -> dict:
 def xql_group(
     table_id: str,
     group_by: list[str],
-    agg: dict[str, str],
+    agg: dict[str, str] | None = None,
     having: dict | None = None,
     limit: int | None = 50,
+    # Flat form for LLM tool calls — Gemini's schema can't express free-form
+    # object maps, so we accept parallel arrays + a single-condition having.
+    agg_columns: list[str] | None = None,
+    agg_functions: list[str] | None = None,
+    having_column: str | None = None,
+    having_op: str | None = None,
+    having_value: Any = None,
 ) -> dict:
     """GROUP BY + aggregation.
+
+    Accepts two equivalent call styles:
+
+    1. **Dict form** (Python/tests):
+       ``agg={"amount": "sum", "material": "count"}``,
+       ``having={"amount_sum": [">", 1000]}``.
+
+    2. **Flat form** (LLM tool calls): parallel ``agg_columns`` +
+       ``agg_functions`` arrays, plus a single ``having_column`` /
+       ``having_op`` / ``having_value`` triple. Gemini's tool schema
+       doesn't support free-form object maps, so this is the shape
+       the LLM uses.
 
     Args:
         table_id: Table to operate on.
         group_by: Columns (aliases or physical) to group by.
-        agg: Mapping of column -> aggregation function. Supported:
+        agg: Dict mapping of column -> aggregation function. Supported:
             ``sum``, ``count``, ``mean``, ``min``, ``max``, ``first``,
-            ``last``, ``nunique``, ``list``.
-        having: Optional filter applied to the aggregated result.
-            Format: {"<col>_<agg>": ["op", value]}.
+            ``last``, ``nunique``, ``list``. Mutually exclusive with
+            ``agg_columns``/``agg_functions``.
+        having: Optional filter on aggregated result.
+            Format: ``{"<col>_<agg>": ["op", value]}``.
         limit: Max rows in the response (None for all).
+        agg_columns: Parallel to ``agg_functions``. Columns to aggregate.
+        agg_functions: Parallel to ``agg_columns``. Functions per column.
+        having_column: Aggregated column name (e.g. ``"amount_sum"``).
+        having_op: Comparison operator for HAVING (e.g. ``">"``).
+        having_value: Comparison value (stringified for LLM use).
     """
+    # Resolve agg from flat form if dict not provided
+    if agg is None and (agg_columns or agg_functions):
+        if not (agg_columns and agg_functions):
+            raise ValueError("agg_columns and agg_functions must both be provided.")
+        if len(agg_columns) != len(agg_functions):
+            raise ValueError(
+                f"agg_columns ({len(agg_columns)}) and agg_functions "
+                f"({len(agg_functions)}) must have equal length."
+            )
+        agg = dict(zip(agg_columns, agg_functions, strict=True))
+    if agg is None:
+        raise ValueError("Provide either agg={col: fn} or both agg_columns and agg_functions.")
+
+    # Resolve having from flat form if dict not provided
+    if having is None and having_column and having_op:
+        having = {having_column: [having_op, having_value]}
+
     meta = _get_table(table_id)
     group_cols = [_resolve_alias(meta.alias_map, c) for c in group_by]
     resolved_agg = {_resolve_alias(meta.alias_map, c): fn for c, fn in agg.items()}
@@ -667,9 +758,13 @@ def xql_pivot(
 
 def xql_build_io_table(
     source: str,
-    products: dict,
+    products: dict | None = None,
     exclude_process: list[str] | None = None,
     pareto_threshold: float | None = None,
+    # LLM-friendly alias for products — Gemini's schema can't express
+    # nested object maps with unknown keys, so the LLM passes a JSON
+    # string that we decode here.
+    products_json: str | None = None,
 ) -> dict:
     """Build an LCI Input-Output table from a source LDI sheet.
 
@@ -681,15 +776,29 @@ def xql_build_io_table(
         source: Catalog table_id of the source LDI sheet.
         products: Dict ``{product_name: {amount, unit, energy_factor,
             energy_unit}}`` used for functional-unit columns in the output.
+            Mutually exclusive with ``products_json``.
         exclude_process: Optional list of regex patterns to drop before
             aggregation. Defaults come from ``default_exclude_process``.
         pareto_threshold: Cumulative share cut-off. Defaults to
             ``pareto.default_threshold`` in lci_rules.yaml.
+        products_json: JSON-encoded version of ``products`` for LLM callers
+            (Gemini tool schemas can't express nested object maps with
+            unknown keys). Passed straight through ``json.loads``.
 
     Returns:
         Dict with ``categories`` (one entry per category with grouped rows,
         totals, and Pareto selection) and ``products`` echoed back.
     """
+    if products is None and products_json:
+        try:
+            products = json.loads(products_json)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"products_json is not valid JSON: {e}") from e
+    if products is None:
+        products = {}
+    if not isinstance(products, dict):
+        raise TypeError(f"products must be a dict, got {type(products).__name__}")
+
     meta = _get_table(source)
     df = meta.df.copy()
 
@@ -849,13 +958,21 @@ XQL_PROJECT_SCHEMA = _fn_schema(
 XQL_WHERE_SCHEMA = _fn_schema(
     "xql_where",
     "Filter rows. conditions is a list of [column, op, value] triples. "
-    "Supported ops: ==, !=, >, <, >=, <=, IN, NOT IN, LIKE, IS NULL, IS NOT NULL.",
+    "Supported ops: ==, !=, >, <, >=, <=, IN, NOT IN, LIKE, IS NULL, IS NOT NULL. "
+    'All three parts are strings — numeric values like "100" are auto-coerced.',
     {
         "table_id": {"type": "string"},
         "conditions": {
             "type": "array",
-            "items": {"type": "array"},
-            "description": "List of [column, op, value] triples",
+            "items": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "description": (
+                "List of [column, op, value] triples. Example: "
+                '[["category", "==", "Liquid Fuels"], '
+                '["amount", ">", "100"]]'
+            ),
         },
         "limit": {"type": "integer"},
     },
@@ -887,31 +1004,78 @@ XQL_DISTINCT_SCHEMA = _fn_schema(
 XQL_GROUP_SCHEMA = _fn_schema(
     "xql_group",
     "GROUP BY + aggregation. Supported aggregations: sum, count, mean, min, "
-    "max, first, last, nunique, list. Optional HAVING filter.",
+    "max, first, last, nunique, list. Optional single-condition HAVING filter.",
     {
         "table_id": {"type": "string"},
-        "group_by": {"type": "array", "items": {"type": "string"}},
-        "agg": {
-            "type": "object",
-            "description": "Map of column -> aggregation function",
+        "group_by": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Columns to group by (aliases or physical names).",
         },
-        "having": {"type": "object", "description": "Optional filter on aggregated result"},
+        "agg_columns": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Parallel to agg_functions: columns to aggregate.",
+        },
+        "agg_functions": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Parallel to agg_columns: function per column. One of: "
+                "sum, count, mean, min, max, first, last, nunique, list."
+            ),
+        },
+        "having_column": {
+            "type": "string",
+            "description": (
+                "Optional. Aggregated column name for HAVING filter, "
+                "e.g. 'amount_sum' (agg-name suffix included)."
+            ),
+        },
+        "having_op": {
+            "type": "string",
+            "description": "Optional. Comparison op for HAVING: ==, !=, >, <, >=, <=.",
+        },
+        "having_value": {
+            "type": "string",
+            "description": "Optional. Comparison value for HAVING (auto-coerced).",
+        },
         "limit": {"type": "integer"},
     },
-    ["table_id", "group_by", "agg"],
+    ["table_id", "group_by", "agg_columns", "agg_functions"],
 )
 
 XQL_PARETO_SCHEMA = _fn_schema(
     "xql_pareto",
     "80/20 Pareto breakdown: sums value_col by group_by and returns the "
-    "hotspots plus a rest-of-distribution bucket.",
+    "hotspots plus a rest-of-distribution bucket. Same filter format as "
+    "xql_where — list of [column, op, value] triples.",
     {
         "table_id": {"type": "string"},
         "group_by": {"type": "string"},
-        "value_col": {"type": "string", "default": "amount"},
-        "threshold": {"type": "number", "default": 0.80},
-        "filter": {"type": "array", "description": "Pre-aggregation [col, op, value] filter"},
-        "rest_bucket": {"type": "string"},
+        "value_col": {
+            "type": "string",
+            "description": "Column to sum (default 'amount').",
+        },
+        "threshold": {
+            "type": "number",
+            "description": "Cumulative share cut-off, default 0.80.",
+        },
+        "filter": {
+            "type": "array",
+            "items": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "description": (
+                "Optional pre-aggregation filter. Same format as "
+                "xql_where.conditions: list of [col, op, value] triples."
+            ),
+        },
+        "rest_bucket": {
+            "type": "string",
+            "description": "Label for the rest-of-distribution bucket (default 'Lainnya').",
+        },
     },
     ["table_id", "group_by"],
 )
@@ -959,10 +1123,27 @@ XQL_BUILD_IO_TABLE_SCHEMA = _fn_schema(
     "Build an LCI IO Table from a source sheet, applying category-specific "
     "grouping rules, process exclusions, and a Pareto cut per category.",
     {
-        "source": {"type": "string"},
-        "products": {"type": "object"},
-        "exclude_process": {"type": "array", "items": {"type": "string"}},
-        "pareto_threshold": {"type": "number"},
+        "source": {
+            "type": "string",
+            "description": "Catalog table_id of the source LDI sheet.",
+        },
+        "products_json": {
+            "type": "string",
+            "description": (
+                "Optional JSON object declaring the products used for FU "
+                'columns. Example: \'{"Crude Oil": {"amount": 369113.5, '
+                '"unit": "barrel"}}\'. Empty or omitted means no FU columns.'
+            ),
+        },
+        "exclude_process": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Regex patterns for processes to skip (default: CSR.*).",
+        },
+        "pareto_threshold": {
+            "type": "number",
+            "description": "Pareto cumulative share cut-off, default 0.80.",
+        },
     },
-    ["source", "products"],
+    ["source"],
 )
