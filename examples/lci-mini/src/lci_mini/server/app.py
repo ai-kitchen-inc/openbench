@@ -31,7 +31,23 @@ def create_app() -> FastAPI:
     load_dotenv(get_persona_dir().parent / ".env")
 
     agent = create_lici_agent()
-    engine = ChatEngine(agent=agent)
+
+    # Wire ChatEngine to the xql skill's render-items queue so tool results
+    # render as ObTable components via chat-ui's TableRenderer instead of
+    # relying on the LLM to format markdown tables. See
+    # examples/lci-mini/skills/xql/tools.py for the push side.
+    xql_mod = sys.modules.get("openbench_skill_xql")
+    render_items_fn = None
+    clear_render_items_fn = None
+    if xql_mod is not None:
+        render_items_fn = getattr(xql_mod, "get_render_items", None)
+        clear_render_items_fn = getattr(xql_mod, "clear_render_items", None)
+
+    engine = ChatEngine(
+        agent=agent,
+        render_items_fn=render_items_fn,
+        clear_render_items_fn=clear_render_items_fn,
+    )
 
     db_path = os.getenv("LCI_MINI_MEMORY_DB", "lci_mini_memory.db")
     agui_handler = LiciAGUIHandler(engine=engine, db_path=db_path)

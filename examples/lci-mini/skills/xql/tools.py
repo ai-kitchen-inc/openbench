@@ -112,10 +112,92 @@ def get_uploaded_files() -> list[str]:
     return list(_UPLOADED_FILES.get() or [])
 
 
+# Per-request render-items queue — tool functions push A2UI-ready items
+# into this list so ChatEngine can render them as rich components (ObTable,
+# ObChart, etc.) via its render_items_fn hook. Same pattern as
+# examples/lci-ignite-x/src/lci_ignite/intelligence/tools.py so the chat UI
+# gets a proper ObTable widget instead of asking the LLM to format markdown.
+_RENDER_ITEMS: contextvars.ContextVar[list[dict] | None] = contextvars.ContextVar(
+    "lci_mini_xql_render_items", default=None
+)
+
+
+def _get_render_list() -> list[dict]:
+    """Return the mutable render-items list for this request."""
+    items = _RENDER_ITEMS.get()
+    if items is None:
+        items = []
+        _RENDER_ITEMS.set(items)
+    return items
+
+
+def get_render_items() -> list[dict]:
+    """Return a shallow copy of the current render queue.
+
+    Called by ChatEngine (via render_items_fn) after the agent finishes
+    executing to extract UI components tools want to render.
+    """
+    return list(_get_render_list())
+
+
+def clear_render_items() -> None:
+    """Reset the render queue. Called by ChatEngine before each request."""
+    _RENDER_ITEMS.set([])
+
+
+def _push_table_item(
+    df: pd.DataFrame | list[dict],
+    title: str,
+    caption: str | None = None,
+    max_rows: int = 50,
+) -> None:
+    """Push a table-shaped render item onto the queue.
+
+    Accepts either a DataFrame or a list-of-dicts. Converts to the
+    ``{headers, rows}`` shape TableRenderer detects. Rows are coerced to
+    strings for display. If more than ``max_rows`` rows are present, only
+    the first ``max_rows`` are shown and the caption notes the truncation.
+    """
+    frame = df if isinstance(df, pd.DataFrame) else pd.DataFrame(df)
+
+    total = len(frame)
+    if total == 0:
+        return  # nothing to render
+
+    truncated = False
+    if total > max_rows:
+        frame = frame.head(max_rows)
+        truncated = True
+
+    headers = [str(c) for c in frame.columns]
+    rows: list[list[str]] = []
+    for _, row in frame.iterrows():
+        rows.append(
+            ["" if pd.isna(v) else (f"{v:g}" if isinstance(v, float) else str(v)) for v in row]
+        )
+
+    final_caption = caption
+    if truncated:
+        extra = f"Showing {max_rows} of {total} rows."
+        final_caption = f"{caption} — {extra}" if caption else extra
+
+    item = {
+        "headers": headers,
+        "rows": rows,
+        "title": title,
+    }
+    if final_caption:
+        item["caption"] = final_caption
+
+    items = _get_render_list()
+    items.append(item)
+
+
 def _reset_state() -> None:
     """Clear the catalog. Primarily used by tests."""
     _STATE.clear()
     _UPLOADED_FILES.set(None)
+    _RENDER_ITEMS.set([])
 
 
 # ---------------------------------------------------------------------------
@@ -418,8 +500,18 @@ def xql_describe_table(table_id: str) -> dict:
 
 
 def xql_select(table_id: str, limit: int | None = 50) -> dict:
-    """Return rows from a table, optionally limited."""
+    """Return rows from a table, optionally limited.
+
+    Also pushes a rich ObTable render item so the chat UI shows the
+    result visually, independent of whatever text the LLM returns.
+    """
     meta = _get_table(table_id)
+    display_df = meta.df.head(limit) if limit else meta.df
+    _push_table_item(
+        display_df,
+        title=f"SELECT * FROM {table_id}",
+        caption=f"{len(display_df)} of {len(meta.df)} rows",
+    )
     return {
         "table_id": table_id,
         "rows": _df_to_records(meta.df, limit=limit),
@@ -432,6 +524,12 @@ def xql_project(table_id: str, columns: list[str], limit: int | None = 50) -> di
     meta = _get_table(table_id)
     resolved = [_resolve_alias(meta.alias_map, c) for c in columns]
     projected = meta.df[resolved]
+    display = projected.head(limit) if limit else projected
+    _push_table_item(
+        display,
+        title=f"SELECT {', '.join(resolved)} FROM {table_id}",
+        caption=f"{len(display)} of {len(projected)} rows",
+    )
     return {
         "table_id": table_id,
         "columns": resolved,
@@ -452,11 +550,19 @@ def xql_where(
     """
     meta = _get_table(table_id)
     df = meta.df
+    cond_strs: list[str] = []
     for cond in conditions:
         col, op, *rest = cond
         value = rest[0] if rest else None
         physical = _resolve_alias(meta.alias_map, col)
         df = _apply_condition(df, physical, op, value)
+        cond_strs.append(f"{col} {op} {value}")
+    display = df.head(limit) if limit else df
+    _push_table_item(
+        display,
+        title=f"WHERE {' AND '.join(cond_strs)}",
+        caption=(f"{len(display)} of {len(df)} filtered rows (table had {len(meta.df)} total)"),
+    )
     return {
         "table_id": table_id,
         "rows": _df_to_records(df, limit=limit),
@@ -484,6 +590,13 @@ def xql_order(
         )
     except (ValueError, TypeError):
         sorted_df = meta.df.sort_values(physical, ascending=ascending)
+    display = sorted_df.head(limit) if limit else sorted_df
+    direction = "ASC" if ascending else "DESC"
+    _push_table_item(
+        display,
+        title=f"ORDER BY {by} {direction}",
+        caption=f"{len(display)} of {len(sorted_df)} rows",
+    )
     return {
         "table_id": table_id,
         "rows": _df_to_records(sorted_df, limit=limit),
@@ -496,6 +609,11 @@ def xql_distinct(table_id: str, columns: list[str]) -> dict:
     meta = _get_table(table_id)
     resolved = [_resolve_alias(meta.alias_map, c) for c in columns]
     unique = meta.df[resolved].drop_duplicates().reset_index(drop=True)
+    _push_table_item(
+        unique,
+        title=f"DISTINCT {', '.join(resolved)}",
+        caption=f"{len(unique)} unique combinations",
+    )
     return {
         "table_id": table_id,
         "columns": resolved,
@@ -585,6 +703,13 @@ def xql_group(
         for col, (op, value) in having.items():
             grouped = _apply_condition(grouped, col, op, value)
 
+    display = grouped.head(limit) if limit else grouped
+    agg_desc = ", ".join(f"{c}={fn}" for c, fn in resolved_agg.items())
+    _push_table_item(
+        display,
+        title=f"GROUP BY {', '.join(group_cols)} — {agg_desc}",
+        caption=f"{len(display)} of {len(grouped)} groups",
+    )
     return {
         "table_id": table_id,
         "group_by": group_cols,
@@ -659,6 +784,23 @@ def xql_pareto(
             }
         )
 
+    # Build render dataframe with formatted share/cumulative columns so
+    # the UI shows percentages instead of raw floats.
+    render_df = pd.DataFrame(result_rows).copy()
+    if "share" in render_df.columns:
+        render_df["share"] = render_df["share"].map(lambda v: f"{float(v) * 100:.1f}%")
+    if "cumulative" in render_df.columns:
+        render_df["cumulative"] = render_df["cumulative"].map(lambda v: f"{float(v) * 100:.1f}%")
+    _push_table_item(
+        render_df,
+        title=(f"PARETO {int(threshold * 100)}% — {group_col} by SUM({value_physical})"),
+        caption=(
+            f"{int(hotspot_mask.sum())} hotspots + "
+            f"{int((~hotspot_mask).sum())} rolled into '{bucket_label}' "
+            f"(total={total:g})"
+        ),
+    )
+
     return {
         "table_id": table_id,
         "group_by": group_col,
@@ -697,6 +839,12 @@ def xql_join(
         how=how,
         suffixes=("_left", "_right"),
     )
+    display = merged.head(limit) if limit else merged
+    _push_table_item(
+        display,
+        title=f"{how.upper()} JOIN {left} ⋈ {right} ON {', '.join(on)}",
+        caption=f"{len(display)} of {len(merged)} matched rows",
+    )
     return {
         "left": left,
         "right": right,
@@ -720,6 +868,12 @@ def xql_union(tables: list[str], align_by: str = "alias", limit: int | None = 50
         else:
             frames.append(meta.df)
     stacked = pd.concat(frames, ignore_index=True, sort=False)
+    display = stacked.head(limit) if limit else stacked
+    _push_table_item(
+        display,
+        title=f"UNION {', '.join(tables)}",
+        caption=f"{len(display)} of {len(stacked)} stacked rows (align={align_by})",
+    )
     return {
         "tables": tables,
         "align_by": align_by,
@@ -749,6 +903,12 @@ def xql_pivot(
         index=idx, columns=col, values=val, aggfunc=aggfunc, fill_value=0
     ).reset_index()
     pivoted.columns = [str(c) for c in pivoted.columns]
+    display = pivoted.head(limit) if limit else pivoted
+    _push_table_item(
+        display,
+        title=f"PIVOT {table_id} — {index} x {columns} = {aggfunc}({values})",
+        caption=f"{len(display)} of {len(pivoted)} rows",
+    )
     return {
         "table_id": table_id,
         "rows": _df_to_records(pivoted, limit=limit),
@@ -859,6 +1019,24 @@ def xql_build_io_table(
                     "cumulative": 1.0,
                 }
             )
+
+        # Push a per-category render table so the UI shows each section
+        # as its own ObTable (matches how PROPER IO tables are presented).
+        cat_render = pd.DataFrame(rows).copy()
+        if "share" in cat_render.columns:
+            cat_render["share"] = cat_render["share"].map(lambda v: f"{float(v) * 100:.1f}%")
+        if "cumulative" in cat_render.columns:
+            cat_render["cumulative"] = cat_render["cumulative"].map(
+                lambda v: f"{float(v) * 100:.1f}%"
+            )
+        _push_table_item(
+            cat_render,
+            title=f"IO Table — {category_value}",
+            caption=(
+                f"grouped by {group_col} ({rule}), {int(hotspot_mask.sum())} "
+                f"hotspot(s), total={total:g}"
+            ),
+        )
 
         categories_out.append(
             {
