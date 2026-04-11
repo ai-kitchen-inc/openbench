@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Request, UploadFile
@@ -36,7 +37,12 @@ def create_app() -> FastAPI:
     agui_handler = LiciAGUIHandler(engine=engine, db_path=db_path)
     action_handler = AGUIActionHandler(engine=engine)
 
-    upload_dir = os.getenv("LCI_MINI_UPLOAD_DIR", "./uploads")
+    # upload_dir defaults to <example_root>/uploads/ — absolute path so the
+    # file store works regardless of which directory uvicorn was launched
+    # from (CLI, manual, Cloud Run, etc).
+    default_upload_dir = get_persona_dir().parent / "uploads"
+    upload_dir = os.getenv("LCI_MINI_UPLOAD_DIR", str(default_upload_dir))
+    upload_dir = str(Path(upload_dir).expanduser().resolve())
     os.makedirs(upload_dir, exist_ok=True)
     file_store = FileStore(upload_dir=upload_dir)
     extractor = FileContentExtractor()
@@ -152,6 +158,10 @@ def create_app() -> FastAPI:
             file.content_type or "application/octet-stream",
         )
         stored.extracted_text = await asyncio.to_thread(extractor.extract, stored)
+        print(
+            f"  [upload] id={stored.id} name={stored.name!r} "
+            f"size={stored.size_bytes}B path={stored.path}"
+        )
         attachment = stored.to_attachment(base_url="/uploads")
         result = attachment.to_dict()
         if stored.extracted_text:
@@ -168,6 +178,7 @@ def create_app() -> FastAPI:
         attachments_list = forwarded.get("attachments") or body.get("attachments") or []
 
         file_paths: list[str] = []
+        unresolved: list[str] = []
         for att in attachments_list:
             file_id = att.get("id")
             if not file_id:
@@ -175,6 +186,16 @@ def create_app() -> FastAPI:
             stored = file_store.get(file_id)
             if stored is not None:
                 file_paths.append(stored.path)
+            else:
+                unresolved.append(file_id)
+
+        if attachments_list:
+            print(
+                f"  [awp] {len(attachments_list)} attachment(s): "
+                f"resolved={len(file_paths)} unresolved={unresolved}"
+            )
+            if file_paths:
+                print(f"  [awp]   paths: {file_paths}")
 
         # Push resolved paths into the xql skill's ContextVar so xql_catalog
         # can pick them up without the LLM having to know the disk path.
