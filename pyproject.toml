@@ -164,6 +164,12 @@ warn_return_any = false
 disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = false
+# SDK skills are loaded at runtime via importlib.util.spec_from_file_location
+# with unique module names. mypy's static module resolver sees the multiple
+# `tools.py` files as duplicates, which isn't meaningful for runtime behavior.
+exclude = [
+    "src/openbench/skills/",
+]
 
 [[tool.mypy.overrides]]
 module = [
