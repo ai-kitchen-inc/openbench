@@ -7,7 +7,6 @@ export default defineConfig({
     dedupe: ["react", "react-dom"],
   },
   server: {
-    port: 5174,
     proxy: {
       "/awp": { target: "http://localhost:8004", changeOrigin: true },
       "/chat/action": { target: "http://localhost:8004", changeOrigin: true },
