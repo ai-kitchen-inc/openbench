@@ -478,6 +478,7 @@ class BaseAgent(Agent):
         temperature: float = 0.7,
         max_iterations: int = 10,
         system_prompt: str | None = None,
+        persona: Any = None,
         provider_name: str | None = None,
         store: DataStore | None = None,
         retrieval_top_k: int = 5,
@@ -498,7 +499,10 @@ class BaseAgent(Agent):
             model: LLM model to use (defaults to config llm.default_model)
             temperature: Model temperature
             max_iterations: Max tool call iterations
-            system_prompt: Custom system prompt (optional)
+            system_prompt: Custom system prompt string (optional, legacy)
+            persona: Agent persona — Path/str to soul/ directory or Persona instance.
+                When provided, takes precedence over system_prompt= and composes
+                SOUL.md + STYLE.md + AGENTS.md into the system prompt.
             provider_name: Specific provider name (uses default if None)
             store: Optional DataStore for RAG (retrieval-augmented generation)
             retrieval_top_k: Number of results to retrieve from store
@@ -582,9 +586,51 @@ class BaseAgent(Agent):
         else:
             self.memory = AgentMemory()
 
-        # Set system prompt (only if memory is empty — persistent may already have it)
-        self._system_prompt = system_prompt or self._default_system_prompt()
-        if not self.memory.messages or self.memory.messages[0].role != MessageRole.SYSTEM:
+        # Resolve persona to system_prompt (persona takes precedence)
+        self._persona = None
+        if persona is not None:
+            from pathlib import Path
+
+            from openbench.intelligence.persona import Persona
+
+            if system_prompt:
+                import warnings
+
+                warnings.warn(
+                    "Both persona= and system_prompt= provided. "
+                    "persona= takes precedence; system_prompt= is ignored.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            if isinstance(persona, (str, Path)):
+                self._persona = Persona.from_dir(persona)
+            elif isinstance(persona, Persona):
+                self._persona = persona
+            else:
+                raise TypeError(
+                    f"persona must be str, Path, or Persona instance, got {type(persona).__name__}"
+                )
+            # Fix #2: persona= explicitly sets identity — no fallback to default
+            self._system_prompt = self._persona.compose()
+        elif system_prompt:
+            self._system_prompt = system_prompt
+        else:
+            self._system_prompt = self._default_system_prompt()
+
+        # Add system message to memory.
+        # Fix #1: when persona= is provided, it represents the authoritative
+        # current identity — replace any existing system message from a
+        # resumed PersistentMemory session, even if persona files have changed.
+        if persona is not None:
+            if self.memory.messages and self.memory.messages[0].role == MessageRole.SYSTEM:
+                # Replace existing system message in-place
+                self.memory.messages[0] = Message(
+                    role=MessageRole.SYSTEM, content=self._system_prompt
+                )
+            else:
+                self.memory.add_system(self._system_prompt)
+        elif not self.memory.messages or self.memory.messages[0].role != MessageRole.SYSTEM:
+            # Legacy path: only add if no system message exists yet
             self.memory.add_system(self._system_prompt)
 
         # LLM provider (lazy loaded)

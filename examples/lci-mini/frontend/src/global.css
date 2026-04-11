@@ -1,0 +1,111 @@
+/* Reset defaults for fullscreen chat layout */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Fullscreen layout: sidebar + chat panel */
+.chat-layout {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+
+.chat-layout .chat-panel {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+/* Sidebar wraps SessionSidebar + PersonaBadge */
+.lci-mini-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--ob-border);
+  background: var(--ob-bg);
+}
+
+.lci-mini-sidebar .ob-session-sidebar {
+  flex: 1;
+  border-right: none;
+  min-height: 0;
+}
+
+/* ── Persona Badge (footer of sidebar) ── */
+
+.persona-badge {
+  padding: 12px 16px;
+  border-top: 1px solid var(--ob-border);
+  font-size: 12px;
+  color: var(--ob-text-secondary);
+  background: var(--ob-bg);
+}
+
+.persona-badge__title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--ob-text);
+  letter-spacing: 0.01em;
+}
+
+.persona-badge__row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.persona-badge__row--total {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--ob-border);
+  color: var(--ob-text);
+  font-weight: 500;
+}
+
+.persona-badge--empty {
+  text-align: center;
+  color: var(--ob-text-muted, var(--ob-text-secondary));
+  font-style: italic;
+}
+
+/* ── Theme Toggle Button ── */
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--ob-text-secondary);
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.theme-toggle:hover {
+  background: var(--ob-border);
+  color: var(--ob-text);
+}

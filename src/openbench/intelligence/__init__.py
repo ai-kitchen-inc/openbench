@@ -46,6 +46,9 @@ from openbench.intelligence.llm_providers import GeminiLLMProvider
 # Memory (persistent conversation memory)
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
 
+# Persona Layer (file-based agent identity)
+from openbench.intelligence.persona import Persona
+
 # Planning (task decomposition)
 from openbench.intelligence.planning import TaskPlan, TaskPlanner
 
@@ -74,6 +77,8 @@ __all__ = [
     "MessageRole",
     # LLM providers
     "GeminiLLMProvider",
+    # Persona Layer
+    "Persona",
     # Memory
     "PersistentMemory",
     "SQLiteMemoryStore",
