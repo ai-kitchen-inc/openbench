@@ -10,6 +10,8 @@ export default defineConfig({
     proxy: {
       "/awp": { target: "http://localhost:8004", changeOrigin: true },
       "/chat/action": { target: "http://localhost:8004", changeOrigin: true },
+      "/chat/upload": { target: "http://localhost:8004", changeOrigin: true },
+      "/uploads": { target: "http://localhost:8004", changeOrigin: true },
       "/persona": { target: "http://localhost:8004", changeOrigin: true },
       "/skills": { target: "http://localhost:8004", changeOrigin: true },
     },
