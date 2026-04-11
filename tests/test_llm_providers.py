@@ -758,6 +758,184 @@ class TestGeminiLLMProviderGenerateStream(unittest.TestCase):
         self.assertTrue(hasattr(results[0], "tool_calls"))
         self.assertEqual(results[0].tool_calls[0]["name"], "search")
 
+    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
+    def test_stream_tool_calls_in_earlier_chunk_not_last(self, mock_get_client):
+        """Regression: function_call parts emitted in an EARLIER chunk must
+        still be captured. Before the fix, generate_stream only looked at
+        the last chunk, so function calls that arrived mid-stream silently
+        vanished and the caller saw "Model returned no text output".
+        """
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        fc = MagicMock()
+        fc.name = "do_thing"
+        fc.args = {"x": 1}
+
+        chunks = [
+            # Tool call arrives on the first chunk...
+            self._make_chunk(function_call=fc),
+            # ...but a later usage-only chunk is the LAST one.
+            self._make_chunk(usage={"prompt": 11000, "completion": 24, "total": 11024}),
+        ]
+        # Ensure the last chunk has no parts at all
+        chunks[-1].candidates[0].content.parts = []
+        mock_client.models.generate_content_stream.return_value = iter(chunks)
+
+        results = list(self.provider.generate_stream("test", model="gemini-3-flash-preview"))
+
+        # Exactly one final response with the tool call attached
+        self.assertEqual(len(results), 1)
+        self.assertTrue(hasattr(results[0], "tool_calls"))
+        self.assertEqual(len(results[0].tool_calls), 1)
+        self.assertEqual(results[0].tool_calls[0]["name"], "do_thing")
+        self.assertEqual(results[0].tool_calls[0]["arguments"], {"x": 1})
+        # Usage from the last chunk still propagates
+        self.assertEqual(results[0].tokens_used, 11024)
+
+    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
+    def test_stream_multiple_tool_calls_across_chunks(self, mock_get_client):
+        """Multiple function_call parts split across chunks are all captured
+        with unique call ids."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        fc1 = MagicMock(name="fc1")
+        fc1.name = "search"
+        fc1.args = {"q": "a"}
+        fc2 = MagicMock(name="fc2")
+        fc2.name = "calculate"
+        fc2.args = {"expr": "1+1"}
+
+        chunks = [
+            self._make_chunk(function_call=fc1),
+            self._make_chunk(function_call=fc2),
+            self._make_chunk(usage={"prompt": 10, "completion": 30, "total": 40}),
+        ]
+        chunks[-1].candidates[0].content.parts = []
+        mock_client.models.generate_content_stream.return_value = iter(chunks)
+
+        results = list(self.provider.generate_stream("test", model="gemini-2.5-flash"))
+
+        self.assertEqual(len(results), 1)
+        tool_calls = results[0].tool_calls
+        self.assertEqual(len(tool_calls), 2)
+        self.assertEqual({tc["name"] for tc in tool_calls}, {"search", "calculate"})
+        # Unique ids (no collisions from restarting the counter per chunk)
+        self.assertEqual(len({tc["id"] for tc in tool_calls}), 2)
+
+    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
+    def test_stream_empty_response_includes_diagnostics(self, mock_get_client):
+        """Empty response must surface diagnostics in metadata so the caller
+        can see WHY the model returned nothing."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        chunks = [
+            self._make_chunk(
+                text="Internal reasoning…",
+                thought=True,
+                usage={"prompt": 11000, "completion": 14, "total": 11014},
+            ),
+        ]
+        # Simulate finish_reason = "MAX_TOKENS" on the final chunk
+        chunks[-1].candidates[0].finish_reason = "MAX_TOKENS"
+        mock_client.models.generate_content_stream.return_value = iter(chunks)
+
+        results = list(self.provider.generate_stream("test", model="gemini-3-flash-preview"))
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].text, "")
+        diagnostics = results[0].metadata.get("empty_response_diagnostics")
+        self.assertIsNotNone(diagnostics, "metadata must carry diagnostics")
+        self.assertEqual(diagnostics["finish_reason"], "MAX_TOKENS")
+        self.assertEqual(diagnostics["part_types"]["thought"], 1)
+        self.assertEqual(diagnostics["part_types"]["text"], 0)
+
+
+class TestGeminiLLMProviderDescribeResponseParts(unittest.TestCase):
+    """Tests for the _describe_response_parts diagnostic helper."""
+
+    def setUp(self):
+        from openbench.intelligence.llm_providers import GeminiLLMProvider
+
+        self.provider = GeminiLLMProvider(api_key="test")
+
+    def _make_part(
+        self,
+        text=None,
+        thought=False,
+        function_call=None,
+        inline_data=None,
+        thought_signature=None,
+    ):
+        part = MagicMock(
+            spec=[
+                "text",
+                "thought",
+                "function_call",
+                "inline_data",
+                "thought_signature",
+                "executable_code",
+            ]
+        )
+        part.text = text
+        part.thought = thought
+        part.function_call = function_call
+        part.inline_data = inline_data
+        part.thought_signature = thought_signature
+        part.executable_code = None
+        return part
+
+    def _make_response(self, parts, finish_reason=None, block_reason=None):
+        candidate = MagicMock()
+        candidate.content.parts = parts
+        candidate.finish_reason = finish_reason
+        response = MagicMock()
+        response.candidates = [candidate]
+        if block_reason is not None:
+            response.prompt_feedback.block_reason = block_reason
+        else:
+            response.prompt_feedback = None
+        return response
+
+    def test_counts_mixed_part_types(self):
+        fc = MagicMock()
+        fc.name = "x"
+        parts = [
+            self._make_part(text="Hello"),
+            self._make_part(text="Thinking", thought=True),
+            self._make_part(function_call=fc),
+        ]
+        result = self.provider._describe_response_parts(
+            self._make_response(parts, finish_reason="STOP")
+        )
+        self.assertEqual(result["part_types"]["text"], 1)
+        self.assertEqual(result["part_types"]["thought"], 1)
+        self.assertEqual(result["part_types"]["function_call"], 1)
+        self.assertEqual(result["finish_reason"], "STOP")
+
+    def test_detects_thought_signature(self):
+        parts = [
+            self._make_part(text="Thinking", thought=True, thought_signature=b"sig"),
+        ]
+        result = self.provider._describe_response_parts(self._make_response(parts))
+        self.assertTrue(result["has_thought_signature"])
+
+    def test_surfaces_block_reason(self):
+        result = self.provider._describe_response_parts(
+            self._make_response([], block_reason="SAFETY")
+        )
+        self.assertEqual(result["block_reason"], "SAFETY")
+
+    def test_empty_response_is_safe(self):
+        response = MagicMock()
+        response.candidates = []
+        response.prompt_feedback = None
+        result = self.provider._describe_response_parts(response)
+        self.assertEqual(result["finish_reason"], None)
+        self.assertEqual(result["part_types"]["text"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

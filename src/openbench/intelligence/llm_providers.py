@@ -277,14 +277,17 @@ class GeminiLLMProvider(LLMProvider):
 
         return "".join(text_parts)
 
-    def _extract_tool_calls(self, response) -> list[dict[str, Any]]:
-        """Extract tool calls from Gemini response.
+    def _extract_tool_calls(self, response, id_offset: int = 0) -> list[dict[str, Any]]:
+        """Extract tool calls from a Gemini response or stream chunk.
 
         Converts Gemini's function_calls to the dict format that
         BaseAgent._parse_tool_calls() expects.
 
         Args:
-            response: Gemini API response object.
+            response: Gemini API response or stream chunk.
+            id_offset: Starting index for generated ``call_<n>`` ids.
+                Used when accumulating tool calls across stream chunks
+                so each call gets a unique id.
 
         Returns:
             List of tool call dicts with id, name, arguments.
@@ -302,13 +305,81 @@ class GeminiLLMProvider(LLMProvider):
                 fc = part.function_call
                 tool_calls.append(
                     {
-                        "id": f"call_{i}",
+                        "id": f"call_{id_offset + i}",
                         "name": fc.name,
                         "arguments": dict(fc.args) if fc.args else {},
                     }
                 )
 
         return tool_calls
+
+    @staticmethod
+    def _describe_response_parts(response: Any) -> dict[str, Any]:
+        """Summarize what parts a Gemini response/chunk actually contains.
+
+        Used by the "no text output" diagnostic path so we can tell
+        *why* a response looked empty — was it filtered thoughts, a
+        safety block, a truncated generation, or something else?
+
+        Returns a dict with:
+            - finish_reason: str | None
+            - block_reason: str | None   (from prompt_feedback)
+            - part_types: dict[str, int] counts of text / function_call /
+                          thought / inline_data / executable_code / other
+            - has_thought_signature: bool
+        """
+        out: dict[str, Any] = {
+            "finish_reason": None,
+            "block_reason": None,
+            "part_types": {
+                "text": 0,
+                "function_call": 0,
+                "thought": 0,
+                "inline_data": 0,
+                "executable_code": 0,
+                "other": 0,
+            },
+            "has_thought_signature": False,
+        }
+
+        # Prompt-level block (safety, recitation, etc.)
+        feedback = getattr(response, "prompt_feedback", None)
+        if feedback is not None:
+            br = getattr(feedback, "block_reason", None)
+            if br:
+                out["block_reason"] = str(br)
+
+        if not hasattr(response, "candidates") or not response.candidates:
+            return out
+
+        candidate = response.candidates[0]
+
+        fr = getattr(candidate, "finish_reason", None)
+        if fr is not None:
+            out["finish_reason"] = str(fr)
+
+        content = getattr(candidate, "content", None)
+        if content is None:
+            return out
+
+        parts = getattr(content, "parts", None) or []
+        for part in parts:
+            if getattr(part, "thought", False):
+                out["part_types"]["thought"] += 1
+            elif getattr(part, "function_call", None):
+                out["part_types"]["function_call"] += 1
+            elif getattr(part, "text", None):
+                out["part_types"]["text"] += 1
+            elif getattr(part, "inline_data", None):
+                out["part_types"]["inline_data"] += 1
+            elif getattr(part, "executable_code", None):
+                out["part_types"]["executable_code"] += 1
+            else:
+                out["part_types"]["other"] += 1
+            if getattr(part, "thought_signature", None):
+                out["has_thought_signature"] = True
+
+        return out
 
     def _estimate_cost(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
         """Estimate cost in USD based on token usage.
@@ -456,15 +527,34 @@ class GeminiLLMProvider(LLMProvider):
                 except Exception:
                     text = ""
 
+        response_metadata: dict[str, Any] = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+        }
+
+        # Same diagnostic as generate_stream: if we get nothing visible
+        # back from the model, surface *why* — otherwise the caller just
+        # sees an empty assistant turn with no clue what happened.
+        if not text and not tool_calls:
+            diagnostics = self._describe_response_parts(response)
+            logger.warning(
+                "Model %s returned no text output "
+                "(prompt_tokens=%s, completion_tokens=%s, diagnostics=%s). "
+                "This may be a Gemini 3 Confidence Dropout, a safety block, "
+                "or a truncated reasoning turn.",
+                model,
+                prompt_tokens,
+                completion_tokens,
+                diagnostics,
+            )
+            response_metadata["empty_response_diagnostics"] = diagnostics
+
         llm_response = LLMResponse(
             text=text,
             model=model,
             tokens_used=total_tokens,
             cost=cost,
-            metadata={
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-            },
+            metadata=response_metadata,
         )
 
         # Attach tool_calls for BaseAgent._parse_tool_calls()
@@ -526,9 +616,19 @@ class GeminiLLMProvider(LLMProvider):
         if tools_param:
             config.tools = self._convert_tools(tools_param)
 
-        # Stream from Gemini API
+        # Stream from Gemini API.
+        #
+        # IMPORTANT: function_call parts can arrive in any chunk — not
+        # necessarily the last one — so we must accumulate them across
+        # the entire stream. The old code only looked at the final chunk
+        # and silently dropped function calls emitted mid-stream, which
+        # surfaced as "Model returned no text output" warnings.
         last_chunk = None
         has_text = False
+        tool_calls: list[dict[str, Any]] = []
+        tool_call_chunk: Any = None  # chunk that held the first tool call (for raw_content)
+        part_summary: dict[str, Any] | None = None
+
         for chunk in client.models.generate_content_stream(
             model=model,
             contents=contents,
@@ -539,10 +639,16 @@ class GeminiLLMProvider(LLMProvider):
             # Extract answer text from parts, filtering out thought parts
             # (Gemini 3+) and function_call parts.
             text = self._extract_text_from_parts(chunk)
-
             if text:
                 has_text = True
                 yield LLMResponse(text=text, model=model, tokens_used=0, cost=0.0)
+
+            # Accumulate tool calls as they stream in.
+            chunk_calls = self._extract_tool_calls(chunk, id_offset=len(tool_calls))
+            if chunk_calls:
+                if tool_call_chunk is None:
+                    tool_call_chunk = chunk
+                tool_calls.extend(chunk_calls)
 
         # Extract token usage from last chunk
         prompt_tokens = 0
@@ -557,11 +663,9 @@ class GeminiLLMProvider(LLMProvider):
 
         cost = self._estimate_cost(model, prompt_tokens, completion_tokens)
 
-        # Check for tool calls in the last chunk
-        tool_calls = self._extract_tool_calls(last_chunk) if last_chunk else []
-
         if tool_calls:
-            # Yield final response with tool calls (text="" for tool-only responses)
+            # Yield final response with accumulated tool calls
+            # (text="" for tool-only responses).
             final = LLMResponse(
                 text="",
                 model=model,
@@ -574,22 +678,37 @@ class GeminiLLMProvider(LLMProvider):
             )
             final.tool_calls = tool_calls
 
-            # Store raw content for replay
-            if last_chunk and hasattr(last_chunk, "candidates") and last_chunk.candidates:
-                candidate = last_chunk.candidates[0]
+            # Store raw content for replay. Prefer the chunk that actually
+            # carried the function_call parts (preserves thought_signature
+            # + function_call together for Gemini 2.5+/3 replay); fall
+            # back to the last chunk if we lost track.
+            source = tool_call_chunk or last_chunk
+            if source and hasattr(source, "candidates") and source.candidates:
+                candidate = source.candidates[0]
                 if hasattr(candidate, "content") and candidate.content:
                     final.raw_content = candidate.content
 
             yield final
 
         elif not has_text:
-            # Model produced no text and no tool calls (Gemini 3 "Confidence
-            # Dropout" or empty response). Log warning and yield a final
-            # response so callers still get usage metadata.
+            # Model produced no text AND no tool calls. Could be:
+            #  - Gemini 3 Confidence Dropout (thoughts only, no commit)
+            #  - Safety / recitation block
+            #  - MAX_TOKENS hit before any visible output
+            #  - True empty response
+            # Dump part-type counts + finish_reason so the caller can tell
+            # which one it was. Without this diagnostic the warning is
+            # indistinguishable from "something is broken".
+            part_summary = self._describe_response_parts(last_chunk) if last_chunk else None
             logger.warning(
-                f"Model {model} returned no text output "
-                f"(prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens}). "
-                "This may be a known issue with Gemini 3 preview models."
+                "Model %s returned no text output "
+                "(prompt_tokens=%s, completion_tokens=%s, diagnostics=%s). "
+                "This may be a Gemini 3 Confidence Dropout, a safety block, "
+                "or a truncated reasoning turn.",
+                model,
+                prompt_tokens,
+                completion_tokens,
+                part_summary,
             )
             yield LLMResponse(
                 text="",
@@ -599,6 +718,7 @@ class GeminiLLMProvider(LLMProvider):
                 metadata={
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
+                    "empty_response_diagnostics": part_summary,
                 },
             )
 
