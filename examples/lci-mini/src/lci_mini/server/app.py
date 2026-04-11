@@ -54,7 +54,18 @@ def create_app() -> FastAPI:
             print(f"  SOUL.md        : {summary['soul_chars']:>5} chars")
             print(f"  STYLE.md       : {summary['style_chars']:>5} chars")
             print(f"  AGENTS.md      : {summary['agents_chars']:>5} chars")
-            print(f"  Total prompt   : {summary['total_chars']:>5} chars")
+            print(f"  Persona total  : {summary['total_chars']:>5} chars")
+        if agent._skill_registry:
+            skill_summary = agent._skill_registry.summary()
+            print(
+                f"  Skills loaded  : {skill_summary['total']} "
+                f"(tools={skill_summary['total_tools']}, "
+                f"context={skill_summary['context_chars']} chars)"
+            )
+            for s in agent._skill_registry.all():
+                tool_names = [name for name, _, _ in s.tools]
+                label = f"tools={tool_names}" if tool_names else "knowledge-only"
+                print(f"    - {s.name} v{s.version}: {label}")
         print(f"  Memory DB      : {db_path}")
         print("  AG-UI          : POST /awp")
         print("  Actions        : POST /chat/action\n")
@@ -82,6 +93,38 @@ def create_app() -> FastAPI:
             "soul": persona.soul,
             "style": persona.style,
             "agents": persona.agents,
+        }
+
+    @app.get("/skills")
+    async def skills_info() -> dict:
+        """Expose loaded skills so the UI can show which capabilities are wired.
+
+        Returns one entry per skill with name, version, source path, tool
+        names, and reference files. Used by the frontend sidebar badge to
+        render a compact skill inventory.
+        """
+        registry = agent._skill_registry
+        if registry is None:
+            return {"loaded": False, "skills": []}
+        items = [
+            {
+                "name": skill.name,
+                "version": skill.version,
+                "description": skill.description,
+                "has_tools": skill.has_tools,
+                "tools": [name for name, _, _ in skill.tools],
+                "references": list(skill.references.keys()),
+                "triggers": skill.triggers,
+                "dependencies": skill.dependencies,
+                "source": skill.source,
+                "context_chars": len(skill.get_context()),
+            }
+            for skill in registry.all()
+        ]
+        return {
+            "loaded": True,
+            "summary": registry.summary(),
+            "skills": items,
         }
 
     @app.post("/awp")

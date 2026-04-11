@@ -80,6 +80,80 @@ function PersonaBadge() {
   );
 }
 
+// ── Skill summary (fetched from /skills) ──
+
+type SkillItem = {
+  name: string;
+  version: string;
+  description: string;
+  has_tools: boolean;
+  tools: string[];
+  references: string[];
+  context_chars: number;
+};
+
+type SkillsResponse = {
+  loaded: boolean;
+  summary?: { total: number; total_tools: number; context_chars: number };
+  skills: SkillItem[];
+};
+
+function SkillBadge() {
+  const [data, setData] = useState<SkillsResponse | null>(null);
+
+  useEffect(() => {
+    fetch("/skills")
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => setData({ loaded: false, skills: [] }));
+  }, []);
+
+  if (!data) return null;
+  if (!data.loaded || data.skills.length === 0) {
+    return (
+      <div className="skill-badge skill-badge--empty">No skills loaded</div>
+    );
+  }
+
+  return (
+    <div className="skill-badge">
+      <div className="skill-badge__title">
+        Skills loaded ({data.skills.length})
+      </div>
+      {data.skills.map((s) => (
+        <div key={s.name} className="skill-badge__item">
+          <div className="skill-badge__name">
+            {s.name} <span className="skill-badge__version">v{s.version}</span>
+          </div>
+          <div className="skill-badge__meta">
+            {s.references.length > 0 && (
+              <span>
+                {s.references.length} ref
+                {s.references.length === 1 ? "" : "s"}
+              </span>
+            )}
+            {s.tools.length > 0 && (
+              <span>
+                {s.tools.length} tool
+                {s.tools.length === 1 ? "" : "s"}: {s.tools.join(", ")}
+              </span>
+            )}
+            {s.references.length === 0 && s.tools.length === 0 && (
+              <span>empty</span>
+            )}
+          </div>
+        </div>
+      ))}
+      {data.summary && (
+        <div className="persona-badge__row persona-badge__row--total">
+          <span>Skill context</span>
+          <span>{data.summary.context_chars} chars</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Dark mode hook ──
 
 function useDarkMode() {
@@ -146,6 +220,7 @@ function ChatLayout() {
         <div className="lci-mini-sidebar">
           <SessionSidebar />
           <PersonaBadge />
+          <SkillBadge />
         </div>
       )}
       <ChatPanel

@@ -116,18 +116,20 @@ def test_create_lici_agent_wires_persona(monkeypatch):
     assert agent._persona.agents, "AGENTS.md not loaded into agent"
 
 
-def test_agent_system_prompt_is_composed_persona(monkeypatch):
+def test_agent_system_prompt_starts_with_persona(monkeypatch):
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
     agent = create_lici_agent()
 
-    composed = agent._persona.compose()
-    assert agent._system_prompt == composed
+    persona_composed = agent._persona.compose()
 
-    # First memory message is the system message carrying the persona.
+    # System prompt begins with the persona (identity before capabilities)
+    assert agent._system_prompt.startswith(persona_composed)
+
+    # First memory message is the system message carrying the full prompt
     assert agent.memory.messages
     first = agent.memory.messages[0]
     assert first.role == MessageRole.SYSTEM
-    assert first.content == composed
+    assert first.content == agent._system_prompt
     assert "Lici" in first.content
     assert "PROPER" in first.content
 
@@ -179,3 +181,106 @@ def test_persona_endpoint_exposes_composed_prompt(monkeypatch):
         assert data["agents_chars"] > 0
         assert "Lici" in data["soul"]
         assert "PROPER" in data["agents"]
+
+
+# ---------------------------------------------------------------------------
+# Skill Layer integration (Milestone 2)
+# ---------------------------------------------------------------------------
+
+
+def test_skills_dir_exists():
+    from lci_mini import get_skills_dir
+
+    d = get_skills_dir()
+    assert d.is_dir(), f"Skills directory missing: {d}"
+
+
+@pytest.mark.parametrize("skill_name", ["proper-2025", "unit-converter"])
+def test_skill_packages_have_skill_md(skill_name):
+    from lci_mini import get_skills_dir
+
+    skill_md = get_skills_dir() / skill_name / "SKILL.md"
+    assert skill_md.exists(), f"{skill_name}/SKILL.md not found"
+    assert skill_md.stat().st_size > 0
+
+
+def test_get_skill_paths_returns_both():
+    from lci_mini import get_skill_paths
+
+    paths = get_skill_paths()
+    assert len(paths) == 2
+    assert any("proper-2025" in p for p in paths)
+    assert any("unit-converter" in p for p in paths)
+
+
+def test_create_lici_agent_loads_skills(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    agent = create_lici_agent()
+
+    # Registry exists and has both skills
+    assert agent._skill_registry is not None
+    names = {s.name for s in agent._skill_registry.all()}
+    assert names == {"proper-2025", "unit-converter"}
+
+    # Unit-converter tool is registered on the agent's ToolExecutor
+    assert "convert_unit" in agent.tools._tools
+
+
+def test_agent_system_prompt_contains_persona_and_skills(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    agent = create_lici_agent()
+
+    prompt = agent._system_prompt
+    # Persona markers
+    assert "Lici" in prompt
+    # Skill markers
+    assert "proper-2025" in prompt
+    assert "unit-converter" in prompt
+    assert "PROPER 2025" in prompt  # from tiers.md reference
+    assert "convert_unit" in prompt  # from SKILL.md of unit-converter
+
+    # Persona should come before skills in the composed prompt
+    p_idx = prompt.index("Lici")
+    s_idx = prompt.index("# Skill: proper-2025")
+    assert p_idx < s_idx
+
+
+def test_unit_converter_tool_callable(monkeypatch):
+    """The convert_unit tool should be invokable via the agent's executor."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    agent = create_lici_agent()
+
+    result = agent.tools.execute("convert_unit", value=1, from_unit="ton", to_unit="kg")
+    assert result == {"value": 1000.0, "unit": "kg"}
+
+    result = agent.tools.execute("convert_unit", value=1, from_unit="MJ", to_unit="kWh")
+    assert abs(result["value"] - 0.2777777777777778) < 1e-9
+
+
+def test_skills_endpoint_exposes_loaded_skills(monkeypatch):
+    """/skills should return both loaded skills with tool & reference counts."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+
+    from fastapi.testclient import TestClient
+    from lci_mini.server.app import create_app
+
+    with TestClient(create_app()) as client:
+        resp = client.get("/skills")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["loaded"] is True
+        assert data["summary"]["total"] == 2
+        assert data["summary"]["total_tools"] == 1
+
+        by_name = {s["name"]: s for s in data["skills"]}
+        assert set(by_name) == {"proper-2025", "unit-converter"}
+
+        proper = by_name["proper-2025"]
+        assert proper["has_tools"] is False
+        assert proper["tools"] == []
+        assert "tiers.md" in proper["references"]
+
+        uc = by_name["unit-converter"]
+        assert uc["has_tools"] is True
+        assert uc["tools"] == ["convert_unit"]
