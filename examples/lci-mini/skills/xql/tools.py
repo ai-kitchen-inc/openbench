@@ -12,6 +12,7 @@ once and then run many queries against it.
 
 from __future__ import annotations
 
+import contextvars
 from pathlib import Path
 from typing import Any
 
@@ -87,9 +88,33 @@ class _TableMeta:
 _STATE: dict[str, _TableMeta] = {}
 
 
+# ContextVar populated by the server (/awp handler) with the absolute paths of
+# files the user attached to the current chat turn. When xql_catalog is called
+# with files=None, it falls back to this list. This lets Claude just say
+# "catalog the uploaded file" without having to guess a path.
+_UPLOADED_FILES: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "lci_mini_xql_uploaded_files", default=None
+)
+
+
+def set_uploaded_files(paths: list[str] | None) -> None:
+    """Set the list of uploaded file paths for the current request.
+
+    Called by the FastAPI server on every /awp request after resolving
+    attachment IDs to on-disk paths. Pass ``None`` to clear.
+    """
+    _UPLOADED_FILES.set(paths)
+
+
+def get_uploaded_files() -> list[str]:
+    """Return the list of uploaded file paths set by the server."""
+    return list(_UPLOADED_FILES.get() or [])
+
+
 def _reset_state() -> None:
     """Clear the catalog. Primarily used by tests."""
     _STATE.clear()
+    _UPLOADED_FILES.set(None)
 
 
 # ---------------------------------------------------------------------------
@@ -110,9 +135,7 @@ def _resolve_alias(alias_map: dict[str, str], name: str) -> str:
         return name
     # Not an alias and not a physical match — be explicit about what's available
     available = sorted(set(list(alias_map.keys()) + list(alias_map.values())))
-    raise KeyError(
-        f"Column {name!r} not found. Available (aliases + physical): {available}"
-    )
+    raise KeyError(f"Column {name!r} not found. Available (aliases + physical): {available}")
 
 
 def _build_alias_map(columns: list[str]) -> dict[str, str]:
@@ -199,9 +222,7 @@ def _convert_value(value: float, from_unit: str, to_unit: str) -> float:
 
 def _get_table(table_id: str) -> _TableMeta:
     if table_id not in _STATE:
-        raise KeyError(
-            f"Table {table_id!r} not in catalog. Loaded: {sorted(_STATE.keys())}"
-        )
+        raise KeyError(f"Table {table_id!r} not in catalog. Loaded: {sorted(_STATE.keys())}")
     return _STATE[table_id]
 
 
@@ -251,7 +272,7 @@ def _df_to_records(df: pd.DataFrame, limit: int | None = None) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def xql_catalog(files: list[str]) -> dict:
+def xql_catalog(files: list[str] | None = None) -> dict:
     """Register every sheet in every given .xlsx file as a queryable table.
 
     Detects the header row, builds an alias map from config/aliases.yaml,
@@ -259,13 +280,30 @@ def xql_catalog(files: list[str]) -> dict:
     a catalog summary. Calling it again with the same file rebuilds the
     entry for that file.
 
+    If ``files`` is ``None`` or empty, falls back to files the user attached
+    to the current chat turn (set by the server via ``set_uploaded_files``).
+    This is the normal path — Claude doesn't need to know disk paths.
+
     Args:
-        files: Absolute or relative paths to .xlsx workbooks.
+        files: Explicit .xlsx paths, or None to use attached uploads.
 
     Returns:
         Dict with keys ``registered`` (list of table_id) and ``tables``
         (list of per-table metadata, same shape as ``xql_describe_table``).
+        If no files are available, ``error`` explains what the user should do.
     """
+    if not files:
+        files = get_uploaded_files()
+    if not files:
+        return {
+            "registered": [],
+            "tables": [],
+            "error": (
+                "No files to catalog. Ask the user to attach an .xlsx "
+                "workbook to the chat, then call xql_catalog again."
+            ),
+        }
+
     registered: list[str] = []
     table_infos: list[dict] = []
 
@@ -390,9 +428,11 @@ def xql_order(
     # Try numeric sort; fall back to string sort
     try:
         sort_key = pd.to_numeric(meta.df[physical], errors="raise")
-        sorted_df = meta.df.assign(_sort=sort_key).sort_values(
-            "_sort", ascending=ascending
-        ).drop(columns="_sort")
+        sorted_df = (
+            meta.df.assign(_sort=sort_key)
+            .sort_values("_sort", ascending=ascending)
+            .drop(columns="_sort")
+        )
     except (ValueError, TypeError):
         sorted_df = meta.df.sort_values(physical, ascending=ascending)
     return {
@@ -447,8 +487,7 @@ def xql_group(
     grouped = df.groupby(group_cols, dropna=False).agg(resolved_agg).reset_index()
     # Flatten column names: "<col>_<agg>"
     grouped.columns = [
-        f"{col}_{resolved_agg[col]}" if col in resolved_agg else col
-        for col in grouped.columns
+        f"{col}_{resolved_agg[col]}" if col in resolved_agg else col for col in grouped.columns
     ]
 
     if having:
@@ -739,9 +778,7 @@ def xql_build_io_table(
 # ---------------------------------------------------------------------------
 
 
-def _fn_schema(
-    name: str, description: str, properties: dict, required: list[str]
-) -> dict:
+def _fn_schema(name: str, description: str, properties: dict, required: list[str]) -> dict:
     return {
         "type": "function",
         "function": {
@@ -759,15 +796,19 @@ def _fn_schema(
 XQL_CATALOG_SCHEMA = _fn_schema(
     "xql_catalog",
     "Register every sheet in each given .xlsx file as a queryable table. "
-    "Must be called before any other xql_* tool.",
+    "Must be called before any other xql_* tool. Call with no arguments "
+    "(or files=[]) to catalog whatever the user has attached to the chat.",
     {
         "files": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "Absolute or relative paths to .xlsx workbooks.",
+            "description": (
+                "Optional. Explicit .xlsx paths. If omitted, the server "
+                "will use files attached to the current chat turn."
+            ),
         }
     },
-    ["files"],
+    [],
 )
 
 XQL_LIST_TABLES_SCHEMA = _fn_schema(

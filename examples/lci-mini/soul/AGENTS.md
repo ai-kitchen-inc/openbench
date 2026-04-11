@@ -37,13 +37,17 @@ data-level questions.
 
 **Behavior:**
 - Ask clarifying questions about the data (unit, boundary, FU basis)
-- If the user references an .xlsx file, use the **xql** skill to catalog
-  sheets and answer questions via SQL-like primitives (SELECT, WHERE,
-  GROUP BY, PARETO, JOIN, BUILD_IO_TABLE)
-- Always call ``xql_catalog`` first — every other xql_* tool needs the
-  table_id it produces
+- If the user attached an .xlsx file to the chat, call ``xql_catalog()``
+  with **NO arguments** — the server passes uploaded paths automatically
+  via a ContextVar. DO NOT guess a disk path, DO NOT look for extracted
+  text in the user message.
+- After cataloging, call ``xql_list_tables()`` to see what sheets are
+  available and pick a table_id to query.
 - Use alias columns (``process``, ``category``, ``material``, ``amount``)
   not physical column names, so queries work across differently-named files
+- For typical questions, chain primitives: ``xql_catalog()`` →
+  ``xql_list_tables()`` → ``xql_where(...)`` → ``xql_group(...)`` →
+  ``xql_order(...)`` or go straight to ``xql_pareto(...)`` / ``xql_build_io_table(...)``
 - Help interpret Pareto results — WHY is CO2 the top hotspot, not just THAT
   it is
 - Suggest what to look for in the data (unit mismatches, missing flows,

@@ -7,10 +7,12 @@ persistent memory.
 
 from __future__ import annotations
 
+import asyncio
 import os
+import sys
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from lci_mini.agent import create_lici_agent, get_persona_dir
 from lci_mini.server.handler import LiciAGUIHandler
 from openbench.chat import ChatEngine
+from openbench.chat.files import FileContentExtractor, FileStore
 from openbench.chat.transport import AGUIActionHandler
 
 
@@ -33,7 +36,12 @@ def create_app() -> FastAPI:
     agui_handler = LiciAGUIHandler(engine=engine, db_path=db_path)
     action_handler = AGUIActionHandler(engine=engine)
 
-    app = FastAPI(title="LCI Mini — Persona Layer Demo")
+    upload_dir = os.getenv("LCI_MINI_UPLOAD_DIR", "./uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    file_store = FileStore(upload_dir=upload_dir)
+    extractor = FileContentExtractor()
+
+    app = FastAPI(title="LCI Mini — Persona + Skill Layer Demo")
 
     app.add_middleware(
         CORSMiddleware,
@@ -67,7 +75,9 @@ def create_app() -> FastAPI:
                 label = f"tools={tool_names}" if tool_names else "knowledge-only"
                 print(f"    - {s.name} v{s.version}: {label}")
         print(f"  Memory DB      : {db_path}")
+        print(f"  Upload dir     : {upload_dir}")
         print("  AG-UI          : POST /awp")
+        print("  Upload         : POST /chat/upload")
         print("  Actions        : POST /chat/action\n")
 
     @app.get("/")
@@ -127,8 +137,51 @@ def create_app() -> FastAPI:
             "skills": items,
         }
 
+    @app.post("/chat/upload")
+    async def upload_file(file: UploadFile = File(...)):
+        """Store an uploaded file on disk and return attachment metadata.
+
+        The returned ``id`` is what the frontend includes in subsequent
+        /awp chat requests; the server resolves that id back to a disk
+        path and makes it available to the xql skill.
+        """
+        content = await file.read()
+        stored = file_store.store(
+            file.filename or "unnamed",
+            content,
+            file.content_type or "application/octet-stream",
+        )
+        stored.extracted_text = await asyncio.to_thread(extractor.extract, stored)
+        attachment = stored.to_attachment(base_url="/uploads")
+        result = attachment.to_dict()
+        if stored.extracted_text:
+            result["extractedText"] = stored.extracted_text[:2000]
+        return result
+
     @app.post("/awp")
     async def agent_endpoint(request: Request):
+        """AG-UI endpoint. Resolves attachments, wires them into xql, delegates."""
+        body = await request.json()
+
+        # Attachments can live on forwardedProps.attachments OR top-level
+        forwarded = body.get("forwardedProps") or {}
+        attachments_list = forwarded.get("attachments") or body.get("attachments") or []
+
+        file_paths: list[str] = []
+        for att in attachments_list:
+            file_id = att.get("id")
+            if not file_id:
+                continue
+            stored = file_store.get(file_id)
+            if stored is not None:
+                file_paths.append(stored.path)
+
+        # Push resolved paths into the xql skill's ContextVar so xql_catalog
+        # can pick them up without the LLM having to know the disk path.
+        xql_mod = sys.modules.get("openbench_skill_xql")
+        if xql_mod is not None and hasattr(xql_mod, "set_uploaded_files"):
+            xql_mod.set_uploaded_files(file_paths or None)
+
         return await agui_handler.handle(request)
 
     @app.post("/chat/action")
@@ -138,6 +191,9 @@ def create_app() -> FastAPI:
     @app.get("/chat/actions")
     async def list_actions():
         return {"actions": action_handler.get_registered_actions()}
+
+    # Serve uploaded files for frontend preview links
+    app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
 
     # Optional: serve built frontend in production (Cloud Run single-container mode)
     static_dir = os.environ.get("LCI_MINI_STATIC_DIR")

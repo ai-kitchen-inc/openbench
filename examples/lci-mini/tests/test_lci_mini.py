@@ -154,7 +154,7 @@ def test_fastapi_app_creates_successfully(monkeypatch):
 
     app = create_app()
     assert isinstance(app, FastAPI)
-    assert app.title == "LCI Mini — Persona Layer Demo"
+    assert app.title == "LCI Mini — Persona + Skill Layer Demo"
 
     routes = {r.path for r in app.routes if hasattr(r, "path")}
     assert "/awp" in routes
@@ -445,3 +445,97 @@ def test_xql_order_desc(xql_agent, synthetic_workbook):
     )
     amounts = [row["Semberah EP"] for row in result["rows"]]
     assert amounts == sorted(amounts, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Upload flow — /chat/upload + /awp attachment resolution
+# ---------------------------------------------------------------------------
+
+
+def test_upload_then_catalog_via_contextvar(monkeypatch, tmp_path):
+    """End-to-end: upload xlsx -> xql_catalog() (no args) picks it up."""
+    import sys
+
+    import pandas as pd
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    monkeypatch.setenv("LCI_MINI_UPLOAD_DIR", str(tmp_path / "uploads"))
+
+    from lci_mini.server.app import create_app
+
+    # Build a tiny LCI workbook
+    xlsx_path = tmp_path / "upload.xlsx"
+    pd.DataFrame(
+        {
+            "Proses": ["A", "B"],
+            "Kategori": ["x", "y"],
+            "Nama Bahan/Alat": ["m1", "m2"],
+            "Unit": ["kg", "kg"],
+            "Semberah EP": [100.0, 200.0],
+        }
+    ).to_excel(xlsx_path, sheet_name="Sheet1", index=False)
+
+    with TestClient(create_app()) as client:
+        # Upload — should return an id we can feed back via /awp
+        with xlsx_path.open("rb") as fh:
+            resp = client.post(
+                "/chat/upload",
+                files={
+                    "file": (
+                        "upload.xlsx",
+                        fh,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+        assert resp.status_code == 200
+        meta = resp.json()
+        assert "id" in meta
+        file_id = meta["id"]
+
+        # Simulate the /awp handler wiring: server resolves id to disk path
+        # and pushes it into the xql ContextVar. We skip the full /awp
+        # AG-UI protocol (needs an LLM) and instead assert the wiring
+        # callable exists and produces the right state.
+        xql_mod = sys.modules["openbench_skill_xql"]
+
+        # Replicate what /awp does: look up stored path, set ContextVar,
+        # then call xql_catalog() with no args.
+        from openbench.chat.files import FileStore
+
+        store = FileStore(upload_dir=str(tmp_path / "uploads"))
+        stored = store.get(file_id)
+        assert stored is not None
+        xql_mod.set_uploaded_files([stored.path])
+
+        # Reset and catalog via the no-args path
+        xql_mod._reset_state()
+        xql_mod.set_uploaded_files([stored.path])
+        result = xql_mod.xql_catalog()
+
+        assert "error" not in result
+        assert any(t.endswith(".Sheet1") for t in result["registered"])
+
+        # Downstream query works
+        table_id = result["registered"][0]
+        rows = xql_mod.xql_where(table_id, conditions=[["amount", ">", 150]])
+        assert rows["filtered_rows"] == 1
+
+
+def test_xql_catalog_returns_error_when_no_files(monkeypatch):
+    """xql_catalog() with no attachments should return a helpful error."""
+    import sys
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    # Instantiate the agent so xql gets loaded into sys.modules
+    create_lici_agent()
+
+    xql_mod = sys.modules["openbench_skill_xql"]
+    xql_mod._reset_state()
+    xql_mod.set_uploaded_files(None)
+
+    result = xql_mod.xql_catalog()
+    assert result["registered"] == []
+    assert "error" in result
+    assert "attach" in result["error"].lower()
