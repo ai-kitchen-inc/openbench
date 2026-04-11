@@ -225,6 +225,12 @@
   gap: 4px;
   padding: 16px;
   min-height: 100%;
+  /* Cap the readable width so wide viewports don't stretch the chat.
+     Long-form responses and data tables stay readable, and wide tables
+     scroll inside their own container instead of expanding the bubble. */
+  max-width: var(--ob-chat-max-width, 960px);
+  width: 100%;
+  margin: 0 auto;
 }
 
 /* ── Message Bubble ── */
@@ -1403,17 +1409,30 @@
 
 .ob-table {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .ob-table__scroll {
+  /* Crucial combo for "scroll inside bubble, don't stretch bubble":
+     max-width: 100% + min-width: 0 forces the container to respect
+     the parent's width budget, then overflow-x: auto handles the
+     rest so wide tables scroll horizontally inside the message. */
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .ob-table__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
-  line-height: 1.5;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  /* table-layout: auto lets columns size to content, which combined
+     with the wrappable headers below keeps narrow tables narrow and
+     only forces horizontal scroll when content genuinely can't fit. */
+  table-layout: auto;
 }
 
 .ob-table__th {
@@ -1422,14 +1441,22 @@
   background: var(--ob-bg, #fbfbfa);
   font-weight: 600;
   text-align: left;
-  padding: 10px 16px;
+  padding: 8px 12px;
   border-bottom: 2px solid var(--ob-border, rgba(55, 53, 47, 0.09));
-  white-space: nowrap;
+  /* Allow header labels to wrap onto 2 lines — the old `nowrap` rule
+     forced the whole table wider than the bubble when there were many
+     columns (e.g. the 10-column LCI inventory tables). */
+  white-space: normal;
+  word-break: break-word;
+  vertical-align: bottom;
 }
 
 .ob-table__td {
-  padding: 10px 16px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--ob-border, rgba(55, 53, 47, 0.09));
+  vertical-align: top;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .ob-table__table--striped .ob-table__row:nth-child(even) {
@@ -1438,7 +1465,7 @@
 
 .ob-table__table--compact .ob-table__th,
 .ob-table__table--compact .ob-table__td {
-  padding: 6px 12px;
+  padding: 6px 10px;
 }
 
 /* ── ObCallout ── */
