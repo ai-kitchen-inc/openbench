@@ -18,6 +18,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import math
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
@@ -470,6 +471,49 @@ def _emit_progress(
     """Safely emit a progress event if callback is provided."""
     if on_progress:
         on_progress(ProgressEvent(phase=phase, detail=detail))
+
+
+def _sanitize_for_json(value: Any) -> Any:
+    """Recursively replace non-finite floats with None so the result is strict JSON.
+
+    Python's ``json.dumps`` emits ``NaN`` / ``Infinity`` / ``-Infinity`` as
+    bareword literals by default (``allow_nan=True``). Those are NOT valid
+    per RFC 8259, and Gemini's API rejects the payload with
+    ``INVALID_ARGUMENT: Invalid JSON payload received. Unexpected token``.
+
+    Tool implementations that touch pandas / numpy (e.g. the xql skill)
+    frequently return ``float('nan')`` for empty cells, which surfaces the
+    problem on the very first tool result put into agent memory. Walk the
+    structure once and convert those to ``None`` before serialization so
+    every downstream JSON encoder sees strict JSON.
+    """
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return value
+    if isinstance(value, dict):
+        return {k: _sanitize_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_for_json(v) for v in value]
+    return value
+
+
+def _tool_result_to_json(result: Any) -> str:
+    """Serialize a tool result as strict JSON that Gemini will accept.
+
+    Sanitizes NaN/Infinity to ``None``, then dumps with ``allow_nan=False``
+    so we fail loudly if some other non-finite value slips through instead
+    of silently writing invalid JSON.
+    """
+    sanitized = _sanitize_for_json(result)
+    try:
+        return json.dumps(sanitized, default=str, allow_nan=False)
+    except ValueError as e:
+        # Last-resort fallback: stringify the whole result. Better to send
+        # a lossy text blob than to crash the agent turn on a single weird
+        # value deep inside the structure.
+        logger.warning("Tool result still contained non-finite values after sanitize: %s", e)
+        return json.dumps(str(result), default=str, allow_nan=False)
 
 
 class BaseAgent(Agent):
@@ -1084,14 +1128,14 @@ Provide clear, actionable responses."""
                             if r["error"] is not None:
                                 result_str = f"Error: {r['error']}"
                             else:
-                                result_str = json.dumps(r["result"], default=str)
+                                result_str = _tool_result_to_json(r["result"])
                             self.memory.add_tool_result(tc["id"], tc["name"], result_str)
                     else:
                         # Sequential execution (default)
                         for tc in tool_calls:
                             try:
                                 result = self.tools.execute(tc["name"], **tc["arguments"])
-                                result_str = json.dumps(result, default=str)
+                                result_str = _tool_result_to_json(result)
                             except Exception as e:
                                 result_str = f"Error: {e!s}"
                             self.memory.add_tool_result(tc["id"], tc["name"], result_str)

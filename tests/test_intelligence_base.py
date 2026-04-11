@@ -23,6 +23,8 @@ from openbench.intelligence.base import (
     SimpleAgent,
     StructuredOutputAgent,
     ToolExecutor,
+    _sanitize_for_json,
+    _tool_result_to_json,
 )
 
 
@@ -1078,6 +1080,97 @@ class TestBaseAgentProgressEvents(unittest.TestCase):
         self.assertEqual(len(tool_phase), 1)
         self.assertIn("search", tool_phase[0])
         self.assertIn("calculate", tool_phase[0])
+
+
+class TestSanitizeForJson(unittest.TestCase):
+    """Regression tests for _sanitize_for_json / _tool_result_to_json.
+
+    These cover the Gemini 'Invalid JSON payload received. Unexpected
+    token NaN' crash: tool results from pandas/numpy contain float('nan')
+    for empty cells, and Python's json.dumps emits those as bareword
+    NaN literals which Gemini rejects.
+    """
+
+    def test_nan_replaced_with_none(self):
+        self.assertIsNone(_sanitize_for_json(float("nan")))
+
+    def test_infinity_replaced_with_none(self):
+        self.assertIsNone(_sanitize_for_json(float("inf")))
+        self.assertIsNone(_sanitize_for_json(float("-inf")))
+
+    def test_finite_float_preserved(self):
+        self.assertEqual(_sanitize_for_json(3.14), 3.14)
+        self.assertEqual(_sanitize_for_json(0.0), 0.0)
+        self.assertEqual(_sanitize_for_json(-1.5), -1.5)
+
+    def test_nested_dict_with_nan(self):
+        data = {
+            "category": float("nan"),
+            "rule": "materials",
+            "rows": [{"value": 1.0}, {"value": float("nan")}],
+        }
+        result = _sanitize_for_json(data)
+        self.assertIsNone(result["category"])
+        self.assertEqual(result["rule"], "materials")
+        self.assertEqual(result["rows"][0]["value"], 1.0)
+        self.assertIsNone(result["rows"][1]["value"])
+
+    def test_list_with_mixed_values(self):
+        result = _sanitize_for_json([1.0, float("nan"), "text", None, 2.5])
+        self.assertEqual(result, [1.0, None, "text", None, 2.5])
+
+    def test_tuple_becomes_list(self):
+        # Tuples aren't JSON-native; they serialize as lists anyway,
+        # so we flatten them to lists during sanitization.
+        result = _sanitize_for_json((1.0, float("nan"), 3.0))
+        self.assertEqual(result, [1.0, None, 3.0])
+
+    def test_non_numeric_values_untouched(self):
+        self.assertEqual(_sanitize_for_json("hello"), "hello")
+        self.assertEqual(_sanitize_for_json(42), 42)
+        self.assertTrue(_sanitize_for_json(True))
+        self.assertIsNone(_sanitize_for_json(None))
+
+    def test_tool_result_to_json_produces_strict_json(self):
+        """The main regression: a tool result containing NaN must
+        round-trip through strict json.loads (which rejects NaN)."""
+        import json
+
+        result = {
+            "pareto_threshold": 0.8,
+            "categories": [
+                {
+                    "category": float("nan"),  # empty cell from pandas
+                    "rule": "materials",
+                    "total": 1234.5,
+                    "rows": [
+                        {"process": "A", "amount": 100.0},
+                        {"process": "B", "amount": float("nan")},
+                    ],
+                }
+            ],
+        }
+        serialized = _tool_result_to_json(result)
+        # Strict parser (no allow_nan=True equivalent on load)
+        parsed = json.loads(serialized)
+        self.assertIsNone(parsed["categories"][0]["category"])
+        self.assertEqual(parsed["categories"][0]["rule"], "materials")
+        self.assertIsNone(parsed["categories"][0]["rows"][1]["amount"])
+
+    def test_tool_result_to_json_rejects_nan_literal(self):
+        """Output must never contain the bareword 'NaN' literal."""
+        serialized = _tool_result_to_json({"x": float("nan")})
+        self.assertNotIn("NaN", serialized)
+        self.assertIn("null", serialized)
+
+    def test_tool_result_to_json_handles_non_serializable(self):
+        """Non-JSON-native types still fall through default=str."""
+        from pathlib import Path
+
+        serialized = _tool_result_to_json({"path": Path("/tmp/x"), "v": float("nan")})
+        parsed = __import__("json").loads(serialized)
+        self.assertIsNone(parsed["v"])
+        self.assertTrue(parsed["path"].endswith("x"))
 
 
 if __name__ == "__main__":
