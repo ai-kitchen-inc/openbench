@@ -481,6 +481,116 @@ class TestExportExcelPathResolution(unittest.TestCase):
         self.assertEqual(item["url"], "/downloads/report-abc.xlsx")
 
 
+class TestExportExcelPushesRenderItem(unittest.TestCase):
+    """Regression: export-excel must push its file item onto the shared
+    render queue so ChatEngine surfaces an ObFileCard. Without this,
+    the file gets written to disk but the assistant turn only contains
+    plain text and the user has no clickable download link."""
+
+    def setUp(self):
+        from openbench.chat import render_queue
+
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "export-excel")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+        self.queue = render_queue
+        self.queue.clear()
+
+        # Save env and clear so helper paths are deterministic
+        self._env_backup = {
+            "OPENBENCH_EXPORT_DIR": os.environ.get("OPENBENCH_EXPORT_DIR"),
+            "OPENBENCH_EXPORT_URL_BASE": os.environ.get("OPENBENCH_EXPORT_URL_BASE"),
+        }
+        os.environ.pop("OPENBENCH_EXPORT_DIR", None)
+        os.environ.pop("OPENBENCH_EXPORT_URL_BASE", None)
+
+    def tearDown(self):
+        self.queue.clear()
+        for k, v in self._env_backup.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _have_pandas(self) -> bool:
+        try:
+            import pandas  # noqa: F401
+
+            return True
+        except ImportError:
+            return False
+
+    def test_export_to_excel_pushes_file_item(self):
+        if not self._have_pandas():
+            self.skipTest("pandas not installed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENBENCH_EXPORT_DIR"] = tmp
+            os.environ["OPENBENCH_EXPORT_URL_BASE"] = "/downloads"
+
+            result = self.tools["export_to_excel"](
+                [{"a": 1, "b": 2}, {"a": 3, "b": 4}],
+                "test.xlsx",
+            )
+
+        self.assertNotIn("error", result)
+        # Queue now has exactly one file item matching the returned one
+        queued = self.queue.get_items()
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["name"], result["name"])
+        self.assertEqual(queued[0]["url"], result["url"])
+        self.assertTrue(queued[0]["url"].startswith("/downloads/"))
+
+    def test_export_multi_sheet_pushes_file_item(self):
+        if not self._have_pandas():
+            self.skipTest("pandas not installed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENBENCH_EXPORT_DIR"] = tmp
+            os.environ["OPENBENCH_EXPORT_URL_BASE"] = "/downloads"
+
+            result = self.tools["export_multi_sheet_excel"](
+                {
+                    "Summary": [{"k": "v"}],
+                    "Detail": [{"x": 1}, {"x": 2}],
+                },
+                "report.xlsx",
+            )
+
+        self.assertNotIn("error", result)
+        queued = self.queue.get_items()
+        self.assertEqual(len(queued), 1)
+        # The pushed item carries both sheet names
+        self.assertEqual(set(queued[0]["sheets"]), {"Summary", "Detail"})
+
+    def test_pushed_item_is_detected_by_file_renderer(self):
+        """End-to-end shape check — the pushed item must match FileRenderer
+        contract so ChatEngine actually renders it."""
+        if not self._have_pandas():
+            self.skipTest("pandas not installed")
+
+        from openbench.chat.renderers.file import FileRenderer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENBENCH_EXPORT_DIR"] = tmp
+            os.environ["OPENBENCH_EXPORT_URL_BASE"] = "/downloads"
+            self.tools["export_to_excel"]([{"a": 1}], "x.xlsx")
+
+        queued = self.queue.get_items()
+        self.assertEqual(len(queued), 1)
+        renderer = FileRenderer()
+        self.assertTrue(
+            renderer.detect(queued[0]),
+            f"FileRenderer should detect the pushed item: {queued[0]}",
+        )
+
+    def test_error_results_do_not_push(self):
+        """If the tool fails, nothing should land on the queue."""
+        # Empty records → error, no push
+        result = self.tools["export_to_excel"]([], "bad.xlsx")
+        self.assertIn("error", result)
+        self.assertEqual(self.queue.get_items(), [])
+
+
 class TestSDKSkillRegistryIntegration(unittest.TestCase):
     """End-to-end: load all SDK skills through the registry."""
 

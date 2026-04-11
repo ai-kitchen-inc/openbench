@@ -25,6 +25,7 @@ Deployment config (read at tool-call time, not at import time):
 
 from __future__ import annotations
 
+import contextlib
 import os
 import uuid
 from pathlib import Path
@@ -133,6 +134,23 @@ def _file_item(path: Path, sheets: list[str]) -> dict[str, Any]:
     return item
 
 
+def _push_to_render_queue(item: dict[str, Any]) -> None:
+    """Push the file item onto ``openbench.chat.render_queue`` if available.
+
+    Imported lazily so the skill still loads cleanly in contexts that
+    don't install the chat extras. Silently no-ops if the queue module
+    can't be imported — the tool still returns the item to the LLM as
+    tool-result context, which is what the agent reads.
+    """
+    try:
+        from openbench.chat.render_queue import push as _push
+    except Exception:
+        return
+    # Never let a render-queue hiccup break the tool call itself.
+    with contextlib.suppress(Exception):
+        _push(item)
+
+
 # ---------------------------------------------------------------------------
 # export_to_excel
 # ---------------------------------------------------------------------------
@@ -181,7 +199,12 @@ def export_to_excel(
     except Exception as e:
         return _error(f"Failed to write workbook: {e}")
 
-    return _file_item(out_path, [sheet_name])
+    item = _file_item(out_path, [sheet_name])
+    # Push onto the shared render queue so ChatEngine surfaces an
+    # ObFileCard in the next assistant turn. The return value is still
+    # used as tool-result context for the LLM.
+    _push_to_render_queue(item)
+    return item
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +254,9 @@ def export_multi_sheet_excel(
     except Exception as e:
         return _error(f"Failed to write workbook: {e}")
 
-    return _file_item(out_path, list(frames.keys()))
+    item = _file_item(out_path, list(frames.keys()))
+    _push_to_render_queue(item)
+    return item
 
 
 # ---------------------------------------------------------------------------

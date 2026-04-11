@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from lci_mini.agent import create_lici_agent, get_persona_dir
 from lci_mini.server.handler import LiciAGUIHandler
 from openbench.chat import ChatEngine
+from openbench.chat import render_queue as shared_render_queue
 from openbench.chat.files import FileContentExtractor, FileStore
 from openbench.chat.transport import AGUIActionHandler
 
@@ -32,16 +33,31 @@ def create_app() -> FastAPI:
 
     agent = create_lici_agent()
 
-    # Wire ChatEngine to the xql skill's render-items queue so tool results
-    # render as ObTable components via chat-ui's TableRenderer instead of
-    # relying on the LLM to format markdown tables. See
-    # examples/lci-mini/skills/xql/tools.py for the push side.
+    # Wire ChatEngine to every render-items queue we know about so tool
+    # results surface as rich A2UI components in the next assistant turn.
+    # Two sources today:
+    #
+    #   1. xql skill — project skill, has its own ContextVar queue (pushes
+    #      ObTable items for every query/pareto/group result)
+    #   2. openbench.chat.render_queue — shared queue that SDK skills push
+    #      to (e.g. export-excel adds an ObFileCard when it writes an xlsx)
+    #
+    # Merge them in a single callback so ChatEngine sees one unified list.
     xql_mod = sys.modules.get("openbench_skill_xql")
-    render_items_fn = None
-    clear_render_items_fn = None
-    if xql_mod is not None:
-        render_items_fn = getattr(xql_mod, "get_render_items", None)
-        clear_render_items_fn = getattr(xql_mod, "clear_render_items", None)
+    xql_get = getattr(xql_mod, "get_render_items", None) if xql_mod else None
+    xql_clear = getattr(xql_mod, "clear_render_items", None) if xql_mod else None
+
+    def render_items_fn() -> list[dict]:
+        items: list[dict] = []
+        if xql_get is not None:
+            items.extend(xql_get())
+        items.extend(shared_render_queue.get_items())
+        return items
+
+    def clear_render_items_fn() -> None:
+        if xql_clear is not None:
+            xql_clear()
+        shared_render_queue.clear()
 
     engine = ChatEngine(
         agent=agent,

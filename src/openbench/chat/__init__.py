@@ -10,6 +10,7 @@ Public API:
     from openbench.chat import ContentRenderer, ContentRendererRegistry
 """
 
+from openbench.chat import render_queue
 from openbench.chat.a2ui import (
     A2UI_VERSION,
     OPENBENCH_CATALOG_ID,
@@ -46,6 +47,8 @@ __all__ = [
     "ChatEngine",
     "ChatLayer",
     "ChatFactory",
+    # Shared render-items queue for SDK skills
+    "render_queue",
     # Session
     "ChatSession",
     "ChatMessage",
