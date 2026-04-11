@@ -34,18 +34,32 @@ body {
   height: 100%;
 }
 
-/* Sidebar wraps SessionSidebar + PersonaBadge */
+/* Sidebar wraps SessionSidebar + PersonaBadge + SkillBadge.
+   Explicit width + flex-shrink: 0 is critical: without it, the
+   SkillBadge's long tool-list text ("extract_file_context,
+   list_excel_sheets, read_csv_file, read_excel_file") contributes
+   to the wrapper's max-content width, which in turn pushes the
+   whole sidebar to ~700-800px wide and leaves the chat panel
+   squeezed to the right edge with a huge empty gap. */
 .lci-mini-sidebar {
   display: flex;
   flex-direction: column;
+  width: 260px;
+  flex-shrink: 0;
   min-width: 0;
   border-right: 1px solid var(--ob-border);
   background: var(--ob-bg);
+  overflow: hidden;
 }
 
-.lci-mini-sidebar .ob-session-sidebar {
-  flex: 1;
+.lci-mini-sidebar .chat-sidebar {
+  /* SessionSidebar renders as <aside class="chat-sidebar"> which
+     defaults to width: var(--ob-sidebar-width) = 260px. Override to
+     fill the wrapper width and shrink when the persona/skill badges
+     need vertical room. */
+  width: 100%;
   border-right: none;
+  flex-shrink: 1;
   min-height: 0;
 }
 
@@ -157,6 +171,12 @@ body {
   margin-top: 2px;
   font-size: 11px;
   color: var(--ob-text-secondary);
+  /* Wrap long tool lists so they don't force the sidebar wider
+     (e.g. "extract_file_context, list_excel_sheets, read_csv_file,
+     read_excel_file" is ~700px unwrapped). */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .skill-badge--empty {
