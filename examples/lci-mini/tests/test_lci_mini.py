@@ -745,3 +745,208 @@ def test_server_wires_render_items_fn(monkeypatch):
     with TestClient(app) as client:
         resp = client.get("/skills")
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Memory sanitization — repair orphaned tool turns
+# ---------------------------------------------------------------------------
+
+
+def _msg(role, content="", tool_calls=None, tool_call_id=None, name=None):
+    """Tiny helper to build Message objects for tests."""
+    from openbench.intelligence.base import Message, MessageRole
+
+    return Message(
+        role=MessageRole[role.upper()],
+        content=content,
+        tool_calls=tool_calls,
+        tool_call_id=tool_call_id,
+        name=name,
+    )
+
+
+class TestSanitizeMessages:
+    def test_empty_list_passes_through(self):
+        from lci_mini.server.handler import sanitize_messages
+
+        assert sanitize_messages([]) == []
+
+    def test_valid_conversation_preserved(self):
+        from lci_mini.server.handler import sanitize_messages
+
+        msgs = [
+            _msg("system", "You are Lici"),
+            _msg("user", "halo"),
+            _msg("assistant", "halo juga"),
+            _msg("user", "tampilkan data"),
+            _msg(
+                "assistant",
+                "",
+                tool_calls=[{"id": "c0", "name": "xql_catalog", "arguments": {}}],
+            ),
+            _msg("tool", '{"ok": true}', tool_call_id="c0", name="xql_catalog"),
+            _msg("assistant", "selesai"),
+        ]
+        result = sanitize_messages(msgs)
+        assert len(result) == len(msgs)
+
+    def test_orphaned_assistant_tool_calls_dropped(self):
+        """assistant(tool_calls) without following tool(result) is dropped."""
+        from lci_mini.server.handler import sanitize_messages
+
+        msgs = [
+            _msg("system", "sys"),
+            _msg("user", "q1"),
+            _msg(
+                "assistant",
+                "",
+                tool_calls=[{"id": "c0", "name": "xql_catalog", "arguments": {}}],
+            ),
+            # tool response missing!
+            _msg("user", "q2"),
+        ]
+        result = sanitize_messages(msgs)
+        roles = [m.role.value for m in result]
+        # Orphan assistant removed, two users collapse to last
+        assert roles == ["system", "user"]
+        assert result[-1].content == "q2"
+
+    def test_orphaned_tool_result_dropped(self):
+        """tool(result) without preceding assistant(tool_calls) is dropped."""
+        from lci_mini.server.handler import sanitize_messages
+
+        msgs = [
+            _msg("system", "sys"),
+            _msg("user", "q1"),
+            _msg("tool", '{"stale": true}', tool_call_id="c0", name="xql_catalog"),
+            _msg("assistant", "ok"),
+        ]
+        result = sanitize_messages(msgs)
+        roles = [m.role.value for m in result]
+        assert "tool" not in roles
+        assert roles == ["system", "user", "assistant"]
+
+    def test_consecutive_users_collapsed(self):
+        from lci_mini.server.handler import sanitize_messages
+
+        msgs = [
+            _msg("user", "q1"),
+            _msg("user", "q2"),
+            _msg("user", "q3"),
+        ]
+        result = sanitize_messages(msgs)
+        assert len(result) == 1
+        assert result[0].content == "q3"
+
+    def test_consecutive_assistants_collapsed(self):
+        from lci_mini.server.handler import sanitize_messages
+
+        msgs = [
+            _msg("user", "q"),
+            _msg("assistant", "a1"),
+            _msg("assistant", "a2"),
+        ]
+        result = sanitize_messages(msgs)
+        assert len(result) == 2
+        assert result[-1].content == "a2"
+
+    def test_assistant_with_partial_tool_responses_dropped(self):
+        """Assistant with 2 tool calls but only 1 tool response — drop the lot."""
+        from lci_mini.server.handler import sanitize_messages
+
+        msgs = [
+            _msg("system", "sys"),
+            _msg("user", "q"),
+            _msg(
+                "assistant",
+                "",
+                tool_calls=[
+                    {"id": "c0", "name": "xql_catalog", "arguments": {}},
+                    {"id": "c1", "name": "xql_list_tables", "arguments": {}},
+                ],
+            ),
+            _msg("tool", '{"ok": 1}', tool_call_id="c0", name="xql_catalog"),
+            # second tool response missing!
+            _msg("user", "retry"),
+        ]
+        result = sanitize_messages(msgs)
+        roles = [m.role.value for m in result]
+        assert "tool" not in roles
+        # Assistant + both tool responses dropped; users collapse
+        assert roles == ["system", "user"]
+        assert result[-1].content == "retry"
+
+    def test_multiple_valid_tool_cycles_preserved(self):
+        """Multi-iteration tool loops should survive sanitization."""
+        from lci_mini.server.handler import sanitize_messages
+
+        msgs = [
+            _msg("system", "sys"),
+            _msg("user", "build io"),
+            _msg(
+                "assistant",
+                "",
+                tool_calls=[{"id": "c0", "name": "xql_catalog", "arguments": {}}],
+            ),
+            _msg("tool", '{"ok": 1}', tool_call_id="c0", name="xql_catalog"),
+            _msg(
+                "assistant",
+                "",
+                tool_calls=[{"id": "c0", "name": "xql_pareto", "arguments": {}}],
+            ),
+            _msg("tool", '{"rows": []}', tool_call_id="c0", name="xql_pareto"),
+            _msg("assistant", "done"),
+        ]
+        result = sanitize_messages(msgs)
+        assert len(result) == len(msgs)
+
+
+# ---------------------------------------------------------------------------
+# BaseAgent rollback on iteration failure
+# ---------------------------------------------------------------------------
+
+
+def test_base_agent_rolls_back_partial_tool_turn_on_failure():
+    """Exception during tool execution must NOT leave orphaned tool_calls."""
+    from unittest.mock import MagicMock
+
+    from openbench.intelligence.base import AgentMemory, BaseAgent
+
+    agent = BaseAgent(goal="test", system_prompt="sys")
+    agent.memory = AgentMemory()
+    agent.memory.add_system("sys")
+    agent.memory.add_user("do thing")
+
+    # Mock the LLM to return a tool call once, then fail if called again
+    mock_llm = MagicMock()
+    tool_response = MagicMock()
+    tool_response.text = ""
+    tool_response.tool_calls = [MagicMock(id="c0")]
+    tool_response.tool_calls[0].function = MagicMock(name="xql_catalog")
+    tool_response.tool_calls[0].function.name = "xql_catalog"
+    tool_response.tool_calls[0].function.arguments = "{}"
+    tool_response.tokens_used = 0
+    tool_response.cost = 0.0
+    tool_response.metadata = {}
+    tool_response.raw_content = None
+    mock_llm.generate.return_value = tool_response
+    agent._llm = mock_llm
+
+    # Sabotage memory.add_tool_result so it explodes after add_assistant succeeds
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated SQLite failure")
+
+    agent.memory.add_tool_result = boom
+
+    # Register a passing tool so execute() gets past tool invocation itself
+    agent.tools.register("xql_catalog", lambda: {"ok": True})
+
+    from openbench.core.abstractions import ExecutionContext
+
+    result = agent.execute(ExecutionContext(goal="do thing"))
+    assert result.status == "failed"
+    assert "simulated SQLite failure" in result.metadata["error"]
+
+    # Critical: memory must NOT contain the orphaned assistant(tool_calls)
+    orphan = [m for m in agent.memory.messages if m.role.value == "assistant" and m.tool_calls]
+    assert orphan == [], f"rollback failed — found orphan: {orphan}"

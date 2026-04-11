@@ -1041,8 +1041,15 @@ Provide clear, actionable responses."""
                     self.memory.add_assistant(response.text, raw_content=raw_content)
                     break
 
-                # Execute tool calls
+                # Execute tool calls.
+                # Snapshot memory length so we can roll back on failure —
+                # without this, a mid-loop exception leaves an orphaned
+                # assistant(tool_calls) message in persistent memory that
+                # Gemini will reject ("function response turn must come
+                # immediately after a function call turn") on every
+                # subsequent request in the same session.
                 all_tools_used.extend(tc["name"] for tc in tool_calls)
+                pre_tools_len = len(self.memory.messages)
                 self.memory.add_assistant(
                     response.text, tool_calls=tool_calls, raw_content=raw_content
                 )
@@ -1051,25 +1058,32 @@ Provide clear, actionable responses."""
                 tool_names = [tc["name"] for tc in tool_calls]
                 _emit_progress(on_progress, f"Running {', '.join(tool_names)}")
 
-                if self.parallel_tool_execution and len(tool_calls) > 1:
-                    # Parallel execution for multiple tool calls
-                    results = self.tools.execute_parallel(tool_calls)
-                    for r in results:
-                        tc = r["call"]
-                        if r["error"] is not None:
-                            result_str = f"Error: {r['error']}"
-                        else:
-                            result_str = json.dumps(r["result"], default=str)
-                        self.memory.add_tool_result(tc["id"], tc["name"], result_str)
-                else:
-                    # Sequential execution (default)
-                    for tc in tool_calls:
-                        try:
-                            result = self.tools.execute(tc["name"], **tc["arguments"])
-                            result_str = json.dumps(result, default=str)
-                        except Exception as e:
-                            result_str = f"Error: {e!s}"
-                        self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                try:
+                    if self.parallel_tool_execution and len(tool_calls) > 1:
+                        # Parallel execution for multiple tool calls
+                        results = self.tools.execute_parallel(tool_calls)
+                        for r in results:
+                            tc = r["call"]
+                            if r["error"] is not None:
+                                result_str = f"Error: {r['error']}"
+                            else:
+                                result_str = json.dumps(r["result"], default=str)
+                            self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                    else:
+                        # Sequential execution (default)
+                        for tc in tool_calls:
+                            try:
+                                result = self.tools.execute(tc["name"], **tc["arguments"])
+                                result_str = json.dumps(result, default=str)
+                            except Exception as e:
+                                result_str = f"Error: {e!s}"
+                            self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                except Exception:
+                    # Tool execution loop itself blew up (e.g. memory.add_tool_result
+                    # raised on SQLite error). Roll back the half-written turn so
+                    # memory stays in a Gemini-acceptable state, then propagate.
+                    self.memory.messages = self.memory.messages[:pre_tools_len]
+                    raise
 
             total_duration = round(time.monotonic() - start_time, 3)
 
