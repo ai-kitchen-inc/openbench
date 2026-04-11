@@ -113,7 +113,11 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         # 2. Add user message to session
         self.session.add_user_message(content, attachments=attachments)
 
-        # 3. Execute agent
+        # 3. Clear per-request render items queue (stale items from previous
+        #    turns would otherwise bleed into this response)
+        self._clear_render_items()
+
+        # 4. Execute agent
         agent_result = self._execute_agent(content, config, attachments=attachments)
 
         # 4. Extract agent output + render items from visualization tools
@@ -183,6 +187,8 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             yield json.dumps(StepStartMessage(sid, "Processing input", message_id).to_dict())
             content, attachments = self._parse_input(input)
             self.session.add_user_message(content, attachments=attachments)
+            # Clear per-request render items queue before executing the agent.
+            self._clear_render_items()
             yield json.dumps(StepCompleteMessage(sid, message_id).to_dict())
 
             # ── Step 2: Thinking ──
@@ -266,6 +272,8 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             yield json.dumps(StepStartMessage(sid, "Processing input", message_id).to_dict())
             content, attachments = self._parse_input(input)
             self.session.add_user_message(content, attachments=attachments)
+            # Clear per-request render items queue before executing the agent.
+            self._clear_render_items()
             yield json.dumps(StepCompleteMessage(sid, message_id).to_dict())
 
             # ── Step 2: Thinking (run in thread pool) ──
@@ -325,6 +333,20 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                     metadata={"error": str(e)},
                 ).to_dict()
             )
+
+    def _clear_render_items(self) -> None:
+        """Invoke the clear-render-items callback if configured.
+
+        Called at the start of every request to drop any render items left
+        over from a previous turn (visualization tool queues are typically
+        process-global, so without this they leak across sessions).
+        """
+        if self._clear_render_items_fn is None:
+            return
+        try:
+            self._clear_render_items_fn()
+        except Exception as e:
+            logger.warning(f"clear_render_items_fn raised: {e}")
 
     def _parse_input(self, input: Any) -> tuple[str, list[Attachment] | None]:
         """Parse input into content string and optional attachments."""

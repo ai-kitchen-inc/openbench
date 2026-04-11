@@ -809,5 +809,116 @@ class TestChatEngineRenderItems(unittest.TestCase):
         self.assertEqual(len(file_cards), 1, "Same-name file cards should be deduped")
 
 
+class TestChatEngineClearRenderItems(unittest.TestCase):
+    """Regression tests for clear_render_items_fn wiring (Issue 2).
+
+    The docstring on ``ChatEngine.__init__`` promises that
+    ``clear_render_items_fn`` is "Called before each agent execution for
+    per-request isolation." Before the fix, the callback was stored but
+    never invoked — so stale render items bled across turns.
+    """
+
+    def test_invoke_calls_clear_before_execution(self):
+        clear_calls: list[int] = []
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=lambda: clear_calls.append(1),
+        )
+        engine.invoke("Hello")
+        self.assertEqual(len(clear_calls), 1)
+
+    def test_invoke_calls_clear_on_every_turn(self):
+        clear_calls: list[int] = []
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=lambda: clear_calls.append(1),
+        )
+        engine.invoke("Turn 1")
+        engine.invoke("Turn 2")
+        engine.invoke("Turn 3")
+        self.assertEqual(len(clear_calls), 3)
+
+    def test_stream_calls_clear_before_execution(self):
+        clear_calls: list[int] = []
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=lambda: clear_calls.append(1),
+        )
+        list(engine.stream("Hello"))
+        self.assertEqual(len(clear_calls), 1)
+
+    def test_async_stream_calls_clear_before_execution(self):
+        clear_calls: list[int] = []
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=lambda: clear_calls.append(1),
+        )
+
+        async def collect():
+            async for _ in engine.async_stream("Hello"):
+                pass
+
+        asyncio.run(collect())
+        self.assertEqual(len(clear_calls), 1)
+
+    def test_clear_called_before_render_items_fn(self):
+        """clear_render_items_fn must fire BEFORE the agent runs, so that
+        stale items from a previous turn do not leak into render_items_fn.
+        """
+        call_order: list[str] = []
+
+        # Simulate a process-global queue.
+        queue: list[dict] = [{"type": "bar", "title": "Stale chart", "data": []}]
+
+        def clear():
+            call_order.append("clear")
+            queue.clear()
+
+        def render_items():
+            call_order.append("render_items")
+            return list(queue)
+
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=clear,
+            render_items_fn=render_items,
+        )
+        result = engine.invoke("Hello")
+
+        # clear must happen before render_items is collected
+        self.assertEqual(call_order[0], "clear")
+        self.assertIn("render_items", call_order)
+        self.assertLess(call_order.index("clear"), call_order.index("render_items"))
+
+        # The stale chart must NOT appear in the output
+        components = result["messages"][1]["updateComponents"]["components"]
+        ob_charts = [c for c in components if c["component"] == "ObChart"]
+        self.assertEqual(
+            len(ob_charts),
+            0,
+            "Stale chart from previous turn should have been cleared before execution",
+        )
+
+    def test_no_clear_fn_is_safe(self):
+        """When clear_render_items_fn is None, invoke() must still work."""
+        engine = ChatEngine(agent=MockAgent("Reply"))
+        result = engine.invoke("Hello")
+        self.assertIn("messages", result)
+
+    def test_clear_fn_exception_does_not_break_invoke(self):
+        """If clear_render_items_fn raises, the turn must still complete."""
+
+        def bad_clear():
+            raise RuntimeError("boom")
+
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=bad_clear,
+        )
+        # Should not propagate the RuntimeError
+        result = engine.invoke("Hello")
+        self.assertIn("messages", result)
+
+
 if __name__ == "__main__":
     unittest.main()

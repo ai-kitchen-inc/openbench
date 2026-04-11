@@ -74,6 +74,32 @@ class MemoryStore(ABC):
             session_id: Session to delete.
         """
 
+    def delete_tail(self, session_id: str, count: int) -> None:
+        """Delete the last ``count`` messages for a session.
+
+        Used by ``PersistentMemory.truncate_to`` to roll back a failed
+        agent turn. The default implementation reloads the full session,
+        drops the tail in-memory, then replaces the session in the store.
+        Subclasses should override with a more efficient implementation
+        when possible.
+
+        Args:
+            session_id: Session to truncate.
+            count: Number of trailing messages to delete. Values <= 0
+                are a no-op; values >= session length delete the whole
+                session.
+        """
+        if count <= 0:
+            return
+        existing = self.load(session_id)
+        if count >= len(existing):
+            self.delete_session(session_id)
+            return
+        kept = existing[: len(existing) - count]
+        self.delete_session(session_id)
+        if kept:
+            self.save(session_id, kept)
+
 
 class SQLiteMemoryStore(MemoryStore):
     """SQLite-backed persistent memory store.
@@ -209,6 +235,27 @@ class SQLiteMemoryStore(MemoryStore):
         finally:
             conn.close()
 
+    def delete_tail(self, session_id: str, count: int) -> None:
+        """Delete the ``count`` most-recently-inserted messages for a session.
+
+        Uses a single SQL DELETE targeting the highest ``id`` rows for the
+        session — O(count) in SQLite. Overrides the base load/save fallback.
+        """
+        if count <= 0:
+            return
+        conn = self._connect()
+        try:
+            conn.execute(
+                "DELETE FROM messages WHERE id IN ("
+                "SELECT id FROM messages WHERE session_id = ? "
+                "ORDER BY id DESC LIMIT ?"
+                ")",
+                (session_id, count),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
 
 class PersistentMemory(AgentMemory):
     """AgentMemory with automatic persistence.
@@ -261,3 +308,31 @@ class PersistentMemory(AgentMemory):
         """Clear in-memory messages and delete from store."""
         super().clear()
         self.store.delete_session(self.session_id)
+
+    def truncate_to(self, length: int) -> None:
+        """Truncate messages to ``length`` both in memory AND in the store.
+
+        Overrides :meth:`AgentMemory.truncate_to` so a rollback after a
+        failed agent turn also deletes the orphaned rows from the backing
+        store — otherwise ``PersistentMemory.__init__`` would resurrect
+        them on the next session load.
+        """
+        if length < 0:
+            length = 0
+        current_len = len(self.messages)
+        if length >= current_len:
+            return
+        delta = current_len - length
+        # Truncate in-memory first so callers see a consistent view even
+        # if the store call raises.
+        super().truncate_to(length)
+        try:
+            self.store.delete_tail(self.session_id, delta)
+        except Exception as e:
+            logger.warning(
+                "Failed to delete %d tail messages from store for session %s: %s",
+                delta,
+                self.session_id,
+                e,
+            )
+            raise

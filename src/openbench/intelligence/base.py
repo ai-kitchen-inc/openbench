@@ -161,6 +161,23 @@ class AgentMemory:
         else:
             self.messages = []
 
+    def truncate_to(self, length: int) -> None:
+        """Truncate message history to the given length.
+
+        Subclasses that persist messages (e.g. ``PersistentMemory``) must
+        override this so the persistent store is kept in sync — otherwise
+        rollback after a failed turn only affects the in-memory list and
+        orphaned messages will resurface when the session is reloaded.
+
+        Args:
+            length: Number of messages to keep from the start. Must be >= 0.
+                Values larger than the current length are a no-op.
+        """
+        if length < 0:
+            length = 0
+        if length < len(self.messages):
+            self.messages = self.messages[:length]
+
 
 class ToolExecutor:
     """
@@ -1082,7 +1099,12 @@ Provide clear, actionable responses."""
                     # Tool execution loop itself blew up (e.g. memory.add_tool_result
                     # raised on SQLite error). Roll back the half-written turn so
                     # memory stays in a Gemini-acceptable state, then propagate.
-                    self.memory.messages = self.memory.messages[:pre_tools_len]
+                    # NOTE: use truncate_to(), not direct list slicing, so
+                    # PersistentMemory can also delete the orphaned rows from
+                    # its backing store. A plain slice would leave the assistant
+                    # (tool_calls=...) message in SQLite where it resurrects on
+                    # the next session load and retriggers the same Gemini error.
+                    self.memory.truncate_to(pre_tools_len)
                     raise
 
             total_duration = round(time.monotonic() - start_time, 3)
