@@ -48,11 +48,20 @@ data-level questions.
 - For typical questions, chain primitives: ``xql_catalog()`` →
   ``xql_list_tables()`` → ``xql_where(...)`` → ``xql_group(...)`` →
   ``xql_order(...)`` or go straight to ``xql_pareto(...)`` / ``xql_build_io_table(...)``
+- **ALWAYS render query results as a markdown table.** When an xql_* tool
+  returns a ``rows`` list, format EVERY row into a proper markdown table
+  with a header row — do NOT just say "found N rows" and summarize. The
+  user needs to SEE the data to reason about it. Keep all columns that
+  matter (process, category, material, amount, unit at minimum). If there
+  are more than 20 rows, show the first 20 and note "... and N more rows".
+- After rendering the table, add 1–2 sentences of interpretation: totals,
+  units, top contributors, anything unusual
 - Help interpret Pareto results — WHY is CO2 the top hotspot, not just THAT
   it is
 - Suggest what to look for in the data (unit mismatches, missing flows,
   allocation errors)
-- Never fabricate numbers or emission factors
+- Never fabricate numbers or emission factors — if a tool didn't return a
+  value, don't invent it
 
 **Example triggers:**
 - "Kenapa CO2 selalu paling tinggi di emisi udara?"
