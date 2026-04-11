@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 from openbench.core.abstractions import (
     Agent,
@@ -479,6 +480,7 @@ class BaseAgent(Agent):
         max_iterations: int = 10,
         system_prompt: str | None = None,
         persona: Any = None,
+        skills: list[str | Path] | None = None,
         provider_name: str | None = None,
         store: DataStore | None = None,
         retrieval_top_k: int = 5,
@@ -503,6 +505,13 @@ class BaseAgent(Agent):
             persona: Agent persona — Path/str to soul/ directory or Persona instance.
                 When provided, takes precedence over system_prompt= and composes
                 SOUL.md + STYLE.md + AGENTS.md into the system prompt.
+            skills: List of skill names or directory paths. SDK skill names
+                (e.g. "data-visualization") are resolved from
+                src/openbench/skills/. Directory paths (e.g. "skills/ldi-parser")
+                are loaded as project skills and override SDK skills of the
+                same name. Each skill's context is appended to the system
+                prompt after the persona, and its tools.py functions are
+                auto-registered with the agent's ToolExecutor.
             provider_name: Specific provider name (uses default if None)
             store: Optional DataStore for RAG (retrieval-augmented generation)
             retrieval_top_k: Number of results to retrieve from store
@@ -616,6 +625,31 @@ class BaseAgent(Agent):
             self._system_prompt = system_prompt
         else:
             self._system_prompt = self._default_system_prompt()
+
+        # Resolve skills — composed AFTER persona so skill context appends to
+        # the base identity. SDK skills are auto-discovered; named references
+        # and path references in `skills=` are both supported.
+        self._skill_registry = None
+        if skills:
+            from openbench.intelligence.skill_registry import SkillRegistry
+
+            self._skill_registry = SkillRegistry()
+            self._skill_registry.load_sdk_skills()
+            self._skill_registry.load_skills(skills)
+
+            skill_context = self._skill_registry.compose_context()
+            if skill_context:
+                self._system_prompt = f"{self._system_prompt}\n\n{skill_context}"
+
+            # Register every tool exposed by the loaded skills. Collisions
+            # with existing tools raise — the caller must rename or exclude.
+            for tool_name, tool_fn, tool_schema in self._skill_registry.collect_tools():
+                if tool_name in self.tools._tools:
+                    raise ValueError(
+                        f"Tool '{tool_name}' from skill conflicts with an "
+                        f"existing tool of the same name. Rename one of them."
+                    )
+                self.tools.register(tool_name, tool_fn, schema=tool_schema)
 
         # Add system message to memory.
         # Fix #1: when persona= is provided, it represents the authoritative

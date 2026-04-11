@@ -52,6 +52,10 @@ from openbench.intelligence.persona import Persona
 # Planning (task decomposition)
 from openbench.intelligence.planning import TaskPlan, TaskPlanner
 
+# Skill Layer (two-tier capability packages)
+from openbench.intelligence.skill import Skill
+from openbench.intelligence.skill_registry import SkillRegistry
+
 __all__ = [
     # L2 Orchestrator
     "IntelligenceLayer",
@@ -79,6 +83,9 @@ __all__ = [
     "GeminiLLMProvider",
     # Persona Layer
     "Persona",
+    # Skill Layer
+    "Skill",
+    "SkillRegistry",
     # Memory
     "PersistentMemory",
     "SQLiteMemoryStore",
