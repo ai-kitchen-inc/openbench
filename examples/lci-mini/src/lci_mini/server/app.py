@@ -63,6 +63,19 @@ def create_app() -> FastAPI:
     file_store = FileStore(upload_dir=upload_dir)
     extractor = FileContentExtractor()
 
+    # download_dir is where the export-excel skill (and any other file-
+    # producing tool) writes its output. It must be a directory the
+    # server also mounts as static HTTP so the frontend can download
+    # what the agent produced. Defaults to <example_root>/downloads/.
+    default_download_dir = get_persona_dir().parent / "downloads"
+    download_dir = os.getenv("LCI_MINI_DOWNLOAD_DIR", str(default_download_dir))
+    download_dir = str(Path(download_dir).expanduser().resolve())
+    os.makedirs(download_dir, exist_ok=True)
+    # Tell the export-excel skill (and any future SDK skill that honors
+    # these env vars) where to write and how to URL-address the result.
+    os.environ["OPENBENCH_EXPORT_DIR"] = download_dir
+    os.environ["OPENBENCH_EXPORT_URL_BASE"] = "/downloads"
+
     app = FastAPI(title="LCI Mini — Persona + Skill Layer Demo")
 
     app.add_middleware(
@@ -98,8 +111,10 @@ def create_app() -> FastAPI:
                 print(f"    - {s.name} v{s.version}: {label}")
         print(f"  Memory DB      : {db_path}")
         print(f"  Upload dir     : {upload_dir}")
+        print(f"  Download dir   : {download_dir}")
         print("  AG-UI          : POST /awp")
         print("  Upload         : POST /chat/upload")
+        print("  Download       : GET  /downloads/<filename>")
         print("  Actions        : POST /chat/action\n")
 
     @app.get("/")
@@ -231,6 +246,11 @@ def create_app() -> FastAPI:
 
     # Serve uploaded files for frontend preview links
     app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
+
+    # Serve agent-produced downloads (export-excel, etc.). URL prefix
+    # matches OPENBENCH_EXPORT_URL_BASE so the file render items the
+    # export-excel skill builds actually resolve to real HTTP URLs.
+    app.mount("/downloads", StaticFiles(directory=download_dir), name="downloads")
 
     # Optional: serve built frontend in production (Cloud Run single-container mode)
     static_dir = os.environ.get("LCI_MINI_STATIC_DIR")

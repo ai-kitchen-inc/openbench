@@ -371,6 +371,116 @@ class TestExportExcelSkill(unittest.TestCase):
         self.assertIn("error", result)
 
 
+class TestExportExcelPathResolution(unittest.TestCase):
+    """Unit tests for the path / URL resolution helpers.
+
+    These are critical for deployed setups: without OPENBENCH_EXPORT_DIR
+    set, every export lands in the process CWD (usually the repo root),
+    and without OPENBENCH_EXPORT_URL_BASE the returned render item's
+    ``url`` field is a filesystem path that the frontend can't fetch
+    over HTTP — so file cards look fine but every download link 404s.
+    """
+
+    def setUp(self):
+        # Import via the loaded skill module so we can exercise the
+        # private helpers that aren't exposed as tools.
+        import sys
+
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "export-excel")
+        mod_name = f"openbench_skill_{self.skill.name.replace('-', '_')}"
+        self.mod = sys.modules[mod_name]
+
+        # Snapshot env for restoration
+        self._env_backup = {
+            "OPENBENCH_EXPORT_DIR": os.environ.get("OPENBENCH_EXPORT_DIR"),
+            "OPENBENCH_EXPORT_URL_BASE": os.environ.get("OPENBENCH_EXPORT_URL_BASE"),
+        }
+        os.environ.pop("OPENBENCH_EXPORT_DIR", None)
+        os.environ.pop("OPENBENCH_EXPORT_URL_BASE", None)
+
+    def tearDown(self):
+        for k, v in self._env_backup.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_unique_filename_preserves_stem_and_ext(self):
+        name = self.mod._unique_filename("report.xlsx")
+        self.assertTrue(name.startswith("report-"))
+        self.assertTrue(name.endswith(".xlsx"))
+        # "report-" + 8 hex chars + ".xlsx"
+        self.assertEqual(len(name), len("report-") + 8 + len(".xlsx"))
+
+    def test_unique_filename_strips_directory_components(self):
+        # Skills don't get to pick their output directory — strip any
+        # path traversal attempts from the supplied filename.
+        name = self.mod._unique_filename("../../etc/passwd.xlsx")
+        self.assertFalse(name.startswith(".."))
+        self.assertNotIn("/", name)
+        self.assertTrue(name.startswith("passwd-"))
+
+    def test_unique_filename_adds_default_xlsx_extension(self):
+        name = self.mod._unique_filename("report")
+        self.assertTrue(name.endswith(".xlsx"))
+
+    def test_unique_filename_produces_different_values(self):
+        names = {self.mod._unique_filename("same.xlsx") for _ in range(10)}
+        # Astronomically unlikely to collide in 10 draws
+        self.assertEqual(len(names), 10)
+
+    def test_resolve_output_uses_env_var_when_no_explicit_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENBENCH_EXPORT_DIR"] = tmp
+            resolved = self.mod._resolve_output("report.xlsx", None)
+            self.assertEqual(str(resolved.parent), str(Path(tmp).resolve()))
+
+    def test_resolve_output_explicit_dir_overrides_env(self):
+        with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
+            os.environ["OPENBENCH_EXPORT_DIR"] = tmp1
+            resolved = self.mod._resolve_output("report.xlsx", tmp2)
+            self.assertEqual(str(resolved.parent), str(Path(tmp2).resolve()))
+
+    def test_resolve_output_creates_parent_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sub = Path(tmp) / "a" / "b" / "c"
+            self.mod._resolve_output("report.xlsx", str(sub))
+            self.assertTrue(sub.exists())
+
+    def test_public_url_uses_url_base_when_set(self):
+        os.environ["OPENBENCH_EXPORT_URL_BASE"] = "/downloads"
+        url = self.mod._public_url(Path("/var/app/downloads/report-abc123.xlsx"))
+        self.assertEqual(url, "/downloads/report-abc123.xlsx")
+
+    def test_public_url_strips_trailing_slash_from_base(self):
+        os.environ["OPENBENCH_EXPORT_URL_BASE"] = "/downloads/"
+        url = self.mod._public_url(Path("/some/where/report.xlsx"))
+        self.assertEqual(url, "/downloads/report.xlsx")
+
+    def test_public_url_falls_back_to_filesystem_path_without_base(self):
+        url = self.mod._public_url(Path("/some/where/report.xlsx"))
+        self.assertEqual(url, "/some/where/report.xlsx")
+
+    def test_file_item_includes_mimetype(self):
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            f.write(b"fake xlsx bytes")
+            tmp_path = Path(f.name)
+        try:
+            item = self.mod._file_item(tmp_path, ["Sheet1"])
+            self.assertIn("mimeType", item)
+            self.assertIn("spreadsheetml", item["mimeType"])
+            self.assertEqual(item["name"], tmp_path.name)
+            self.assertIn("size", item)
+        finally:
+            os.unlink(tmp_path)
+
+    def test_file_item_url_uses_env_base(self):
+        os.environ["OPENBENCH_EXPORT_URL_BASE"] = "/downloads"
+        fake_path = Path("/tmp/nonexistent-xyz/report-abc.xlsx")
+        item = self.mod._file_item(fake_path, ["Sheet1"])
+        self.assertEqual(item["url"], "/downloads/report-abc.xlsx")
+
+
 class TestSDKSkillRegistryIntegration(unittest.TestCase):
     """End-to-end: load all SDK skills through the registry."""
 

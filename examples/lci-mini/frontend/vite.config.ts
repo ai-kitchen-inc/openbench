@@ -12,6 +12,7 @@ export default defineConfig({
       "/chat/action": { target: "http://localhost:8004", changeOrigin: true },
       "/chat/upload": { target: "http://localhost:8004", changeOrigin: true },
       "/uploads": { target: "http://localhost:8004", changeOrigin: true },
+      "/downloads": { target: "http://localhost:8004", changeOrigin: true },
       "/persona": { target: "http://localhost:8004", changeOrigin: true },
       "/skills": { target: "http://localhost:8004", changeOrigin: true },
     },

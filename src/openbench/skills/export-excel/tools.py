@@ -8,10 +8,25 @@ shape expected by ``openbench.chat.renderers.file.FileRenderer``:
 ``pandas`` and ``openpyxl`` are imported lazily so that loading this
 skill does not require the ``[data]`` extra at install time — the
 failure only surfaces when the agent actually calls one of the tools.
+
+Deployment config (read at tool-call time, not at import time):
+
+- ``OPENBENCH_EXPORT_DIR`` — absolute path where every exported file
+  should land. Defaults to the process CWD, which is almost never
+  what you want in production (files end up in the repo root).
+- ``OPENBENCH_EXPORT_URL_BASE`` — URL prefix used to build the
+  downloadable ``url`` field on the returned render item. For
+  example, ``/downloads`` makes the card link to
+  ``/downloads/<filename>``. When unset the render item falls back
+  to the absolute filesystem path, which the frontend cannot fetch
+  over HTTP — so in any deployed context you want BOTH env vars set
+  together.
 """
 
 from __future__ import annotations
 
+import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -32,21 +47,73 @@ def _error(message: str) -> dict[str, Any]:
     return {"error": message}
 
 
+def _default_output_dir() -> str | None:
+    """Return the configured default output directory.
+
+    Read from env at call time so tests (and hot reloads) pick up
+    changes without reimporting the module.
+    """
+    return os.environ.get("OPENBENCH_EXPORT_DIR") or None
+
+
+def _url_base() -> str | None:
+    """Return the configured HTTP URL base for exported files."""
+    base = os.environ.get("OPENBENCH_EXPORT_URL_BASE")
+    if not base:
+        return None
+    # Strip trailing slash so joins don't double up.
+    return base.rstrip("/")
+
+
+def _unique_filename(filename: str) -> str:
+    """Add a short unique suffix to avoid overwriting previous exports.
+
+    Multiple turns in the same chat may export files with the same
+    ``filename`` parameter (e.g. ``"report.xlsx"``). Without a unique
+    suffix the second export clobbers the first, which breaks the
+    download link in older messages. Insert an 8-char uuid before
+    the extension so every export gets its own file.
+    """
+    p = Path(filename).name  # drop any directory components
+    stem = Path(p).stem
+    suffix = Path(p).suffix or ".xlsx"
+    return f"{stem}-{uuid.uuid4().hex[:8]}{suffix}"
+
+
 def _resolve_output(filename: str, output_dir: str | None) -> Path:
     """Return an absolute path for the output file.
 
-    If ``output_dir`` is given, the file is placed there. Otherwise it
-    goes to the current working directory. Parent directories are
-    created on demand.
+    Precedence for the directory:
+    1. Explicit ``output_dir`` argument (tool caller / tests)
+    2. ``OPENBENCH_EXPORT_DIR`` environment variable
+    3. Process CWD (legacy fallback — usually wrong in production)
+
+    Parent directories are created on demand. The filename always
+    gets a unique suffix so concurrent or repeated exports don't
+    collide.
     """
-    p = Path(filename)
-    if output_dir:
-        p = Path(output_dir) / p.name
+    target_dir = output_dir or _default_output_dir()
+    unique_name = _unique_filename(filename)
+    p = Path(target_dir) / unique_name if target_dir else Path(unique_name)
     p = p.resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
     if p.suffix.lower() != ".xlsx":
         p = p.with_suffix(".xlsx")
     return p
+
+
+def _public_url(path: Path) -> str:
+    """Return a URL the frontend can use to download the file.
+
+    When ``OPENBENCH_EXPORT_URL_BASE`` is set, join it with the
+    filename so the server's static mount (e.g. ``/downloads``) can
+    serve it over HTTP. Otherwise fall back to the absolute
+    filesystem path, which is only useful for local / CLI callers.
+    """
+    base = _url_base()
+    if base is None:
+        return str(path)
+    return f"{base}/{path.name}"
 
 
 def _file_item(path: Path, sheets: list[str]) -> dict[str, Any]:
@@ -57,8 +124,9 @@ def _file_item(path: Path, sheets: list[str]) -> dict[str, Any]:
         size = None
     item: dict[str, Any] = {
         "name": path.name,
-        "url": str(path),
+        "url": _public_url(path),
         "sheets": sheets,
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }
     if size is not None:
         item["size"] = size
