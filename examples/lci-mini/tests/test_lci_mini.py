@@ -184,7 +184,7 @@ def test_persona_endpoint_exposes_composed_prompt(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Skill Layer integration (Milestone 2)
+# Skill Layer integration — XQL (Excel-as-RDBMS)
 # ---------------------------------------------------------------------------
 
 
@@ -195,70 +195,76 @@ def test_skills_dir_exists():
     assert d.is_dir(), f"Skills directory missing: {d}"
 
 
-@pytest.mark.parametrize("skill_name", ["proper-2025", "unit-converter"])
-def test_skill_packages_have_skill_md(skill_name):
+def test_xql_skill_package_present():
     from lci_mini import get_skills_dir
 
-    skill_md = get_skills_dir() / skill_name / "SKILL.md"
-    assert skill_md.exists(), f"{skill_name}/SKILL.md not found"
-    assert skill_md.stat().st_size > 0
+    xql_dir = get_skills_dir() / "xql"
+    assert xql_dir.is_dir()
+    assert (xql_dir / "SKILL.md").exists()
+    assert (xql_dir / "tools.py").exists()
+    assert (xql_dir / "config" / "aliases.yaml").exists()
+    assert (xql_dir / "config" / "units.yaml").exists()
+    assert (xql_dir / "config" / "lci_rules.yaml").exists()
+    assert (xql_dir / "references" / "grouping-rules.md").exists()
 
 
-def test_get_skill_paths_returns_both():
+def test_get_skill_paths_returns_xql():
     from lci_mini import get_skill_paths
 
     paths = get_skill_paths()
-    assert len(paths) == 2
-    assert any("proper-2025" in p for p in paths)
-    assert any("unit-converter" in p for p in paths)
+    assert len(paths) == 1
+    assert any("xql" in p for p in paths)
 
 
-def test_create_lici_agent_loads_skills(monkeypatch):
+# A catalog of primitives the agent should have at its disposal.
+_EXPECTED_XQL_TOOLS = {
+    "xql_catalog",
+    "xql_list_tables",
+    "xql_describe_table",
+    "xql_select",
+    "xql_project",
+    "xql_where",
+    "xql_order",
+    "xql_distinct",
+    "xql_group",
+    "xql_pareto",
+    "xql_join",
+    "xql_union",
+    "xql_pivot",
+    "xql_build_io_table",
+}
+
+
+def test_create_lici_agent_loads_xql_skill(monkeypatch):
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
     agent = create_lici_agent()
 
-    # Registry exists and has both skills
     assert agent._skill_registry is not None
     names = {s.name for s in agent._skill_registry.all()}
-    assert names == {"proper-2025", "unit-converter"}
+    assert names == {"xql"}
 
-    # Unit-converter tool is registered on the agent's ToolExecutor
-    assert "convert_unit" in agent.tools._tools
+    # Every XQL primitive is registered on the agent's ToolExecutor
+    for tool_name in _EXPECTED_XQL_TOOLS:
+        assert tool_name in agent.tools._tools, f"missing {tool_name}"
 
 
-def test_agent_system_prompt_contains_persona_and_skills(monkeypatch):
+def test_agent_system_prompt_contains_persona_and_xql(monkeypatch):
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
     agent = create_lici_agent()
 
     prompt = agent._system_prompt
-    # Persona markers
-    assert "Lici" in prompt
-    # Skill markers
-    assert "proper-2025" in prompt
-    assert "unit-converter" in prompt
-    assert "PROPER 2025" in prompt  # from tiers.md reference
-    assert "convert_unit" in prompt  # from SKILL.md of unit-converter
+    assert "Lici" in prompt  # from persona
+    assert "# Skill: xql" in prompt  # from skill registry
+    assert "XQL" in prompt  # from SKILL.md
+    assert "xql_pareto" in prompt  # primitives mentioned
+    assert "Grouping Rules" in prompt  # from references/grouping-rules.md
 
-    # Persona should come before skills in the composed prompt
-    p_idx = prompt.index("Lici")
-    s_idx = prompt.index("# Skill: proper-2025")
-    assert p_idx < s_idx
+    # Persona precedes skill context
+    assert prompt.index("Lici") < prompt.index("# Skill: xql")
 
 
-def test_unit_converter_tool_callable(monkeypatch):
-    """The convert_unit tool should be invokable via the agent's executor."""
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
-    agent = create_lici_agent()
-
-    result = agent.tools.execute("convert_unit", value=1, from_unit="ton", to_unit="kg")
-    assert result == {"value": 1000.0, "unit": "kg"}
-
-    result = agent.tools.execute("convert_unit", value=1, from_unit="MJ", to_unit="kWh")
-    assert abs(result["value"] - 0.2777777777777778) < 1e-9
-
-
-def test_skills_endpoint_exposes_loaded_skills(monkeypatch):
-    """/skills should return both loaded skills with tool & reference counts."""
+def test_skills_endpoint_exposes_xql(monkeypatch):
+    """/skills should return the single xql skill with 14 tools."""
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
 
     from fastapi.testclient import TestClient
@@ -270,17 +276,172 @@ def test_skills_endpoint_exposes_loaded_skills(monkeypatch):
         data = resp.json()
 
         assert data["loaded"] is True
-        assert data["summary"]["total"] == 2
-        assert data["summary"]["total_tools"] == 1
+        assert data["summary"]["total"] == 1
+        assert data["summary"]["total_tools"] == len(_EXPECTED_XQL_TOOLS)
 
-        by_name = {s["name"]: s for s in data["skills"]}
-        assert set(by_name) == {"proper-2025", "unit-converter"}
+        assert len(data["skills"]) == 1
+        xql = data["skills"][0]
+        assert xql["name"] == "xql"
+        assert xql["has_tools"] is True
+        assert set(xql["tools"]) == _EXPECTED_XQL_TOOLS
+        assert "grouping-rules.md" in xql["references"]
 
-        proper = by_name["proper-2025"]
-        assert proper["has_tools"] is False
-        assert proper["tools"] == []
-        assert "tiers.md" in proper["references"]
 
-        uc = by_name["unit-converter"]
-        assert uc["has_tools"] is True
-        assert uc["tools"] == ["convert_unit"]
+# ---------------------------------------------------------------------------
+# XQL end-to-end — exercise the primitives against a synthetic workbook
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def synthetic_workbook(tmp_path):
+    """Write a 6-row LCI workbook mirroring the Pertamina LDI shape."""
+    import pandas as pd
+
+    df = pd.DataFrame(
+        {
+            "Proses": [
+                "Refinery A",
+                "Refinery A",
+                "Refinery B",
+                "Refinery B",
+                "Boiler",
+                "CSR Program",
+            ],
+            "Kategori": [
+                "Bahan Bakar Cair",
+                "Emisi Udara",
+                "Bahan Bakar Cair",
+                "Emisi Udara",
+                "Fuel Gas",
+                "Bahan Baku",
+            ],
+            "Nama Bahan/Alat": [
+                "Diesel",
+                "CO2",
+                "Diesel",
+                "CO2",
+                "Natural Gas",
+                "Paper",
+            ],
+            "I/O": ["Input", "Output", "Input", "Output", "Input", "Input"],
+            "Unit": ["L", "kg", "L", "kg", "m3", "kg"],
+            "Semberah EP": [1000.0, 50.0, 800.0, 40.0, 200.0, 5.0],
+            "Produced From": ["Generator", "Stack", "Generator", "Stack", "Heater", "Office"],
+        }
+    )
+    path = tmp_path / "testlci.xlsx"
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Sheet14", index=False)
+    return path
+
+
+@pytest.fixture
+def xql_agent(monkeypatch):
+    """A Lici agent with xql preloaded and the catalog reset between tests."""
+    import sys
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    agent = create_lici_agent()
+    # Reset the xql module-level catalog so tests don't cross-contaminate.
+    # SkillRegistry registers the tools module in sys.modules under a
+    # namespaced key (openbench_skill_<name>); reach it from there.
+    xql_module = sys.modules["openbench_skill_xql"]
+    xql_module._reset_state()
+    return agent
+
+
+def test_xql_catalog_discovers_sheet(xql_agent, synthetic_workbook):
+    result = xql_agent.tools.execute("xql_catalog", files=[str(synthetic_workbook)])
+    assert "testlci.Sheet14" in result["registered"]
+
+    listed = xql_agent.tools.execute("xql_list_tables")
+    assert listed["total"] == 1
+    assert listed["tables"][0]["row_count"] == 6
+    aliases = set(listed["tables"][0]["aliases"])
+    # Alias registry should have resolved the Indonesian headers
+    assert {"process", "category", "material", "amount"}.issubset(aliases)
+
+
+def test_xql_where_filter_by_category(xql_agent, synthetic_workbook):
+    xql_agent.tools.execute("xql_catalog", files=[str(synthetic_workbook)])
+    result = xql_agent.tools.execute(
+        "xql_where",
+        table_id="testlci.Sheet14",
+        conditions=[["category", "==", "Emisi Udara"]],
+    )
+    assert result["filtered_rows"] == 2
+    for row in result["rows"]:
+        assert row["Kategori"] == "Emisi Udara"
+
+
+def test_xql_group_sum_by_process(xql_agent, synthetic_workbook):
+    xql_agent.tools.execute("xql_catalog", files=[str(synthetic_workbook)])
+    result = xql_agent.tools.execute(
+        "xql_group",
+        table_id="testlci.Sheet14",
+        group_by=["process"],
+        agg={"amount": "sum"},
+    )
+    totals = {row["Proses"]: row["Semberah EP_sum"] for row in result["rows"]}
+    # Refinery A = 1000 (Diesel) + 50 (CO2) = 1050
+    assert totals["Refinery A"] == 1050.0
+    # Refinery B = 800 + 40 = 840
+    assert totals["Refinery B"] == 840.0
+
+
+def test_xql_distinct(xql_agent, synthetic_workbook):
+    xql_agent.tools.execute("xql_catalog", files=[str(synthetic_workbook)])
+    result = xql_agent.tools.execute(
+        "xql_distinct",
+        table_id="testlci.Sheet14",
+        columns=["category"],
+    )
+    values = {row["Kategori"] for row in result["rows"]}
+    assert values == {
+        "Bahan Bakar Cair",
+        "Emisi Udara",
+        "Fuel Gas",
+        "Bahan Baku",
+    }
+
+
+def test_xql_pareto_returns_hotspots_plus_rest(xql_agent, synthetic_workbook):
+    xql_agent.tools.execute("xql_catalog", files=[str(synthetic_workbook)])
+    result = xql_agent.tools.execute(
+        "xql_pareto",
+        table_id="testlci.Sheet14",
+        group_by="material",
+        value_col="amount",
+        threshold=0.80,
+    )
+    assert result["hotspot_count"] >= 1
+    # Diesel (1800) should dominate and therefore be a hotspot
+    assert any(row.get("Nama Bahan/Alat") == "Diesel" for row in result["rows"])
+    # Final cumulative share should always reach 1.0
+    assert result["rows"][-1]["cumulative"] == pytest.approx(1.0)
+
+
+def test_xql_build_io_table_excludes_csr(xql_agent, synthetic_workbook):
+    xql_agent.tools.execute("xql_catalog", files=[str(synthetic_workbook)])
+    result = xql_agent.tools.execute(
+        "xql_build_io_table",
+        source="testlci.Sheet14",
+        products={"Crude": {"amount": 1000, "unit": "barrel"}},
+        exclude_process=["CSR.*"],
+    )
+    category_names = {c["category"] for c in result["categories"]}
+    # CSR Program owned the only "Bahan Baku" row — it must be excluded
+    assert "Bahan Baku" not in category_names
+    assert {"Bahan Bakar Cair", "Emisi Udara", "Fuel Gas"}.issubset(category_names)
+
+
+def test_xql_order_desc(xql_agent, synthetic_workbook):
+    xql_agent.tools.execute("xql_catalog", files=[str(synthetic_workbook)])
+    result = xql_agent.tools.execute(
+        "xql_order",
+        table_id="testlci.Sheet14",
+        by="amount",
+        ascending=False,
+    )
+    amounts = [row["Semberah EP"] for row in result["rows"]]
+    assert amounts == sorted(amounts, reverse=True)

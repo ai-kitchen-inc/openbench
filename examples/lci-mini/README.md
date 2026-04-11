@@ -1,18 +1,24 @@
-# LCI Mini — Persona Layer Demo
+# LCI Mini — Persona + Skill Layer Demo
 
 A minimal **web chat** example showing how to build an OpenBench agent whose
-identity lives in markdown files. Meet **Lici**, an LCI/LCA consultant
-assistant for Indonesian LCA practitioners preparing PROPER 2025 submissions.
+identity and capabilities both live in files, not Python. Meet **Lici**, an
+LCI/LCA consultant assistant for Indonesian LCA practitioners preparing
+PROPER 2025 submissions.
 
 ## What this example demonstrates
 
 - **`Persona.from_dir()`** — loading agent identity from `soul/SOUL.md`,
   `soul/STYLE.md`, and `soul/AGENTS.md`
-- **`BaseAgent(persona=...)`** — wiring the composed persona into the agent
-  without hard-coding `system_prompt=` in Python
+- **`BaseAgent(persona=..., skills=[...])`** — wiring the composed persona
+  and a bundled **Skill Layer** into the agent without hard-coding
+  `system_prompt=` or tool registrations in Python
+- **`xql` skill** — Excel-as-RDBMS with 14 SQL-like primitives (SELECT,
+  WHERE, GROUP BY, PARETO, JOIN, UNION, PIVOT, BUILD_IO_TABLE, ...).
+  Lives at `skills/xql/` with its own `SKILL.md`, `tools.py`, YAML config
+  for aliases/units/LCI rules, and reference docs
 - **Persistent memory** — each chat thread gets its own SQLite-backed session
-- **React chat UI** — reuses `@openbench/chat-ui` and shows a live
-  persona badge (character counts per markdown file) in the sidebar
+- **React chat UI** — reuses `@openbench/chat-ui` and shows live Persona +
+  Skills badges (character counts, loaded tools) in the sidebar
 
 Unlike the full [LCI Ignite X](../lci-ignite-x/) app (which does real LDI
 parsing, Pareto hotspot analysis, and Excel export), Lici is **knowledge
@@ -24,25 +30,31 @@ coaches consultants on data interpretation.
 ```
 examples/lci-mini/
 ├── server.py                 # uvicorn entry point (port 8004)
-├── soul/
+├── soul/                     # --- Persona Layer ---
 │   ├── SOUL.md               # WHO Lici is (identity, domain, boundaries)
 │   ├── STYLE.md              # HOW she communicates (bilingual ID/EN, tone)
 │   └── AGENTS.md             # WHAT modes she operates in (4 modes)
+├── skills/                   # --- Skill Layer ---
+│   └── xql/                  # Excel-as-RDBMS project skill
+│       ├── SKILL.md          # orchestrator + natural language mapping
+│       ├── tools.py          # 14 primitives (catalog, query, transform)
+│       ├── config/           # aliases.yaml, units.yaml, lci_rules.yaml
+│       └── references/       # grouping-rules.md
 ├── src/lci_mini/
 │   ├── __init__.py
-│   ├── agent.py              # create_lici_agent() factory
+│   ├── agent.py              # create_lici_agent() — persona + skills
 │   └── server/
-│       ├── app.py            # FastAPI create_app()
+│       ├── app.py            # FastAPI create_app() with /persona, /skills
 │       └── handler.py        # LiciAGUIHandler (persistent memory)
 ├── frontend/                 # React + @openbench/chat-ui (port 5173)
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── src/
-│       ├── App.tsx           # ChatProvider + PersonaBadge sidebar
+│       ├── App.tsx           # ChatProvider + PersonaBadge + SkillBadge
 │       ├── main.tsx
 │       └── global.css
 ├── tests/
-│   └── test_lci_mini.py      # 16 tests (persona + agent + FastAPI)
+│   └── test_lci_mini.py      # persona + skill layer + XQL end-to-end
 ├── pyproject.toml
 └── .env.example
 ```

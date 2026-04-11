@@ -1,0 +1,38 @@
+# LCI-specific business rules used by Pareto and IO Table builders.
+
+pareto:
+  default_threshold: 0.80    # cumulative share that defines a "hotspot"
+  bucket_name: "Lainnya"     # label for the rest-of-distribution bucket
+
+# Grouping strategies per category when building the IO Table.
+# Values: "material" (default), "produced_from", or "semantic".
+grouping_rules:
+  "Liquid Fuels": produced_from
+  "Air Emissions": produced_from
+  "Non-Hazardous Waste": semantic
+  "Hazardous Waste": semantic
+  "*": material
+
+# Regex patterns (fullmatch) whose processes are excluded from IO Table
+# aggregation by default. Override via xql_build_io_table(exclude_process=).
+default_exclude_process:
+  - "CSR.*"
+  - "Corporate Social.*"
+
+# Standard LCI categories recognized by PROPER 2025.
+standard_categories:
+  - Bahan Baku
+  - Air
+  - Bahan Pendukung Cairan
+  - Bahan Pendukung Padatan
+  - Transportasi
+  - Fuel Gas
+  - Bahan Bakar Cair
+  - Listrik
+  - Infrastruktur
+  - Lahan
+  - Produk
+  - Sampah
+  - Limbah B3
+  - Limbah Cair
+  - Emisi Udara

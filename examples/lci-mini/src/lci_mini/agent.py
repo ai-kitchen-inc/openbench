@@ -36,17 +36,17 @@ def get_skills_dir() -> Path:
 def get_skill_paths() -> list[str]:
     """Return project skill paths passed to ``BaseAgent(skills=...)``.
 
-    Lici ships with two skills bundled in the example:
+    Lici ships with one bundled project skill:
 
-    - ``proper-2025`` — knowledge-only skill with Indonesian PROPER 2025
-      regulation context and LCA submission requirements.
-    - ``unit-converter`` — tool-bearing skill exposing ``convert_unit``
-      for mass / volume / energy conversions common in LCI work.
+    - ``xql`` — Excel-as-RDBMS skill exposing 14 SQL-like primitives
+      (SELECT, WHERE, PROJECT, GROUP BY, JOIN, UNION, PIVOT, PARETO,
+      BUILD_IO_TABLE, ...) that treat Excel sheets as relational tables
+      with an alias-based schema registry and YAML config for unit
+      conversions and LCI grouping rules.
     """
     skills_dir = get_skills_dir()
     return [
-        str(skills_dir / "proper-2025"),
-        str(skills_dir / "unit-converter"),
+        str(skills_dir / "xql"),
     ]
 
 
@@ -65,9 +65,11 @@ def create_lici_agent(
     Returns:
         A :class:`BaseAgent` whose system prompt is composed from
         ``soul/SOUL.md``, ``soul/STYLE.md``, ``soul/AGENTS.md``, plus the
-        bundled ``skills/proper-2025`` and ``skills/unit-converter``
-        packages. The ``convert_unit`` tool is auto-registered on the
-        agent's ToolExecutor via the Skill Layer.
+        bundled ``skills/xql`` package (Excel-as-RDBMS). All 14 XQL tools
+        — catalog, select, where, project, order, group, distinct,
+        pareto, join, union, pivot, build_io_table, list_tables,
+        describe_table — are auto-registered on the agent's ToolExecutor
+        via the Skill Layer.
 
     Raises:
         RuntimeError: If no Google API key is available.

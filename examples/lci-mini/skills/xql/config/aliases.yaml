@@ -1,0 +1,55 @@
+# Logical column aliases -> list of physical column names.
+# Every XQL operation uses aliases (e.g. "category"); the resolver looks
+# up the concrete column name per-table so queries are portable across
+# Excel files with different headers.
+aliases:
+  process:
+    - Proses
+    - Process Title
+    - Process
+  category:
+    - Kategori
+    - LDI Category
+    - Category
+  material:
+    - Nama Bahan/Alat
+    - Material Title
+    - Material
+    - Nama Material
+  io:
+    - I/O
+    - Input or Output
+    - Input/Output
+  unit:
+    - Unit
+    - Satuan
+    - UOM
+  data_source:
+    - Sumber Data
+    - Data Source
+  amount:
+    # Site-specific amount columns (Pertamina LDI examples)
+    - Semberah EP
+    - Tanjung 2023
+    - Amount
+    - Total
+    - Total Bulk
+  total:
+    - Total Bulk
+    - Total
+  fu_crude:
+    - Functional Unit Semberah EP - Crude Oil
+    - Functional Unit Tanjung 2023 - Crude Oil
+    - FU Crude Oil
+  fu_gas:
+    - Functional Unit Semberah EP - Gas
+    - Functional Unit Tanjung 2023 - Gas
+    - FU Gas
+  produced_from:
+    - Produced From
+    - Source
+    - Sumber
+  notes:
+    - Keterangan
+    - Notes
+    - Remarks

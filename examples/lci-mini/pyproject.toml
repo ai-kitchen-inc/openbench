@@ -5,13 +5,17 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lci-mini"
 version = "0.1.0"
-description = "Minimal LCI consultant assistant — demonstrates OpenBench Persona Layer"
+description = "Minimal LCI consultant assistant — demonstrates OpenBench Persona + Skill Layers"
 requires-python = ">=3.10"
 dependencies = [
     "openbench",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "python-dotenv>=1.0",
+    # XQL skill dependencies (Excel-as-RDBMS)
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "pyyaml>=6.0",
 ]
 
 [tool.setuptools.packages.find]

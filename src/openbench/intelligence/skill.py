@@ -134,13 +134,18 @@ def _load_tools_module(tools_py: Path, skill_name: str) -> Any:
 
     Uses ``importlib.util`` so the file doesn't need to be on ``sys.path``.
     The module name is namespaced as ``openbench_skill_<skill>`` to avoid
-    collisions with user code.
+    collisions with user code. The loaded module is registered in
+    ``sys.modules`` so later code (tests, other modules) can refer to it
+    by name via ``importlib.import_module``.
     """
+    import sys
+
     mod_name = f"openbench_skill_{skill_name.replace('-', '_').replace(' ', '_')}"
     spec = importlib.util.spec_from_file_location(mod_name, tools_py)
     if spec is None or spec.loader is None:  # pragma: no cover — defensive
         raise ImportError(f"Cannot load spec for {tools_py}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = module
     spec.loader.exec_module(module)
     return module
 

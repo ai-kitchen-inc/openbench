@@ -1,0 +1,50 @@
+# Unit conversion factors. Everything inside a dimension converts
+# through the declared base unit.
+#
+# Rule: base_value = source_value * factor_to_base
+#       result     = base_value / factor_to_base(target)
+
+mass:
+  base: kg
+  conversions:
+    kg: 1.0
+    g: 0.001
+    ton: 1000.0
+    Ton: 1000.0
+    tonne: 1000.0
+    Tonne: 1000.0
+    t: 1000.0
+    gram: 0.001
+    Gram: 0.001
+    Kilogram: 1.0
+
+volume:
+  base: L
+  conversions:
+    L: 1.0
+    liter: 1.0
+    litre: 1.0
+    Liter: 1.0
+    m3: 1000.0
+    "m³": 1000.0
+    barrel: 158.987
+    Barrel: 158.987
+    Barrels: 158.987
+    BBL: 158.987
+    BBLS: 158.987
+    Bbl: 158.987
+    bbl: 158.987
+    gallon: 3.78541
+    Gallon: 3.78541
+    # Gas volumes at standard conditions (petroleum industry):
+    SCF: 28.316847
+    MMSCF: 28316847.0
+
+energy:
+  base: MJ
+  conversions:
+    MJ: 1.0
+    kWh: 3.6
+    GJ: 1000.0
+    kcal: 0.004184
+    BTU: 0.001055
