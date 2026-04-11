@@ -226,11 +226,14 @@
   padding: 16px;
   min-height: 100%;
   /* Cap the readable width so wide viewports don't stretch the chat.
-     Long-form responses and data tables stay readable, and wide tables
-     scroll inside their own container instead of expanding the bubble. */
+     The same cap is applied to .chat-welcome and .chat-input below so
+     every body/footer section lines up in a consistent 960px column.
+     Long-form responses and wide data tables still scroll horizontally
+     inside their bubble instead of expanding the column. */
   max-width: var(--ob-chat-max-width, 960px);
   width: 100%;
-  margin: 0 auto;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* ── Message Bubble ── */
@@ -446,6 +449,12 @@
 
 .chat-input {
   padding: 12px 16px;
+  /* Match the reading column cap so the input lines up with the
+     message bubbles / welcome screen above it on wide viewports. */
+  max-width: var(--ob-chat-max-width, 960px);
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .chat-input__row {
@@ -766,6 +775,14 @@
   height: 100%;
   padding: 48px 24px;
   text-align: center;
+  /* Match the reading column cap applied to .chat-message-list and
+     .chat-input so the empty state stays visually aligned with the
+     chat + input column on wide viewports (no "stranded welcome"
+     floating in a very wide panel). */
+  max-width: var(--ob-chat-max-width, 960px);
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .chat-welcome__icon {
