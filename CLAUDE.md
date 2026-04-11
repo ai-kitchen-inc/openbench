@@ -140,7 +140,15 @@ openbench/
 │   │   ├── embeddings.py        # Embedding providers (Google, OpenAI)
 │   │   ├── planning.py          # TaskPlanner, TaskPlan (task decomposition)
 │   │   ├── memory.py            # PersistentMemory, SQLiteMemoryStore
+│   │   ├── persona.py           # Persona (SOUL/STYLE/AGENTS) — agent identity layer
+│   │   ├── skill.py             # Skill dataclass — reusable capability packages
+│   │   ├── skill_registry.py    # SkillRegistry (two-tier: SDK + project)
 │   │   └── layer.py             # AgentFactory for creating agents
+│   ├── skills/                  # Bundled SDK skills (loaded by SkillRegistry.load_sdk_skills())
+│   │   ├── data-context-extractor/  # Read CSV/TSV/XLSX/JSON → normalized payload
+│   │   ├── data-visualization/      # Build ObChart-compatible chart dicts
+│   │   ├── export-excel/            # Single + multi-sheet .xlsx writer
+│   │   └── query-explorer/          # filter/sort/group/distinct/top-N over records
 │   ├── chat/                    # Chat layer (A2UI-powered)
 │   │   ├── engine.py            # ChatEngine (Chainable) -- main orchestrator
 │   │   ├── session.py           # ChatSession, ChatMessage, Attachment
@@ -221,6 +229,108 @@ source = DataSourceRegistry.create('pdf', 'custom', path='./docs')
 workflow = Workflow(name="report", chain=data | intelligence | output, checkpoints=True)
 result = workflow.run({"project": "Q1 2026"})
 ```
+
+### Persona & Skill Layer
+
+**Persona** = WHO the agent is (identity). **Skill** = WHAT the agent can do
+(capability). They are orthogonal: one persona per agent, N skills per agent.
+See `.tmp/RFC-PERSONA-LAYER.md` for the full spec.
+
+#### Persona — agent identity from `soul/` directories
+
+A persona is composed from three markdown files in a `soul/` directory:
+
+```
+soul/
+├── SOUL.md     # Identity: "I am an LCA analyst. I prioritize accuracy over speed."
+├── STYLE.md    # Voice: "Reply in Indonesian. Use markdown tables for results."
+└── AGENTS.md   # Rules: "Always call xql_catalog first. Never fabricate data."
+```
+
+Load it via the `persona=` parameter on `BaseAgent`:
+
+```python
+from openbench.intelligence.base import BaseAgent
+from openbench.intelligence.persona import Persona
+
+# Option A: Path-based (most common)
+agent = BaseAgent(goal="Analyze data", persona="examples/lci-mini/soul/")
+
+# Option B: Explicit Persona object
+persona = Persona.from_dir("examples/lci-mini/soul/")
+agent = BaseAgent(goal="Analyze data", persona=persona)
+
+# Option C: Inline string (testing / dynamic composition)
+agent = BaseAgent(goal="Analyze data", persona=Persona.from_prompt("You are..."))
+```
+
+`persona=` takes precedence over `system_prompt=` — passing both logs a
+warning. `PersistentMemory` sessions replay the persona on resume.
+
+#### Skills — reusable capability packages
+
+A skill is a directory containing `SKILL.md`, optional `references/*.md`,
+and optional `tools.py`. The skill loader auto-discovers `FOO_SCHEMA` +
+`foo()` pairs in `tools.py` and registers them with the agent.
+
+Two tiers:
+
+1. **SDK skills** — bundled in `src/openbench/skills/`. Every project gets
+   them for free. Currently: `data-context-extractor`, `data-visualization`,
+   `export-excel`, `query-explorer`.
+2. **Project skills** — domain-specific, loaded from project paths.
+   Project names override SDK names of the same skill (project wins).
+
+```python
+agent = BaseAgent(
+    goal="Analyze uploaded spreadsheet",
+    persona="soul/",
+    skills=[
+        # SDK skills — bare names, resolved via load_sdk_skills()
+        "data-context-extractor",
+        "query-explorer",
+        "data-visualization",
+        "export-excel",
+        # Project skills — paths
+        "skills/my-domain-parser",
+        "skills/my-domain-rules",    # knowledge-only, no tools
+    ],
+)
+```
+
+Every `BaseAgent` owns its own `SkillRegistry` instance (not a global
+singleton) so two agents in the same process can have different skill sets.
+Skills can be **tool-bearing** (expose callables via `tools.py`) or
+**knowledge-only** (only contribute `SKILL.md` + references to the system
+prompt).
+
+#### Authoring a new SDK skill
+
+1. Create `src/openbench/skills/<skill-name>/` with `SKILL.md` (H1 =
+   skill name, first paragraph = description, required `## Triggers`
+   and `## Version` sections, optional `## Dependencies`).
+2. Add `references/*.md` for any domain knowledge the agent needs
+   alongside the description.
+3. If the skill has tools, add `tools.py` with callables + matching
+   `FOO_SCHEMA` dicts (uppercase variable → lowercase function, same
+   prefix). The loader discovers pairs by convention — no decorators.
+4. Add tests in `tests/test_sdk_skills.py` following the existing pattern
+   (discovery + per-tool correctness + ChartRenderer/FileRenderer contract
+   round-trip when applicable).
+
+#### Key rules
+
+- **Fail fast on init**: missing `SKILL.md`, malformed H1, and import
+  errors in `tools.py` raise at `BaseAgent` construction — not at tool
+  call time.
+- **Lazy optional deps**: SDK skills import pandas/openpyxl inside tool
+  functions (never at module top) so loading a skill never fails due to
+  missing extras. The error only surfaces on actual tool invocation.
+- **No tool name collisions**: `SkillRegistry.collect_tools()` raises
+  `ValueError` if two loaded skills expose the same tool name.
+- **Token budget is advisory**: `SkillRegistry.summary()` reports
+  `context_chars` — use it to watch budget, but enforcement is not yet
+  implemented (RFC Milestone 3).
 
 ## Build and Development
 
@@ -422,7 +532,14 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/intelligence/embeddings.py` | Embedding providers (Google, OpenAI) |
 | `src/openbench/intelligence/planning.py` | TaskPlanner, TaskPlan (task decomposition) |
 | `src/openbench/intelligence/memory.py` | PersistentMemory, SQLiteMemoryStore (persistent conversation) |
+| `src/openbench/intelligence/persona.py` | Persona (SOUL/STYLE/AGENTS composer) — agent identity layer |
+| `src/openbench/intelligence/skill.py` | Skill dataclass — SKILL.md + references/ + tools.py loader |
+| `src/openbench/intelligence/skill_registry.py` | SkillRegistry — two-tier SDK + project skill resolution |
 | `src/openbench/intelligence/layer.py` | AgentFactory for creating agents |
+| `src/openbench/skills/data-context-extractor/` | SDK skill: CSV/TSV/XLSX/JSON reader with schema summary |
+| `src/openbench/skills/data-visualization/` | SDK skill: ObChart-compatible chart dict builders |
+| `src/openbench/skills/export-excel/` | SDK skill: single + multi-sheet .xlsx writer |
+| `src/openbench/skills/query-explorer/` | SDK skill: filter / sort / group / distinct / top-N over records |
 | `src/openbench/data/sources/pdf.py` | PDF data source with chunking support |
 | `src/openbench/data/sources/grounded_search.py` | Grounded search (Tavily, Google, DuckDuckGo) |
 | `src/openbench/data/sources/langextract.py` | Structured entity extraction (Google LangExtract) |
@@ -454,7 +571,11 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `/check` | Run all quality checks (lint + type check + tests) |
 | `/coverage` | Run tests with coverage report |
 
-## Skills (Auto-Invoked)
+## Documentation Skills (Claude Code Auto-Invoked)
+
+These are **Claude Code meta-skills** (authoring guidance for contributors)
+— distinct from the OpenBench **Skill Layer** (runtime agent capabilities,
+see `## Core Abstractions → Persona & Skill Layer` above).
 
 | Skill | Triggers On |
 |-------|-------------|
