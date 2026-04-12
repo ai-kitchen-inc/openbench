@@ -31,10 +31,19 @@ def _find_project_root() -> Path:
 
 
 def _detect_port(server_py: Path) -> int:
-    """Extract --port value from server.py, fallback 8000."""
+    """Extract port value from server.py, fallback 8000.
+
+    Matches both CLI-style ``--port 8005`` and Python-style
+    ``port=8005`` / ``port = 8005`` in uvicorn.run() calls.
+    """
     try:
         text = server_py.read_text()
+        # --port 8005
         match = re.search(r"--port\s+(\d+)", text)
+        if match:
+            return int(match.group(1))
+        # port=8005 or port = 8005
+        match = re.search(r"port\s*=\s*(\d+)", text)
         if match:
             return int(match.group(1))
     except OSError:
