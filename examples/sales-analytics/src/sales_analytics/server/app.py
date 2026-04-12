@@ -23,7 +23,7 @@ from sales_analytics.agent import create_analyst_agent, get_persona_dir
 
 def create_app() -> FastAPI:
     """Create the Sales Analytics FastAPI app."""
-    load_dotenv(get_persona_dir().parent / ".env")
+    load_dotenv(get_persona_dir().parent / ".env", override=True)
 
     agent = create_analyst_agent()
 
