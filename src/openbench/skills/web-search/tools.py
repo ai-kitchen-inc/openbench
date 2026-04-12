@@ -182,8 +182,9 @@ WEB_SEARCH_SCHEMA = _schema(
             "type": "string",
             "description": (
                 "The search query. Be specific and factual. "
-                'E.g. "ISO 14040 latest amendment 2026" or '
-                '"Indonesia PROPER 2025 gold criteria"'
+                "Include dates or version numbers for best results. "
+                'E.g. "Python 3.13 new features" or '
+                '"global inflation rate Q1 2026"'
             ),
         },
         "provider": {
@@ -199,8 +200,8 @@ WEB_SEARCH_MULTI_SCHEMA = _schema(
     "web_search_multi",
     "Search the web for multiple queries in one call. Each query runs "
     "independently. Use when you need to gather information from several "
-    "angles before synthesizing (e.g. search for a standard AND its "
-    "latest amendment AND regional adoption status).",
+    "angles before synthesizing (e.g. search for a topic AND its "
+    "latest updates AND related statistics).",
     {
         "queries": {
             "type": "array",

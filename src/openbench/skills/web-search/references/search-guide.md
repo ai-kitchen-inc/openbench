@@ -21,14 +21,14 @@
 ## Query Tips
 
 Good queries are specific and factual:
-- GOOD: "ISO 14040:2006 amendment 1 publication date"
-- BAD: "tell me about ISO 14040"
-- GOOD: "Indonesia PROPER 2025 evaluation criteria update"
-- BAD: "PROPER rating"
+- GOOD: "Python 3.13 release date and new features"
+- BAD: "tell me about Python"
+- GOOD: "US Federal Reserve interest rate decision March 2026"
+- BAD: "interest rates"
 
 Include the year or "latest" when looking for recent information:
-- "renewable energy market size 2026"
-- "latest IPCC emission factors for cement production"
+- "global AI market size 2026"
+- "latest React Server Components best practices"
 
 ## Source Handling
 
