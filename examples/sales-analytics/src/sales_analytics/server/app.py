@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -95,13 +95,11 @@ def create_app() -> FastAPI:
         return result
 
     @app.post("/awp")
-    async def agent_endpoint(request):
-
+    async def agent_endpoint(request: Request):
         return await agui_handler.handle(request)
 
     @app.post("/chat/action")
-    async def chat_action(request):
-
+    async def chat_action(request: Request):
         return await action_handler.handle(request)
 
     app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
