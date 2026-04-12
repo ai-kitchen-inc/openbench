@@ -682,6 +682,13 @@ class BaseAgent(Agent):
                 )
             # Fix #2: persona= explicitly sets identity — no fallback to default
             self._system_prompt = self._persona.compose()
+            logger.info(
+                "Persona loaded from %s (SOUL: %d chars, STYLE: %d chars, AGENTS: %d chars)",
+                self._persona.source,
+                len(self._persona.soul),
+                len(self._persona.style),
+                len(self._persona.agents),
+            )
         elif system_prompt:
             self._system_prompt = system_prompt
         else:
@@ -711,6 +718,31 @@ class BaseAgent(Agent):
                         f"existing tool of the same name. Rename one of them."
                     )
                 self.tools.register(tool_name, tool_fn, schema=tool_schema)
+
+            skill_summary = self._skill_registry.summary()
+            logger.info(
+                "Skills loaded: %d SDK + %d project (total context: %d chars, tools: %d)",
+                len(skill_summary["sdk_skills"]),
+                len(skill_summary["project_skills"]),
+                skill_summary["context_chars"],
+                skill_summary["total_tools"],
+            )
+
+        # Token budget warning (RFC §8.3, R3: "2K chars warn, non-fatal")
+        _TOKEN_BUDGET_WARNING_CHARS = 8000
+        prompt_len = len(self._system_prompt)
+        if prompt_len > _TOKEN_BUDGET_WARNING_CHARS:
+            logger.warning(
+                "System prompt is %d chars (~%d tokens). Large prompts increase "
+                "latency and cost. Consider reducing persona/skill content or "
+                "using lazy skill loading (Strategy B).",
+                prompt_len,
+                prompt_len // 4,
+            )
+        else:
+            logger.info(
+                "System prompt composed: %d chars (~%d tokens)", prompt_len, prompt_len // 4
+            )
 
         # Add system message to memory.
         # Fix #1: when persona= is provided, it represents the authoritative

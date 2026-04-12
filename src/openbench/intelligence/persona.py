@@ -73,11 +73,12 @@ class Persona:
         }
 
     @classmethod
-    def from_dir(cls, path) -> Persona:
+    def from_dir(cls, path: str | Path) -> Persona:
         """Load persona from a directory containing markdown files.
 
         Reads SOUL.md, STYLE.md, AGENTS.md if they exist.
         Missing files are silently skipped (empty string).
+        Symlinks are rejected to prevent path traversal attacks (§10.2).
 
         Args:
             path: Directory containing persona markdown files.
@@ -87,6 +88,7 @@ class Persona:
 
         Raises:
             FileNotFoundError: If directory does not exist.
+            ValueError: If any persona file is a symlink.
         """
         d = Path(path)
         if not d.is_dir():
@@ -103,6 +105,11 @@ class Persona:
         for filename, attr in _FILE_MAP.items():
             f = d / filename
             if f.exists():
+                if f.is_symlink():
+                    raise ValueError(
+                        f"Persona file {filename} is a symlink — rejected for security. "
+                        f"Use a regular file instead: {f}"
+                    )
                 setattr(persona, attr, f.read_text(encoding="utf-8").strip())
 
         return persona
