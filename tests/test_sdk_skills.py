@@ -329,6 +329,9 @@ class TestDataContextExtractorSkill(unittest.TestCase):
                 "read_csv_file",
                 "read_excel_file",
                 "list_excel_sheets",
+                "save_column_profile",
+                "get_column_profile",
+                "update_column_profile",
             },
         )
 
@@ -386,6 +389,156 @@ class TestDataContextExtractorSkill(unittest.TestCase):
             self.assertIn("error", result)
         finally:
             os.unlink(tmp_path)
+
+
+class TestColumnProfileSystem(unittest.TestCase):
+    """Tests for the column profile (save/get/update) in data-context-extractor."""
+
+    def setUp(self):
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "data-context-extractor")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+        # Use a temp dir for profiles so tests don't pollute
+        self._tmp_dir = tempfile.mkdtemp()
+        self._env_backup = os.environ.get("OPENBENCH_PROFILE_DIR")
+        os.environ["OPENBENCH_PROFILE_DIR"] = self._tmp_dir
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self._tmp_dir, ignore_errors=True)
+        if self._env_backup is None:
+            os.environ.pop("OPENBENCH_PROFILE_DIR", None)
+        else:
+            os.environ["OPENBENCH_PROFILE_DIR"] = self._env_backup
+
+    def _make_json_file(self, data: list[dict]) -> str:
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        with open(path, "w") as f:
+            json.dump(data, f)
+        return path
+
+    def test_save_and_get_profile(self):
+        path = self._make_json_file([{"Region": "EU", "Revenue": 100.0}])
+        try:
+            result = self.tools["save_column_profile"](
+                path,
+                [
+                    {"column": "Region", "role": "category"},
+                    {"column": "Revenue", "role": "amount"},
+                ],
+            )
+            self.assertTrue(result["saved"])
+            self.assertIn("file_hash", result)
+
+            # Get it back
+            got = self.tools["get_column_profile"](path)
+            self.assertEqual(got["profile_status"], "cached")
+            profile = got["profile"]
+            cols = profile["sheets"]["default"]["columns"]
+            roles = {c["physical_name"]: c["role"] for c in cols}
+            self.assertEqual(roles["Region"], "category")
+            self.assertEqual(roles["Revenue"], "amount")
+        finally:
+            os.unlink(path)
+
+    def test_get_profile_not_found(self):
+        path = self._make_json_file([{"a": 1}])
+        try:
+            got = self.tools["get_column_profile"](path)
+            self.assertEqual(got["profile_status"], "not_found")
+        finally:
+            os.unlink(path)
+
+    def test_update_profile(self):
+        path = self._make_json_file([{"Region": "EU", "Revenue": 100.0}])
+        try:
+            self.tools["save_column_profile"](
+                path,
+                [{"column": "Revenue", "role": "amount"}],
+            )
+            result = self.tools["update_column_profile"](
+                path, "Revenue", "metric", description="Quarterly metric"
+            )
+            self.assertTrue(result["updated"])
+
+            # Verify the update persisted
+            got = self.tools["get_column_profile"](path)
+            cols = got["profile"]["sheets"]["default"]["columns"]
+            rev = next(c for c in cols if c["physical_name"] == "Revenue")
+            self.assertEqual(rev["role"], "metric")
+            self.assertEqual(rev["description"], "Quarterly metric")
+        finally:
+            os.unlink(path)
+
+    def test_update_adds_new_column(self):
+        path = self._make_json_file([{"A": 1, "B": 2}])
+        try:
+            self.tools["save_column_profile"](path, [{"column": "A", "role": "label"}])
+            self.tools["update_column_profile"](path, "B", "amount")
+
+            got = self.tools["get_column_profile"](path)
+            cols = got["profile"]["sheets"]["default"]["columns"]
+            names = {c["physical_name"] for c in cols}
+            self.assertEqual(names, {"A", "B"})
+        finally:
+            os.unlink(path)
+
+    def test_update_without_profile_returns_error(self):
+        path = self._make_json_file([{"a": 1}])
+        try:
+            result = self.tools["update_column_profile"](path, "a", "label")
+            self.assertIn("error", result)
+        finally:
+            os.unlink(path)
+
+    def test_extract_file_context_returns_profile_status(self):
+        """extract_file_context should include profile_status field."""
+        path = self._make_json_file([{"Name": "Alice", "Score": 42.0}])
+        try:
+            # No profile yet
+            result = self.tools["extract_file_context"](path)
+            self.assertEqual(result["profile_status"], "needs_mapping")
+            self.assertIn("unmapped_columns", result)
+
+            # Save profile
+            self.tools["save_column_profile"](
+                path,
+                [
+                    {"column": "Name", "role": "label"},
+                    {"column": "Score", "role": "amount"},
+                ],
+            )
+
+            # Now should be cached
+            result2 = self.tools["extract_file_context"](path)
+            self.assertEqual(result2["profile_status"], "cached")
+            self.assertIn("column_roles", result2)
+            self.assertEqual(result2["column_roles"]["Name"], "label")
+            self.assertEqual(result2["column_roles"]["Score"], "amount")
+        finally:
+            os.unlink(path)
+
+    def test_same_content_different_name_shares_profile(self):
+        """Profile is keyed by content hash — rename doesn't lose mapping."""
+        data = [{"X": 1.0, "Y": 2.0}]
+        path1 = self._make_json_file(data)
+        path2 = self._make_json_file(data)  # same content, different path
+        try:
+            self.tools["save_column_profile"](path1, [{"column": "X", "role": "amount"}])
+            got = self.tools["get_column_profile"](path2)
+            self.assertEqual(got["profile_status"], "cached")
+        finally:
+            os.unlink(path1)
+            os.unlink(path2)
+
+    def test_save_rejects_empty_mappings(self):
+        path = self._make_json_file([{"a": 1}])
+        try:
+            result = self.tools["save_column_profile"](path, [])
+            self.assertIn("error", result)
+        finally:
+            os.unlink(path)
 
 
 class TestExportExcelSkill(unittest.TestCase):
@@ -713,8 +866,8 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         reg = SkillRegistry()
         reg.load_sdk_skills()
         tools = reg.collect_tools()
-        # 4 + 5 + 2 + 5 + 2 = 18 tools (+ web-search)
-        self.assertEqual(len(tools), 18)
+        # 7 + 5 + 2 + 5 + 2 = 21 tools (data-context-extractor gained 3 profile tools)
+        self.assertEqual(len(tools), 21)
 
     def test_load_skills_by_name_after_load_sdk_skills(self):
         """load_skills(['data-visualization']) must work after load_sdk_skills()."""

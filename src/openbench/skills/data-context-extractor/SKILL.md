@@ -7,10 +7,15 @@ step whenever the user uploads a file or asks about the contents of a
 path — it gives the agent cheap, structured ground truth about what's in
 the file without reading the whole thing into the prompt.
 
+Also provides a **column profile** system: once the agent infers column
+roles (amount, category, metric, label, etc.), it saves a profile to disk
+keyed by file content hash. Subsequent sessions with the same file skip
+re-mapping entirely — the profile is loaded automatically.
+
 This is an SDK-level skill: every OpenBench project gets it for free, so
 downstream skills (query-explorer, data-visualization, export-excel, and
 project-specific parsers) can rely on a consistent `{file, schema,
-sample}` contract.
+sample, column_roles}` contract.
 
 ## Triggers
 
@@ -26,13 +31,27 @@ sample}` contract.
 
 - formats.md: supported file formats, encoding defaults, and common
   edge cases (multi-sheet Excel, BOM-prefixed CSV, nested JSON)
+- column-roles.md: standard column roles and how to infer them
 
 ## Tools
 
-- extract_file_context: auto-detect the format and return a schema summary
+- extract_file_context: auto-detect format, return schema + profile status
 - read_csv_file: read a CSV/TSV and return records + metadata
 - read_excel_file: read a single Excel sheet and return records + metadata
 - list_excel_sheets: list every sheet name in an Excel workbook
+- save_column_profile: persist LLM-inferred column role mappings to disk
+- get_column_profile: load cached profile for a file
+- update_column_profile: correct a single column's role (user override)
+
+## Column Resolution Protocol
+
+1. Call extract_file_context — check profile_status in response
+2. If profile_status == "cached": use column_roles directly, skip mapping
+3. If profile_status == "needs_mapping":
+   a. Identify unmapped columns by dtype + name
+   b. Call save_column_profile with your mappings
+   c. Proceed with queries using physical column names
+4. If user corrects a mapping: call update_column_profile
 
 ## Dependencies
 
@@ -41,4 +60,4 @@ sample}` contract.
 
 ## Version
 
-0.1.0
+0.2.0
