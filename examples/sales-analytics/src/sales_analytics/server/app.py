@@ -96,6 +96,30 @@ def create_app() -> FastAPI:
 
     @app.post("/awp")
     async def agent_endpoint(request: Request):
+        # Resolve uploaded file paths so the agent can pass them to
+        # extract_file_context / read_csv_file / read_excel_file.
+        # Without this, the agent only gets attachment metadata (name,
+        # extractedText) but no disk path — and all file tools fail.
+        body = await request.json()
+        forwarded = body.get("forwardedProps") or {}
+        attachments_list = forwarded.get("attachments") or body.get("attachments") or []
+
+        file_paths: list[str] = []
+        for att in attachments_list:
+            file_id = att.get("id")
+            if not file_id:
+                continue
+            stored = file_store.get(file_id)
+            if stored is not None:
+                file_paths.append(stored.path)
+                # Inject absolute path into attachment so ChatEngine
+                # passes it to the agent context. The LLM reads this
+                # and uses it in extract_file_context(path=...) calls.
+                att["path"] = stored.path
+
+        if file_paths:
+            print(f"  [awp] {len(file_paths)} file(s): {file_paths}")
+
         return await agui_handler.handle(request)
 
     @app.post("/chat/action")

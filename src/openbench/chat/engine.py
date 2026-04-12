@@ -421,16 +421,22 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             if not _has_persistent_memory:
                 data["session"] = active_session.to_dict()
             if attachments:
-                att_data = [
-                    {
+                att_data = []
+                for a in attachments:
+                    if not a.extracted_text:
+                        continue
+                    entry: dict[str, Any] = {
                         "name": a.name,
                         "type": a.type,
                         "mime_type": a.mime_type,
                         "content": a.extracted_text,
                     }
-                    for a in attachments
-                    if a.extracted_text
-                ]
+                    # Include disk path if available so tools like
+                    # extract_file_context can read the file directly.
+                    path = getattr(a, "path", None)
+                    if path:
+                        entry["path"] = path
+                    att_data.append(entry)
                 if att_data:
                     data["attachments"] = att_data
             context = ExecutionContext(

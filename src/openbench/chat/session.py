@@ -39,6 +39,7 @@ class Attachment:
     mime_type: str
     size_bytes: int | None = None
     extracted_text: str | None = None
+    path: str | None = None  # Absolute disk path (set by server for tool access)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict."""
@@ -66,6 +67,7 @@ class Attachment:
             mime_type=data["mimeType"],
             size_bytes=data.get("sizeBytes"),
             extracted_text=data.get("extractedText"),
+            path=data.get("path"),
         )
 
 
