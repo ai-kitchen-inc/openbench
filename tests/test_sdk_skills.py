@@ -151,6 +151,49 @@ class TestDataVisualizationSkill(unittest.TestCase):
                 )
 
 
+class TestDataVisualizationPushesRenderItem(unittest.TestCase):
+    """All 5 chart tools must push their output onto the shared render queue
+    so ChatEngine surfaces an ObChart component in the assistant turn."""
+
+    def setUp(self):
+        from openbench.chat import render_queue
+
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "data-visualization")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+        self.queue = render_queue
+        self.queue.clear()
+
+    def tearDown(self):
+        self.queue.clear()
+
+    def test_every_chart_tool_pushes_to_queue(self):
+        for tool_name in self.tools:
+            with self.subTest(tool=tool_name):
+                self.queue.clear()
+                result = self.tools[tool_name](
+                    title="Test",
+                    data=[{"name": "a", "value": 1, "x": 1, "y": 1}],
+                )
+                self.assertNotIn("error", result)
+                queued = self.queue.get_items()
+                self.assertEqual(len(queued), 1, f"{tool_name} did not push to queue")
+                self.assertEqual(queued[0]["type"], result["type"])
+
+    def test_error_results_do_not_push(self):
+        result = self.tools["create_bar_chart"](title="Bad", data=[])
+        self.assertIn("error", result)
+        self.assertEqual(self.queue.get_items(), [])
+
+    def test_pushed_item_detected_by_chart_renderer(self):
+        from openbench.chat.renderers.chart import ChartRenderer
+
+        renderer = ChartRenderer()
+        self.tools["create_bar_chart"](title="Revenue", data=[{"name": "Q1", "value": 100}])
+        queued = self.queue.get_items()
+        self.assertEqual(len(queued), 1)
+        self.assertTrue(renderer.detect(queued[0]))
+
+
 class TestQueryExplorerSkill(unittest.TestCase):
     """Pure-Python relational ops — no external deps."""
 

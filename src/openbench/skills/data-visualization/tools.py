@@ -16,6 +16,7 @@ they only shape the data.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 __all__ = [
@@ -56,6 +57,21 @@ def _normalize_records(
             if key not in row:
                 return _error(f"data[{i}] is missing required key {key!r}")
     return data
+
+
+def _push_to_render_queue(item: dict[str, Any]) -> None:
+    """Push chart item onto the shared render queue if available.
+
+    Lazily imports so the skill loads without the chat extras.
+    Silently no-ops on any failure — the tool still returns the dict
+    to the LLM as tool-result context.
+    """
+    try:
+        from openbench.chat.render_queue import push as _push
+    except Exception:
+        return
+    with contextlib.suppress(Exception):
+        _push(item)
 
 
 def _chart_dict(
@@ -99,7 +115,9 @@ def create_bar_chart(
     merged_options = {"xKey": x_key, "yKey": y_key}
     if options:
         merged_options.update(options)
-    return _chart_dict("bar", title, validated, merged_options)
+    item = _chart_dict("bar", title, validated, merged_options)
+    _push_to_render_queue(item)
+    return item
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +139,9 @@ def create_line_chart(
     merged_options = {"xKey": x_key, "yKey": y_key}
     if options:
         merged_options.update(options)
-    return _chart_dict("line", title, validated, merged_options)
+    item = _chart_dict("line", title, validated, merged_options)
+    _push_to_render_queue(item)
+    return item
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +173,9 @@ def create_pie_chart(
         )
     if options:
         merged_options.update(options)
-    return _chart_dict("pie", title, validated, merged_options)
+    item = _chart_dict("pie", title, validated, merged_options)
+    _push_to_render_queue(item)
+    return item
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +197,9 @@ def create_scatter_chart(
     merged_options = {"xKey": x_key, "yKey": y_key}
     if options:
         merged_options.update(options)
-    return _chart_dict("scatter", title, validated, merged_options)
+    item = _chart_dict("scatter", title, validated, merged_options)
+    _push_to_render_queue(item)
+    return item
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +221,9 @@ def create_area_chart(
     merged_options = {"xKey": x_key, "yKey": y_key}
     if options:
         merged_options.update(options)
-    return _chart_dict("area", title, validated, merged_options)
+    item = _chart_dict("area", title, validated, merged_options)
+    _push_to_render_queue(item)
+    return item
 
 
 # ---------------------------------------------------------------------------
