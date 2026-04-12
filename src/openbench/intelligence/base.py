@@ -1060,6 +1060,13 @@ Provide clear, actionable responses."""
         response = None
         start_time = time.monotonic()
 
+        # Gemini 3 Confidence Dropout retry: when the model returns
+        # no text and no tool calls (all-thought response), retry up
+        # to this many times before accepting an empty result. Without
+        # this the agent returns a blank answer on the first dropout.
+        _MAX_EMPTY_RETRIES = 2
+        _empty_retries = 0
+
         # Determine if we can stream
         use_stream = on_chunk is not None
 
@@ -1130,7 +1137,32 @@ Provide clear, actionable responses."""
                 raw_content = getattr(response, "raw_content", None)
 
                 if not tool_calls:
-                    # No tool calls - we're done
+                    # No tool calls. If the model also produced no text this
+                    # is a Gemini 3 "Confidence Dropout" — the model spent
+                    # thinking tokens but didn't commit to an answer. Retry
+                    # instead of accepting a blank result, up to a cap.
+                    if not response.text.strip() and _empty_retries < _MAX_EMPTY_RETRIES:
+                        _empty_retries += 1
+                        diagnostics = response.metadata.get("empty_response_diagnostics")
+                        logger.warning(
+                            "Empty response on iteration %d (retry %d/%d, diagnostics=%s). "
+                            "Retrying — NOT adding empty turn to memory.",
+                            iterations,
+                            _empty_retries,
+                            _MAX_EMPTY_RETRIES,
+                            diagnostics,
+                        )
+                        # Do NOT add the empty response to memory — that would
+                        # poison the conversation with a blank assistant turn and
+                        # Gemini might follow the pattern. Just retry.
+                        continue
+
+                    # Non-empty text OR max retries exhausted — we're done.
+                    if not response.text.strip() and _empty_retries >= _MAX_EMPTY_RETRIES:
+                        logger.warning(
+                            "Empty response persists after %d retries. Accepting empty result.",
+                            _MAX_EMPTY_RETRIES,
+                        )
                     self.memory.add_assistant(response.text, raw_content=raw_content)
                     break
 
