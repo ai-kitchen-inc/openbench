@@ -118,12 +118,15 @@ class LiciAGUIHandler(AGUIHandler):
     def __init__(self, engine, db_path: str = "lci_mini_memory.db"):
         super().__init__(engine)
         self._memory_store = SQLiteMemoryStore(db_path=db_path)
-        self._current_session_id: str | None = None
-        self._session_lock = threading.Lock()
+        # Thread-local storage for session_id so concurrent requests
+        # (each in its own thread via asyncio.to_thread) don't cross-
+        # contaminate. The old approach stored session_id on the
+        # instance — two concurrent requests could swap each other's
+        # session memory.
+        self._local = threading.local()
 
     def _get_or_create_session(self, session_id):
-        with self._session_lock:
-            self._current_session_id = session_id
+        self._local.session_id = session_id
         return super()._get_or_create_session(session_id)
 
     def _create_request_agent(self):
@@ -133,8 +136,7 @@ class LiciAGUIHandler(AGUIHandler):
 
         agent_copy = copy.copy(agent)
 
-        with self._session_lock:
-            session_id = self._current_session_id
+        session_id = getattr(self._local, "session_id", None)
 
         if session_id and self._memory_store:
             agent_copy.memory = PersistentMemory(

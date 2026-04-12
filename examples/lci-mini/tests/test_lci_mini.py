@@ -241,7 +241,11 @@ def test_create_lici_agent_loads_xql_skill(monkeypatch):
 
     assert agent._skill_registry is not None
     names = {s.name for s in agent._skill_registry.all()}
-    assert names == {"xql"}
+    # xql is the project skill; SDK skills (data-context-extractor,
+    # data-visualization, export-excel, query-explorer) are auto-
+    # discovered by SkillRegistry.load_sdk_skills().
+    assert "xql" in names
+    assert len(names) >= 1  # at minimum xql; SDK skills may also be present
 
     # Every XQL primitive is registered on the agent's ToolExecutor
     for tool_name in _EXPECTED_XQL_TOOLS:
@@ -264,7 +268,7 @@ def test_agent_system_prompt_contains_persona_and_xql(monkeypatch):
 
 
 def test_skills_endpoint_exposes_xql(monkeypatch):
-    """/skills should return the single xql skill with 14 tools."""
+    """/skills should include xql + any auto-discovered SDK skills."""
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
 
     from fastapi.testclient import TestClient
@@ -276,12 +280,14 @@ def test_skills_endpoint_exposes_xql(monkeypatch):
         data = resp.json()
 
         assert data["loaded"] is True
-        assert data["summary"]["total"] == 1
-        assert data["summary"]["total_tools"] == len(_EXPECTED_XQL_TOOLS)
+        # At least xql + SDK skills
+        assert data["summary"]["total"] >= 1
+        assert data["summary"]["total_tools"] >= len(_EXPECTED_XQL_TOOLS)
 
-        assert len(data["skills"]) == 1
-        xql = data["skills"][0]
-        assert xql["name"] == "xql"
+        skill_names = {s["name"] for s in data["skills"]}
+        assert "xql" in skill_names
+
+        xql = next(s for s in data["skills"] if s["name"] == "xql")
         assert xql["has_tools"] is True
         assert set(xql["tools"]) == _EXPECTED_XQL_TOOLS
         assert "grouping-rules.md" in xql["references"]

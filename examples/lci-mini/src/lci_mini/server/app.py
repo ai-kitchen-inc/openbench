@@ -271,16 +271,23 @@ def create_app() -> FastAPI:
     # Optional: serve built frontend in production (Cloud Run single-container mode)
     static_dir = os.environ.get("LCI_MINI_STATIC_DIR")
     if static_dir and os.path.isdir(static_dir):
+        static_root = Path(static_dir).resolve()
 
         @app.get("/{full_path:path}")
         async def serve_spa(full_path: str):
-            file_path = os.path.join(static_dir, full_path)
-            if os.path.isfile(file_path):
-                return FileResponse(file_path)
-            return FileResponse(os.path.join(static_dir, "index.html"))
+            # Resolve and assert containment to prevent path traversal
+            # (e.g. GET /../../../etc/passwd).
+            file_path = (static_root / full_path).resolve()
+            if not str(file_path).startswith(str(static_root)):
+                from fastapi.responses import JSONResponse
 
-        app.mount(
-            "/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets"
-        )
+                return JSONResponse({"error": "Not found"}, status_code=404)
+            if file_path.is_file():
+                return FileResponse(file_path)
+            return FileResponse(static_root / "index.html")
+
+        assets_dir = static_root / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
     return app

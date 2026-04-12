@@ -21,5 +21,18 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# NOTE: soul/ and skills/ are project-root directories, NOT inside
+# src/lci_mini/. For editable installs (`pip install -e .`) the files
+# are already on disk. For non-editable installs or Docker builds, use
+# MANIFEST.in or copy these directories into the container alongside
+# the package. setuptools package-data paths are relative to the
+# package dir (src/lci_mini/) so "../soul/*.md" only works in editable
+# mode — we keep it for dev convenience but document the limitation.
 [tool.setuptools.package-data]
-lci_mini = ["../soul/*.md"]
+lci_mini = [
+    "../soul/*.md",
+    "../skills/*/SKILL.md",
+    "../skills/*/tools.py",
+    "../skills/*/references/*.md",
+    "../skills/*/config/*.yaml",
+]
