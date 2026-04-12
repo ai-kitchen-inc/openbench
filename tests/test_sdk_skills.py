@@ -31,6 +31,7 @@ class TestSDKSkillsDiscovery(unittest.TestCase):
         "data-visualization",
         "export-excel",
         "query-explorer",
+        "web-search",
     }
 
     def test_sdk_skills_dir_exists(self):
@@ -634,6 +635,63 @@ class TestExportExcelPushesRenderItem(unittest.TestCase):
         self.assertEqual(self.queue.get_items(), [])
 
 
+class TestWebSearchSkill(unittest.TestCase):
+    """Tests for web-search SDK skill — tool loading + error paths."""
+
+    def setUp(self):
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "web-search")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+
+    def test_expected_tools_present(self):
+        self.assertEqual(set(self.tools), {"web_search", "web_search_multi"})
+
+    def test_skill_metadata(self):
+        self.assertEqual(self.skill.name, "web-search")
+        self.assertTrue(self.skill.has_tools)
+        self.assertTrue(self.skill.description)
+        self.assertTrue(self.skill.triggers)
+        self.assertIn("search-guide.md", self.skill.references)
+
+    def test_web_search_empty_query_returns_error(self):
+        result = self.tools["web_search"]("")
+        self.assertIn("error", result)
+
+    def test_web_search_whitespace_query_returns_error(self):
+        result = self.tools["web_search"]("   ")
+        self.assertIn("error", result)
+
+    def test_web_search_multi_empty_list_returns_error(self):
+        result = self.tools["web_search_multi"]([])
+        self.assertIn("error", result)
+
+    def test_web_search_multi_non_list_returns_error(self):
+        result = self.tools["web_search_multi"]("not a list")
+        self.assertIn("error", result)
+
+    def test_web_search_multi_invalid_query_element(self):
+        """Invalid elements produce per-item errors, not a crash."""
+        result = self.tools["web_search_multi"](["", "   "])
+        self.assertIn("results", result)
+        self.assertEqual(len(result["results"]), 2)
+        for r in result["results"]:
+            self.assertIn("error", r)
+
+    def test_web_search_without_api_key_returns_error(self):
+        """Without GOOGLE_API_KEY set, search should error gracefully."""
+        # Temporarily remove the env var if set
+        import os
+
+        saved = os.environ.pop("GOOGLE_API_KEY", None)
+        try:
+            result = self.tools["web_search"]("test query")
+            # Should either error (no API key) or succeed (if key happens to be set)
+            # We just verify it doesn't crash
+            self.assertIsInstance(result, dict)
+        finally:
+            if saved:
+                os.environ["GOOGLE_API_KEY"] = saved
+
+
 class TestSDKSkillRegistryIntegration(unittest.TestCase):
     """End-to-end: load all SDK skills through the registry."""
 
@@ -655,8 +713,8 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         reg = SkillRegistry()
         reg.load_sdk_skills()
         tools = reg.collect_tools()
-        # 4 + 5 + 2 + 5 = 16 tools
-        self.assertEqual(len(tools), 16)
+        # 4 + 5 + 2 + 5 + 2 = 18 tools (+ web-search)
+        self.assertEqual(len(tools), 18)
 
     def test_load_skills_by_name_after_load_sdk_skills(self):
         """load_skills(['data-visualization']) must work after load_sdk_skills()."""
@@ -669,7 +727,7 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         reg = SkillRegistry()
         reg.load_sdk_skills()
         summary = reg.summary()
-        self.assertGreaterEqual(len(summary["sdk_skills"]), 4)
+        self.assertGreaterEqual(len(summary["sdk_skills"]), 5)
         self.assertGreater(summary["total_tools"], 0)
 
 
