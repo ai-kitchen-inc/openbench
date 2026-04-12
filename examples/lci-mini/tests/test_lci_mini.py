@@ -106,7 +106,7 @@ def test_create_lici_agent_wires_persona(monkeypatch):
     agent = create_lici_agent()
 
     assert isinstance(agent, BaseAgent)
-    assert agent.model == "gemini-2.5-flash"
+    assert agent.model == "gemini-3-flash-preview"
     assert agent.temperature == 0.3
 
     # Persona was loaded from disk and stored on the agent.

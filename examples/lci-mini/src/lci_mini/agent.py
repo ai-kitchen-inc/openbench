@@ -52,7 +52,7 @@ def get_skill_paths() -> list[str]:
 
 def create_lici_agent(
     api_key: str | None = None,
-    model: str = "gemini-2.5-flash",
+    model: str = "gemini-3-flash-preview",
     temperature: float = 0.3,
 ) -> BaseAgent:
     """Create the Lici LCI consultant agent with persona + skills from disk.

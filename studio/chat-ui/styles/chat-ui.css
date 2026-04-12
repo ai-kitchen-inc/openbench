@@ -775,14 +775,11 @@
   height: 100%;
   padding: 48px 24px;
   text-align: center;
-  /* Match the reading column cap applied to .chat-message-list and
-     .chat-input so the empty state stays visually aligned with the
-     chat + input column on wide viewports (no "stranded welcome"
-     floating in a very wide panel). */
-  max-width: var(--ob-chat-max-width, 960px);
-  width: 100%;
-  margin-left: auto;
-  margin-right: auto;
+  /* No max-width cap here — the welcome screen fills the full panel
+     width and centers its own content via align-items: center +
+     .chat-welcome__suggestions { max-width: 500px }. The reading
+     column cap is only needed on .chat-message-list and .chat-input
+     where long text lines must stay readable. */
 }
 
 .chat-welcome__icon {
