@@ -43,8 +43,35 @@ data-level questions.
   text in the user message.
 - After cataloging, call ``xql_list_tables()`` to see what sheets are
   available and pick a table_id to query.
-- Use alias columns (``process``, ``category``, ``material``, ``amount``)
-  not physical column names, so queries work across differently-named files
+
+### Column Resolution Protocol
+
+When working with uploaded files, follow this protocol to identify columns:
+
+1. Call ``extract_file_context(path)`` — check ``profile_status`` in response.
+2. **If profile_status == "cached"**: use ``column_roles`` directly. Column
+   mappings are already saved from a previous session. Skip to querying.
+3. **If profile_status == "needs_mapping"**:
+   a. Call ``xql_describe_table(table_id)`` to see all columns + dtypes + samples.
+   b. For standard columns (category, material, unit, io, process): use the
+      alias names — XQL resolves these automatically via ``config/aliases.yaml``.
+   c. For **numeric columns without a standard name** (site-specific production
+      data, functional unit columns, custom metrics):
+      - Identify them by dtype (float64/int64) + column name context.
+      - If the column name is a site/plant/location → role = ``amount``
+      - If the column name contains "FU", "Functional Unit", "Per" → role = ``functional_unit``
+      - If ambiguous or multiple numeric columns exist → **ASK the user**:
+        "File Anda memiliki kolom [A] dan [B] — mana yang ingin dianalisis?"
+   d. Call ``save_column_profile(path, mappings)`` with your inferred roles.
+      This persists the mapping so the NEXT session skips re-mapping entirely.
+4. **If user corrects a mapping**: call ``update_column_profile(path, column, role)``.
+5. **ALWAYS use physical column names** from describe/profile in xql_* calls.
+   For standard columns, alias names also work (XQL resolves both).
+6. **NEVER hardcode or guess column names** from previous conversations.
+   Each file can have different headers.
+
+### Querying
+
 - For typical questions, chain primitives: ``xql_catalog()`` →
   ``xql_list_tables()`` → ``xql_where(...)`` → ``xql_group(...)`` →
   ``xql_order(...)`` or go straight to ``xql_pareto(...)`` / ``xql_build_io_table(...)``

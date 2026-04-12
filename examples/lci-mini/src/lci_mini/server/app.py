@@ -99,6 +99,15 @@ def create_app() -> FastAPI:
     download_dir = os.getenv("LCI_MINI_DOWNLOAD_DIR", str(default_download_dir))
     download_dir = str(Path(download_dir).expanduser().resolve())
     os.makedirs(download_dir, exist_ok=True)
+
+    # profile_dir is where the data-context-extractor SDK skill stores
+    # column profile caches (LLM-inferred column→role mappings). Keyed
+    # by file content hash so the same file never needs re-mapping.
+    default_profile_dir = get_persona_dir().parent / "profiles"
+    profile_dir = os.getenv("OPENBENCH_PROFILE_DIR", str(default_profile_dir))
+    profile_dir = str(Path(profile_dir).expanduser().resolve())
+    os.makedirs(profile_dir, exist_ok=True)
+    os.environ["OPENBENCH_PROFILE_DIR"] = profile_dir
     # Tell the export-excel skill (and any future SDK skill that honors
     # these env vars) where to write and how to URL-address the result.
     os.environ["OPENBENCH_EXPORT_DIR"] = download_dir
@@ -140,6 +149,7 @@ def create_app() -> FastAPI:
         print(f"  Memory DB      : {db_path}")
         print(f"  Upload dir     : {upload_dir}")
         print(f"  Download dir   : {download_dir}")
+        print(f"  Profile dir    : {profile_dir}")
         print("  AG-UI          : POST /awp")
         print("  Upload         : POST /chat/upload")
         print("  Download       : GET  /downloads/<filename>")

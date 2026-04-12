@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "file_hash": "f5be20c20dfb47b7",
+  "file_name": "ldi_master_pertamina.xlsx",
+  "created_at": "2026-04-12T15:31:47.993364+00:00",
+  "mapped_by": "llm",
+  "sheets": {
+    "LDI-Pertamina Zona 9-00004": {
+      "columns": [
+        {
+          "physical_name": "Process Title",
+          "role": "process"
+        },
+        {
+          "physical_name": "LDI Category",
+          "role": "category"
+        },
+        {
+          "physical_name": "Material Title",
+          "role": "material"
+        },
+        {
+          "physical_name": "Input or Output",
+          "role": "io"
+        },
+        {
+          "physical_name": "Unit",
+          "role": "unit"
+        },
+        {
+          "physical_name": "Total Bulk",
+          "role": "amount"
+        },
+        {
+          "physical_name": "Semberah EP",
+          "role": "amount"
+        },
+        {
+          "physical_name": "Functional Unit Semberah EP - Crude Oil",
+          "role": "functional_unit"
+        },
+        {
+          "physical_name": "Functional Unit Semberah EP - Gas",
+          "role": "functional_unit"
+        },
+        {
+          "physical_name": "Data Source",
+          "role": "source"
+        },
+        {
+          "physical_name": "Notes",
+          "role": "description"
+        }
+      ]
+    }
+  },
+  "updated_at": "2026-04-12T15:31:47.993406+00:00"
+}

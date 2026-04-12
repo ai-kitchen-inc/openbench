@@ -2,6 +2,17 @@
 # Every XQL operation uses aliases (e.g. "category"); the resolver looks
 # up the concrete column name per-table so queries are portable across
 # Excel files with different headers.
+#
+# ONLY universal LCI column names belong here — names that are the same
+# across ALL clients (Pertamina, Holcim, PLN, etc.). Site-specific
+# column names (e.g. "Semberah EP", "Cirebon Plant", "FU - Clinker")
+# are NOT listed here — the LLM infers them from xql_describe_table
+# output and the column profile system (save_column_profile in the
+# data-context-extractor SDK skill) caches the mapping to disk.
+#
+# If you find yourself adding a client-specific column name here,
+# STOP — that's a sign the LLM should be mapping it dynamically.
+
 aliases:
   process:
     - Proses
@@ -28,23 +39,18 @@ aliases:
     - Sumber Data
     - Data Source
   amount:
-    # Site-specific amount columns (Pertamina LDI examples)
-    - Semberah EP
-    - Tanjung 2023
+    # Generic amount column names only — NO site-specific names.
+    # Site columns ("Semberah EP", "Cirebon Plant", etc.) are
+    # identified by the LLM via dtype (float64) + column name context.
     - Amount
     - Total
     - Total Bulk
+    - Quantity
+    - Value
   total:
     - Total Bulk
     - Total
-  fu_crude:
-    - Functional Unit Semberah EP - Crude Oil
-    - Functional Unit Tanjung 2023 - Crude Oil
-    - FU Crude Oil
-  fu_gas:
-    - Functional Unit Semberah EP - Gas
-    - Functional Unit Tanjung 2023 - Gas
-    - FU Gas
+    - Grand Total
   produced_from:
     - Produced From
     - Source

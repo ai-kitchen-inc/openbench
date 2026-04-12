@@ -331,7 +331,7 @@ def synthetic_workbook(tmp_path):
             ],
             "I/O": ["Input", "Output", "Input", "Output", "Input", "Input"],
             "Unit": ["L", "kg", "L", "kg", "m3", "kg"],
-            "Semberah EP": [1000.0, 50.0, 800.0, 40.0, 200.0, 5.0],
+            "Amount": [1000.0, 50.0, 800.0, 40.0, 200.0, 5.0],
             "Produced From": ["Generator", "Stack", "Generator", "Stack", "Heater", "Office"],
         }
     )
@@ -388,7 +388,7 @@ def test_xql_group_sum_by_process(xql_agent, synthetic_workbook):
         group_by=["process"],
         agg={"amount": "sum"},
     )
-    totals = {row["Proses"]: row["Semberah EP_sum"] for row in result["rows"]}
+    totals = {row["Proses"]: row["Amount_sum"] for row in result["rows"]}
     # Refinery A = 1000 (Diesel) + 50 (CO2) = 1050
     assert totals["Refinery A"] == 1050.0
     # Refinery B = 800 + 40 = 840
@@ -449,7 +449,7 @@ def test_xql_order_desc(xql_agent, synthetic_workbook):
         by="amount",
         ascending=False,
     )
-    amounts = [row["Semberah EP"] for row in result["rows"]]
+    amounts = [row["Amount"] for row in result["rows"]]
     assert amounts == sorted(amounts, reverse=True)
 
 
@@ -478,7 +478,7 @@ def test_upload_then_catalog_via_contextvar(monkeypatch, tmp_path):
             "Kategori": ["x", "y"],
             "Nama Bahan/Alat": ["m1", "m2"],
             "Unit": ["kg", "kg"],
-            "Semberah EP": [100.0, 200.0],
+            "Amount": [100.0, 200.0],
         }
     ).to_excel(xlsx_path, sheet_name="Sheet1", index=False)
 

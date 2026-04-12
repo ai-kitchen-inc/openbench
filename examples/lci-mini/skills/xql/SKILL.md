@@ -48,8 +48,28 @@ Three layers, all implemented in ``tools.py``:
 Configuration lives in ``config/``:
 
 - ``aliases.yaml``   — logical column name -> list of physical names
+  (UNIVERSAL names only — no site-specific columns)
 - ``units.yaml``     — unit conversion factors (mass, volume, energy)
 - ``lci_rules.yaml`` — Pareto thresholds, grouping rules, exclusions
+
+## Column Resolution Strategy
+
+XQL uses a TWO-TIER column resolution:
+
+1. **Alias config** (config/aliases.yaml) — maps universal logical
+   names (category, material, unit, io) to common physical names.
+   Works for standard columns present in every LCI file.
+
+2. **LLM inference + Column Profile** (data-context-extractor SDK skill)
+   — for site-specific columns (amount, functional unit, custom metrics).
+   The agent reads xql_describe_table output, identifies the correct
+   column by name + dtype, then persists the mapping via
+   save_column_profile. Next session: profile loaded from disk, zero
+   re-mapping cost.
+
+Site-specific columns like "Semberah EP", "Cirebon Plant", or
+"FU - Clinker" do NOT belong in aliases.yaml. They are mapped
+dynamically by the LLM and cached by the column profile system.
 
 All queries return results inline (JSON-serializable list of row dicts)
 unless the caller asks to persist them. Source .xlsx files are **never**
