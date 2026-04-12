@@ -385,6 +385,7 @@ data/
 datasets/
 uploads/
 downloads/
+profiles/
 
 # Generated outputs
 outputs/
