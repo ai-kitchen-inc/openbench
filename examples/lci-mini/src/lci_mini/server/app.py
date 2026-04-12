@@ -50,8 +50,20 @@ def create_app() -> FastAPI:
     def render_items_fn() -> list[dict]:
         items: list[dict] = []
         if xql_get is not None:
-            items.extend(xql_get())
-        items.extend(shared_render_queue.get_items())
+            xql_items = xql_get()
+            items.extend(xql_items)
+        shared_items = shared_render_queue.get_items()
+        items.extend(shared_items)
+        if items:
+            xql_count = len(xql_items) if xql_get else 0
+            print(
+                f"  [render] {len(items)} render item(s): "
+                f"xql={xql_count}, shared={len(shared_items)}"
+            )
+            for i, item in enumerate(items):
+                item_type = item.get("type", item.get("headers", "?"))
+                item_name = item.get("title", item.get("name", ""))
+                print(f"  [render]   [{i}] type={item_type} name={item_name!r}")
         return items
 
     def clear_render_items_fn() -> None:

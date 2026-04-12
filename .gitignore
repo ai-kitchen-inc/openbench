@@ -500,3 +500,5 @@ examples/lci-ignite-x/tests/fixtures/*.xlsx
 examples/lci-ignite-x/uploads/
 examples/lci-ignite-x/.firebase/
 examples/lci-ignite-x/frontend/dist/
+# Added by code-review-graph
+.code-review-graph/

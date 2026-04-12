@@ -16,7 +16,6 @@ they only shape the data.
 
 from __future__ import annotations
 
-import contextlib
 from typing import Any
 
 __all__ = [
@@ -68,10 +67,16 @@ def _push_to_render_queue(item: dict[str, Any]) -> None:
     """
     try:
         from openbench.chat.render_queue import push as _push
-    except Exception:
+    except Exception as e:
+        print(f"  [chart-push] FAILED import: {e}")
         return
-    with contextlib.suppress(Exception):
+    try:
         _push(item)
+        from openbench.chat.render_queue import get_items
+
+        print(f"  [chart-push] OK — queue now has {len(get_items())} item(s)")
+    except Exception as e:
+        print(f"  [chart-push] FAILED push: {e}")
 
 
 def _chart_dict(
