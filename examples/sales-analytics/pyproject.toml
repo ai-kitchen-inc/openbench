@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sales-analytics"
+version = "0.1.0"
+description = "Sales analytics demo — proves OpenBench SDK skills work for any tabular domain"
+requires-python = ">=3.10"
+dependencies = [
+    "openbench",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-dotenv>=1.0",
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
