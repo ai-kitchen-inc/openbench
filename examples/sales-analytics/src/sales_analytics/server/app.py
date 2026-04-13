@@ -23,7 +23,12 @@ from sales_analytics.agent import create_analyst_agent, get_persona_dir
 
 def create_app() -> FastAPI:
     """Create the Sales Analytics FastAPI app."""
-    load_dotenv(get_persona_dir().parent / ".env", override=True)
+    env_path = get_persona_dir().parent / ".env"
+    load_dotenv(env_path, override=True)
+    key = os.environ.get("GOOGLE_API_KEY", "")
+    print(
+        f"  [env] path={env_path} exists={env_path.exists()} key_len={len(key)} key_start={key[:10]}..."
+    )
 
     agent = create_analyst_agent()
 

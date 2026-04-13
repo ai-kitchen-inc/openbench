@@ -24,7 +24,7 @@ def get_persona_dir() -> Path:
 
 def create_analyst_agent(
     api_key: str | None = None,
-    model: str = "gemini-3-flash-preview",
+    model: str = "gemini-2.5-flash",
     temperature: float = 0.3,
 ) -> BaseAgent:
     """Create the sales analyst agent with persona + SDK skills only.
