@@ -125,23 +125,6 @@ function SkillBadge() {
           <div className="skill-badge__name">
             {s.name} <span className="skill-badge__version">v{s.version}</span>
           </div>
-          <div className="skill-badge__meta">
-            {s.references.length > 0 && (
-              <span>
-                {s.references.length} ref
-                {s.references.length === 1 ? "" : "s"}
-              </span>
-            )}
-            {s.tools.length > 0 && (
-              <span>
-                {s.tools.length} tool
-                {s.tools.length === 1 ? "" : "s"}: {s.tools.join(", ")}
-              </span>
-            )}
-            {s.references.length === 0 && s.tools.length === 0 && (
-              <span>empty</span>
-            )}
-          </div>
         </div>
       ))}
       {data.summary && (
