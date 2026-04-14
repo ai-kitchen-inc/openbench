@@ -941,7 +941,7 @@ class TestPdfToolsSkill(unittest.TestCase):
         finally:
             os.unlink(path)
 
-    def test_read_pdf_page_out_of_range(self):
+    def test_read_pdf_pages_out_of_range(self):
         path = self._make_pdf(3)
         try:
             result = self.tools["read_pdf"](path, pages=[99])
