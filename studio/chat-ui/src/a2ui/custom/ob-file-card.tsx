@@ -272,6 +272,8 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
       </div>
       <a
         href={fileUrl}
+        target="_blank"
+        rel="noopener noreferrer"
         download={fileName}
         className="ob-file-card__download"
         style={{
