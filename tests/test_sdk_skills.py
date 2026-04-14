@@ -30,6 +30,7 @@ class TestSDKSkillsDiscovery(unittest.TestCase):
         "data-context-extractor",
         "data-visualization",
         "export-excel",
+        "pdf-tools",
         "query-explorer",
         "web-search",
     }
@@ -845,6 +846,193 @@ class TestWebSearchSkill(unittest.TestCase):
                 os.environ["GOOGLE_API_KEY"] = saved
 
 
+class TestPdfToolsSkill(unittest.TestCase):
+    """Tests for pdf-tools SDK skill."""
+
+    def setUp(self):
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "pdf-tools")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+
+    def test_expected_tools_present(self):
+        self.assertEqual(
+            set(self.tools),
+            {
+                "pdf_metadata",
+                "read_pdf",
+                "read_pdf_page",
+                "extract_pdf_tables",
+                "merge_pdfs",
+                "split_pdf",
+                "generate_pdf",
+            },
+        )
+
+    def test_skill_metadata(self):
+        self.assertEqual(self.skill.name, "pdf-tools")
+        self.assertTrue(self.skill.has_tools)
+        self.assertIn("pdf-guide.md", self.skill.references)
+
+    def _make_pdf(self, pages: int = 3) -> str:
+        """Create a small test PDF via reportlab."""
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import Paragraph, SimpleDocTemplate
+
+        fd, path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        doc = SimpleDocTemplate(path, pagesize=A4, title="Test PDF", author="Test")
+        elements = []
+        from reportlab.lib.styles import getSampleStyleSheet
+
+        styles = getSampleStyleSheet()
+        for i in range(pages):
+            elements.append(Paragraph(f"Page {i} content. Hello world.", styles["BodyText"]))
+            if i < pages - 1:
+                from reportlab.platypus import PageBreak
+
+                elements.append(PageBreak())
+        doc.build(elements)
+        return path
+
+    def test_pdf_metadata(self):
+        path = self._make_pdf(3)
+        try:
+            result = self.tools["pdf_metadata"](path)
+            self.assertNotIn("error", result)
+            self.assertEqual(result["page_count"], 3)
+            self.assertEqual(result["title"], "Test PDF")
+            self.assertEqual(result["author"], "Test")
+            self.assertFalse(result["encrypted"])
+        finally:
+            os.unlink(path)
+
+    def test_pdf_metadata_missing_file(self):
+        result = self.tools["pdf_metadata"]("/nonexistent/file.pdf")
+        self.assertIn("error", result)
+
+    def test_read_pdf(self):
+        path = self._make_pdf(3)
+        try:
+            result = self.tools["read_pdf"](path)
+            self.assertNotIn("error", result)
+            self.assertEqual(result["page_count"], 3)
+            self.assertIn("Page 0 content", result["text"])
+            self.assertFalse(result["truncated"])
+        finally:
+            os.unlink(path)
+
+    def test_read_pdf_with_page_filter(self):
+        path = self._make_pdf(5)
+        try:
+            result = self.tools["read_pdf"](path, pages=[0, 2, 4])
+            self.assertNotIn("error", result)
+            self.assertEqual(result["pages_read"], [0, 2, 4])
+            self.assertIn("Page 0 content", result["text"])
+            self.assertIn("Page 2 content", result["text"])
+        finally:
+            os.unlink(path)
+
+    def test_read_pdf_truncation(self):
+        path = self._make_pdf(10)
+        try:
+            result = self.tools["read_pdf"](path, max_chars=50)
+            self.assertTrue(result["truncated"])
+            self.assertIn("truncated_at_page", result)
+            self.assertLessEqual(len(result["text"]), 55)  # small margin
+        finally:
+            os.unlink(path)
+
+    def test_read_pdf_page_out_of_range(self):
+        path = self._make_pdf(3)
+        try:
+            result = self.tools["read_pdf"](path, pages=[99])
+            self.assertIn("error", result)
+            self.assertIn("out of range", result["error"])
+        finally:
+            os.unlink(path)
+
+    def test_read_pdf_page(self):
+        path = self._make_pdf(3)
+        try:
+            result = self.tools["read_pdf_page"](path, 1)
+            self.assertNotIn("error", result)
+            self.assertEqual(result["page"], 1)
+            self.assertIn("Page 1 content", result["text"])
+        finally:
+            os.unlink(path)
+
+    def test_read_pdf_page_out_of_range(self):
+        path = self._make_pdf(3)
+        try:
+            result = self.tools["read_pdf_page"](path, 99)
+            self.assertIn("error", result)
+        finally:
+            os.unlink(path)
+
+    def test_split_pdf(self):
+        path = self._make_pdf(5)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ["OPENBENCH_EXPORT_DIR"] = tmp
+                result = self.tools["split_pdf"](path, [0, 2, 4], "subset.pdf")
+                self.assertNotIn("error", result)
+                self.assertEqual(result["page_count"], 3)
+                self.assertEqual(result["pages_extracted"], [0, 2, 4])
+                os.environ.pop("OPENBENCH_EXPORT_DIR", None)
+        finally:
+            os.unlink(path)
+
+    def test_split_pdf_empty_pages(self):
+        path = self._make_pdf(3)
+        try:
+            result = self.tools["split_pdf"](path, [], "bad.pdf")
+            self.assertIn("error", result)
+        finally:
+            os.unlink(path)
+
+    def test_merge_pdfs(self):
+        path1 = self._make_pdf(2)
+        path2 = self._make_pdf(3)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ["OPENBENCH_EXPORT_DIR"] = tmp
+                result = self.tools["merge_pdfs"]([path1, path2], "combined.pdf")
+                self.assertNotIn("error", result)
+                self.assertEqual(result["page_count"], 5)
+                os.environ.pop("OPENBENCH_EXPORT_DIR", None)
+        finally:
+            os.unlink(path1)
+            os.unlink(path2)
+
+    def test_merge_pdfs_single_file_error(self):
+        path = self._make_pdf(1)
+        try:
+            result = self.tools["merge_pdfs"]([path])
+            self.assertIn("error", result)
+        finally:
+            os.unlink(path)
+
+    def test_generate_pdf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENBENCH_EXPORT_DIR"] = tmp
+            result = self.tools["generate_pdf"](
+                title="Test Report",
+                sections=[
+                    {"type": "heading", "content": "Summary"},
+                    {"type": "text", "content": "This is a test report."},
+                    {"type": "table", "headers": ["A", "B"], "rows": [["1", "2"]]},
+                ],
+                filename="test_report.pdf",
+            )
+            self.assertNotIn("error", result)
+            self.assertIn("test_report", result["name"])
+            self.assertTrue(result["name"].endswith(".pdf"))
+            os.environ.pop("OPENBENCH_EXPORT_DIR", None)
+
+    def test_generate_pdf_empty_sections(self):
+        result = self.tools["generate_pdf"](title="Bad", sections=[])
+        self.assertIn("error", result)
+
+
 class TestSDKSkillRegistryIntegration(unittest.TestCase):
     """End-to-end: load all SDK skills through the registry."""
 
@@ -866,8 +1054,8 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         reg = SkillRegistry()
         reg.load_sdk_skills()
         tools = reg.collect_tools()
-        # 7 + 5 + 2 + 5 + 2 = 21 tools (data-context-extractor gained 3 profile tools)
-        self.assertEqual(len(tools), 21)
+        # 7 + 5 + 2 + 7 + 5 + 2 = 28 tools (+ pdf-tools 7)
+        self.assertEqual(len(tools), 28)
 
     def test_load_skills_by_name_after_load_sdk_skills(self):
         """load_skills(['data-visualization']) must work after load_sdk_skills()."""
@@ -880,7 +1068,7 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         reg = SkillRegistry()
         reg.load_sdk_skills()
         summary = reg.summary()
-        self.assertGreaterEqual(len(summary["sdk_skills"]), 5)
+        self.assertGreaterEqual(len(summary["sdk_skills"]), 6)
         self.assertGreater(summary["total_tools"], 0)
 
 
