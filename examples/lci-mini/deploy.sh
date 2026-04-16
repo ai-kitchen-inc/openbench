@@ -9,8 +9,7 @@ set -euo pipefail
 
 PROJECT_ID="openbench-lci"
 REGION="us-central1"
-SERVICE_NAME="lci-mini"
-HOSTING_SITE="lci-mini"
+SERVICE_NAME="lci-ignite-x"
 MEMORY="1Gi"
 TIMEOUT="300"
 
@@ -110,21 +109,11 @@ deploy_web() {
     pnpm install --frozen-lockfile 2>/dev/null || pnpm install
     pnpm build
 
-    log "Ensuring Firebase site '${HOSTING_SITE}' exists..."
-    if ! firebase hosting:sites:list --project "$PROJECT_ID" 2>/dev/null | grep -q "${HOSTING_SITE}"; then
-        log "Creating Firebase Hosting site: ${HOSTING_SITE}"
-        firebase hosting:sites:create "$HOSTING_SITE" --project "$PROJECT_ID" || \
-            warn "Site creation failed (may already exist or need manual creation)"
-    fi
-
-    log "Applying hosting target..."
+    log "Deploying to Firebase Hosting (default site: openbench-lci.web.app)..."
     cd "$LCI_DIR"
-    firebase target:apply hosting "$HOSTING_SITE" "$HOSTING_SITE" --project "$PROJECT_ID" 2>/dev/null || true
+    firebase deploy --only hosting --project "$PROJECT_ID"
 
-    log "Deploying to Firebase Hosting (target: ${HOSTING_SITE})..."
-    firebase deploy --only "hosting:${HOSTING_SITE}" --project "$PROJECT_ID"
-
-    log "Frontend deployed: https://${HOSTING_SITE}.web.app"
+    log "Frontend deployed: https://${PROJECT_ID}.web.app"
 }
 
 # ============================================================
@@ -145,6 +134,6 @@ esac
 
 log "Done!"
 echo ""
-echo "  Frontend: https://${HOSTING_SITE}.web.app"
+echo "  Frontend: https://${PROJECT_ID}.web.app"
 echo "  API:      Cloud Run ($SERVICE_NAME @ $REGION)"
 echo ""
