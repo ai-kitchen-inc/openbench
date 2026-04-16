@@ -5,8 +5,11 @@
   "targets": {
     "openbench-lci": {
       "hosting": {
-        "lci-mini": ["lci-mini"]
+        "lci-mini": [
+          "lci-mini"
+        ]
       }
     }
-  }
+  },
+  "etags": {}
 }
