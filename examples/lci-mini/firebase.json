@@ -1,0 +1,62 @@
+{
+  "hosting": {
+    "target": "lci-mini",
+    "public": "frontend/dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "/awp",
+        "run": {
+          "serviceId": "lci-mini",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/chat/**",
+        "run": {
+          "serviceId": "lci-mini",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/uploads/**",
+        "run": {
+          "serviceId": "lci-mini",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/downloads/**",
+        "run": {
+          "serviceId": "lci-mini",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/persona",
+        "run": {
+          "serviceId": "lci-mini",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/skills",
+        "run": {
+          "serviceId": "lci-mini",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/health",
+        "run": {
+          "serviceId": "lci-mini",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

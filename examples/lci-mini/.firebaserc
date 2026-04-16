@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "default": "openbench-lci"
+  },
+  "targets": {
+    "openbench-lci": {
+      "hosting": {
+        "lci-mini": ["lci-mini"]
+      }
+    }
+  }
+}
