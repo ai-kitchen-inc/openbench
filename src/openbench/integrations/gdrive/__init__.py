@@ -18,8 +18,10 @@ from __future__ import annotations
 
 from openbench.integrations.gdrive.drive_persona_source import GoogleDrivePersonaSource
 from openbench.integrations.gdrive.persona_source import GoogleDocPersonaSource
+from openbench.integrations.gdrive.scratchpad import GoogleDriveScratchpad
 
 __all__ = [
     "GoogleDocPersonaSource",
     "GoogleDrivePersonaSource",
+    "GoogleDriveScratchpad",
 ]
