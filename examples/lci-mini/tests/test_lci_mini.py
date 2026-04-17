@@ -190,6 +190,57 @@ def test_fastapi_app_creates_successfully(monkeypatch, tmp_path):
     assert "/sessions/{session_id}" in routes
 
 
+class TestStorageBackendSelection:
+    """Cover the env-var-driven switch between Local and Drive backends."""
+
+    def test_defaults_to_local_backend(self, monkeypatch):
+        from lci_mini.server.app import _build_storage_backend
+
+        from openbench import LocalStorageBackend
+
+        monkeypatch.delenv("LCI_MINI_DRIVE_ROOT", raising=False)
+        monkeypatch.delenv("LCI_MINI_STORAGE_ROOT", raising=False)
+        monkeypatch.delenv("LCI_MINI_SERVICE_ACCOUNT", raising=False)
+
+        backend, label = _build_storage_backend()
+        assert isinstance(backend, LocalStorageBackend)
+        assert label.startswith("Local(")
+
+    def test_local_root_env_override(self, monkeypatch, tmp_path):
+        from lci_mini.server.app import _build_storage_backend
+
+        from openbench import LocalStorageBackend
+
+        monkeypatch.delenv("LCI_MINI_DRIVE_ROOT", raising=False)
+        monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(tmp_path / "alt"))
+
+        backend, label = _build_storage_backend()
+        assert isinstance(backend, LocalStorageBackend)
+        assert str(tmp_path / "alt") in label
+
+    def test_drive_env_selects_drive_backend(self, monkeypatch):
+        from lci_mini.server.app import _build_storage_backend
+
+        from openbench.integrations.gdrive import GoogleDriveStorageBackend
+
+        monkeypatch.setenv("LCI_MINI_DRIVE_ROOT", "folder-xyz")
+        monkeypatch.setenv("LCI_MINI_SERVICE_ACCOUNT", "/fake/creds.json")
+
+        backend, label = _build_storage_backend()
+        assert isinstance(backend, GoogleDriveStorageBackend)
+        assert backend.root_folder_id == "folder-xyz"
+        assert "folder-xyz" in label
+
+    def test_drive_without_service_account_raises(self, monkeypatch):
+        from lci_mini.server.app import _build_storage_backend
+
+        monkeypatch.setenv("LCI_MINI_DRIVE_ROOT", "folder-xyz")
+        monkeypatch.delenv("LCI_MINI_SERVICE_ACCOUNT", raising=False)
+
+        with pytest.raises(RuntimeError, match="LCI_MINI_SERVICE_ACCOUNT"):
+            _build_storage_backend()
+
+
 def test_sessions_endpoints_use_local_storage_backend(monkeypatch, tmp_path):
     """Phase 2 wiring: /sessions reads from the LocalStorageBackend SQLite store."""
     from fastapi.testclient import TestClient

@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from lci_mini.agent import create_lici_agent, get_persona_dir
 from lci_mini.server.handler import LiciAGUIHandler
-from openbench import LocalStorageBackend
+from openbench import LocalStorageBackend, StorageBackend
 from openbench.chat import ChatEngine
 from openbench.chat import render_queue as shared_render_queue
 from openbench.chat.files import FileContentExtractor, FileStore
@@ -28,20 +28,60 @@ from openbench.chat.transport import AGUIActionHandler
 from openbench.chat.transport.sessions import AGUISessionHandler
 
 
+def _build_storage_backend() -> tuple[StorageBackend, str]:
+    """Pick the storage backend based on environment variables.
+
+    Returns ``(backend, human_label)`` — the label is printed at startup
+    so operators can see at a glance which backend is active.
+
+    Selection rules:
+    - If ``LCI_MINI_DRIVE_ROOT`` is set, use
+      :class:`GoogleDriveStorageBackend`. ``LCI_MINI_SERVICE_ACCOUNT``
+      must also be set (path to a service-account JSON file).
+    - Otherwise, default to :class:`LocalStorageBackend` rooted at
+      ``examples/lci-mini/.openbench/`` (override via
+      ``LCI_MINI_STORAGE_ROOT``).
+
+    Raises:
+        RuntimeError: If ``LCI_MINI_DRIVE_ROOT`` is set without a
+            corresponding ``LCI_MINI_SERVICE_ACCOUNT``.
+        ImportError: If the ``[gdrive]`` extras are not installed when
+            the Drive backend is requested.
+    """
+    drive_root = os.getenv("LCI_MINI_DRIVE_ROOT")
+    if drive_root:
+        service_account = os.getenv("LCI_MINI_SERVICE_ACCOUNT")
+        if not service_account:
+            raise RuntimeError(
+                "LCI_MINI_DRIVE_ROOT is set but LCI_MINI_SERVICE_ACCOUNT is not. "
+                "Provide a service-account JSON path to use the Drive backend, "
+                "or unset LCI_MINI_DRIVE_ROOT to fall back to local storage."
+            )
+        # Lazy import — only pull in the [gdrive] extras when actually used.
+        from openbench.integrations.gdrive import GoogleDriveStorageBackend
+
+        backend: StorageBackend = GoogleDriveStorageBackend(
+            root_folder_id=drive_root,
+            service_account_file=service_account,
+        )
+        return backend, f"GoogleDrive(folder={drive_root})"
+
+    default_root = get_persona_dir().parent / ".openbench"
+    storage_root = os.getenv("LCI_MINI_STORAGE_ROOT", str(default_root))
+    return LocalStorageBackend(storage_root), f"Local(root={storage_root})"
+
+
 def create_app() -> FastAPI:
     """Create and configure the LCI Mini FastAPI app."""
     # Load .env from the example directory if present
     load_dotenv(get_persona_dir().parent / ".env")
 
-    # Project-scoped storage backend rooted inside the example dir:
-    #   examples/lci-mini/.openbench/
-    #   ├── sessions.db   — SQLiteSessionStore (ChatSession persistence)
-    #   ├── memory/       — LocalMarkdownScratchpad (user-editable notes)
-    #   └── personas/     — FilesystemPersonaSource (not used here; Lici's
-    #                        persona lives at soul/ to keep the demo layout)
-    default_storage_root = get_persona_dir().parent / ".openbench"
-    storage_root = os.getenv("LCI_MINI_STORAGE_ROOT", str(default_storage_root))
-    storage = LocalStorageBackend(storage_root)
+    # Pick the storage backend (local by default, Drive via env vars).
+    # The StorageBackend Protocol is the exact seam the RFC sold: flip
+    # one env var (LCI_MINI_DRIVE_ROOT + LCI_MINI_SERVICE_ACCOUNT) and
+    # sessions + scratchpad move off disk and onto Google Drive, without
+    # touching agent wiring or request handlers.
+    storage, storage_label = _build_storage_backend()
     session_store = storage.session_store()
     scratchpad = storage.scratchpad_store()
 
@@ -163,9 +203,7 @@ def create_app() -> FastAPI:
                 label = f"tools={tool_names}" if tool_names else "knowledge-only"
                 print(f"    - {s.name} v{s.version}: {label}")
         print(f"  Memory DB      : {db_path}")
-        print(f"  Storage root   : {storage.root}")
-        print(f"  Sessions       : {storage.root / 'sessions.db'}")
-        print(f"  Scratchpad     : {storage.root / 'memory'}")
+        print(f"  Storage        : {storage_label}")
         print(f"  Upload dir     : {upload_dir}")
         print(f"  Download dir   : {download_dir}")
         print(f"  Profile dir    : {profile_dir}")
