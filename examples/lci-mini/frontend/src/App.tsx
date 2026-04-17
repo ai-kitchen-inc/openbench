@@ -12,9 +12,12 @@ import {
   SessionSidebar,
   useChatContext,
 } from "@openbench/chat-ui";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "@openbench/chat-ui/styles/chat-ui.css";
 import "@openbench/chat-ui/styles/bundle.css";
+import { AuthGate } from "./auth/AuthGate";
+import { UserBadge } from "./auth/UserBadge";
+import { type UseAuthReturn, useAuth } from "./auth/useAuth";
 import "./global.css";
 
 const STREAM_URL = "/awp";
@@ -193,7 +196,7 @@ function ThemeIcon({ dark }: { dark: boolean }) {
   );
 }
 
-function ChatLayout() {
+function ChatLayout({ auth }: { auth: UseAuthReturn }) {
   const { sidebarOpen } = useChatContext();
   const [dark, toggleDark] = useDarkMode();
 
@@ -212,15 +215,18 @@ function ChatLayout() {
         placeholder="Tanya apa saja tentang LCI/LCA atau PROPER 2025..."
         greeting="Halo, saya Lici — LCI Consultant Assistant"
         headerRight={
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={toggleDark}
-            title={dark ? "Switch to light mode" : "Switch to dark mode"}
-            aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
-          >
-            <ThemeIcon dark={dark} />
-          </button>
+          <div className="chat-header-right">
+            <UserBadge auth={auth} />
+            <button
+              type="button"
+              className="theme-toggle"
+              onClick={toggleDark}
+              title={dark ? "Switch to light mode" : "Switch to dark mode"}
+              aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              <ThemeIcon dark={dark} />
+            </button>
+          </div>
         }
       />
     </div>
@@ -228,9 +234,24 @@ function ChatLayout() {
 }
 
 export default function App() {
+  const auth = useAuth();
+
+  // Build ChatConfig once per auth.getIdToken identity — useAuth's
+  // callback is stable across renders so this memo is effectively
+  // stable for the lifetime of the hook.
+  const chatConfig = useMemo(
+    () => ({
+      streamUrl: STREAM_URL,
+      getAuthToken: auth.configured ? auth.getIdToken : undefined,
+    }),
+    [auth.configured, auth.getIdToken],
+  );
+
   return (
-    <ChatProvider config={{ streamUrl: STREAM_URL }}>
-      <ChatLayout />
-    </ChatProvider>
+    <AuthGate auth={auth}>
+      <ChatProvider config={chatConfig}>
+        <ChatLayout auth={auth} />
+      </ChatProvider>
+    </AuthGate>
   );
 }

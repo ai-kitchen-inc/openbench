@@ -184,3 +184,191 @@ body {
   color: var(--ob-text-muted, var(--ob-text-secondary));
   font-style: italic;
 }
+
+/* ── Auth gate (pre-sign-in) ─────────────────────────────────── */
+
+.auth-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  padding: 24px;
+}
+
+.auth-gate__panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px 32px;
+  max-width: 420px;
+  width: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  background: var(--ob-bg-primary, #fff);
+  text-align: center;
+}
+
+.auth-gate__icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ob-bg-tertiary, rgba(0, 0, 0, 0.04));
+  color: var(--ob-text-primary, #1a1a1a);
+}
+
+.auth-gate__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ob-text-primary, #1a1a1a);
+}
+
+.auth-gate__blurb {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.64));
+}
+
+.auth-gate__signin {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 10px 20px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  background: var(--ob-bg-primary, #fff);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.auth-gate__signin:hover {
+  border-color: rgba(0, 0, 0, 0.24);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.auth-gate--loading {
+  flex-direction: column;
+  gap: 12px;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.64));
+  font-size: 14px;
+}
+
+.auth-gate__spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(0, 0, 0, 0.12);
+  border-top-color: var(--ob-text-primary, #1a1a1a);
+  border-radius: 50%;
+  animation: auth-spin 800ms linear infinite;
+}
+
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── User badge (in header) ──────────────────────────────────── */
+
+.chat-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-badge {
+  position: relative;
+}
+
+.user-badge__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+  background: var(--ob-bg-primary, #fff);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 13px;
+  cursor: pointer;
+  max-width: 200px;
+}
+
+.user-badge__trigger:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.user-badge__email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-badge__drive-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10a37f;
+  flex-shrink: 0;
+}
+
+.user-badge__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 220px;
+  padding: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  background: var(--ob-bg-primary, #fff);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  z-index: 100;
+}
+
+.user-badge__menu-email {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.64));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-badge__menu-sep {
+  height: 1px;
+  background: rgba(0, 0, 0, 0.06);
+  margin: 4px 0;
+}
+
+.user-badge__menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.user-badge__menu-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] .auth-gate__panel,
+[data-theme="dark"] .user-badge__trigger,
+[data-theme="dark"] .user-badge__menu,
+[data-theme="dark"] .auth-gate__signin {
+  border-color: rgba(255, 255, 255, 0.12);
+}
