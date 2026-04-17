@@ -119,6 +119,13 @@ openbench = "openbench.cli.main:cli"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+openbench = [
+    "skills/*/SKILL.md",
+    "skills/*/tools.py",
+    "skills/*/references/*.md",
+]
+
 [tool.black]
 line-length = 100
 target-version = ["py310"]
