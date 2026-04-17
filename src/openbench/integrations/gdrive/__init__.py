@@ -16,12 +16,16 @@ Currently ships:
 
 from __future__ import annotations
 
+from openbench.integrations.gdrive.backend import GoogleDriveStorageBackend
 from openbench.integrations.gdrive.drive_persona_source import GoogleDrivePersonaSource
 from openbench.integrations.gdrive.persona_source import GoogleDocPersonaSource
 from openbench.integrations.gdrive.scratchpad import GoogleDriveScratchpad
+from openbench.integrations.gdrive.session_store import GoogleDriveSessionStore
 
 __all__ = [
     "GoogleDocPersonaSource",
     "GoogleDrivePersonaSource",
     "GoogleDriveScratchpad",
+    "GoogleDriveSessionStore",
+    "GoogleDriveStorageBackend",
 ]
