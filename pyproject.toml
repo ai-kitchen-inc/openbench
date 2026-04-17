@@ -93,6 +93,11 @@ vector = [
     "pinecone-client>=3.0.0",
 ]
 
+gdrive = [
+    "google-api-python-client>=2.100.0",
+    "google-auth>=2.25.0",
+]
+
 extraction = [
     "langextract>=1.0.0",
 ]
