@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from openbench.core.providers import ProviderType, configure_provider
 from openbench.intelligence import BaseAgent, Persona
+
+if TYPE_CHECKING:
+    from openbench.intelligence.scratchpad import ScratchpadStore
 
 
 def _example_root() -> Path:
@@ -33,8 +37,8 @@ def get_skills_dir() -> Path:
     return (_example_root() / "skills").resolve()
 
 
-def get_skill_paths() -> list[str]:
-    """Return project skill paths passed to ``BaseAgent(skills=...)``.
+def get_skill_paths(include_scratchpad: bool = False) -> list[str]:
+    """Return skill names/paths passed to ``BaseAgent(skills=...)``.
 
     Lici ships with one bundled project skill:
 
@@ -43,17 +47,26 @@ def get_skill_paths() -> list[str]:
       BUILD_IO_TABLE, ...) that treat Excel sheets as relational tables
       with an alias-based schema registry and YAML config for unit
       conversions and LCI grouping rules.
+
+    Args:
+        include_scratchpad: When True, also include the bundled
+            ``memory-scratchpad`` SDK skill so the agent can read/write
+            user-editable memory. Requires a :class:`ScratchpadStore`
+            to be passed to :func:`create_lici_agent`.
     """
     skills_dir = get_skills_dir()
-    return [
-        str(skills_dir / "xql"),
-    ]
+    skills: list[str] = [str(skills_dir / "xql")]
+    if include_scratchpad:
+        # Bare SDK skill name — resolved via SkillRegistry.load_sdk_skills()
+        skills.append("memory-scratchpad")
+    return skills
 
 
 def create_lici_agent(
     api_key: str | None = None,
     model: str = "gemini-3-flash-preview",
     temperature: float = 0.3,
+    scratchpad: ScratchpadStore | None = None,
 ) -> BaseAgent:
     """Create the Lici LCI consultant agent with persona + skills from disk.
 
@@ -61,15 +74,17 @@ def create_lici_agent(
         api_key: Google Gemini API key. Falls back to ``GOOGLE_API_KEY`` env.
         model: Gemini model id. Must be 2.5+ per project conventions.
         temperature: LLM sampling temperature.
+        scratchpad: Optional :class:`ScratchpadStore` for user-editable
+            markdown memory. When provided, the ``memory-scratchpad``
+            SDK skill is loaded and bound to this store so the agent can
+            read/write persistent notes (user preferences, ongoing LCA
+            project context) across sessions.
 
     Returns:
         A :class:`BaseAgent` whose system prompt is composed from
         ``soul/SOUL.md``, ``soul/STYLE.md``, ``soul/AGENTS.md``, plus the
-        bundled ``skills/xql`` package (Excel-as-RDBMS). All 14 XQL tools
-        — catalog, select, where, project, order, group, distinct,
-        pareto, join, union, pivot, build_io_table, list_tables,
-        describe_table — are auto-registered on the agent's ToolExecutor
-        via the Skill Layer.
+        bundled ``skills/xql`` package (Excel-as-RDBMS) and — when a
+        scratchpad is provided — the ``memory-scratchpad`` SDK skill.
 
     Raises:
         RuntimeError: If no Google API key is available.
@@ -102,5 +117,6 @@ def create_lici_agent(
         model=model,
         temperature=temperature,
         persona=persona,
-        skills=get_skill_paths(),
+        skills=get_skill_paths(include_scratchpad=scratchpad is not None),
+        scratchpad=scratchpad,
     )

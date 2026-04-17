@@ -20,10 +20,12 @@ from fastapi.staticfiles import StaticFiles
 
 from lci_mini.agent import create_lici_agent, get_persona_dir
 from lci_mini.server.handler import LiciAGUIHandler
+from openbench import LocalStorageBackend
 from openbench.chat import ChatEngine
 from openbench.chat import render_queue as shared_render_queue
 from openbench.chat.files import FileContentExtractor, FileStore
 from openbench.chat.transport import AGUIActionHandler
+from openbench.chat.transport.sessions import AGUISessionHandler
 
 
 def create_app() -> FastAPI:
@@ -31,7 +33,19 @@ def create_app() -> FastAPI:
     # Load .env from the example directory if present
     load_dotenv(get_persona_dir().parent / ".env")
 
-    agent = create_lici_agent()
+    # Project-scoped storage backend rooted inside the example dir:
+    #   examples/lci-mini/.openbench/
+    #   ├── sessions.db   — SQLiteSessionStore (ChatSession persistence)
+    #   ├── memory/       — LocalMarkdownScratchpad (user-editable notes)
+    #   └── personas/     — FilesystemPersonaSource (not used here; Lici's
+    #                        persona lives at soul/ to keep the demo layout)
+    default_storage_root = get_persona_dir().parent / ".openbench"
+    storage_root = os.getenv("LCI_MINI_STORAGE_ROOT", str(default_storage_root))
+    storage = LocalStorageBackend(storage_root)
+    session_store = storage.session_store()
+    scratchpad = storage.scratchpad_store()
+
+    agent = create_lici_agent(scratchpad=scratchpad)
 
     # Wire ChatEngine to every render-items queue we know about so tool
     # results surface as rich A2UI components in the next assistant turn.
@@ -75,11 +89,13 @@ def create_app() -> FastAPI:
         agent=agent,
         render_items_fn=render_items_fn,
         clear_render_items_fn=clear_render_items_fn,
+        session_store=session_store,
     )
 
     db_path = os.getenv("LCI_MINI_MEMORY_DB", "lci_mini_memory.db")
     agui_handler = LiciAGUIHandler(engine=engine, db_path=db_path)
     action_handler = AGUIActionHandler(engine=engine)
+    session_handler = AGUISessionHandler(session_store=session_store)
 
     # upload_dir defaults to <example_root>/uploads/ — absolute path so the
     # file store works regardless of which directory uvicorn was launched
@@ -147,13 +163,17 @@ def create_app() -> FastAPI:
                 label = f"tools={tool_names}" if tool_names else "knowledge-only"
                 print(f"    - {s.name} v{s.version}: {label}")
         print(f"  Memory DB      : {db_path}")
+        print(f"  Storage root   : {storage.root}")
+        print(f"  Sessions       : {storage.root / 'sessions.db'}")
+        print(f"  Scratchpad     : {storage.root / 'memory'}")
         print(f"  Upload dir     : {upload_dir}")
         print(f"  Download dir   : {download_dir}")
         print(f"  Profile dir    : {profile_dir}")
         print("  AG-UI          : POST /awp")
         print("  Upload         : POST /chat/upload")
         print("  Download       : GET  /downloads/<filename>")
-        print("  Actions        : POST /chat/action\n")
+        print("  Actions        : POST /chat/action")
+        print("  Sessions API   : GET/DELETE /sessions[/{id}]\n")
 
     @app.get("/")
     async def root() -> dict:
@@ -281,6 +301,26 @@ def create_app() -> FastAPI:
     @app.get("/chat/actions")
     async def list_actions():
         return {"actions": action_handler.get_registered_actions()}
+
+    # ── Session CRUD (for the chat-ui SessionSidebar) ──
+
+    @app.get("/sessions")
+    async def list_sessions(limit: int = 50, offset: int = 0) -> list[dict]:
+        return session_handler.list(limit=limit, offset=offset)
+
+    @app.get("/sessions/{session_id}")
+    async def get_session(session_id: str):
+        from fastapi import HTTPException
+
+        data = session_handler.get(session_id)
+        if data is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return data
+
+    @app.delete("/sessions/{session_id}")
+    async def delete_session(session_id: str) -> dict:
+        session_handler.delete(session_id)
+        return {"ok": True, "sessionId": session_id}
 
     # Serve uploaded files for frontend preview links
     app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")

@@ -140,14 +140,38 @@ def test_agent_accepts_api_key_parameter():
     assert agent._persona is not None
 
 
+def test_agent_with_scratchpad_loads_memory_scratchpad_skill(monkeypatch, tmp_path):
+    """Passing scratchpad= should auto-load the memory-scratchpad SDK skill."""
+    from openbench.intelligence.scratchpads.local_md import LocalMarkdownScratchpad
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    pad = LocalMarkdownScratchpad(tmp_path)
+
+    agent = create_lici_agent(scratchpad=pad)
+    assert agent._scratchpad is pad
+
+    skill_names = {s.name for s in agent._skill_registry.all()}
+    assert "memory-scratchpad" in skill_names
+
+    # The four scratchpad tools should be registered on the agent
+    for tool_name in ("read_memory", "write_memory", "append_memory", "list_memory_keys"):
+        assert tool_name in agent.tools._tools, f"missing {tool_name}"
+
+    # And they should round-trip through the bound pad
+    agent.tools.execute("write_memory", key="notes", content="hello")
+    assert pad.read("notes") == "hello"
+    assert agent.tools.execute("read_memory", key="notes") == "hello"
+
+
 # ---------------------------------------------------------------------------
 # FastAPI app (server mode)
 # ---------------------------------------------------------------------------
 
 
-def test_fastapi_app_creates_successfully(monkeypatch):
+def test_fastapi_app_creates_successfully(monkeypatch, tmp_path):
     """create_app() should wire persona + ChatEngine + AG-UI handler."""
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(tmp_path / ".openbench"))
 
     from fastapi import FastAPI
     from lci_mini.server.app import create_app
@@ -161,6 +185,54 @@ def test_fastapi_app_creates_successfully(monkeypatch):
     assert "/chat/action" in routes
     assert "/persona" in routes
     assert "/health" in routes
+    # Session CRUD endpoints added in Phase 2 migration
+    assert "/sessions" in routes
+    assert "/sessions/{session_id}" in routes
+
+
+def test_sessions_endpoints_use_local_storage_backend(monkeypatch, tmp_path):
+    """Phase 2 wiring: /sessions reads from the LocalStorageBackend SQLite store."""
+    from fastapi.testclient import TestClient
+    from lci_mini.server.app import create_app
+
+    from openbench.chat.session import ChatSession
+    from openbench.chat.stores.sqlite import SQLiteSessionStore
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    storage_root = tmp_path / ".openbench"
+    monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(storage_root))
+
+    # Pre-seed the SQLite session store so /sessions has something to return
+    store = SQLiteSessionStore(str(storage_root / "sessions.db"))
+    session = ChatSession(session_id="s-seeded", title="Preseeded")
+    session.add_user_message("ingat persona ini")
+    store.save(session)
+
+    with TestClient(create_app()) as client:
+        # GET /sessions
+        resp = client.get("/sessions")
+        assert resp.status_code == 200
+        summaries = resp.json()
+        assert any(s["sessionId"] == "s-seeded" for s in summaries)
+
+        # GET /sessions/{id}
+        resp = client.get("/sessions/s-seeded")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["title"] == "Preseeded"
+        assert len(data["messages"]) == 1
+
+        # GET /sessions/unknown -> 404
+        resp = client.get("/sessions/does-not-exist")
+        assert resp.status_code == 404
+
+        # DELETE /sessions/{id}
+        resp = client.delete("/sessions/s-seeded")
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+        resp = client.get("/sessions/s-seeded")
+        assert resp.status_code == 404
 
 
 def test_persona_endpoint_exposes_composed_prompt(monkeypatch):
