@@ -41,6 +41,7 @@ from openbench.chat.session import (
     ChatSession,
     MessageRole,
 )
+from openbench.chat.session_store import SessionStore, SessionSummary
 
 __all__ = [
     # Engine + Layer
@@ -54,6 +55,8 @@ __all__ = [
     "ChatMessage",
     "MessageRole",
     "Attachment",
+    "SessionStore",
+    "SessionSummary",
     # A2UI
     "A2UI_VERSION",
     "A2UIComponent",

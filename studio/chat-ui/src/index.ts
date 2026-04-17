@@ -97,6 +97,7 @@ export type {
   FunctionCall,
   MessageMetadata,
   // Step Info
+  SessionSummary,
   StepInfo,
   ToolCallInfo,
   TransportStatus,

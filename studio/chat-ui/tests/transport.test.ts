@@ -405,6 +405,125 @@ describe("AGUITransport listeners", () => {
 
 // ── Dispose ──
 
+// ── Sessions REST ──
+
+describe("AGUITransport sessions", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("listSessions returns parsed summaries", async () => {
+    const summaries = [
+      {
+        sessionId: "s-1",
+        title: "Q1 review",
+        createdAt: "2026-04-17T10:00:00Z",
+        updatedAt: "2026-04-17T10:00:00Z",
+        messageCount: 4,
+        preview: "tell me about q1",
+      },
+    ];
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse(summaries));
+    const t = new AGUITransport(config);
+    const result = await t.listSessions(10, 0);
+    expect(result).toEqual(summaries);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/sessions?limit=10&offset=0",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("listSessions returns empty array on 501", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 501));
+    const t = new AGUITransport(config);
+    expect(await t.listSessions()).toEqual([]);
+  });
+
+  it("listSessions returns empty array on fetch error", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("network down"));
+    const t = new AGUITransport(config);
+    expect(await t.listSessions()).toEqual([]);
+  });
+
+  it("listSessions uses custom sessionsUrl", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse([]));
+    const t = new AGUITransport({ ...config, sessionsUrl: "/api/v2/sessions" });
+    await t.listSessions(5, 2);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/v2/sessions?limit=5&offset=2",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("loadSession returns a ChatSession with normalized fields", async () => {
+    const wire = {
+      sessionId: "s-42",
+      title: "Saved",
+      createdAt: "2026-04-17T10:00:00Z",
+      updatedAt: "2026-04-17T10:05:00Z",
+      messages: [
+        {
+          id: "m-1",
+          role: "user",
+          content: "hello",
+          timestamp: "2026-04-17T10:00:00Z",
+        },
+        {
+          id: "m-2",
+          role: "assistant",
+          content: "hi back",
+          timestamp: "2026-04-17T10:00:30Z",
+        },
+      ],
+    };
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse(wire));
+    const t = new AGUITransport(config);
+    const session = await t.loadSession("s-42");
+    expect(session).not.toBeNull();
+    expect(session?.id).toBe("s-42");
+    expect(session?.messages).toHaveLength(2);
+    expect(session?.messages[0].status).toBe("complete");
+  });
+
+  it("loadSession returns null on 404", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 404));
+    const t = new AGUITransport(config);
+    expect(await t.loadSession("missing")).toBeNull();
+  });
+
+  it("deleteSession issues DELETE request", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 200));
+    const t = new AGUITransport(config);
+    await t.deleteSession("s-1");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/sessions/s-1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("deleteSession swallows 404", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 404));
+    const t = new AGUITransport(config);
+    await expect(t.deleteSession("missing")).resolves.toBeUndefined();
+  });
+
+  it("deleteSession encodes session id", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 200));
+    const t = new AGUITransport(config);
+    await t.deleteSession("id with/slash");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/sessions/id%20with%2Fslash",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("deleteSession throws on 500", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 500));
+    const t = new AGUITransport(config);
+    await expect(t.deleteSession("x")).rejects.toThrow();
+  });
+});
+
 describe("AGUITransport dispose", () => {
   it("clears all listeners and sets disconnected", async () => {
     createMockAgent([{ type: "RUN_STARTED", threadId: "t1", runId: "r1" }]);

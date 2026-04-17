@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
 
+    from openbench.chat.session_store import SessionStore
+
 from openbench.chat.a2ui.builder import A2UIMessageBuilder
 from openbench.chat.a2ui.catalog import OPENBENCH_CATALOG_ID
 from openbench.chat.a2ui.schema import (
@@ -73,6 +75,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         catalog_id: str | None = None,
         render_items_fn: Callable[[], list[dict]] | None = None,
         clear_render_items_fn: Callable[[], None] | None = None,
+        session_store: SessionStore | None = None,
     ):
         """Initialize ChatEngine.
 
@@ -86,6 +89,10 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                 Called after agent execution to collect side-channel visualizations.
             clear_render_items_fn: Optional callback to clear render items queue.
                 Called before each agent execution for per-request isolation.
+            session_store: Optional persistent store for ChatSessions.
+                When provided, the session is saved after every user and
+                assistant message — so a server crash between the two
+                still leaves the user's message on disk.
         """
         self.agent = agent
         self.renderers = renderers if renderers is not None else _get_default_renderers()
@@ -93,6 +100,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         self.builder = A2UIMessageBuilder(catalog_id=catalog_id or OPENBENCH_CATALOG_ID)
         self._render_items_fn = render_items_fn
         self._clear_render_items_fn = clear_render_items_fn
+        self.session_store = session_store
 
     def invoke(self, input: Any, config: RunnableConfig | None = None) -> dict[str, Any]:
         """Process a single message turn.
@@ -112,6 +120,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
 
         # 2. Add user message to session
         self.session.add_user_message(content, attachments=attachments)
+        self._persist_session()
 
         # 3. Clear per-request render items queue (stale items from previous
         #    turns would otherwise bleed into this response)
@@ -151,6 +160,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             surfaces=[{"surfaceId": surface_id}],
             metadata=metadata,
         )
+        self._persist_session()
 
         return {
             "messages": messages,
@@ -187,6 +197,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             yield json.dumps(StepStartMessage(sid, "Processing input", message_id).to_dict())
             content, attachments = self._parse_input(input)
             self.session.add_user_message(content, attachments=attachments)
+            self._persist_session()
             # Clear per-request render items queue before executing the agent.
             self._clear_render_items()
             yield json.dumps(StepCompleteMessage(sid, message_id).to_dict())
@@ -226,6 +237,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                 surfaces=[{"surfaceId": surface_id}],
                 metadata=metadata,
             )
+            self._persist_session()
 
             # Stream end (include content as fallback for frontend)
             end_metadata = dict(metadata) if metadata else {}
@@ -272,6 +284,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             yield json.dumps(StepStartMessage(sid, "Processing input", message_id).to_dict())
             content, attachments = self._parse_input(input)
             self.session.add_user_message(content, attachments=attachments)
+            self._persist_session()
             # Clear per-request render items queue before executing the agent.
             self._clear_render_items()
             yield json.dumps(StepCompleteMessage(sid, message_id).to_dict())
@@ -312,6 +325,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                 surfaces=[{"surfaceId": surface_id}],
                 metadata=metadata,
             )
+            self._persist_session()
 
             # Stream end (include content as fallback for frontend)
             end_metadata = dict(metadata) if metadata else {}
@@ -347,6 +361,21 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             self._clear_render_items_fn()
         except Exception as e:
             logger.warning(f"clear_render_items_fn raised: {e}")
+
+    def _persist_session(self) -> None:
+        """Save the current session to ``session_store`` if configured.
+
+        Called after each user and assistant message append. Swallows
+        exceptions so a transient storage failure (disk full, DB lock)
+        does not break the live chat turn — the in-memory session
+        remains the source of truth until the next save succeeds.
+        """
+        if self.session_store is None:
+            return
+        try:
+            self.session_store.save(self.session)
+        except Exception as e:
+            logger.warning(f"session_store.save failed: {e}")
 
     def _parse_input(self, input: Any) -> tuple[str, list[Attachment] | None]:
         """Parse input into content string and optional attachments."""

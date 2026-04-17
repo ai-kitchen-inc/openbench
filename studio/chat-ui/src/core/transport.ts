@@ -11,8 +11,53 @@
 
 import { HttpAgent } from "@ag-ui/client";
 import type { BaseEvent } from "@ag-ui/core";
-import type { Attachment, ChatConfig, TransportStatus } from "../types";
+import type {
+  Attachment,
+  ChatConfig,
+  ChatMessage,
+  ChatSession,
+  SessionSummary,
+  TransportStatus,
+} from "../types";
 import { generateId } from "./utils";
+
+/** Raw shape returned by the Python ChatSession.to_dict(). */
+interface WireChatMessage {
+  id: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  timestamp: string;
+  surfaces?: ChatMessage["surfaces"];
+  attachments?: ChatMessage["attachments"];
+  metadata?: ChatMessage["metadata"];
+}
+
+interface WireChatSession {
+  sessionId: string;
+  title: string;
+  messages: WireChatMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+function wireToChatSession(raw: WireChatSession): ChatSession {
+  return {
+    id: raw.sessionId,
+    title: raw.title,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+    messages: raw.messages.map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      timestamp: m.timestamp,
+      surfaces: m.surfaces,
+      attachments: m.attachments,
+      metadata: m.metadata,
+      status: "complete" as const,
+    })),
+  };
+}
 
 export type AGUIEventListener = (event: BaseEvent) => void;
 export type StatusListener = (status: TransportStatus) => void;
@@ -172,6 +217,56 @@ export class AGUITransport {
     }
 
     return (await response.json()) as Attachment;
+  }
+
+  /**
+   * List persisted chat sessions from the backend.
+   *
+   * Returns an empty array if the server returns a 404 / 501, so the
+   * sidebar gracefully degrades when the backend has no session store.
+   */
+  async listSessions(limit = 50, offset = 0): Promise<SessionSummary[]> {
+    const base = this.config.sessionsUrl ?? "/sessions";
+    const url = `${base}?limit=${limit}&offset=${offset}`;
+    try {
+      const response = await fetch(url, { method: "GET" });
+      if (response.status === 404 || response.status === 501) return [];
+      if (!response.ok) throw new Error(`listSessions failed: ${response.status}`);
+      return (await response.json()) as SessionSummary[];
+    } catch (err) {
+      console.error("[AGUITransport] listSessions error:", err);
+      return [];
+    }
+  }
+
+  /**
+   * Load a persisted session by id.
+   *
+   * Returns null on 404 (unknown session) or if the backend has no
+   * session store configured. Throws on unexpected errors.
+   */
+  async loadSession(sessionId: string): Promise<ChatSession | null> {
+    const base = this.config.sessionsUrl ?? "/sessions";
+    const url = `${base}/${encodeURIComponent(sessionId)}`;
+    const response = await fetch(url, { method: "GET" });
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) throw new Error(`loadSession failed: ${response.status}`);
+    const raw = (await response.json()) as WireChatSession;
+    return wireToChatSession(raw);
+  }
+
+  /**
+   * Delete a persisted session by id.
+   *
+   * Idempotent: a 404 from the server is treated as success. Other
+   * error statuses throw.
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    const base = this.config.sessionsUrl ?? "/sessions";
+    const url = `${base}/${encodeURIComponent(sessionId)}`;
+    const response = await fetch(url, { method: "DELETE" });
+    if (response.status === 404 || response.status === 501) return;
+    if (!response.ok) throw new Error(`deleteSession failed: ${response.status}`);
   }
 
   /** Cancel any in-flight AG-UI stream. */

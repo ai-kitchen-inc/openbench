@@ -62,6 +62,21 @@ export interface ChatSession {
   updatedAt: string;
 }
 
+/**
+ * Lightweight session metadata returned by GET /sessions.
+ *
+ * Uses wire-format field names (sessionId, createdAt) to match the
+ * Python SessionSummary.to_dict() payload exactly.
+ */
+export interface SessionSummary {
+  sessionId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  preview: string;
+}
+
 // ── A2UI v0.10 Types ──
 
 export interface A2UISurface {
@@ -156,6 +171,7 @@ export interface ChatConfig {
   streamUrl: string; // POST → SSE AG-UI endpoint (e.g., "/awp")
   actionUrl?: string; // POST → JSON (defaults to "/chat/action")
   uploadUrl?: string; // POST → JSON (defaults to "/chat/upload")
+  sessionsUrl?: string; // REST CRUD endpoint (defaults to "/sessions")
   theme?: "light" | "dark" | "auto";
   maxConcurrentStreams?: number; // Max parallel SSE streams (default: 3)
 }

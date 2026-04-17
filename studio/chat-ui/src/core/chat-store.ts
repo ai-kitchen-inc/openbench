@@ -61,6 +61,10 @@ export interface ChatActions {
   deleteSession: (id: string) => void;
   renameSession: (id: string, newTitle: string) => void;
 
+  // Server-backed session hydration
+  hydrateSessions: (sessions: ChatSession[]) => void;
+  hydrateSessionMessages: (sessionId: string, messages: ChatMessage[]) => void;
+
   // State actions
   setStreaming: (streaming: boolean) => void;
   setConnectionStatus: (status: TransportStatus) => void;
@@ -356,6 +360,33 @@ export function createChatStore() {
         sessions: state.sessions.map((s) =>
           s.id === id ? { ...s, title: newTitle, updatedAt: nowISO() } : s,
         ),
+      }));
+    },
+
+    // ── Server-backed hydration ──
+
+    hydrateSessions: (incoming: ChatSession[]) => {
+      set((state) => {
+        if (incoming.length === 0) return state;
+        // Preserve local-only sessions (e.g. just-created, not yet persisted)
+        const serverIds = new Set(incoming.map((s) => s.id));
+        const localOnly = state.sessions.filter((s) => !serverIds.has(s.id));
+        const merged = [...incoming, ...localOnly];
+        // Pick most-recent server session as active if none selected
+        const activeId = state.activeSessionId ?? incoming[0]?.id ?? null;
+        const active = merged.find((s) => s.id === activeId);
+        return {
+          sessions: merged,
+          activeSessionId: activeId,
+          messages: active ? [...active.messages] : state.messages,
+        };
+      });
+    },
+
+    hydrateSessionMessages: (sessionId: string, messages: ChatMessage[]) => {
+      set((state) => ({
+        sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, messages } : s)),
+        messages: state.activeSessionId === sessionId ? [...messages] : state.messages,
       }));
     },
 

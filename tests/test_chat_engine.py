@@ -920,5 +920,94 @@ class TestChatEngineClearRenderItems(unittest.TestCase):
         self.assertIn("messages", result)
 
 
+class TestChatEngineSessionStore(unittest.TestCase):
+    """ChatEngine persists the session after each turn when a store is set."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from openbench.chat.stores.sqlite import SQLiteSessionStore
+
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.store = SQLiteSessionStore(str(Path(self._tmpdir.name) / "sessions.db"))
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def test_invoke_persists_session(self):
+        engine = ChatEngine(agent=MockAgent("Reply"), session_store=self.store)
+        engine.invoke("Hi")
+        reloaded = self.store.load(engine.session.session_id)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+        # Two messages: user + assistant
+        self.assertEqual(len(reloaded.messages), 2)
+        self.assertEqual(reloaded.messages[0].role, MessageRole.USER)
+        self.assertEqual(reloaded.messages[1].role, MessageRole.ASSISTANT)
+
+    def test_invoke_persists_twice_per_turn(self):
+        """Session saved after user message AND after assistant message."""
+
+        class CountingStore:
+            def __init__(self, inner):
+                self.inner = inner
+                self.saves = 0
+
+            def save(self, session):
+                self.saves += 1
+                self.inner.save(session)
+
+            def load(self, session_id):
+                return self.inner.load(session_id)
+
+            def list(self, limit=50, offset=0):
+                return self.inner.list(limit=limit, offset=offset)
+
+            def delete(self, session_id):
+                self.inner.delete(session_id)
+
+        counter = CountingStore(self.store)
+        engine = ChatEngine(agent=MockAgent("Reply"), session_store=counter)
+        engine.invoke("Hi")
+        # One save after user message, one after assistant
+        self.assertEqual(counter.saves, 2)
+
+    def test_stream_persists_session(self):
+        engine = ChatEngine(agent=MockAgent("Reply"), session_store=self.store)
+        for _ in engine.stream("Streaming hi"):
+            pass
+        reloaded = self.store.load(engine.session.session_id)
+        assert reloaded is not None
+        self.assertEqual(len(reloaded.messages), 2)
+
+    def test_store_failure_does_not_break_turn(self):
+        """A transient store exception must not sink the live turn."""
+
+        class BrokenStore:
+            def save(self, session):
+                raise RuntimeError("disk full")
+
+            def load(self, session_id):
+                return None
+
+            def list(self, limit=50, offset=0):
+                return []
+
+            def delete(self, session_id):
+                pass
+
+        engine = ChatEngine(agent=MockAgent("Reply"), session_store=BrokenStore())
+        result = engine.invoke("Hi")
+        self.assertIn("messages", result)
+        # In-memory session still intact
+        self.assertEqual(len(engine.session.messages), 2)
+
+    def test_no_store_means_no_persist(self):
+        engine = ChatEngine(agent=MockAgent("Reply"), session_store=None)
+        engine.invoke("Hi")
+        self.assertIsNone(self.store.load(engine.session.session_id))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -103,12 +103,33 @@ export function useChat(config: ChatConfig): UseChatReturn {
     };
   }, [transport, streamManager, store]);
 
-  // Create initial session if none exists
+  // Hydrate sessions from the backend on mount.
+  // If the server returns any sessions, merge them into the store and
+  // skip auto-creating a new one. If the backend has no session store
+  // (empty list or 404), fall back to the original "create one if
+  // empty" behavior so the app works without persistence.
   useEffect(() => {
-    if (store.getState().sessions.length === 0) {
-      store.getState().createSession();
-    }
-  }, [store]);
+    let cancelled = false;
+    (async () => {
+      const summaries = await transport.listSessions();
+      if (cancelled) return;
+      if (summaries.length > 0) {
+        const placeholders = summaries.map((s) => ({
+          id: s.sessionId,
+          title: s.title,
+          messages: [],
+          createdAt: s.createdAt,
+          updatedAt: s.updatedAt,
+        }));
+        store.getState().hydrateSessions(placeholders);
+      } else if (store.getState().sessions.length === 0) {
+        store.getState().createSession();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [store, transport]);
 
   // Send message — creates independent parallel stream via StreamManager
   const sendMessage = useCallback(
@@ -212,14 +233,43 @@ export function useChat(config: ChatConfig): UseChatReturn {
 
   // Session actions (delegate to store)
   const createSession = useCallback(() => store.getState().createSession(), [store]);
-  const switchSession = useCallback((id: string) => store.getState().switchSession(id), [store]);
+
+  // Switch session; if the session is a hydration placeholder with no
+  // messages yet, lazy-load its full content from the server.
+  const switchSession = useCallback(
+    (id: string) => {
+      store.getState().switchSession(id);
+      const session = store.getState().sessions.find((s) => s.id === id);
+      if (session && session.messages.length === 0) {
+        (async () => {
+          try {
+            const loaded = await transport.loadSession(id);
+            if (loaded) {
+              store.getState().hydrateSessionMessages(id, loaded.messages);
+            }
+          } catch (err) {
+            console.error("[useChat] loadSession failed:", err);
+          }
+        })();
+      }
+    },
+    [store, transport],
+  );
+
+  // Delete session both locally and on the server (fire-and-forget);
+  // a server failure does not block the UI — the user will see it
+  // come back on the next reload, which is acceptable.
   const deleteSession = useCallback(
     (id: string) => {
       streamManager.removeProcessor(id);
       store.getState().deleteSession(id);
+      transport.deleteSession(id).catch((err) => {
+        console.error("[useChat] deleteSession server sync failed:", err);
+      });
     },
-    [store, streamManager],
+    [store, streamManager, transport],
   );
+
   const renameSession = useCallback(
     (id: string, newTitle: string) => store.getState().renameSession(id, newTitle),
     [store],
