@@ -1054,8 +1054,10 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         reg = SkillRegistry()
         reg.load_sdk_skills()
         tools = reg.collect_tools()
-        # 7 + 5 + 2 + 7 + 5 + 2 = 28 tools (+ pdf-tools 7)
-        self.assertEqual(len(tools), 28)
+        # data-context-extractor(2) + data-visualization(5) + export-excel(2)
+        # + pdf-tools(7) + query-explorer(5) + web-search(7)
+        # + memory-scratchpad(4) = 32 tools
+        self.assertEqual(len(tools), 32)
 
     def test_load_skills_by_name_after_load_sdk_skills(self):
         """load_skills(['data-visualization']) must work after load_sdk_skills()."""

@@ -552,6 +552,7 @@ class BaseAgent(Agent):
         parallel_tool_execution: bool = False,
         memory_store: Any = None,
         session_id: str | None = None,
+        scratchpad: Any = None,
     ):
         """
         Initialize agent.
@@ -591,6 +592,10 @@ class BaseAgent(Agent):
                 in-memory AgentMemory.
             session_id: Session identifier for persistent memory. Required when
                 memory_store is provided.
+            scratchpad: Optional ScratchpadStore for user-editable markdown
+                memory. When provided, it is injected into any loaded skill
+                whose ``tools.py`` declares a ``bind(scratchpad=...)``
+                function — e.g. the bundled ``memory-scratchpad`` skill.
         """
         self.goal = goal
         self.model = model or get_default_model()
@@ -599,6 +604,7 @@ class BaseAgent(Agent):
         self.provider_name = provider_name
         self.enable_planning = enable_planning
         self.parallel_tool_execution = parallel_tool_execution
+        self._scratchpad = scratchpad
 
         # RAG configuration
         self.store = store
@@ -703,7 +709,16 @@ class BaseAgent(Agent):
 
             self._skill_registry = SkillRegistry()
             self._skill_registry.load_sdk_skills()
+            self._skill_registry.load_user_skills()
             self._skill_registry.load_skills(skills)
+
+            # Inject agent-scoped runtime state into any skill that declares
+            # a module-level ``bind(**kwargs)`` function in its tools.py.
+            # Skills that do not declare ``bind`` are silently skipped. This
+            # is how the bundled ``memory-scratchpad`` skill learns which
+            # ScratchpadStore to use (see §6 of the storage-layer RFC).
+            if scratchpad is not None:
+                self._skill_registry.bind(scratchpad=scratchpad)
 
             skill_context = self._skill_registry.compose_context()
             if skill_context:
@@ -721,8 +736,9 @@ class BaseAgent(Agent):
 
             skill_summary = self._skill_registry.summary()
             logger.info(
-                "Skills loaded: %d SDK + %d project (total context: %d chars, tools: %d)",
+                "Skills loaded: %d SDK + %d user + %d project (total context: %d chars, tools: %d)",
                 len(skill_summary["sdk_skills"]),
+                len(skill_summary["user_skills"]),
                 len(skill_summary["project_skills"]),
                 skill_summary["context_chars"],
                 skill_summary["total_tools"],

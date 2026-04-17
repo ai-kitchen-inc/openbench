@@ -532,6 +532,213 @@ class TestBaseAgentSkillsIntegration:
 
 
 # ---------------------------------------------------------------------------
+# Skill.bind() convention (storage-layer RFC §6)
+# ---------------------------------------------------------------------------
+
+
+_BINDABLE_TOOLS = '''
+_state = {"store": None, "calls": 0}
+
+
+def bind(store=None, **_):
+    """Inject the agent's dependency into module state."""
+    _state["store"] = store
+    _state["calls"] += 1
+
+
+def use_it() -> str:
+    """Return the bound store or raise if not bound."""
+    if _state["store"] is None:
+        raise RuntimeError("not bound")
+    return str(_state["store"])
+
+
+USE_IT_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "use_it",
+        "description": "Use the bound store.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+'''
+
+
+class TestSkillBind:
+    def test_bind_returns_true_when_module_defines_bind(self, tmp_path):
+        _write_skill(tmp_path, "bindable", tools_py=_BINDABLE_TOOLS)
+        skill = Skill.from_dir(tmp_path / "bindable")
+        assert skill.bind(store="sentinel") is True
+
+    def test_bind_returns_false_when_no_tools_module(self, tmp_path):
+        _write_skill(tmp_path, "knowledge-only", description="no tools")
+        skill = Skill.from_dir(tmp_path / "knowledge-only")
+        assert skill.bind(store="sentinel") is False
+
+    def test_bind_returns_false_when_module_has_no_bind(self, tmp_path):
+        _write_skill(tmp_path, "sample", tools_py=_TOOLS_SAMPLE)
+        skill = Skill.from_dir(tmp_path / "sample")
+        assert skill.bind(store="sentinel") is False
+
+    def test_bound_tool_sees_injected_dependency(self, tmp_path):
+        _write_skill(tmp_path, "bindable", tools_py=_BINDABLE_TOOLS)
+        skill = Skill.from_dir(tmp_path / "bindable")
+        skill.bind(store="sentinel")
+        tools = {name: fn for name, fn, _ in skill.tools}
+        assert tools["use_it"]() == "sentinel"
+
+    def test_bind_is_forward_compatible_with_extra_kwargs(self, tmp_path):
+        _write_skill(tmp_path, "bindable", tools_py=_BINDABLE_TOOLS)
+        skill = Skill.from_dir(tmp_path / "bindable")
+        # Extra kwargs must not raise thanks to the ``**_`` in bind()
+        skill.bind(store="sentinel", unknown="kwarg")
+
+
+class TestSkillRegistryBind:
+    def test_bind_forwards_to_every_skill(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "openbench.intelligence.skill_registry._default_sdk_skills_dir",
+            lambda: tmp_path / "fake-sdk",
+        )
+        _write_skill(tmp_path / "fake-sdk", "a", tools_py=_BINDABLE_TOOLS)
+        _write_skill(tmp_path / "fake-sdk", "b", tools_py=_BINDABLE_TOOLS)
+
+        reg = SkillRegistry()
+        reg.load_sdk_skills()
+        bound = reg.bind(store="X")
+        assert set(bound) == {"a", "b"}
+
+    def test_bind_skips_skills_without_bind_function(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "openbench.intelligence.skill_registry._default_sdk_skills_dir",
+            lambda: tmp_path / "fake-sdk",
+        )
+        _write_skill(tmp_path / "fake-sdk", "plain", tools_py=_TOOLS_SAMPLE)
+        _write_skill(tmp_path / "fake-sdk", "bindable", tools_py=_BINDABLE_TOOLS)
+
+        reg = SkillRegistry()
+        reg.load_sdk_skills()
+        bound = reg.bind(store="X")
+        assert bound == ["bindable"]
+
+
+# ---------------------------------------------------------------------------
+# User tier (storage-layer RFC §7)
+# ---------------------------------------------------------------------------
+
+
+class TestUserTier:
+    def test_load_user_skills_noop_when_missing(self, tmp_path):
+        reg = SkillRegistry(user_skills_dir=tmp_path / "does-not-exist")
+        reg.load_user_skills()
+        assert len(reg) == 0
+
+    def test_load_user_skills_from_default_dir(self, tmp_path):
+        user_dir = tmp_path / "users"
+        _write_skill(user_dir, "preset-a", description="User preset")
+        reg = SkillRegistry(user_skills_dir=user_dir)
+        reg.load_user_skills()
+        assert "preset-a" in reg
+
+    def test_load_user_skills_explicit_root(self, tmp_path):
+        user_dir = tmp_path / "users"
+        _write_skill(user_dir, "alt", description="User alt")
+        reg = SkillRegistry()
+        reg.load_user_skills(root=user_dir)
+        assert "alt" in reg
+
+    def test_resolution_order_project_wins_over_user(self, tmp_path):
+        user_dir = tmp_path / "users"
+        _write_skill(user_dir, "shared", description="user version")
+        proj_dir = tmp_path / "proj"
+        _write_skill(proj_dir, "shared", description="project version")
+
+        reg = SkillRegistry(user_skills_dir=user_dir)
+        reg.load_user_skills()
+        reg.load_project_skills([proj_dir / "shared"])
+
+        resolved = reg.resolve("shared")
+        assert "project version" in resolved.description
+
+    def test_resolution_order_user_wins_over_sdk(self, tmp_path, monkeypatch):
+        sdk_dir = tmp_path / "fake-sdk"
+        _write_skill(sdk_dir, "shared", description="sdk version")
+        monkeypatch.setattr(
+            "openbench.intelligence.skill_registry._default_sdk_skills_dir",
+            lambda: sdk_dir,
+        )
+        user_dir = tmp_path / "users"
+        _write_skill(user_dir, "shared", description="user version")
+
+        reg = SkillRegistry(user_skills_dir=user_dir)
+        reg.load_sdk_skills()
+        reg.load_user_skills()
+
+        assert "user version" in reg.resolve("shared").description
+
+    def test_load_skills_accepts_bare_name_from_user_tier(self, tmp_path):
+        user_dir = tmp_path / "users"
+        _write_skill(user_dir, "user-only", description="only in user tier")
+        reg = SkillRegistry(user_skills_dir=user_dir)
+        reg.load_user_skills()
+        # Must not raise — bare name should resolve to user tier.
+        reg.load_skills(["user-only"])
+
+    def test_summary_reports_user_skills_key(self, tmp_path):
+        user_dir = tmp_path / "users"
+        _write_skill(user_dir, "u1", description="u1")
+        reg = SkillRegistry(user_skills_dir=user_dir)
+        reg.load_user_skills()
+        summary = reg.summary()
+        assert "user_skills" in summary
+        assert summary["user_skills"] == ["u1"]
+
+
+# ---------------------------------------------------------------------------
+# BaseAgent(scratchpad=) integration
+# ---------------------------------------------------------------------------
+
+
+class TestBaseAgentScratchpadBinding:
+    """When scratchpad= is provided, memory-scratchpad tools can operate.
+
+    Uses tmp_path-scoped skills dir so we don't need the real LLM.
+    """
+
+    def test_scratchpad_stored_on_agent(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "openbench.intelligence.skill_registry._default_sdk_skills_dir",
+            lambda: tmp_path / "fake-sdk",
+        )
+        sentinel = object()
+        agent = BaseAgent(goal="t", scratchpad=sentinel)
+        assert agent._scratchpad is sentinel
+
+    def test_bind_wires_scratchpad_into_memory_scratchpad_skill(self, tmp_path, monkeypatch):
+        # Point SDK skills at our fake dir with a bindable skill
+        sdk_dir = tmp_path / "fake-sdk"
+        _write_skill(sdk_dir, "memtest", tools_py=_BINDABLE_TOOLS)
+        monkeypatch.setattr(
+            "openbench.intelligence.skill_registry._default_sdk_skills_dir",
+            lambda: sdk_dir,
+        )
+
+        scratchpad_obj = "pad-instance"  # any object; skill just stashes it
+        agent = BaseAgent(
+            goal="t",
+            skills=["memtest"],
+            scratchpad=scratchpad_obj,
+        )
+
+        # Our bindable skill uses **_ so 'scratchpad=' gets swallowed
+        # silently — what we want to assert is that BaseAgent called
+        # bind() at all. Peek at the module-level call counter.
+        skill = agent._skill_registry.resolve("memtest")
+        state = skill._tools_module._state  # type: ignore[union-attr]
+        assert state["calls"] == 1
+
+
+# ---------------------------------------------------------------------------
 # Public API export
 # ---------------------------------------------------------------------------
 

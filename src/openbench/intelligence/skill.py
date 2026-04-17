@@ -207,6 +207,11 @@ class Skill:
     has_tools: bool = False
     source: str = ""
     raw_skill_md: str = ""
+    # Reference to the imported tools.py module when ``has_tools`` is True.
+    # Exposed as ``_tools_module`` (private-ish) so ``SkillRegistry.bind``
+    # can invoke its optional module-level ``bind(**kwargs)`` function to
+    # inject agent-scoped state (e.g. a ScratchpadStore). Never serialized.
+    _tools_module: Any = None
 
     @classmethod
     def from_dir(cls, path: str | Path) -> Skill:
@@ -245,10 +250,11 @@ class Skill:
         # Load tools.py if present
         tools: list[tuple[str, Callable, dict]] = []
         has_tools = False
+        tools_module: Any = None
         tools_py = d / "tools.py"
         if tools_py.exists():
-            module = _load_tools_module(tools_py, parsed["name"])
-            tools = _discover_tools(module)
+            tools_module = _load_tools_module(tools_py, parsed["name"])
+            tools = _discover_tools(tools_module)
             has_tools = True
 
         return cls(
@@ -262,6 +268,7 @@ class Skill:
             has_tools=has_tools,
             source=str(d.resolve()),
             raw_skill_md=raw.strip(),
+            _tools_module=tools_module,
         )
 
     def get_context(self) -> str:
@@ -280,6 +287,31 @@ class Skill:
     def get_tools(self) -> list[tuple[str, Callable, dict]]:
         """Return tool tuples for registration with ``ToolExecutor``."""
         return list(self.tools)
+
+    def bind(self, **kwargs: Any) -> bool:
+        """Inject runtime state into the skill's tools module.
+
+        Calls ``tools.py``'s module-level ``bind(**kwargs)`` function
+        when one is present. Skills that do not declare ``bind`` are
+        silently skipped so this is safe to call on every loaded skill.
+
+        This is the DI hook described in §6 of the storage-layer RFC —
+        used to pass agent-scoped dependencies (e.g. a ScratchpadStore
+        instance) to tool implementations that need them.
+
+        Args:
+            **kwargs: Keyword arguments forwarded verbatim to ``bind``.
+
+        Returns:
+            True if the skill had a ``bind`` function and it was called.
+        """
+        if self._tools_module is None:
+            return False
+        fn = getattr(self._tools_module, "bind", None)
+        if fn is None or not callable(fn):
+            return False
+        fn(**kwargs)
+        return True
 
     def summary(self) -> dict[str, Any]:
         """Return a debug summary for introspection.
