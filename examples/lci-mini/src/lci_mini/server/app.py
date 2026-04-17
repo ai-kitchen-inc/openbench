@@ -20,10 +20,16 @@ from fastapi.staticfiles import StaticFiles
 
 from lci_mini.agent import create_lici_agent, get_persona_dir
 from lci_mini.auth import AuthConfig, verify_firebase_token
+from lci_mini.auth.drive import get_token_store
 from lci_mini.auth.endpoints import build_drive_router
 from lci_mini.server.handler import LiciAGUIHandler
+from lci_mini.server.request_scope import (
+    configure_render_queue,
+    resolve_agent,
+    resolve_session_for_thread,
+    resolve_storage_backend,
+)
 from openbench import LocalStorageBackend, StorageBackend
-from openbench.chat import ChatEngine
 from openbench.chat import render_queue as shared_render_queue
 from openbench.chat.files import FileContentExtractor, FileStore
 from openbench.chat.transport import AGUIActionHandler
@@ -31,24 +37,19 @@ from openbench.chat.transport.sessions import AGUISessionHandler
 
 
 def _build_storage_backend() -> tuple[StorageBackend, str]:
-    """Pick the storage backend based on environment variables.
+    """Legacy Phase-2 shim retained for tests + documentation.
 
-    Returns ``(backend, human_label)`` — the label is printed at startup
-    so operators can see at a glance which backend is active.
+    Returns ``(backend, human_label)`` for the **startup-level** storage
+    decision — used only for the display agent (/persona, /skills) and
+    the startup banner. Per-request storage now lives in
+    :mod:`lci_mini.server.request_scope`.
 
-    Selection rules:
-    - If ``LCI_MINI_DRIVE_ROOT`` is set, use
-      :class:`GoogleDriveStorageBackend`. ``LCI_MINI_SERVICE_ACCOUNT``
-      must also be set (path to a service-account JSON file).
-    - Otherwise, default to :class:`LocalStorageBackend` rooted at
+    Selection:
+    - ``LCI_MINI_DRIVE_ROOT`` + ``LCI_MINI_SERVICE_ACCOUNT`` → shared
+      service-account Drive backend (legacy multi-tenant-unsafe mode).
+    - Otherwise → :class:`LocalStorageBackend` at
       ``examples/lci-mini/.openbench/`` (override via
       ``LCI_MINI_STORAGE_ROOT``).
-
-    Raises:
-        RuntimeError: If ``LCI_MINI_DRIVE_ROOT`` is set without a
-            corresponding ``LCI_MINI_SERVICE_ACCOUNT``.
-        ImportError: If the ``[gdrive]`` extras are not installed when
-            the Drive backend is requested.
     """
     drive_root = os.getenv("LCI_MINI_DRIVE_ROOT")
     if drive_root:
@@ -59,7 +60,6 @@ def _build_storage_backend() -> tuple[StorageBackend, str]:
                 "Provide a service-account JSON path to use the Drive backend, "
                 "or unset LCI_MINI_DRIVE_ROOT to fall back to local storage."
             )
-        # Lazy import — only pull in the [gdrive] extras when actually used.
         from openbench.integrations.gdrive import GoogleDriveStorageBackend
 
         backend: StorageBackend = GoogleDriveStorageBackend(
@@ -73,21 +73,31 @@ def _build_storage_backend() -> tuple[StorageBackend, str]:
     return LocalStorageBackend(storage_root), f"Local(root={storage_root})"
 
 
+def _build_display_backend() -> tuple[StorageBackend, str]:
+    """Backend used for the process-wide display agent (/persona, /skills).
+
+    In Firebase-auth mode we don't have a real user at startup, so we
+    route display metadata through a shared local backend that lives
+    next to Lici's persona. Actual chat traffic never flows through
+    this — it uses per-request resolution.
+    """
+    try:
+        return _build_storage_backend()
+    except Exception:
+        default_root = get_persona_dir().parent / ".openbench"
+        return LocalStorageBackend(default_root), f"Local(root={default_root})"
+
+
 def create_app() -> FastAPI:
     """Create and configure the LCI Mini FastAPI app."""
     # Load .env from the example directory if present
     load_dotenv(get_persona_dir().parent / ".env")
 
-    # Pick the storage backend (local by default, Drive via env vars).
-    # The StorageBackend Protocol is the exact seam the RFC sold: flip
-    # one env var (LCI_MINI_DRIVE_ROOT + LCI_MINI_SERVICE_ACCOUNT) and
-    # sessions + scratchpad move off disk and onto Google Drive, without
-    # touching agent wiring or request handlers.
-    storage, storage_label = _build_storage_backend()
-    session_store = storage.session_store()
-    scratchpad = storage.scratchpad_store()
-
-    agent = create_lici_agent(scratchpad=scratchpad)
+    # The request-scope module (see server/request_scope.py) builds a
+    # per-request StorageBackend / BaseAgent / ChatEngine based on the
+    # authenticated user. In "disabled" and "none" auth modes every
+    # request resolves to the same synthetic uid, so the Phase-2
+    # single-tenant deployment still works unchanged.
 
     # Wire ChatEngine to every render-items queue we know about so tool
     # results surface as rich A2UI components in the next assistant turn.
@@ -127,17 +137,18 @@ def create_app() -> FastAPI:
             xql_clear()
         shared_render_queue.clear()
 
-    engine = ChatEngine(
-        agent=agent,
-        render_items_fn=render_items_fn,
-        clear_render_items_fn=clear_render_items_fn,
-        session_store=session_store,
-    )
+    # Install callbacks on the request-scope module so per-request
+    # ChatEngines inherit the same render-queue plumbing.
+    configure_render_queue(render_items_fn, clear_render_items_fn)
 
     db_path = os.getenv("LCI_MINI_MEMORY_DB", "lci_mini_memory.db")
-    agui_handler = LiciAGUIHandler(engine=engine, db_path=db_path)
-    action_handler = AGUIActionHandler(engine=engine)
-    session_handler = AGUISessionHandler(session_store=session_store)
+
+    # A single "display" agent + label for /persona, /skills, startup
+    # banner — these endpoints show process-wide metadata (Lici's
+    # persona, loaded skills) that does not vary per user. Built with a
+    # throwaway LocalStorageBackend so the factory is happy.
+    display_backend, display_storage_label = _build_display_backend()
+    display_agent = create_lici_agent(scratchpad=display_backend.scratchpad_store())
 
     # upload_dir defaults to <example_root>/uploads/ — absolute path so the
     # file store works regardless of which directory uvicorn was launched
@@ -180,32 +191,34 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    persona = agent._persona
+    persona = display_agent._persona
+    auth_mode = AuthConfig.from_env().mode
 
     @app.on_event("startup")
     async def startup() -> None:
         summary = persona.summary() if persona else {}
         print("\n  LCI Mini — Persona Layer Demo")
-        print(f"  Model          : {agent.model}")
+        print(f"  Model          : {display_agent.model}")
+        print(f"  Auth mode      : {auth_mode}")
         print(f"  Persona source : {summary.get('source', '(none)')}")
         if persona:
             print(f"  SOUL.md        : {summary['soul_chars']:>5} chars")
             print(f"  STYLE.md       : {summary['style_chars']:>5} chars")
             print(f"  AGENTS.md      : {summary['agents_chars']:>5} chars")
             print(f"  Persona total  : {summary['total_chars']:>5} chars")
-        if agent._skill_registry:
-            skill_summary = agent._skill_registry.summary()
+        if display_agent._skill_registry:
+            skill_summary = display_agent._skill_registry.summary()
             print(
                 f"  Skills loaded  : {skill_summary['total']} "
                 f"(tools={skill_summary['total_tools']}, "
                 f"context={skill_summary['context_chars']} chars)"
             )
-            for s in agent._skill_registry.all():
+            for s in display_agent._skill_registry.all():
                 tool_names = [name for name, _, _ in s.tools]
                 label = f"tools={tool_names}" if tool_names else "knowledge-only"
                 print(f"    - {s.name} v{s.version}: {label}")
         print(f"  Memory DB      : {db_path}")
-        print(f"  Storage        : {storage_label}")
+        print(f"  Display storage: {display_storage_label}")
         print(f"  Upload dir     : {upload_dir}")
         print(f"  Download dir   : {download_dir}")
         print(f"  Profile dir    : {profile_dir}")
@@ -213,7 +226,8 @@ def create_app() -> FastAPI:
         print("  Upload         : POST /chat/upload")
         print("  Download       : GET  /downloads/<filename>")
         print("  Actions        : POST /chat/action")
-        print("  Sessions API   : GET/DELETE /sessions[/{id}]\n")
+        print("  Sessions API   : GET/DELETE /sessions[/{id}]")
+        print("  Auth           : GET  /auth/me, /auth/drive/*\n")
 
     @app.get("/")
     async def root() -> dict:
@@ -231,17 +245,37 @@ def create_app() -> FastAPI:
 
     @app.get("/auth/me")
     async def auth_me(user=Depends(verify_firebase_token)) -> dict:
-        """Return the authenticated user (or synthetic dev/anon user).
+        """Return the authenticated user + Drive connection status.
 
-        Lets the frontend build a "signed in as …" UI; also doubles
-        as the simplest smoke test that Firebase verification works.
+        The frontend reads this once on app bootstrap to:
+        1. Build the "signed in as …" UI
+        2. Decide whether to show the "Connect Google Drive" prompt
+
+        Returning both pieces of state in one round-trip avoids the
+        sign-in → /auth/me → /auth/drive/status → ... waterfall.
         """
+        drive_connected = False
+        drive_folder_id: str | None = None
+        drive_email: str | None = None
+        try:
+            drive_token = get_token_store().load(user.uid)
+        except Exception:  # pragma: no cover — defensive
+            drive_token = None
+        if drive_token is not None:
+            drive_connected = True
+            drive_folder_id = drive_token.openbench_folder_id
+            drive_email = drive_token.connected_email
         return {
             "uid": user.uid,
             "email": user.email,
             "name": user.name,
             "emailVerified": user.email_verified,
-            "mode": AuthConfig.from_env().mode,
+            "mode": auth_mode,
+            "drive": {
+                "connected": drive_connected,
+                "folderId": drive_folder_id,
+                "email": drive_email,
+            },
         }
 
     @app.get("/persona")
@@ -263,9 +297,10 @@ def create_app() -> FastAPI:
 
         Returns one entry per skill with name, version, source path, tool
         names, and reference files. Used by the frontend sidebar badge to
-        render a compact skill inventory.
+        render a compact skill inventory. Reads from the process-wide
+        display agent — skill set is uniform across users.
         """
-        registry = agent._skill_registry
+        registry = display_agent._skill_registry
         if registry is None:
             return {"loaded": False, "skills": []}
         items = [
@@ -315,8 +350,18 @@ def create_app() -> FastAPI:
         return result
 
     @app.post("/awp")
-    async def agent_endpoint(request: Request):
-        """AG-UI endpoint. Resolves attachments, wires them into xql, delegates."""
+    async def agent_endpoint(
+        request: Request,
+        storage: StorageBackend = Depends(resolve_storage_backend),
+        agent=Depends(resolve_agent),
+    ):
+        """AG-UI endpoint — per-user engine built from resolved storage.
+
+        Storage + agent are resolved per-request so each user's
+        ChatSessions land in their own store (Drive or per-user local).
+        Existing sessions are loaded by threadId from the body so chat
+        history survives across turns without a process-global engine.
+        """
         body = await request.json()
 
         # Attachments can live on forwardedProps.attachments OR top-level
@@ -349,34 +394,69 @@ def create_app() -> FastAPI:
         if xql_mod is not None and hasattr(xql_mod, "set_uploaded_files"):
             xql_mod.set_uploaded_files(file_paths or None)
 
-        return await agui_handler.handle(request)
+        thread_id = body.get("threadId")
+        session_store = storage.session_store()
+        session = resolve_session_for_thread(thread_id, session_store)
+        from lci_mini.server.request_scope import build_engine
+
+        engine = build_engine(agent=agent, session=session, session_store=session_store)
+        handler = LiciAGUIHandler(engine=engine, db_path=db_path)
+        return await handler.handle(request)
 
     @app.post("/chat/action")
-    async def chat_action(request: Request):
-        return await action_handler.handle(request)
+    async def chat_action(
+        request: Request,
+        storage: StorageBackend = Depends(resolve_storage_backend),
+        agent=Depends(resolve_agent),
+    ):
+        body = await request.json()
+        thread_id = body.get("threadId")
+        session_store = storage.session_store()
+        session = resolve_session_for_thread(thread_id, session_store)
+        from lci_mini.server.request_scope import build_engine
+
+        engine = build_engine(agent=agent, session=session, session_store=session_store)
+        handler = AGUIActionHandler(engine=engine)
+        return await handler.handle(request)
 
     @app.get("/chat/actions")
-    async def list_actions():
-        return {"actions": action_handler.get_registered_actions()}
+    async def list_actions() -> dict:
+        # Registered-action names are process-wide (no user state), so
+        # resolving a throwaway handler with the display engine is fine.
+        handler = AGUIActionHandler(engine=None)
+        return {"actions": handler.get_registered_actions()}
 
     # ── Session CRUD (for the chat-ui SessionSidebar) ──
 
     @app.get("/sessions")
-    async def list_sessions(limit: int = 50, offset: int = 0) -> list[dict]:
-        return session_handler.list(limit=limit, offset=offset)
+    async def list_sessions(
+        limit: int = 50,
+        offset: int = 0,
+        storage: StorageBackend = Depends(resolve_storage_backend),
+    ) -> list[dict]:
+        handler = AGUISessionHandler(session_store=storage.session_store())
+        return handler.list(limit=limit, offset=offset)
 
     @app.get("/sessions/{session_id}")
-    async def get_session(session_id: str):
+    async def get_session(
+        session_id: str,
+        storage: StorageBackend = Depends(resolve_storage_backend),
+    ):
         from fastapi import HTTPException
 
-        data = session_handler.get(session_id)
+        handler = AGUISessionHandler(session_store=storage.session_store())
+        data = handler.get(session_id)
         if data is None:
             raise HTTPException(status_code=404, detail="Session not found")
         return data
 
     @app.delete("/sessions/{session_id}")
-    async def delete_session(session_id: str) -> dict:
-        session_handler.delete(session_id)
+    async def delete_session(
+        session_id: str,
+        storage: StorageBackend = Depends(resolve_storage_backend),
+    ) -> dict:
+        handler = AGUISessionHandler(session_store=storage.session_store())
+        handler.delete(session_id)
         return {"ok": True, "sessionId": session_id}
 
     # Serve uploaded files for frontend preview links
