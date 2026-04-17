@@ -8,6 +8,7 @@
  */
 
 import type { ReactNode } from "react";
+import { useOptionalToast } from "./Toast";
 import type { UseAuthReturn } from "./useAuth";
 
 interface AuthGateProps {
@@ -32,6 +33,7 @@ function AuthLoading() {
 }
 
 function SignInScreen({ onSignIn }: { onSignIn: () => Promise<void> }) {
+  const toast = useOptionalToast();
   return (
     <div className="auth-gate">
       <div className="auth-gate__panel">
@@ -62,6 +64,10 @@ function SignInScreen({ onSignIn }: { onSignIn: () => Promise<void> }) {
           onClick={() => {
             onSignIn().catch((err) => {
               console.error("Sign-in failed:", err);
+              toast.show(
+                err instanceof Error ? err.message : "Sign-in failed. Please try again.",
+                "error",
+              );
             });
           }}
         >

@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { useOptionalToast } from "./Toast";
 import type { UseAuthReturn } from "./useAuth";
 
 interface DriveStatus {
@@ -32,6 +33,7 @@ interface UserBadgeProps {
 export function UserBadge({ auth }: UserBadgeProps) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<AuthMeResponse | null>(null);
+  const toast = useOptionalToast();
 
   const refresh = useCallback(async () => {
     const token = await auth.getIdToken();
@@ -66,12 +68,17 @@ export function UserBadge({ auth }: UserBadgeProps) {
       });
       if (!resp.ok) {
         console.error("connect failed:", resp.status);
+        toast.show(
+          `Couldn't start Google Drive connection (HTTP ${resp.status}).`,
+          "error",
+        );
         return;
       }
       const { authorizeUrl } = await resp.json();
       if (authorizeUrl) window.location.href = authorizeUrl;
     } catch (err) {
       console.error("[UserBadge] connect failed:", err);
+      toast.show("Couldn't reach the server for Drive connection.", "error");
     }
   };
 
@@ -79,13 +86,19 @@ export function UserBadge({ auth }: UserBadgeProps) {
     const token = await auth.getIdToken();
     if (!token) return;
     try {
-      await fetch("/auth/drive/disconnect", {
+      const resp = await fetch("/auth/drive/disconnect", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (!resp.ok) {
+        toast.show("Couldn't disconnect Google Drive. Try again.", "error");
+        return;
+      }
       await refresh();
+      toast.show("Google Drive disconnected.", "success");
     } catch (err) {
       console.error("[UserBadge] disconnect failed:", err);
+      toast.show("Couldn't reach the server to disconnect Drive.", "error");
     }
   };
 

@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from "react";
 import "@openbench/chat-ui/styles/chat-ui.css";
 import "@openbench/chat-ui/styles/bundle.css";
 import { AuthGate } from "./auth/AuthGate";
+import { ToastProvider } from "./auth/Toast";
 import { UserBadge } from "./auth/UserBadge";
 import { type UseAuthReturn, useAuth } from "./auth/useAuth";
 import "./global.css";
@@ -248,10 +249,12 @@ export default function App() {
   );
 
   return (
-    <AuthGate auth={auth}>
-      <ChatProvider config={chatConfig}>
-        <ChatLayout auth={auth} />
-      </ChatProvider>
-    </AuthGate>
+    <ToastProvider>
+      <AuthGate auth={auth}>
+        <ChatProvider config={chatConfig}>
+          <ChatLayout auth={auth} />
+        </ChatProvider>
+      </AuthGate>
+    </ToastProvider>
   );
 }
