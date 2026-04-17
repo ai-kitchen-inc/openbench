@@ -108,6 +108,11 @@ class TestProtocolDuckTyping(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     return LocalMarkdownScratchpad(tmpdir)
 
+            def persona_source(self, name="default"):
+                from openbench.intelligence.persona_source import InlinePersonaSource
+
+                return InlinePersonaSource()
+
         self.assertIsInstance(Duck(), StorageBackend)
 
     def test_missing_method_fails_protocol_check(self):
@@ -115,7 +120,7 @@ class TestProtocolDuckTyping(unittest.TestCase):
             def session_store(self):
                 return None
 
-            # missing scratchpad_store
+            # missing scratchpad_store and persona_source
 
         self.assertNotIsInstance(NotABackend(), StorageBackend)
 

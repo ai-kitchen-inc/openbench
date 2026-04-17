@@ -271,7 +271,7 @@ class TestBaseAgentPersonaIntegration:
         """Invalid type for persona= raises TypeError."""
         from openbench.intelligence.base import BaseAgent
 
-        with pytest.raises(TypeError, match="persona must be str, Path, or Persona"):
+        with pytest.raises(TypeError, match="persona must be str, Path, Persona"):
             BaseAgent(goal="test", persona=123)
 
     def test_persona_dir_not_found_raises(self):

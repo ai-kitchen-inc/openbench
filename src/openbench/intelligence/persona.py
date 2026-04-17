@@ -24,6 +24,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from openbench.intelligence.persona_source import PersonaSource
 
 
 @dataclass
@@ -80,6 +84,10 @@ class Persona:
         Missing files are silently skipped (empty string).
         Symlinks are rejected to prevent path traversal attacks (§10.2).
 
+        Internally this delegates to :class:`FilesystemPersonaSource`
+        so the "directory of markdown files" policy has a single
+        implementation shared with ``from_source``.
+
         Args:
             path: Directory containing persona markdown files.
 
@@ -90,29 +98,35 @@ class Persona:
             FileNotFoundError: If directory does not exist.
             ValueError: If any persona file is a symlink.
         """
-        d = Path(path)
-        if not d.is_dir():
-            raise FileNotFoundError(f"Persona directory not found: {d}")
+        from openbench.intelligence.persona_source import FilesystemPersonaSource
 
-        persona = cls(source=str(d.resolve()))
-
-        _FILE_MAP = {
-            "SOUL.md": "soul",
-            "STYLE.md": "style",
-            "AGENTS.md": "agents",
-        }
-
-        for filename, attr in _FILE_MAP.items():
-            f = d / filename
-            if f.exists():
-                if f.is_symlink():
-                    raise ValueError(
-                        f"Persona file {filename} is a symlink — rejected for security. "
-                        f"Use a regular file instead: {f}"
-                    )
-                setattr(persona, attr, f.read_text(encoding="utf-8").strip())
-
+        source = FilesystemPersonaSource(path)
+        persona = cls.from_source(source)
+        # Preserve the legacy behavior of storing the resolved directory
+        # path as ``source`` (not the backend class name) so callers that
+        # read ``persona.source`` for debug output keep working.
+        persona.source = str(Path(path).expanduser().resolve())
         return persona
+
+    @classmethod
+    def from_source(cls, source: PersonaSource) -> Persona:
+        """Load persona content from any :class:`PersonaSource` backend.
+
+        Calls ``source.fetch(key)`` for each canonical key (soul, style,
+        agents) and stores the results on the returned persona.
+
+        Args:
+            source: The backend to fetch from.
+
+        Returns:
+            Persona populated with fetched content.
+        """
+        return cls(
+            soul=source.fetch("soul"),
+            style=source.fetch("style"),
+            agents=source.fetch("agents"),
+            source=type(source).__name__,
+        )
 
     @classmethod
     def from_prompt(cls, prompt: str) -> Persona:

@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from openbench.chat.session_store import SessionStore
+    from openbench.intelligence.persona_source import PersonaSource
     from openbench.intelligence.scratchpad import ScratchpadStore
 
 
@@ -40,15 +41,22 @@ __all__ = ["LocalStorageBackend", "StorageBackend"]
 class StorageBackend(Protocol):
     """Factory for all storage stores an OpenBench app may need.
 
-    Implementations produce a :class:`SessionStore` and a
-    :class:`ScratchpadStore` rooted at a single logical location — a
-    local directory, a cloud bucket, a Notion workspace, etc. A future
-    ``persona_source(name)`` method will be added in M3.
+    Implementations produce a :class:`SessionStore`, a
+    :class:`ScratchpadStore`, and a :class:`PersonaSource` all rooted
+    at a single logical location — a local directory, a cloud bucket,
+    a Notion workspace, etc.
+
+    The ``name`` argument to :meth:`persona_source` identifies which
+    persona to load when a backend hosts multiple (e.g.
+    ``"lci-analyst"`` vs ``"code-reviewer"`` in the same Drive folder).
+    Default is ``"default"``.
     """
 
     def session_store(self) -> SessionStore: ...
 
     def scratchpad_store(self) -> ScratchpadStore: ...
+
+    def persona_source(self, name: str = "default") -> PersonaSource: ...
 
 
 class LocalStorageBackend:
@@ -58,8 +66,13 @@ class LocalStorageBackend:
 
         ~/.openbench/
         ├── sessions.db         # SQLiteSessionStore
-        └── memory/             # LocalMarkdownScratchpad
-            └── <key>.md
+        ├── memory/             # LocalMarkdownScratchpad
+        │   └── <key>.md
+        └── personas/           # FilesystemPersonaSource, per-name
+            └── <name>/
+                ├── SOUL.md
+                ├── STYLE.md
+                └── AGENTS.md
 
     Project-scoped usage — pass ``./.openbench/`` to isolate storage to
     the current working directory:
@@ -92,6 +105,20 @@ class LocalStorageBackend:
         from openbench.intelligence.scratchpads.local_md import LocalMarkdownScratchpad
 
         return LocalMarkdownScratchpad(root=self.root / "memory")
+
+    def persona_source(self, name: str = "default") -> PersonaSource:
+        """Return a :class:`FilesystemPersonaSource` at ``<root>/personas/<name>/``.
+
+        Creates the directory if absent so callers can inspect or edit
+        the persona files immediately after construction. The directory
+        starts empty — missing SOUL.md / STYLE.md / AGENTS.md files
+        resolve to empty sections when fetched.
+        """
+        from openbench.intelligence.persona_source import FilesystemPersonaSource
+
+        persona_dir = self.root / "personas" / name
+        persona_dir.mkdir(parents=True, exist_ok=True)
+        return FilesystemPersonaSource(persona_dir)
 
     def __repr__(self) -> str:
         return f"LocalStorageBackend(root={str(self.root)!r})"

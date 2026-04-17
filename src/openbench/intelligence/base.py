@@ -564,7 +564,10 @@ class BaseAgent(Agent):
             temperature: Model temperature
             max_iterations: Max tool call iterations
             system_prompt: Custom system prompt string (optional, legacy)
-            persona: Agent persona — Path/str to soul/ directory or Persona instance.
+            persona: Agent persona — any of:
+                - Path/str pointing to a ``soul/`` directory (filesystem).
+                - A :class:`Persona` instance (pre-composed).
+                - A :class:`PersonaSource` instance (Drive, HTTP, inline, etc.).
                 When provided, takes precedence over system_prompt= and composes
                 SOUL.md + STYLE.md + AGENTS.md into the system prompt.
             skills: List of skill names or directory paths. SDK skill names
@@ -668,6 +671,7 @@ class BaseAgent(Agent):
             from pathlib import Path
 
             from openbench.intelligence.persona import Persona
+            from openbench.intelligence.persona_source import PersonaSource
 
             if system_prompt:
                 import warnings
@@ -682,9 +686,12 @@ class BaseAgent(Agent):
                 self._persona = Persona.from_dir(persona)
             elif isinstance(persona, Persona):
                 self._persona = persona
+            elif isinstance(persona, PersonaSource):
+                self._persona = Persona.from_source(persona)
             else:
                 raise TypeError(
-                    f"persona must be str, Path, or Persona instance, got {type(persona).__name__}"
+                    f"persona must be str, Path, Persona, or PersonaSource instance, "
+                    f"got {type(persona).__name__}"
                 )
             # Fix #2: persona= explicitly sets identity — no fallback to default
             self._system_prompt = self._persona.compose()
