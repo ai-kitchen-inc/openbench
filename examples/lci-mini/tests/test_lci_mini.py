@@ -190,6 +190,79 @@ def test_fastapi_app_creates_successfully(monkeypatch, tmp_path):
     assert "/sessions/{session_id}" in routes
 
 
+class TestFailClosedAuth:
+    """Protected endpoints must 401 when no auth config is set at all."""
+
+    def test_sessions_returns_401_without_auth_config(self, monkeypatch, tmp_path):
+        """No FIREBASE_PROJECT_ID, no OPENBENCH_AUTH_DISABLED → chat must fail closed."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+        monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(tmp_path / ".openbench"))
+        monkeypatch.delenv("OPENBENCH_AUTH_DISABLED", raising=False)
+        monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+
+        from fastapi.testclient import TestClient
+        from lci_mini.server.app import create_app
+
+        with TestClient(create_app()) as client:
+            resp = client.get("/sessions")
+            assert resp.status_code == 401
+
+    def test_upload_returns_401_without_auth_config(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+        monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(tmp_path / ".openbench"))
+        monkeypatch.delenv("OPENBENCH_AUTH_DISABLED", raising=False)
+        monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+
+        from fastapi.testclient import TestClient
+        from lci_mini.server.app import create_app
+
+        with TestClient(create_app()) as client:
+            resp = client.post(
+                "/chat/upload",
+                files={"file": ("x.txt", b"hello", "text/plain")},
+            )
+            assert resp.status_code == 401
+
+    def test_persona_returns_401_without_auth_config(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+        monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(tmp_path / ".openbench"))
+        monkeypatch.delenv("OPENBENCH_AUTH_DISABLED", raising=False)
+        monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+
+        from fastapi.testclient import TestClient
+        from lci_mini.server.app import create_app
+
+        with TestClient(create_app()) as client:
+            assert client.get("/persona").status_code == 401
+            assert client.get("/skills").status_code == 401
+            assert client.get("/auth/me").status_code == 401
+
+    def test_awp_returns_401_without_auth_config(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+        monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(tmp_path / ".openbench"))
+        monkeypatch.delenv("OPENBENCH_AUTH_DISABLED", raising=False)
+        monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+
+        from fastapi.testclient import TestClient
+        from lci_mini.server.app import create_app
+
+        with TestClient(create_app()) as client:
+            resp = client.post("/awp", json={})
+            assert resp.status_code == 401
+
+    def test_health_still_public(self, monkeypatch, tmp_path):
+        """/health and / do not require auth — health checks need it."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+        monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(tmp_path / ".openbench"))
+        monkeypatch.delenv("OPENBENCH_AUTH_DISABLED", raising=False)
+
+        from fastapi.testclient import TestClient
+        from lci_mini.server.app import create_app
+
+        with TestClient(create_app()) as client:
+            assert client.get("/health").status_code == 200
+
+
 class TestStorageBackendSelection:
     """Cover the env-var-driven switch between Local and Drive backends."""
 
@@ -250,6 +323,7 @@ def test_sessions_endpoints_use_local_storage_backend(monkeypatch, tmp_path):
     from openbench.chat.stores.sqlite import SQLiteSessionStore
 
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    monkeypatch.setenv("OPENBENCH_AUTH_DISABLED", "1")
     storage_root = tmp_path / ".openbench"
     monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(storage_root))
 
@@ -289,6 +363,7 @@ def test_sessions_endpoints_use_local_storage_backend(monkeypatch, tmp_path):
 def test_persona_endpoint_exposes_composed_prompt(monkeypatch):
     """/persona should return the composed persona summary + contents."""
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    monkeypatch.setenv("OPENBENCH_AUTH_DISABLED", "1")
 
     from fastapi.testclient import TestClient
     from lci_mini.server.app import create_app
@@ -393,6 +468,7 @@ def test_agent_system_prompt_contains_persona_and_xql(monkeypatch):
 def test_skills_endpoint_exposes_xql(monkeypatch):
     """/skills should include xql + any auto-discovered SDK skills."""
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    monkeypatch.setenv("OPENBENCH_AUTH_DISABLED", "1")
 
     from fastapi.testclient import TestClient
     from lci_mini.server.app import create_app
@@ -589,6 +665,7 @@ def test_upload_then_catalog_via_contextvar(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    monkeypatch.setenv("OPENBENCH_AUTH_DISABLED", "1")
     monkeypatch.setenv("LCI_MINI_UPLOAD_DIR", str(tmp_path / "uploads"))
 
     from lci_mini.server.app import create_app
@@ -853,6 +930,7 @@ def test_server_wires_render_items_fn(monkeypatch):
     import sys
 
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    monkeypatch.setenv("OPENBENCH_AUTH_DISABLED", "1")
 
     from lci_mini.server.app import create_app
 

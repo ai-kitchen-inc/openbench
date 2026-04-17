@@ -25,7 +25,6 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 
 from lci_mini.auth.config import DriveOAuthConfig
-from lci_mini.auth.dependencies import verify_firebase_token
 from lci_mini.auth.drive import (
     STATE_COOKIE_MAX_AGE,
     STATE_COOKIE_NAME,
@@ -35,6 +34,7 @@ from lci_mini.auth.drive import (
     read_state_cookie,
     sign_state_payload,
 )
+from lci_mini.server.request_scope import require_firebase_user
 
 if TYPE_CHECKING:
     from openbench.integrations.firebase_auth import FirebaseUser
@@ -67,7 +67,7 @@ def build_drive_router(redirect_home: str = "/") -> APIRouter:
     @router.post("/connect")
     async def connect(
         request: Request,
-        user: FirebaseUser = Depends(verify_firebase_token),
+        user: FirebaseUser = Depends(require_firebase_user),
     ) -> dict:
         """Return the authorize URL and set a signed state cookie.
 
@@ -210,7 +210,7 @@ def build_drive_router(redirect_home: str = "/") -> APIRouter:
 
     @router.post("/disconnect")
     async def disconnect(
-        user: FirebaseUser = Depends(verify_firebase_token),
+        user: FirebaseUser = Depends(require_firebase_user),
     ) -> dict:
         """Revoke the refresh token at Google and delete our copy."""
         from openbench.integrations.firebase_auth import revoke_refresh_token
@@ -231,7 +231,7 @@ def build_drive_router(redirect_home: str = "/") -> APIRouter:
 
     @router.get("/status")
     async def status_endpoint(
-        user: FirebaseUser = Depends(verify_firebase_token),
+        user: FirebaseUser = Depends(require_firebase_user),
     ) -> dict:
         """Report whether the user has connected Drive."""
         # Status is allowed even when drive OAuth isn't configured — the

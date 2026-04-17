@@ -19,12 +19,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from lci_mini.agent import create_lici_agent, get_persona_dir
-from lci_mini.auth import AuthConfig, verify_firebase_token
+from lci_mini.auth import AuthConfig
 from lci_mini.auth.drive import get_token_store
 from lci_mini.auth.endpoints import build_drive_router
 from lci_mini.server.handler import LiciAGUIHandler
 from lci_mini.server.request_scope import (
     configure_render_queue,
+    require_firebase_user,
     resolve_agent,
     resolve_session_for_thread,
     resolve_storage_backend,
@@ -244,7 +245,7 @@ def create_app() -> FastAPI:
     app.include_router(build_drive_router(redirect_home="/"))
 
     @app.get("/auth/me")
-    async def auth_me(user=Depends(verify_firebase_token)) -> dict:
+    async def auth_me(user=Depends(require_firebase_user)) -> dict:
         """Return the authenticated user + Drive connection status.
 
         The frontend reads this once on app bootstrap to:
@@ -279,7 +280,7 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/persona")
-    async def persona_info() -> dict:
+    async def persona_info(_user=Depends(require_firebase_user)) -> dict:
         """Expose the composed persona so the UI can show what's loaded."""
         if not persona:
             return {"loaded": False}
@@ -292,7 +293,7 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/skills")
-    async def skills_info() -> dict:
+    async def skills_info(_user=Depends(require_firebase_user)) -> dict:
         """Expose loaded skills so the UI can show which capabilities are wired.
 
         Returns one entry per skill with name, version, source path, tool
@@ -325,7 +326,10 @@ def create_app() -> FastAPI:
         }
 
     @app.post("/chat/upload")
-    async def upload_file(file: UploadFile = File(...)):
+    async def upload_file(
+        file: UploadFile = File(...),
+        _user=Depends(require_firebase_user),
+    ):
         """Store an uploaded file on disk and return attachment metadata.
 
         The returned ``id`` is what the frontend includes in subsequent

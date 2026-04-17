@@ -167,6 +167,12 @@ def resolve_storage_backend(
 ) -> StorageBackend:
     """FastAPI dependency — returns the user's StorageBackend.
 
+    Rejects anonymous callers (auth ``none`` mode): hitting chat or
+    session endpoints without a real Firebase user (or the explicit
+    dev-bypass flag) returns 401 — previously this was silently
+    treated as an anonymous request, which meant chat worked without
+    sign-in even when the frontend was gated.
+
     Selection rules (first match wins):
 
     1. If ``LCI_MINI_DRIVE_ROOT`` + ``LCI_MINI_SERVICE_ACCOUNT`` are set,
@@ -178,6 +184,7 @@ def resolve_storage_backend(
     3. Otherwise, return a per-user :class:`LocalStorageBackend` under
        ``<root>/users/<prefix>/<uid>/``.
     """
+    _reject_if_anonymous(user)
     shared = _shared_service_account_backend()
     if shared is not None:
         return shared
@@ -308,8 +315,11 @@ def resolve_agent(
     """FastAPI dependency — returns the agent for this user + backend.
 
     Cache key: ``(user.uid, storage_signature(token))``. Reconnect /
-    disconnect flows rotate the signature automatically.
+    disconnect flows rotate the signature automatically. Rejects
+    anonymous callers by delegating to ``resolve_storage_backend``
+    (which already enforces the policy).
     """
+    _reject_if_anonymous(user)
     token = _load_drive_token(user.uid)
     signature = storage_signature(token)
     return _agent_cache.get_or_build(
@@ -371,6 +381,25 @@ def build_engine(
 # ---------------------------------------------------------------------------
 
 
+def _reject_if_anonymous(user: FirebaseUser) -> None:
+    """Raise HTTP 401 when ``user`` is the ``none``-mode synthetic.
+
+    Called from every resolver that touches per-user state. Keeps the
+    fail-closed default: with no auth config at all, the server
+    refuses chat / session / upload requests instead of silently
+    serving them as shared anonymous traffic.
+    """
+    if user.uid == "anonymous":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "This endpoint requires authentication. Set "
+                "FIREBASE_PROJECT_ID for real auth, or "
+                "OPENBENCH_AUTH_DISABLED=1 for explicit dev bypass."
+            ),
+        )
+
+
 def require_firebase_user(
     user: FirebaseUser = Depends(verify_firebase_token),
 ) -> FirebaseUser:
@@ -382,10 +411,5 @@ def require_firebase_user(
     Auth see a clear 401 instead of silently leaking data across
     callers.
     """
-    if user.uid == "anonymous":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="This endpoint requires Firebase Auth. Set FIREBASE_PROJECT_ID or "
-            "OPENBENCH_AUTH_DISABLED=1.",
-        )
+    _reject_if_anonymous(user)
     return user
