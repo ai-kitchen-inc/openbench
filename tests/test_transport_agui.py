@@ -422,7 +422,7 @@ class TestAGUIHandlerContentExtraction(unittest.TestCase):
             "context": [],
         }
 
-        content, attachments = handler._extract_content(body)
+        content, _attachments = handler._extract_content(body)
 
         self.assertEqual(content, "")
 

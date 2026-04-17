@@ -85,7 +85,7 @@ class TestLangChainAdapterInvoke(unittest.TestCase):
         mock_runnable.ainvoke = AsyncMock(return_value={"output": "async_result"})
         adapter = LangChainAdapter(mock_runnable)
 
-        result = asyncio.get_event_loop().run_until_complete(adapter.ainvoke({"input": "test"}))
+        result = asyncio.run(adapter.ainvoke({"input": "test"}))
 
         mock_runnable.ainvoke.assert_called_once_with({"input": "test"}, config=None)
         self.assertEqual(result, {"output": "async_result"})
