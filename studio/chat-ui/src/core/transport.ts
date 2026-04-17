@@ -74,6 +74,23 @@ export class AGUITransport {
     this.config = config;
   }
 
+  /**
+   * Resolve the Authorization header from the configured getAuthToken
+   * hook, if any. Returns an empty object when no hook is wired or the
+   * hook returns null — callers merge it into their headers map.
+   */
+  private async _authHeaders(): Promise<Record<string, string>> {
+    if (!this.config.getAuthToken) return {};
+    try {
+      const token = await this.config.getAuthToken();
+      if (!token) return {};
+      return { Authorization: `Bearer ${token}` };
+    } catch (err) {
+      console.error("[AGUITransport] getAuthToken threw:", err);
+      return {};
+    }
+  }
+
   /** Current transport status. */
   get status(): TransportStatus {
     return this._status;
@@ -100,7 +117,11 @@ export class AGUITransport {
     const currentGen = this.runGeneration;
 
     // Create a fresh HttpAgent per request to avoid state accumulation
-    const agent = new HttpAgent({ url: this.config.streamUrl });
+    const authHeaders = await this._authHeaders();
+    const agent = new HttpAgent({
+      url: this.config.streamUrl,
+      headers: authHeaders,
+    });
 
     const input = {
       threadId: sessionId || generateId(),
@@ -163,7 +184,10 @@ export class AGUITransport {
     try {
       const response = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(await this._authHeaders()),
+        },
         body: JSON.stringify(payload),
       });
 
@@ -209,6 +233,7 @@ export class AGUITransport {
 
     const response = await fetch(url, {
       method: "POST",
+      headers: { ...(await this._authHeaders()) },
       body: formData,
     });
 
@@ -229,7 +254,10 @@ export class AGUITransport {
     const base = this.config.sessionsUrl ?? "/sessions";
     const url = `${base}?limit=${limit}&offset=${offset}`;
     try {
-      const response = await fetch(url, { method: "GET" });
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { ...(await this._authHeaders()) },
+      });
       if (response.status === 404 || response.status === 501) return [];
       if (!response.ok) throw new Error(`listSessions failed: ${response.status}`);
       return (await response.json()) as SessionSummary[];
@@ -248,7 +276,10 @@ export class AGUITransport {
   async loadSession(sessionId: string): Promise<ChatSession | null> {
     const base = this.config.sessionsUrl ?? "/sessions";
     const url = `${base}/${encodeURIComponent(sessionId)}`;
-    const response = await fetch(url, { method: "GET" });
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { ...(await this._authHeaders()) },
+    });
     if (response.status === 404 || response.status === 501) return null;
     if (!response.ok) throw new Error(`loadSession failed: ${response.status}`);
     const raw = (await response.json()) as WireChatSession;
@@ -264,7 +295,10 @@ export class AGUITransport {
   async deleteSession(sessionId: string): Promise<void> {
     const base = this.config.sessionsUrl ?? "/sessions";
     const url = `${base}/${encodeURIComponent(sessionId)}`;
-    const response = await fetch(url, { method: "DELETE" });
+    const response = await fetch(url, {
+      method: "DELETE",
+      headers: { ...(await this._authHeaders()) },
+    });
     if (response.status === 404 || response.status === 501) return;
     if (!response.ok) throw new Error(`deleteSession failed: ${response.status}`);
   }

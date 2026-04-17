@@ -174,6 +174,16 @@ export interface ChatConfig {
   sessionsUrl?: string; // REST CRUD endpoint (defaults to "/sessions")
   theme?: "light" | "dark" | "auto";
   maxConcurrentStreams?: number; // Max parallel SSE streams (default: 3)
+  /**
+   * Optional hook called before every authenticated request. Wire it
+   * to Firebase Auth's getIdToken() (or any equivalent) to have the
+   * transport attach ``Authorization: Bearer <token>`` headers.
+   *
+   * Returning ``null`` or leaving this unset omits the header — the
+   * backend's auth dependency then decides whether to reject (401)
+   * or allow anonymous access.
+   */
+  getAuthToken?: () => Promise<string | null>;
 }
 
 export type TransportStatus = "connected" | "disconnected" | "error";

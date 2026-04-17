@@ -98,6 +98,10 @@ gdrive = [
     "google-auth>=2.25.0",
 ]
 
+firebase = [
+    "firebase-admin>=6.0.0",
+]
+
 extraction = [
     "langextract>=1.0.0",
 ]

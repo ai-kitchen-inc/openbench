@@ -147,7 +147,7 @@ describe("AGUITransport events", () => {
     const t = new AGUITransport(config);
     await t.run("Hello");
 
-    expect(HttpAgent).toHaveBeenCalledWith({ url: "/awp" });
+    expect(HttpAgent).toHaveBeenCalledWith(expect.objectContaining({ url: "/awp" }));
 
     t.dispose();
   });
@@ -166,10 +166,14 @@ describe("AGUITransport events", () => {
 
     const t = new AGUITransport(config);
 
-    // Start stream (don't await — it would hang)
+    // Start stream (don't await the long-running run — it would hang).
+    // We DO await a microtask so the transport's internal getAuthToken()
+    // promise resolves and subscribe() runs before we cancel.
     const _runPromise = t.run("Hello");
+    await Promise.resolve();
+    await Promise.resolve();
 
-    // Cancel immediately
+    // Cancel
     t.cancel();
 
     expect(unsubMock).toHaveBeenCalled();
@@ -521,6 +525,158 @@ describe("AGUITransport sessions", () => {
     global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 500));
     const t = new AGUITransport(config);
     await expect(t.deleteSession("x")).rejects.toThrow();
+  });
+});
+
+// ── Authorization header (Firebase ID token) ──
+
+describe("AGUITransport Authorization header", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("listSessions attaches Bearer token when getAuthToken is wired", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse([]));
+    global.fetch = fetchMock;
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "fake-id-token",
+    });
+    await t.listSessions();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ Authorization: "Bearer fake-id-token" }),
+      }),
+    );
+  });
+
+  it("loadSession attaches Bearer token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createJSONResponse({
+        sessionId: "s-1",
+        title: "t",
+        createdAt: "2026-04-18T00:00:00Z",
+        updatedAt: "2026-04-18T00:00:00Z",
+        messages: [],
+      }),
+    );
+    global.fetch = fetchMock;
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "tok-1",
+    });
+    await t.loadSession("s-1");
+    const call = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = call.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer tok-1");
+  });
+
+  it("deleteSession attaches Bearer token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse({}, 200));
+    global.fetch = fetchMock;
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "tok-del",
+    });
+    await t.deleteSession("s-1");
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer tok-del");
+  });
+
+  it("sendAction attaches Bearer token alongside Content-Type", async () => {
+    createMockAgent([]);
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "tok-act",
+    });
+    await t.sendAction({
+      name: "click",
+      surfaceId: "s1",
+      sourceComponentId: "btn-1",
+      timestamp: "2026-04-18T00:00:00Z",
+      context: {},
+    });
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer tok-act");
+    expect(headers["Content-Type"]).toBe("application/json");
+    t.dispose();
+  });
+
+  it("upload attaches Bearer token without setting Content-Type", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createJSONResponse({
+        id: "att-1",
+        type: "file",
+        name: "x",
+        url: "/u/x",
+        mimeType: "text/plain",
+      }),
+    );
+    global.fetch = fetchMock;
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "tok-up",
+    });
+    await t.upload(new File(["hello"], "hello.txt", { type: "text/plain" }));
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer tok-up");
+    expect(headers["Content-Type"]).toBeUndefined();
+  });
+
+  it("run passes Bearer token into HttpAgent headers", async () => {
+    createMockAgent([]);
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "tok-sse",
+    });
+    await t.run("hi");
+    expect(HttpAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "/awp",
+        headers: expect.objectContaining({ Authorization: "Bearer tok-sse" }),
+      }),
+    );
+    t.dispose();
+  });
+
+  it("no header attached when getAuthToken is unset", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse([]));
+    global.fetch = fetchMock;
+    const t = new AGUITransport(config); // no getAuthToken
+    await t.listSessions();
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers?.Authorization).toBeUndefined();
+  });
+
+  it("no header attached when getAuthToken returns null", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse([]));
+    global.fetch = fetchMock;
+    const t = new AGUITransport({ ...config, getAuthToken: async () => null });
+    await t.listSessions();
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers?.Authorization).toBeUndefined();
+  });
+
+  it("getAuthToken error is swallowed — request still runs without auth", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse([]));
+    global.fetch = fetchMock;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => {
+        throw new Error("token fetch failed");
+      },
+    });
+    const result = await t.listSessions();
+    expect(result).toEqual([]);
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers?.Authorization).toBeUndefined();
+    errSpy.mockRestore();
   });
 });
 

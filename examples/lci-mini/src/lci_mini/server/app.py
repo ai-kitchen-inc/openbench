@@ -13,12 +13,13 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from lci_mini.agent import create_lici_agent, get_persona_dir
+from lci_mini.auth import AuthConfig, verify_firebase_token
 from lci_mini.server.handler import LiciAGUIHandler
 from openbench import LocalStorageBackend, StorageBackend
 from openbench.chat import ChatEngine
@@ -224,6 +225,21 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok", "service": "lci-mini"}
+
+    @app.get("/auth/me")
+    async def auth_me(user=Depends(verify_firebase_token)) -> dict:
+        """Return the authenticated user (or synthetic dev/anon user).
+
+        Lets the frontend build a "signed in as …" UI; also doubles
+        as the simplest smoke test that Firebase verification works.
+        """
+        return {
+            "uid": user.uid,
+            "email": user.email,
+            "name": user.name,
+            "emailVerified": user.email_verified,
+            "mode": AuthConfig.from_env().mode,
+        }
 
     @app.get("/persona")
     async def persona_info() -> dict:
