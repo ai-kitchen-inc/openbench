@@ -386,6 +386,7 @@ datasets/
 uploads/
 downloads/
 profiles/
+.firebase/
 
 # Generated outputs
 outputs/
