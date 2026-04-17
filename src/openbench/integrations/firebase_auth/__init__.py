@@ -21,6 +21,26 @@ See ``.tmp/RFC-AUTH-LAYER.md`` §4 for the integration design.
 
 from __future__ import annotations
 
+from openbench.integrations.firebase_auth.drive_oauth import (
+    ClientSecrets,
+    OAuthError,
+    TokenResponse,
+    build_authorize_url,
+    build_credentials,
+    exchange_code,
+    load_client_secrets,
+    refresh_access_token,
+    revoke_refresh_token,
+)
+from openbench.integrations.firebase_auth.token_store import (
+    AESGCMEncryptor,
+    DriveToken,
+    Encryptor,
+    FirestoreTokenStore,
+    InMemoryTokenStore,
+    NoOpEncryptor,
+    TokenStore,
+)
 from openbench.integrations.firebase_auth.verifier import (
     FirebaseIDVerifier,
     FirebaseUser,
@@ -31,10 +51,26 @@ from openbench.integrations.firebase_auth.verifier import (
 )
 
 __all__ = [
+    "AESGCMEncryptor",
+    "ClientSecrets",
+    "DriveToken",
+    "Encryptor",
     "FirebaseIDVerifier",
     "FirebaseUser",
+    "FirestoreTokenStore",
+    "InMemoryTokenStore",
     "InvalidTokenError",
+    "NoOpEncryptor",
+    "OAuthError",
     "TokenExpiredError",
+    "TokenResponse",
     "TokenRevokedError",
+    "TokenStore",
     "WrongProjectError",
+    "build_authorize_url",
+    "build_credentials",
+    "exchange_code",
+    "load_client_secrets",
+    "refresh_access_token",
+    "revoke_refresh_token",
 ]

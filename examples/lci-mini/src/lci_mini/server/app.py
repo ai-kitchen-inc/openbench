@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from lci_mini.agent import create_lici_agent, get_persona_dir
 from lci_mini.auth import AuthConfig, verify_firebase_token
+from lci_mini.auth.endpoints import build_drive_router
 from lci_mini.server.handler import LiciAGUIHandler
 from openbench import LocalStorageBackend, StorageBackend
 from openbench.chat import ChatEngine
@@ -225,6 +226,8 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok", "service": "lci-mini"}
+
+    app.include_router(build_drive_router(redirect_home="/"))
 
     @app.get("/auth/me")
     async def auth_me(user=Depends(verify_firebase_token)) -> dict:

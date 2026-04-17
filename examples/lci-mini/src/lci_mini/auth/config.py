@@ -53,3 +53,52 @@ class AuthConfig:
                 firebase_admin_credentials=creds,
             )
         return cls(mode="none")
+
+
+@dataclass(frozen=True)
+class DriveOAuthConfig:
+    """Config for the /auth/drive/* endpoint family.
+
+    ``enabled`` is False when ``GOOGLE_OAUTH_CLIENT_SECRETS`` is unset —
+    the endpoints then return 501 rather than breaking startup. This
+    keeps the identity-only (M1) deployment path viable.
+    """
+
+    enabled: bool
+    client_secrets_path: str | None = None
+    redirect_url: str | None = None
+    scopes: tuple[str, ...] = ()
+    session_secret: str | None = None
+    token_encryption_key_env: str = "DRIVE_TOKEN_ENCRYPTION_KEY"
+
+    @classmethod
+    def from_env(cls, env: dict[str, str] | None = None) -> DriveOAuthConfig:
+        e = env if env is not None else os.environ
+        secrets_path = (e.get("GOOGLE_OAUTH_CLIENT_SECRETS") or "").strip() or None
+        if not secrets_path:
+            return cls(enabled=False)
+        redirect = (e.get("DRIVE_OAUTH_REDIRECT_URL") or "").strip()
+        if not redirect:
+            raise RuntimeError(
+                "GOOGLE_OAUTH_CLIENT_SECRETS is set but DRIVE_OAUTH_REDIRECT_URL is not. "
+                "Both are required to enable the Drive OAuth flow."
+            )
+        scopes_raw = (e.get("DRIVE_OAUTH_SCOPES") or "").strip()
+        scopes = (
+            tuple(s for s in scopes_raw.split(",") if s.strip())
+            if scopes_raw
+            else ("https://www.googleapis.com/auth/drive.file",)
+        )
+        session_secret = (e.get("SESSION_SECRET") or "").strip() or None
+        if not session_secret:
+            raise RuntimeError(
+                "SESSION_SECRET is required when the Drive OAuth flow is enabled. "
+                "Generate with: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+            )
+        return cls(
+            enabled=True,
+            client_secrets_path=secrets_path,
+            redirect_url=redirect,
+            scopes=scopes,
+            session_secret=session_secret,
+        )
