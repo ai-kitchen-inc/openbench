@@ -100,12 +100,17 @@ export function MessageBubble({ message, onAction }: MessageBubbleProps) {
         {/* Streaming indicator (fallback when no steps and no content) */}
         {isStreaming && !hasSteps && !hasContent && <StreamingIndicator />}
 
-        {/* A2UI surfaces */}
-        {message.surfaces?.map((surface) => (
-          <div key={surface.surfaceId} className="chat-message__surface">
-            <SurfaceRenderer surface={surface} onAction={onAction} />
-          </div>
-        ))}
+        {/* A2UI surfaces. Historical sessions persist a bare
+            {surfaceId} reference without the components tree, so skip
+            those — SurfaceRenderer would return null anyway, but the
+            wrapper div would still take up layout space. */}
+        {message.surfaces
+          ?.filter((s) => s && typeof (s as { components?: unknown }).components !== "undefined")
+          .map((surface) => (
+            <div key={surface.surfaceId} className="chat-message__surface">
+              <SurfaceRenderer surface={surface} onAction={onAction} />
+            </div>
+          ))}
 
         {/* Step indicators — always at the bottom */}
         {hasSteps && (

@@ -428,4 +428,27 @@ describe("SurfaceRenderer", () => {
       expect(container.querySelector('[data-component-id="root"]')).not.toBeNull();
     });
   });
+
+  // ── Defensive guards for server-persisted surface shapes ──
+
+  describe("defensive rendering", () => {
+    it("returns null when surface.components is missing entirely", () => {
+      // Historical sessions persist only {surfaceId} — no components tree.
+      const bareSurface = { surfaceId: "s-persisted" } as unknown as A2UISurface;
+      const { container } = render(<SurfaceRenderer surface={bareSurface} />);
+      expect(container.firstChild).toBeNull();
+    });
+
+    it("returns null when surface.components is a plain object (JSON round-trip)", () => {
+      // If the Map got JSON-serialized and re-parsed without revival,
+      // components becomes {} which has no .get(). Must not throw.
+      const plainObj = {
+        surfaceId: "s-json",
+        catalogId: "openbench",
+        components: {} as unknown as Map<string, A2UIComponent>,
+      };
+      const { container } = render(<SurfaceRenderer surface={plainObj} />);
+      expect(container.firstChild).toBeNull();
+    });
+  });
 });

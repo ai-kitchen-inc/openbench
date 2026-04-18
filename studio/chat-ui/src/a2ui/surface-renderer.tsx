@@ -27,7 +27,15 @@ export interface SurfaceRendererProps {
  * Render an A2UI surface as a React component tree.
  */
 export const SurfaceRenderer: React.FC<SurfaceRendererProps> = ({ surface, onAction }) => {
-  const root = surface.components.get("root");
+  // Historical sessions reloaded from the server persist only the
+  // surfaceId (no components tree), and occasionally a message.surfaces
+  // entry is a bare pointer until the stream fills it in. Guard against
+  // both so a half-built record never crashes the chat panel.
+  const components = surface?.components;
+  if (!components || typeof components.get !== "function") {
+    return null;
+  }
+  const root = components.get("root");
   if (!root) {
     return null;
   }
