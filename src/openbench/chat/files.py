@@ -28,7 +28,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class StoredFile:
-    """Metadata for a file stored on disk."""
+    """Metadata for a stored file.
+
+    Attributes:
+        id: Opaque id returned by the store; stable across reads.
+        name: Original filename with the store's uniqueness suffix.
+        path: Local filesystem path — real for :class:`LocalFileStore`,
+            a TTL-cached temp path for remote stores.
+        mime_type: MIME type of the file's contents.
+        size_bytes: File size in bytes.
+        stored_at: ISO-8601 timestamp of the store / last modification.
+        extracted_text: Optional extracted text preview (from the
+            :class:`FileContentExtractor`).
+        web_view_link: Cloud viewer URL when the backing store is
+            cloud-hosted (Drive). ``None`` for local stores. Frontend
+            can use this to open the file directly in the user's
+            authenticated cloud UI — for example, clicking a Drive
+            webViewLink in a new tab opens ``drive.google.com`` without
+            proxying bytes through the backend.
+    """
 
     id: str
     name: str
@@ -37,6 +55,7 @@ class StoredFile:
     size_bytes: int
     stored_at: str
     extracted_text: str | None = None
+    web_view_link: str | None = None
 
     def to_attachment(self, base_url: str) -> Attachment:
         """Convert to an Attachment for chat messages.

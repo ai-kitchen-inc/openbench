@@ -66,6 +66,11 @@ class FileRenderer(ContentRenderer):
             props["mimeType"] = file_data["mimeType"]
         if "previewUrl" in file_data:
             props["previewUrl"] = file_data["previewUrl"]
+        # Propagate the "external" flag when set by a cloud-backed
+        # producer (e.g. Drive ``webViewLink``) so the frontend opens
+        # the URL in a new tab without forcing a download.
+        if file_data.get("external"):
+            props["external"] = True
 
         return A2UIComponent(
             id=_gen_id("file"),

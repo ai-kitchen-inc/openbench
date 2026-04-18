@@ -118,12 +118,13 @@ class GoogleDriveFileStore:
             .create(
                 body=body,
                 media_body=self._media(content, mime),
-                fields="id",
+                fields="id, webViewLink",
                 supportsAllDrives=True,
             )
             .execute()
         )
         drive_file_id = str(resp["id"])
+        web_view_link = resp.get("webViewLink")
         self._gc_cache()
 
         # Pre-populate cache — caller almost always reads right after
@@ -139,6 +140,7 @@ class GoogleDriveFileStore:
             mime_type=mime,
             size_bytes=len(content),
             stored_at=datetime.now(timezone.utc).isoformat(),
+            web_view_link=web_view_link,
         )
 
     def get(self, file_id: str) -> StoredFile | None:
@@ -149,7 +151,7 @@ class GoogleDriveFileStore:
                 service.files()
                 .get(
                     fileId=file_id,
-                    fields="id, name, mimeType, size, modifiedTime, appProperties",
+                    fields="id, name, mimeType, size, modifiedTime, appProperties, webViewLink",
                     supportsAllDrives=True,
                 )
                 .execute()
@@ -175,6 +177,7 @@ class GoogleDriveFileStore:
             mime_type=mime,
             size_bytes=size,
             stored_at=stored_at,
+            web_view_link=meta.get("webViewLink"),
         )
 
     def get_local_path(self, file_id: str) -> str | None:

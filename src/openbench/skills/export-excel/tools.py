@@ -211,11 +211,17 @@ def _persist_via_bound_store(
     # land as distinct files, not overwrite each other.
     stored = _output_store.store(on_disk_path.name, content, _XLSX_MIME())
 
-    # URL contract: host app exposes a route at <base>/<id>/<name>
-    # that streams bytes via output_store.get_local_path(id). When no
-    # base was bound, fall back to the local cache path so CLI callers
-    # can still open the file.
-    if _output_url_base:
+    # URL precedence, most-preferred first:
+    # 1. Cloud viewer link (Drive ``webViewLink``) — opens the file in
+    #    the user's own Drive UI in a new tab, no backend proxy.
+    # 2. Backend route ``<base>/<id>/<name>`` — the host app resolves
+    #    the id back to bytes via ``output_store.get_local_path``.
+    #    Used for local-only deployments.
+    # 3. Absolute cache path — CLI / Python-only callers who just
+    #    want the file on disk.
+    if stored.web_view_link:
+        url = stored.web_view_link
+    elif _output_url_base:
         base = _output_url_base.rstrip("/")
         url = f"{base}/{stored.id}/{stored.name}"
     else:
@@ -228,6 +234,10 @@ def _persist_via_bound_store(
         "mimeType": stored.mime_type or _XLSX_MIME(),
         "size": stored.size_bytes,
     }
+    # Signal to the frontend that this URL points to a third-party
+    # viewer — ObFileCard uses it to open in a new tab with rel=noopener.
+    if stored.web_view_link:
+        item["external"] = True
     return item
 
 

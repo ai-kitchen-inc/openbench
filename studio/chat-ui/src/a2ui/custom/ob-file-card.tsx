@@ -225,6 +225,10 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
   const previewUrl = component.previewUrl
     ? resolveString(component.previewUrl, surface)
     : undefined;
+  // When the producer sets ``external`` (e.g. Drive webViewLink), open
+  // the URL in a new tab as-is instead of triggering a download —
+  // the user's authenticated cloud UI handles preview.
+  const external = Boolean(component.external);
 
   const IconComponent = getFileIcon(mimeType);
 
@@ -274,7 +278,11 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
         href={fileUrl}
         target="_blank"
         rel="noopener noreferrer"
-        download={fileName}
+        // Local / backend-proxied files: force the browser to save.
+        // External (Drive / cloud viewer): let the cloud UI open in
+        // a new tab — no ``download`` attribute so the browser
+        // navigates instead of triggering save-as on an HTML page.
+        {...(external ? {} : { download: fileName })}
         className="ob-file-card__download"
         style={{
           display: "inline-flex",
@@ -289,7 +297,7 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
         }}
       >
         <DownloadIcon />
-        Download
+        {external ? "Open" : "Download"}
       </a>
     </div>
   );

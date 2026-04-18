@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 
@@ -34,12 +35,12 @@ class FakeDrive:
             media = kwargs.get("media_body")
             content = b""
             if media is not None:
-                # MediaInMemoryUpload stores the blob on ``_fd`` (BytesIO).
                 fd = getattr(media, "_fd", None)
                 if fd is not None:
                     content = fd.getvalue()
                 else:
                     content = getattr(media, "_body", b"") or b""
+            view_link = f"https://drive.google.com/file/d/{fid}/view"
             self._files[fid] = {
                 "id": fid,
                 "name": body["name"],
@@ -48,8 +49,14 @@ class FakeDrive:
                 "appProperties": body.get("appProperties") or {},
                 "size": len(content),
                 "modifiedTime": "2026-04-18T00:00:00Z",
+                "webViewLink": view_link,
             }
-            return MagicMock(execute=MagicMock(return_value={"id": fid}))
+            # Honour ``fields`` — return only what the caller asked for.
+            fields = kwargs.get("fields", "id")
+            resp: dict[str, Any] = {"id": fid}
+            if "webViewLink" in fields:
+                resp["webViewLink"] = view_link
+            return MagicMock(execute=MagicMock(return_value=resp))
 
         def _get(**kwargs):
             fid = kwargs["fileId"]
@@ -65,6 +72,7 @@ class FakeDrive:
                         "size": str(rec["size"]),
                         "modifiedTime": rec["modifiedTime"],
                         "appProperties": rec["appProperties"],
+                        "webViewLink": rec["webViewLink"],
                     }
                 )
             )
@@ -182,6 +190,22 @@ class TestGoogleDriveFileStore(unittest.TestCase):
         from openbench.chat.files import FileStore
 
         self.assertIsInstance(self.store, FileStore)
+
+    def test_store_populates_web_view_link_from_drive(self):
+        """Drive returns a webViewLink on create — surface it so the frontend
+        can open the file in the user's own Drive UI without proxying."""
+        stored = self.store.store("spread.xlsx", b"xyz", "application/vnd.ms-excel")
+        self.assertIsNotNone(stored.web_view_link)
+        assert stored.web_view_link is not None
+        self.assertTrue(stored.web_view_link.startswith("https://drive.google.com/file/"))
+
+    def test_get_returns_web_view_link_from_metadata(self):
+        """Re-reading an existing Drive file must also expose the viewer link."""
+        created = self.store.store("r.xlsx", b"b", "application/vnd.ms-excel")
+        meta = self.store.get(created.id)
+        assert meta is not None
+        self.assertIsNotNone(meta.web_view_link)
+        self.assertEqual(meta.web_view_link, created.web_view_link)
 
 
 class TestCacheGC(unittest.TestCase):

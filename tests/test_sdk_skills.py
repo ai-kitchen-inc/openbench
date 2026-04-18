@@ -1169,6 +1169,47 @@ class TestExportExcelBoundOutputStore(unittest.TestCase):
         # Absolute filesystem path — still downloadable by CLI users.
         self.assertTrue(os.path.isabs(result["url"]))
 
+    def test_web_view_link_wins_over_backend_url(self):
+        """A store that surfaces ``web_view_link`` (Drive / cloud) takes
+        priority — the URL points at the user's authenticated cloud UI,
+        not at the backend proxy."""
+        # Wrap LocalFileStore so every store() call returns a StoredFile
+        # with web_view_link set — mimics GoogleDriveFileStore.
+        from openbench.chat.files import LocalFileStore, StoredFile
+
+        class _CloudishStore:
+            def __init__(self, inner: LocalFileStore):
+                self._inner = inner
+
+            def store(self, filename: str, content: bytes, mime: str) -> StoredFile:
+                s = self._inner.store(filename, content, mime)
+                return StoredFile(
+                    id=s.id,
+                    name=s.name,
+                    path=s.path,
+                    mime_type=s.mime_type,
+                    size_bytes=s.size_bytes,
+                    stored_at=s.stored_at,
+                    web_view_link=f"https://drive.google.com/file/d/{s.id}/view",
+                )
+
+            def get(self, file_id):
+                return self._inner.get(file_id)
+
+            def get_local_path(self, file_id):
+                return self._inner.get_local_path(file_id)
+
+        cloudish = _CloudishStore(self.store)
+        self.skill.bind(output_store=cloudish, output_url_base="/downloads")
+
+        result = self.tools["export_to_excel"]([{"a": 1}], "c.xlsx")
+        self.assertNotIn("error", result)
+        # URL points at drive.google.com, NOT at /downloads.
+        self.assertTrue(result["url"].startswith("https://drive.google.com/"))
+        # The frontend-facing "external" flag is set so ObFileCard opens
+        # in a new tab instead of forcing a download.
+        self.assertIs(result.get("external"), True)
+
 
 if __name__ == "__main__":
     unittest.main()
