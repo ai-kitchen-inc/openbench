@@ -12,7 +12,7 @@
  */
 
 import { type FirebaseApp, getApps, initializeApp } from "firebase/app";
-import { GoogleAuthProvider, type Auth, getAuth } from "firebase/auth";
+import { type Auth, GoogleAuthProvider, getAuth } from "firebase/auth";
 
 interface FirebaseClientConfig {
   apiKey: string;
@@ -36,10 +36,8 @@ function readConfig(): FirebaseClientConfig | null {
     authDomain,
     projectId,
     appId: import.meta.env.VITE_FIREBASE_APP_ID?.trim() || undefined,
-    messagingSenderId:
-      import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID?.trim() || undefined,
-    storageBucket:
-      import.meta.env.VITE_FIREBASE_STORAGE_BUCKET?.trim() || undefined,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID?.trim() || undefined,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET?.trim() || undefined,
   };
 }
 

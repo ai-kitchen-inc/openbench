@@ -6,12 +6,7 @@
  * server. The sidebar panel below the session list shows what was loaded.
  */
 
-import {
-  ChatPanel,
-  ChatProvider,
-  SessionSidebar,
-  useChatContext,
-} from "@openbench/chat-ui";
+import { ChatPanel, ChatProvider, SessionSidebar, useChatContext } from "@openbench/chat-ui";
 import { useEffect, useMemo, useState } from "react";
 import "@openbench/chat-ui/styles/chat-ui.css";
 import "@openbench/chat-ui/styles/bundle.css";
@@ -54,11 +49,7 @@ function PersonaBadge() {
 
   if (!persona) return null;
   if (!persona.loaded) {
-    return (
-      <div className="persona-badge persona-badge--empty">
-        No persona loaded
-      </div>
-    );
+    return <div className="persona-badge persona-badge--empty">No persona loaded</div>;
   }
 
   return (
@@ -114,16 +105,12 @@ function SkillBadge() {
 
   if (!data) return null;
   if (!data.loaded || data.skills.length === 0) {
-    return (
-      <div className="skill-badge skill-badge--empty">No skills loaded</div>
-    );
+    return <div className="skill-badge skill-badge--empty">No skills loaded</div>;
   }
 
   return (
     <div className="skill-badge">
-      <div className="skill-badge__title">
-        Skills loaded ({data.skills.length})
-      </div>
+      <div className="skill-badge__title">Skills loaded ({data.skills.length})</div>
       {data.skills.map((s) => (
         <div key={s.name} className="skill-badge__item">
           <div className="skill-badge__name">
@@ -152,10 +139,7 @@ function useDarkMode() {
   });
 
   useEffect(() => {
-    document.documentElement.setAttribute(
-      "data-theme",
-      dark ? "dark" : "light",
-    );
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
   }, [dark]);
 
   return [dark, () => setDark((d) => !d)] as const;

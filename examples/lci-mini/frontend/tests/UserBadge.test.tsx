@@ -7,32 +7,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { UserBadge } from "../src/auth/UserBadge";
-import type { UseAuthReturn } from "../src/auth/useAuth";
-
+import { fakeAuth as _auth, fakeUser } from "./_helpers";
 
 function _user(email: string | null = "jane@example.com") {
-  return {
-    uid: "u-1",
-    email,
-    displayName: "Jane",
-    getIdToken: vi.fn().mockResolvedValue("fake-id-token"),
-  } as never;
+  return fakeUser({ email });
 }
-
-
-function _auth(overrides: Partial<UseAuthReturn> = {}): UseAuthReturn {
-  const hasUser = !!overrides.user;
-  return {
-    user: null,
-    loading: false,
-    configured: false,
-    signIn: vi.fn().mockResolvedValue(undefined),
-    signOut: vi.fn().mockResolvedValue(undefined),
-    getIdToken: vi.fn().mockResolvedValue(hasUser ? "fake-id-token" : null),
-    ...overrides,
-  };
-}
-
 
 function _installFetchMock(
   authMe: unknown,
@@ -59,7 +38,6 @@ function _installFetchMock(
   return fetchMock;
 }
 
-
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -69,7 +47,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-
 describe("UserBadge", () => {
   it("renders nothing when Firebase is not configured", () => {
     const { container } = render(<UserBadge auth={_auth({ configured: false })} />);
@@ -77,9 +54,7 @@ describe("UserBadge", () => {
   });
 
   it("renders nothing when user is not signed in", () => {
-    const { container } = render(
-      <UserBadge auth={_auth({ configured: true, user: null })} />,
-    );
+    const { container } = render(<UserBadge auth={_auth({ configured: true, user: null })} />);
     expect(container.firstChild).toBeNull();
   });
 
@@ -108,9 +83,7 @@ describe("UserBadge", () => {
       email: "jane@example.com",
       drive: { connected: true, folderId: "f-1", email: "jane@example.com" },
     });
-    const { container } = render(
-      <UserBadge auth={_auth({ configured: true, user: _user() })} />,
-    );
+    const { container } = render(<UserBadge auth={_auth({ configured: true, user: _user() })} />);
     await waitFor(() => {
       expect(container.querySelector(".user-badge__drive-dot")).toBeInTheDocument();
     });
@@ -134,9 +107,7 @@ describe("UserBadge", () => {
     render(<UserBadge auth={_auth({ configured: true, user: _user() })} />);
     const trigger = await screen.findByRole("button", { name: /Account menu/i });
     await userEvent.click(trigger);
-    expect(
-      screen.getByRole("menuitem", { name: /Disconnect Google Drive/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Disconnect Google Drive/i })).toBeInTheDocument();
   });
 
   it("Connect Drive click POSTs to /auth/drive/connect and navigates to authorizeUrl", async () => {
@@ -157,9 +128,7 @@ describe("UserBadge", () => {
     render(<UserBadge auth={_auth({ configured: true, user: _user() })} />);
     const trigger = await screen.findByRole("button", { name: /Account menu/i });
     await userEvent.click(trigger);
-    await userEvent.click(
-      screen.getByRole("menuitem", { name: /Connect Google Drive/i }),
-    );
+    await userEvent.click(screen.getByRole("menuitem", { name: /Connect Google Drive/i }));
 
     await waitFor(() => {
       expect(locationStub.href).toBe("https://google/consent?state=x");
@@ -194,9 +163,7 @@ describe("UserBadge", () => {
     render(<UserBadge auth={_auth({ configured: true, user: _user() })} />);
     const trigger = await screen.findByRole("button", { name: /Account menu/i });
     await userEvent.click(trigger);
-    await userEvent.click(
-      screen.getByRole("menuitem", { name: /Disconnect Google Drive/i }),
-    );
+    await userEvent.click(screen.getByRole("menuitem", { name: /Disconnect Google Drive/i }));
 
     await waitFor(() => {
       expect(document.querySelector(".user-badge__drive-dot")).not.toBeInTheDocument();

@@ -140,6 +140,23 @@ Tests verify (without making any real LLM calls):
   `/persona`, and `/health` routes
 - `GET /persona` returns the composed persona contents
 
+## Production deployment (Firebase Auth + Drive OAuth)
+
+For a real deployment with sign-in, per-user storage, and rate-limited
+Drive OAuth: see [`docs/AUTH_SETUP.md`](docs/AUTH_SETUP.md).
+
+The short version:
+
+1. Create a Firebase project, enable Email/Google sign-in.
+2. Copy the web SDK config into `VITE_FIREBASE_*` env vars.
+3. Deploy `firestore.rules` (`firebase deploy --only firestore:rules`).
+4. Deploy backend to Cloud Run with `FIREBASE_PROJECT_ID` +
+   (optionally) Drive OAuth env vars.
+5. Deploy frontend to Firebase Hosting.
+
+For localhost development, add `OPENBENCH_AUTH_DISABLED=1` to `.env`
+and skip the rest.
+
 ## Editing Lici's identity
 
 You don't need to touch Python to change how Lici behaves:

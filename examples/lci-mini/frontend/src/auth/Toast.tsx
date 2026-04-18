@@ -41,10 +41,7 @@ export interface ToastProviderProps {
   durationMs?: number;
 }
 
-export function ToastProvider({
-  children,
-  durationMs = DEFAULT_DURATION_MS,
-}: ToastProviderProps) {
+export function ToastProvider({ children, durationMs = DEFAULT_DURATION_MS }: ToastProviderProps) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const dismiss = useCallback((id: number) => {
@@ -64,10 +61,7 @@ export function ToastProvider({
     [dismiss, durationMs],
   );
 
-  const value = useMemo(
-    () => ({ show, dismiss, toasts }),
-    [show, dismiss, toasts],
-  );
+  const value = useMemo(() => ({ show, dismiss, toasts }), [show, dismiss, toasts]);
 
   return (
     <ToastContext.Provider value={value}>
@@ -94,7 +88,6 @@ export function useOptionalToast(): ToastContextValue {
   const ctx = useContext(ToastContext);
   return ctx ?? _noopToast;
 }
-
 
 function ToastHost({
   toasts,
@@ -125,7 +118,6 @@ function ToastHost({
     </div>
   );
 }
-
 
 let _toastIdCounter = 0;
 function _nextId(): number {

@@ -68,10 +68,7 @@ export function UserBadge({ auth }: UserBadgeProps) {
       });
       if (!resp.ok) {
         console.error("connect failed:", resp.status);
-        toast.show(
-          `Couldn't start Google Drive connection (HTTP ${resp.status}).`,
-          "error",
-        );
+        toast.show(`Couldn't start Google Drive connection (HTTP ${resp.status}).`, "error");
         return;
       }
       const { authorizeUrl } = await resp.json();

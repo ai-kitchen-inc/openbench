@@ -34,6 +34,7 @@ from lci_mini.auth.drive import (
     read_state_cookie,
     sign_state_payload,
 )
+from lci_mini.auth.rate_limit import RateLimited, get_drive_connect_limiter
 from lci_mini.server.request_scope import require_firebase_user
 
 if TYPE_CHECKING:
@@ -84,6 +85,18 @@ def build_drive_router(redirect_home: str = "/") -> APIRouter:
         cfg = _require_drive_cfg()
         assert cfg.client_secrets_path is not None
         assert cfg.redirect_url is not None
+
+        # Slow down retry loops — see lci_mini.auth.rate_limit.
+        try:
+            get_drive_connect_limiter().check(f"connect:{user.uid}")
+        except RateLimited as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    f"Too many Drive-connect attempts. Try again in {int(exc.retry_after_s) + 1}s."
+                ),
+                headers={"Retry-After": str(int(exc.retry_after_s) + 1)},
+            ) from exc
 
         secrets = load_client_secrets(cfg.client_secrets_path)
         state = generate_state()
