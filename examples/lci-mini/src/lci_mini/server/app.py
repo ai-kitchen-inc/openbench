@@ -31,7 +31,7 @@ from lci_mini.server.request_scope import (
 )
 from openbench import LocalStorageBackend, StorageBackend
 from openbench.chat import render_queue as shared_render_queue
-from openbench.chat.files import FileContentExtractor, FileStore
+from openbench.chat.files import FileContentExtractor, LocalFileStore
 from openbench.chat.transport import AGUIActionHandler
 from openbench.chat.transport.sessions import AGUISessionHandler
 
@@ -160,7 +160,7 @@ def create_app() -> FastAPI:
     upload_dir = os.getenv("LCI_MINI_UPLOAD_DIR", str(default_upload_dir))
     upload_dir = str(Path(upload_dir).expanduser().resolve())
     os.makedirs(upload_dir, exist_ok=True)
-    file_store = FileStore(upload_dir=upload_dir)
+    file_store = LocalFileStore(upload_dir=upload_dir)
     extractor = FileContentExtractor()
 
     # download_dir is where the export-excel skill (and any other file-
@@ -344,16 +344,21 @@ def create_app() -> FastAPI:
     @app.post("/chat/upload")
     async def upload_file(
         file: UploadFile = File(...),
+        storage: StorageBackend = Depends(resolve_storage_backend),
         _user=Depends(require_firebase_user),
     ):
-        """Store an uploaded file on disk and return attachment metadata.
+        """Store an uploaded file and return attachment metadata.
 
-        The returned ``id`` is what the frontend includes in subsequent
-        /awp chat requests; the server resolves that id back to a disk
-        path and makes it available to the xql skill.
+        Uploads go to the per-request storage backend's file store —
+        local disk for unconnected users, Drive ``OpenBench/uploads/``
+        once the user connects Drive. The returned ``id`` is what the
+        frontend includes in subsequent /awp chat requests; /awp then
+        resolves it back to a local path for the xql skill.
         """
         content = await file.read()
-        stored = file_store.store(
+        user_store = storage.file_store()
+        stored = await asyncio.to_thread(
+            user_store.store,
             file.filename or "unnamed",
             content,
             file.content_type or "application/octet-stream",
@@ -361,7 +366,7 @@ def create_app() -> FastAPI:
         stored.extracted_text = await asyncio.to_thread(extractor.extract, stored)
         print(
             f"  [upload] id={stored.id} name={stored.name!r} "
-            f"size={stored.size_bytes}B path={stored.path}"
+            f"size={stored.size_bytes}B store={type(user_store).__name__}"
         )
         attachment = stored.to_attachment(base_url="/uploads")
         result = attachment.to_dict()
@@ -388,15 +393,19 @@ def create_app() -> FastAPI:
         forwarded = body.get("forwardedProps") or {}
         attachments_list = forwarded.get("attachments") or body.get("attachments") or []
 
+        # Resolve each attachment id to a local path via the
+        # per-request file store. For a Drive-backed user this triggers
+        # a download-to-cache; for local storage it's a dict lookup.
+        user_file_store = storage.file_store()
         file_paths: list[str] = []
         unresolved: list[str] = []
         for att in attachments_list:
             file_id = att.get("id")
             if not file_id:
                 continue
-            stored = file_store.get(file_id)
-            if stored is not None:
-                file_paths.append(stored.path)
+            path = await asyncio.to_thread(user_file_store.get_local_path, file_id)
+            if path is not None:
+                file_paths.append(path)
             else:
                 unresolved.append(file_id)
 

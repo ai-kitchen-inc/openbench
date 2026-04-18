@@ -666,6 +666,11 @@ def test_upload_then_catalog_via_contextvar(monkeypatch, tmp_path):
 
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
     monkeypatch.setenv("OPENBENCH_AUTH_DISABLED", "1")
+    # Uploads now route through the per-user storage backend, which in
+    # auth-disabled mode roots at LCI_MINI_STORAGE_ROOT/uploads/. Point
+    # both env vars at the tmp path so the static-mount (legacy module-
+    # level file_store) and the new per-user store land in the same dir.
+    monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(tmp_path))
     monkeypatch.setenv("LCI_MINI_UPLOAD_DIR", str(tmp_path / "uploads"))
 
     from lci_mini.server.app import create_app
@@ -707,10 +712,12 @@ def test_upload_then_catalog_via_contextvar(monkeypatch, tmp_path):
         xql_mod = sys.modules["openbench_skill_xql"]
 
         # Replicate what /awp does: look up stored path, set ContextVar,
-        # then call xql_catalog() with no args.
-        from openbench.chat.files import FileStore
+        # then call xql_catalog() with no args. With LCI_MINI_STORAGE_ROOT
+        # set above, the per-user LocalStorageBackend roots at tmp_path
+        # so uploads land at tmp_path/uploads/.
+        from openbench.chat.files import LocalFileStore
 
-        store = FileStore(upload_dir=str(tmp_path / "uploads"))
+        store = LocalFileStore(upload_dir=str(tmp_path / "uploads"))
         stored = store.get(file_id)
         assert stored is not None
         xql_mod.set_uploaded_files([stored.path])

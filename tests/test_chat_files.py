@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from openbench.chat.files import FileContentExtractor, FileStore, StoredFile
+from openbench.chat.files import FileContentExtractor, LocalFileStore, StoredFile
 from openbench.chat.session import Attachment
 
 
@@ -17,7 +17,7 @@ class TestFileStore(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        self.store = FileStore(upload_dir=self.tmpdir)
+        self.store = LocalFileStore(upload_dir=self.tmpdir)
 
     def tearDown(self):
         import shutil
@@ -44,7 +44,7 @@ class TestFileStore(unittest.TestCase):
     def test_creates_directory(self):
         """FileStore.store() auto-creates upload_dir subdirectories."""
         nested_dir = os.path.join(self.tmpdir, "deep", "nested")
-        store = FileStore(upload_dir=nested_dir)
+        store = LocalFileStore(upload_dir=nested_dir)
         stored = store.store("file.txt", b"data", "text/plain")
         self.assertTrue(Path(stored.path).exists())
 

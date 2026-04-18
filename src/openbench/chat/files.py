@@ -1,9 +1,14 @@
 """File storage and content extraction for chat uploads.
 
 Provides:
-- FileStore: Disk-based file storage with unique IDs
+- FileStore: Protocol for pluggable file storage (local disk / Drive / S3 / ...)
+- LocalFileStore: Disk-based implementation. Files live in
+  ``upload_dir/<file_id>/<original_filename>``. This used to be called
+  ``FileStore``; the old name is aliased for backward compat.
 - FileContentExtractor: Extract text from uploaded files (PDF, text, etc.)
-- StoredFile: Metadata for a stored file
+- StoredFile: Metadata for a stored file. Carries an optional
+  ``backend_ref`` so Drive-backed stores can round-trip file ids without
+  leaking backend specifics into the attachment protocol.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from openbench.chat.session import Attachment
 
@@ -58,7 +64,42 @@ class StoredFile:
         )
 
 
-class FileStore:
+@runtime_checkable
+class FileStore(Protocol):
+    """Pluggable file storage for chat uploads.
+
+    Two implementations ship:
+
+    - :class:`LocalFileStore` — disk-backed, files under ``upload_dir/``.
+    - ``GoogleDriveFileStore`` (``openbench.integrations.gdrive``) —
+      uploads to the user's ``OpenBench/uploads/`` Drive folder.
+
+    Methods intentionally return plain :class:`StoredFile` values so
+    downstream code (XQL skill, chat renderer, etc.) only depends on
+    local paths via :meth:`get_local_path`. Backends that live in the
+    cloud (Drive) download-on-demand to a temp cache and return the
+    cached path — callers never have to know the file is remote.
+    """
+
+    def store(self, filename: str, content: bytes, mime_type: str) -> StoredFile:
+        """Persist the file and return its metadata + public url."""
+        ...
+
+    def get(self, file_id: str) -> StoredFile | None:
+        """Return metadata for a previously-stored file, or None if absent."""
+        ...
+
+    def get_local_path(self, file_id: str) -> str | None:
+        """Return a filesystem path the caller can read.
+
+        For local stores this is the actual on-disk path; for remote
+        backends it's a temp-file path populated on first access. Return
+        None if the file can't be produced (unknown id, IO error).
+        """
+        ...
+
+
+class LocalFileStore:
     """Disk-based file storage for chat uploads.
 
     Files are stored in subdirectories named by their unique ID:
@@ -127,6 +168,17 @@ class FileStore:
                 file_path.stat().st_mtime, tz=timezone.utc
             ).isoformat(),
         )
+
+    def get_local_path(self, file_id: str) -> str | None:
+        """Return the on-disk path; identical to ``get().path`` for local."""
+        stored = self.get(file_id)
+        return stored.path if stored is not None else None
+
+
+# Backward-compat alias — the old ``FileStore`` concrete class is now the
+# :class:`LocalFileStore` implementation. Callers still importing
+# ``FileStore`` directly get the local one.
+_LocalFileStoreAlias = LocalFileStore
 
 
 _EXCEL_MIMES = {

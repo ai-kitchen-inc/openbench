@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from openbench.chat import ChatEngine
 from openbench.chat import render_queue as shared_render_queue
-from openbench.chat.files import FileContentExtractor, FileStore
+from openbench.chat.files import FileContentExtractor, LocalFileStore
 from openbench.chat.transport import AGUIActionHandler, AGUIHandler
 from sales_analytics.agent import create_analyst_agent, get_persona_dir
 
@@ -56,7 +56,7 @@ def create_app() -> FastAPI:
     os.environ["OPENBENCH_EXPORT_URL_BASE"] = "/downloads"
     os.environ["OPENBENCH_PROFILE_DIR"] = profile_dir
 
-    file_store = FileStore(upload_dir=upload_dir)
+    file_store = LocalFileStore(upload_dir=upload_dir)
     extractor = FileContentExtractor()
 
     app = FastAPI(title="Sales Analytics — SDK Skills Demo")

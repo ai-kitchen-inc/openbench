@@ -31,11 +31,10 @@ from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from openbench.chat.session_store import SessionStore
     from openbench.intelligence.persona_source import PersonaSource
     from openbench.intelligence.scratchpad import ScratchpadStore
@@ -70,6 +69,7 @@ class GoogleDriveStorageBackend:
     _SESSIONS_SUBFOLDER = "sessions"
     _MEMORY_SUBFOLDER = "memory"
     _PERSONAS_SUBFOLDER = "personas"
+    _UPLOADS_SUBFOLDER = "uploads"
 
     def __init__(
         self,
@@ -77,6 +77,7 @@ class GoogleDriveStorageBackend:
         *,
         service_account_file: str | Path | None = None,
         credentials: Any | None = None,
+        file_cache_root: str | Path | None = None,
     ):
         if not root_folder_id:
             raise ValueError("root_folder_id must be a non-empty string")
@@ -88,6 +89,17 @@ class GoogleDriveStorageBackend:
             str(service_account_file) if service_account_file is not None else None
         )
         self._explicit_credentials = credentials
+        # Cache dir for :class:`GoogleDriveFileStore`. Default to a
+        # per-folder subdir under the OS tempdir so multiple users on
+        # the same process don't collide.
+        if file_cache_root is not None:
+            self._file_cache_root = Path(file_cache_root)
+        else:
+            import tempfile as _tempfile
+
+            self._file_cache_root = (
+                Path(_tempfile.gettempdir()) / "openbench-drive-cache" / root_folder_id
+            )
 
         # Lazy-built Drive service used only for subfolder resolution.
         self._service: Any = None
@@ -118,6 +130,18 @@ class GoogleDriveStorageBackend:
         folder_id = self._resolve_subfolder(self._MEMORY_SUBFOLDER)
         return GoogleDriveScratchpad(
             folder_id=folder_id,
+            service_account_file=self._service_account_file,
+            credentials=self._explicit_credentials,
+        )
+
+    def file_store(self):
+        """Return a :class:`GoogleDriveFileStore` rooted at ``<root>/uploads/``."""
+        from openbench.integrations.gdrive.file_store import GoogleDriveFileStore
+
+        folder_id = self._resolve_subfolder(self._UPLOADS_SUBFOLDER)
+        return GoogleDriveFileStore(
+            folder_id=folder_id,
+            cache_root=self._file_cache_root,
             service_account_file=self._service_account_file,
             credentials=self._explicit_credentials,
         )

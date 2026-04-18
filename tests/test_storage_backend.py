@@ -113,6 +113,11 @@ class TestProtocolDuckTyping(unittest.TestCase):
 
                 return InlinePersonaSource()
 
+            def file_store(self):
+                from openbench.chat.files import LocalFileStore
+
+                return LocalFileStore(upload_dir=tempfile.mkdtemp())
+
         self.assertIsInstance(Duck(), StorageBackend)
 
     def test_missing_method_fails_protocol_check(self):

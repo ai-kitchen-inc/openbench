@@ -30,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 
 from openbench.chat import ChatEngine
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.files import FileContentExtractor, FileStore
+from openbench.chat.files import FileContentExtractor, LocalFileStore
 from openbench.chat.transport import ActionData, AGUIActionHandler, AGUIHandler
 from openbench.intelligence.base import AgentMemory, BaseAgent, MessageRole
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
@@ -188,7 +188,7 @@ def handle_form_submit(action: ActionData):
 
 
 # File upload
-file_store = FileStore(upload_dir="./uploads")
+file_store = LocalFileStore(upload_dir="./uploads")
 extractor = FileContentExtractor()
 
 app = FastAPI(title="OpenBench Chat Demo")

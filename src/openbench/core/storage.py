@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from openbench.chat.files import FileStore
     from openbench.chat.session_store import SessionStore
     from openbench.intelligence.persona_source import PersonaSource
     from openbench.intelligence.scratchpad import ScratchpadStore
@@ -57,6 +58,8 @@ class StorageBackend(Protocol):
     def scratchpad_store(self) -> ScratchpadStore: ...
 
     def persona_source(self, name: str = "default") -> PersonaSource: ...
+
+    def file_store(self) -> FileStore: ...
 
 
 class LocalStorageBackend:
@@ -119,6 +122,12 @@ class LocalStorageBackend:
         persona_dir = self.root / "personas" / name
         persona_dir.mkdir(parents=True, exist_ok=True)
         return FilesystemPersonaSource(persona_dir)
+
+    def file_store(self) -> FileStore:
+        """Return a disk-backed :class:`FileStore` at ``<root>/uploads/``."""
+        from openbench.chat.files import LocalFileStore
+
+        return LocalFileStore(upload_dir=str(self.root / "uploads"))
 
     def __repr__(self) -> str:
         return f"LocalStorageBackend(root={str(self.root)!r})"

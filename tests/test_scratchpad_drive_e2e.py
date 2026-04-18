@@ -89,18 +89,14 @@ class FakeDrive:
                 hit = self._files.get((parent_id, name))
                 if hit is not None:
                     return MagicMock(
-                        execute=MagicMock(
-                            return_value={"files": [{"id": hit[0], "name": name}]}
-                        )
+                        execute=MagicMock(return_value={"files": [{"id": hit[0], "name": name}]})
                     )
                 return MagicMock(execute=MagicMock(return_value={"files": []}))
 
             # "List all files in folder" — used by list_keys().
             if parent_id:
                 results = [
-                    {"name": fname}
-                    for (pid, fname), _ in self._files.items()
-                    if pid == parent_id
+                    {"name": fname} for (pid, fname), _ in self._files.items() if pid == parent_id
                 ]
                 return MagicMock(execute=MagicMock(return_value={"files": results}))
 
@@ -121,9 +117,13 @@ class FakeDrive:
             # MediaInMemoryUpload exposes ._body in modern google-api-python-client.
             content = b""
             if media is not None:
-                content = getattr(media, "_body", None) or media.getbytes(0, -1)
-                if isinstance(content, bytes):
-                    content = content.decode("utf-8")
+                fd = getattr(media, "_fd", None)
+                if fd is not None:
+                    content = fd.getvalue().decode("utf-8")
+                else:
+                    content = getattr(media, "_body", None) or media.getbytes(0, -1)
+                    if isinstance(content, bytes):
+                        content = content.decode("utf-8")
             fid = self._mint("file")
             self._files[(parent_id, name)] = (fid, content)
             return MagicMock(execute=MagicMock(return_value={"id": fid}))
@@ -133,9 +133,13 @@ class FakeDrive:
             media = kwargs.get("media_body")
             content = b""
             if media is not None:
-                content = getattr(media, "_body", None) or media.getbytes(0, -1)
-                if isinstance(content, bytes):
-                    content = content.decode("utf-8")
+                fd = getattr(media, "_fd", None)
+                if fd is not None:
+                    content = fd.getvalue().decode("utf-8")
+                else:
+                    content = getattr(media, "_body", None) or media.getbytes(0, -1)
+                    if isinstance(content, bytes):
+                        content = content.decode("utf-8")
             for key, (fid, _) in self._files.items():
                 if fid == file_id:
                     self._files[key] = (fid, content)
@@ -194,12 +198,8 @@ class TestMemorySkillDriveEndToEnd(unittest.TestCase):
         orig_backend_build = backend_mod.GoogleDriveStorageBackend._build_service
         orig_scratchpad_build = scratchpad_mod.GoogleDriveScratchpad._build_service
 
-        backend_mod.GoogleDriveStorageBackend._build_service = (
-            lambda _s: self.drive.build_service()
-        )
-        scratchpad_mod.GoogleDriveScratchpad._build_service = (
-            lambda _s: self.drive.build_service()
-        )
+        backend_mod.GoogleDriveStorageBackend._build_service = lambda _s: self.drive.build_service()
+        scratchpad_mod.GoogleDriveScratchpad._build_service = lambda _s: self.drive.build_service()
 
         def _restore():
             backend_mod.GoogleDriveStorageBackend._build_service = orig_backend_build
@@ -267,7 +267,9 @@ class TestMemorySkillDriveEndToEnd(unittest.TestCase):
         self.assertEqual(self.tools_mod.read_memory("k"), "v2")
         # Still just one file per key on Drive.
         mem_folder = self.drive._folders[(self._root_id, "memory")]
-        md_files = [k for (pid, name), _ in self.drive._files.items() if pid == mem_folder for k in [name]]
+        md_files = [
+            k for (pid, name), _ in self.drive._files.items() if pid == mem_folder for k in [name]
+        ]
         self.assertEqual(md_files.count("k.md"), 1)
 
     def test_skill_not_bound_raises_actionable_error(self):
