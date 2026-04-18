@@ -38,6 +38,50 @@ function createMockAgent(events: Record<string, unknown>[]) {
   }));
 }
 
+
+/** Installs a fake ``XMLHttpRequest`` on ``globalThis`` that resolves
+ *  to the given status/body. Returns an inspection handle so tests can
+ *  assert on headers, open() args, and the request body.
+ */
+interface MockXHRHandle {
+  openCalls: [string, string, boolean][];
+  headers: Map<string, string>;
+  lastBody: unknown;
+}
+
+function installMockXHR(response: { status: number; responseText: string }): MockXHRHandle {
+  const handle: MockXHRHandle = {
+    openCalls: [],
+    headers: new Map(),
+    lastBody: null,
+  };
+  class FakeXHR {
+    upload = { onprogress: null as ((ev: ProgressEvent) => void) | null };
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    status = 0;
+    responseText = "";
+    open(method: string, url: string, async: boolean) {
+      handle.openCalls.push([method, url, async]);
+    }
+    setRequestHeader(k: string, v: string) {
+      handle.headers.set(k, v);
+    }
+    send(body: unknown) {
+      handle.lastBody = body;
+      // Resolve on next microtask so the caller can attach listeners.
+      queueMicrotask(() => {
+        this.status = response.status;
+        this.responseText = response.responseText;
+        this.onload?.();
+      });
+    }
+  }
+  vi.stubGlobal("XMLHttpRequest", FakeXHR as unknown as typeof XMLHttpRequest);
+  return handle;
+}
+
 function createMockAgentError(error: Error) {
   const MockedHttpAgent = HttpAgent as unknown as ReturnType<typeof vi.fn>;
   MockedHttpAgent.mockImplementation(() => ({
@@ -336,9 +380,7 @@ describe("AGUITransport upload", () => {
       sizeBytes: 1024,
     };
 
-    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse(serverResponse));
-    vi.stubGlobal("fetch", fetchMock);
-
+    const xhr = installMockXHR({ status: 200, responseText: JSON.stringify(serverResponse) });
     const t = new AGUITransport(config);
     const file = new File(["test content"], "report.pdf", { type: "application/pdf" });
 
@@ -346,19 +388,68 @@ describe("AGUITransport upload", () => {
 
     expect(result.id).toBe("file-abc123");
     expect(result.name).toBe("report.pdf");
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/chat/upload");
-    expect(init.method).toBe("POST");
-    expect(init.body).toBeInstanceOf(FormData);
+    expect(xhr.openCalls).toEqual([["POST", "/chat/upload", true]]);
+    expect(xhr.lastBody).toBeInstanceOf(FormData);
 
     t.dispose();
   });
 
+  it("upload() fires onProgress callback with normalized fractions", async () => {
+    createMockAgent([]);
+    // A custom XHR fake so we can drive the progress events explicitly.
+    const progressFns: ((ev: ProgressEvent) => void)[] = [];
+    let resolveLoad: (() => void) | null = null;
+    class ProgressXHR {
+      upload = {
+        set onprogress(fn: (ev: ProgressEvent) => void) {
+          progressFns.push(fn);
+        },
+      };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      status = 0;
+      responseText = "";
+      open() {}
+      setRequestHeader() {}
+      send() {
+        resolveLoad = () => {
+          this.status = 200;
+          this.responseText = JSON.stringify({
+            id: "a",
+            type: "file",
+            name: "f",
+            url: "/u/f",
+            mimeType: "text/plain",
+          });
+          this.onload?.();
+        };
+      }
+    }
+    vi.stubGlobal("XMLHttpRequest", ProgressXHR as unknown as typeof XMLHttpRequest);
+
+    const seen: number[] = [];
+    const t = new AGUITransport(config);
+    const promise = t.upload(new File(["x"], "f.txt", { type: "text/plain" }), {
+      onProgress: (frac) => seen.push(frac),
+    });
+    // Fire two progress events + completion.
+    await Promise.resolve();
+    const fn = progressFns[0];
+    fn({ lengthComputable: true, loaded: 50, total: 200 } as ProgressEvent);
+    fn({ lengthComputable: true, loaded: 120, total: 200 } as ProgressEvent);
+    // Non-computable should be ignored.
+    fn({ lengthComputable: false, loaded: 999, total: 0 } as ProgressEvent);
+    resolveLoad?.();
+    await promise;
+
+    // Two real events + the explicit 1.0 at completion.
+    expect(seen).toEqual([0.25, 0.6, 1]);
+  });
+
   it("upload() throws on server error", async () => {
     createMockAgent([]);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 500 })));
-
+    installMockXHR({ status: 500, responseText: "" });
     const t = new AGUITransport(config);
     const file = new File(["data"], "f.txt", { type: "text/plain" });
 
@@ -608,23 +699,26 @@ describe("AGUITransport Authorization header", () => {
   });
 
   it("upload attaches Bearer token without setting Content-Type", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      createJSONResponse({
+    const xhr = installMockXHR({
+      status: 200,
+      responseText: JSON.stringify({
         id: "att-1",
         type: "file",
         name: "x",
         url: "/u/x",
         mimeType: "text/plain",
       }),
-    );
-    global.fetch = fetchMock;
+    });
     const t = new AGUITransport({
       ...config,
       getAuthToken: async () => "tok-up",
     });
     await t.upload(new File(["hello"], "hello.txt", { type: "text/plain" }));
-    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    // XHR's setRequestHeader calls — pluck what upload() set.
+    const headers = Object.fromEntries(xhr.headers);
     expect(headers.Authorization).toBe("Bearer tok-up");
+    // Content-Type must NOT be set manually — XHR infers multipart/form-data
+    // with boundary when the body is FormData.
     expect(headers["Content-Type"]).toBeUndefined();
   });
 

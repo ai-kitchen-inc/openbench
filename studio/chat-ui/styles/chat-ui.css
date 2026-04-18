@@ -528,6 +528,55 @@
   width: 100%;
   margin-left: auto;
   margin-right: auto;
+  position: relative;
+}
+
+.chat-input--dragging {
+  /* Subtle highlight on the whole input area while a drag is in flight. */
+  background: rgba(59, 130, 246, 0.04);
+}
+
+/* Fullscreen drop-zone overlay that tells the user where to release.
+   Positioned via the .chat-input parent's ``position: relative``. */
+.chat-input__dropzone {
+  position: absolute;
+  inset: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  border: 2px dashed rgba(59, 130, 246, 0.6);
+  border-radius: var(--ob-radius, 12px);
+  background: rgba(59, 130, 246, 0.06);
+  color: rgba(59, 130, 246, 0.9);
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 1;
+  backdrop-filter: blur(1px);
+}
+
+/* Per-attachment progress bar. Rendered by AttachmentPreview when
+   the attachment's id is in useChat().uploadProgress. */
+.chat-attachment__progress {
+  position: relative;
+  height: 3px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.chat-attachment__progress-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--ob-text-primary, #1a1a1a);
+  transition: width 120ms ease-out;
+}
+
+[data-theme="dark"] .chat-attachment__progress {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .chat-input__row {

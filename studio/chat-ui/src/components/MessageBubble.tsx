@@ -16,6 +16,12 @@ import { StreamingIndicator } from "./StreamingIndicator";
 export interface MessageBubbleProps {
   message: ChatMessage;
   onAction?: (action: A2UIAction) => void;
+  /**
+   * Per-attachment upload progress, keyed by local attachment id,
+   * values ``[0, 1]``. When an attachment's id is in the map, the
+   * bubble renders a thin progress bar under its name.
+   */
+  uploadProgress?: Record<string, number>;
 }
 
 function formatFileSize(bytes: number | undefined): string {
@@ -25,14 +31,31 @@ function formatFileSize(bytes: number | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function MessageAttachment({ attachment }: { attachment: Attachment }) {
+function MessageAttachment({
+  attachment,
+  uploadFraction,
+}: {
+  attachment: Attachment;
+  uploadFraction?: number;
+}) {
   const isImage = attachment.type === "image";
+  const isUploading = typeof uploadFraction === "number";
+
+  const progressBar = isUploading ? (
+    <div className="chat-attachment__progress" aria-hidden="true">
+      <div
+        className="chat-attachment__progress-fill"
+        style={{ width: `${Math.round((uploadFraction ?? 0) * 100)}%` }}
+      />
+    </div>
+  ) : null;
 
   if (isImage) {
     return (
       <div className="chat-message__attachment chat-message__attachment--image">
         <img src={attachment.url} alt={attachment.name} className="chat-message__attachment-img" />
         <span className="chat-message__attachment-name">{attachment.name}</span>
+        {progressBar}
       </div>
     );
   }
@@ -59,12 +82,17 @@ function MessageAttachment({ attachment }: { attachment: Attachment }) {
             {formatFileSize(attachment.sizeBytes)}
           </span>
         )}
+        {progressBar}
       </div>
     </div>
   );
 }
 
-export function MessageBubble({ message, onAction }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  onAction,
+  uploadProgress,
+}: MessageBubbleProps) {
   const isStreaming = message.status === "streaming";
   const isError = message.status === "error";
   const hasSteps = message.steps && message.steps.length > 0;
@@ -80,7 +108,11 @@ export function MessageBubble({ message, onAction }: MessageBubbleProps) {
         {message.attachments && message.attachments.length > 0 && (
           <div className="chat-message__attachments">
             {message.attachments.map((att) => (
-              <MessageAttachment key={att.id} attachment={att} />
+              <MessageAttachment
+                key={att.id}
+                attachment={att}
+                uploadFraction={uploadProgress?.[att.id]}
+              />
             ))}
           </div>
         )}

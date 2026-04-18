@@ -35,6 +35,17 @@ export interface UseChatReturn {
    * surface a spinner to avoid "nothing happened" perception.
    */
   isLoadingSession: boolean;
+  /**
+   * True while at least one upload is in flight. Use to disable the
+   * send button or show a top-level indicator.
+   */
+  isUploading: boolean;
+  /**
+   * Per-attachment upload progress map, keyed by local attachment id.
+   * Values are ``[0, 1]``. Entries disappear when the upload
+   * completes or fails.
+   */
+  uploadProgress: Record<string, number>;
 
   // Connection
   connectionStatus: TransportStatus;
@@ -76,6 +87,8 @@ export function useChat(config: ChatConfig): UseChatReturn {
   const activeSessionId = useStore(store, (s) => s.activeSessionId);
   const loadingSessionIds = useStore(store, (s) => s.loadingSessionIds);
   const isLoadingSession = activeSessionId !== null && !!loadingSessionIds[activeSessionId];
+  const uploadProgress = useStore(store, (s) => s.uploadProgress);
+  const isUploading = Object.keys(uploadProgress).length > 0;
   const sidebarOpen = useStore(store, (s) => s.sidebarOpen);
 
   // Create stable transport instance (for upload + sendAction + status)
@@ -171,9 +184,26 @@ export function useChat(config: ChatConfig): UseChatReturn {
             serverAttachments = await Promise.all(
               attachments.map(async (att) => {
                 if (att.file) {
-                  const uploaded = await transport.upload(att.file);
-                  URL.revokeObjectURL(att.url);
-                  return { ...uploaded, file: undefined };
+                  // Seed a 0% entry so the UI paints a progress bar
+                  // immediately — otherwise a fast XHR on localhost
+                  // can complete before the first progress event
+                  // fires and the bar never renders.
+                  store.getState().setUploadProgress(att.id, 0);
+                  const localFile = att.file;
+                  try {
+                    const uploaded = await transport.upload(localFile, {
+                      onProgress: (frac) =>
+                        store.getState().setUploadProgress(att.id, frac),
+                    });
+                    URL.revokeObjectURL(att.url);
+                    config.onUploadSuccess?.(att.id, uploaded);
+                    return { ...uploaded, file: undefined };
+                  } catch (err) {
+                    config.onUploadError?.(localFile, err);
+                    throw err;
+                  } finally {
+                    store.getState().clearUploadProgress(att.id);
+                  }
                 }
                 return att;
               }),
@@ -299,6 +329,8 @@ export function useChat(config: ChatConfig): UseChatReturn {
     sendMessage,
     isStreaming,
     isLoadingSession,
+    isUploading,
+    uploadProgress,
     connectionStatus,
     sessions,
     activeSessionId,

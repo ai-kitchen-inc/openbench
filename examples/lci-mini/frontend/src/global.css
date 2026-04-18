@@ -618,6 +618,133 @@ body {
 }
 
 
+/* ── Sidebar badge skeleton ─────────────────────────────────── */
+
+.badge-skeleton {
+  padding: 12px 16px;
+  border-top: 1px solid var(--ob-border);
+  font-size: 12px;
+}
+
+.badge-skeleton__title {
+  font-weight: 600;
+  color: var(--ob-text);
+  letter-spacing: 0.01em;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.badge-skeleton__row {
+  height: 8px;
+  border-radius: 3px;
+  margin-top: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.05) 0%,
+    rgba(0, 0, 0, 0.11) 50%,
+    rgba(0, 0, 0, 0.05) 100%
+  );
+  background-size: 200% 100%;
+  animation: badge-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+[data-theme="dark"] .badge-skeleton__row {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.06) 0%,
+    rgba(255, 255, 255, 0.14) 50%,
+    rgba(255, 255, 255, 0.06) 100%
+  );
+  background-size: 200% 100%;
+}
+
+@keyframes badge-skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+
+/* ── Error boundary ──────────────────────────────────────────── */
+
+.error-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  height: 100%;
+  min-height: 240px;
+}
+
+.error-boundary__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 480px;
+  width: 100%;
+  padding: 24px;
+  border: 1px solid rgba(200, 40, 40, 0.24);
+  border-radius: 10px;
+  background: rgba(200, 40, 40, 0.04);
+  color: var(--ob-text-primary, #1a1a1a);
+}
+
+.error-boundary__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #b02020;
+}
+
+.error-boundary__detail {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.64));
+  background: var(--ob-bg-primary, #fff);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  padding: 8px 10px;
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-boundary__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.error-boundary__btn {
+  padding: 6px 14px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 6px;
+  background: var(--ob-bg-primary, #fff);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.error-boundary__btn:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.error-boundary__btn--primary {
+  background: var(--ob-text-primary, #1a1a1a);
+  color: var(--ob-bg-primary, #fff);
+  border-color: var(--ob-text-primary, #1a1a1a);
+}
+
+.error-boundary__btn--primary:hover {
+  opacity: 0.9;
+  background: var(--ob-text-primary, #1a1a1a);
+}
+
+
 /* ── Toast ────────────────────────────────────────────────────── */
 
 .toast-host {

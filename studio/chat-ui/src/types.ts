@@ -184,6 +184,19 @@ export interface ChatConfig {
    * or allow anonymous access.
    */
   getAuthToken?: () => Promise<string | null>;
+  /**
+   * Fires when an uploaded attachment successfully round-trips to the
+   * server. ``localId`` is the pre-upload id the user's ChatInput
+   * assigned; ``attachment`` is the server-shaped response. Use to
+   * surface a success toast or analytics event.
+   */
+  onUploadSuccess?: (localId: string, attachment: Attachment) => void;
+  /**
+   * Fires when an upload fails. ``file`` is the original ``File`` the
+   * user picked (filename, size, etc. still readable); ``error`` is
+   * whatever the transport threw. Use to surface a failure toast.
+   */
+  onUploadError?: (file: File, error: unknown) => void;
 }
 
 export type TransportStatus = "connected" | "disconnected" | "error";

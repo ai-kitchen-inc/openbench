@@ -35,6 +35,7 @@ export function ChatPanel({
     sendMessage,
     isStreaming,
     isLoadingSession,
+    uploadProgress,
     connectionStatus,
     sendAction,
     sidebarOpen,
@@ -110,7 +111,12 @@ export function ChatPanel({
             onSuggestionClick={(s) => sendMessage(s)}
           />
         ) : (
-          <MessageList messages={messages} isStreaming={isStreaming} onAction={sendAction} />
+          <MessageList
+            messages={messages}
+            isStreaming={isStreaming}
+            onAction={sendAction}
+            uploadProgress={uploadProgress}
+          />
         )}
       </div>
 

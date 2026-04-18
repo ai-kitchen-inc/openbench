@@ -11,8 +11,9 @@ import { useEffect, useMemo, useState } from "react";
 import "@openbench/chat-ui/styles/chat-ui.css";
 import "@openbench/chat-ui/styles/bundle.css";
 import { AuthGate } from "./auth/AuthGate";
-import { ToastProvider } from "./auth/Toast";
+import { ToastProvider, useToast } from "./auth/Toast";
 import { UserBadge } from "./auth/UserBadge";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { type UseAuthReturn, useAuth } from "./auth/useAuth";
 import "./global.css";
 
@@ -25,6 +26,24 @@ const SUGGESTIONS = [
   "Kenapa CO2 biasanya jadi hotspot utama di kilang minyak?",
   "Bedanya mass allocation vs economic allocation?",
 ];
+
+// ── Shared skeleton shown while a sidebar badge is loading ──
+
+function BadgeSkeleton({ title, rows }: { title: string; rows: number }) {
+  return (
+    <div className="badge-skeleton" aria-busy="true" aria-label={`${title} loading`}>
+      <div className="badge-skeleton__title">{title}</div>
+      {Array.from({ length: rows }, (_, i) => (
+        <div
+          key={i}
+          className="badge-skeleton__row"
+          style={{ width: `${60 + ((i * 13) % 30)}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
 
 // ── Persona summary (fetched from /persona) ──
 
@@ -39,9 +58,11 @@ type PersonaSummary = {
 
 function PersonaBadge({ auth }: { auth: UseAuthReturn }) {
   const [persona, setPersona] = useState<PersonaSummary | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
+    setIsLoading(true);
     (async () => {
       try {
         const token = await auth.getIdToken();
@@ -56,6 +77,8 @@ function PersonaBadge({ auth }: { auth: UseAuthReturn }) {
         setPersona(await resp.json());
       } catch {
         if (!cancelled) setPersona({ loaded: false });
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
     })();
     return () => {
@@ -63,6 +86,7 @@ function PersonaBadge({ auth }: { auth: UseAuthReturn }) {
     };
   }, [auth.getIdToken]);
 
+  if (isLoading) return <BadgeSkeleton rows={4} title="Persona" />;
   if (!persona) return null;
   if (!persona.loaded) {
     return <div className="persona-badge persona-badge--empty">No persona loaded</div>;
@@ -111,9 +135,11 @@ type SkillsResponse = {
 
 function SkillBadge({ auth }: { auth: UseAuthReturn }) {
   const [data, setData] = useState<SkillsResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
+    setIsLoading(true);
     (async () => {
       try {
         const token = await auth.getIdToken();
@@ -128,6 +154,8 @@ function SkillBadge({ auth }: { auth: UseAuthReturn }) {
         setData(await resp.json());
       } catch {
         if (!cancelled) setData({ loaded: false, skills: [] });
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
     })();
     return () => {
@@ -135,6 +163,7 @@ function SkillBadge({ auth }: { auth: UseAuthReturn }) {
     };
   }, [auth.getIdToken]);
 
+  if (isLoading) return <BadgeSkeleton rows={3} title="Skills" />;
   if (!data) return null;
   if (!data.loaded || data.skills.length === 0) {
     return <div className="skill-badge skill-badge--empty">No skills loaded</div>;
@@ -250,26 +279,45 @@ function ChatLayout({ auth }: { auth: UseAuthReturn }) {
   );
 }
 
-export default function App() {
-  const auth = useAuth();
+/**
+ * Inner shell with access to useToast — owns ChatProvider so upload
+ * callbacks can surface success/failure toasts. Separated from
+ * ``App`` because ``useToast`` requires a ToastProvider ancestor.
+ */
+function AuthedShell({ auth }: { auth: UseAuthReturn }) {
+  const toast = useToast();
 
-  // Build ChatConfig once per auth.getIdToken identity — useAuth's
-  // callback is stable across renders so this memo is effectively
-  // stable for the lifetime of the hook.
   const chatConfig = useMemo(
     () => ({
       streamUrl: STREAM_URL,
       getAuthToken: auth.configured ? auth.getIdToken : undefined,
+      onUploadSuccess: (_localId: string, attachment: { name: string }) => {
+        toast.show(`Uploaded: ${attachment.name}`, "success");
+      },
+      onUploadError: (file: { name: string }, error: unknown) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        toast.show(`Upload failed for ${file.name}: ${msg}`, "error");
+      },
     }),
-    [auth.configured, auth.getIdToken],
+    [auth.configured, auth.getIdToken, toast],
   );
+
+  return (
+    <ChatProvider config={chatConfig}>
+      <ErrorBoundary region="chat">
+        <ChatLayout auth={auth} />
+      </ErrorBoundary>
+    </ChatProvider>
+  );
+}
+
+export default function App() {
+  const auth = useAuth();
 
   return (
     <ToastProvider>
       <AuthGate auth={auth}>
-        <ChatProvider config={chatConfig}>
-          <ChatLayout auth={auth} />
-        </ChatProvider>
+        <AuthedShell auth={auth} />
       </AuthGate>
     </ToastProvider>
   );

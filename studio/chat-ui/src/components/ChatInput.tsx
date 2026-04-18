@@ -20,6 +20,10 @@ export function ChatInput({
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  // Drag events fire rapidly across child elements — track depth so we
+  // only flip the drag state on the outermost enter/leave pair.
+  const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentsRef = useRef(attachments);
@@ -58,11 +62,10 @@ export function ChatInput({
     [handleSend],
   );
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    const newAttachments: Attachment[] = Array.from(files).map((file) => ({
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const asArray = Array.from(files as FileList);
+    if (asArray.length === 0) return;
+    const newAttachments: Attachment[] = asArray.map((file) => ({
       id: generateId("att"),
       type: getFileType(file.type),
       name: file.name,
@@ -71,14 +74,57 @@ export function ChatInput({
       sizeBytes: file.size,
       file: file,
     }));
-
     setAttachments((prev) => [...prev, ...newAttachments]);
-
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
   }, []);
+
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (files) addFiles(files);
+      // Reset file input so re-picking the same file still fires change.
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    },
+    [addFiles],
+  );
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepth.current += 1;
+    if (dragDepth.current === 1) setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setIsDragging(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // Required to allow drop — without preventDefault the drop event
+    // never fires.
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragDepth.current = 0;
+      setIsDragging(false);
+      if (e.dataTransfer?.files?.length) {
+        addFiles(e.dataTransfer.files);
+      }
+    },
+    [addFiles],
+  );
 
   const handleRemoveAttachment = useCallback((id: string) => {
     setAttachments((prev) => {
@@ -97,7 +143,18 @@ export function ChatInput({
   }, []);
 
   return (
-    <div className="chat-input">
+    <div
+      className={`chat-input ${isDragging ? "chat-input--dragging" : ""}`}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {isDragging && (
+        <div className="chat-input__dropzone" aria-hidden="true">
+          <span>Drop files to attach</span>
+        </div>
+      )}
       <AttachmentPreview attachments={attachments} onRemove={handleRemoveAttachment} />
       <div className="chat-input__row">
         <button

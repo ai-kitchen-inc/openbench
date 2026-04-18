@@ -37,6 +37,14 @@ export interface ChatState {
    */
   loadingSessionIds: Record<string, true>;
 
+  /**
+   * Per-attachment upload progress, keyed by the local (pre-upload)
+   * attachment id. Progress is a float in ``[0, 1]``. Entries are
+   * removed once the upload completes or fails so the UI can react to
+   * "any upload in flight?" cheaply via ``Object.keys`` length.
+   */
+  uploadProgress: Record<string, number>;
+
   // UI
   sidebarOpen: boolean;
 }
@@ -73,6 +81,10 @@ export interface ChatActions {
   hydrateSessionMessages: (sessionId: string, messages: ChatMessage[]) => void;
   setSessionLoading: (sessionId: string, loading: boolean) => void;
 
+  // Upload progress tracking (see ChatState.uploadProgress)
+  setUploadProgress: (attachmentId: string, fraction: number) => void;
+  clearUploadProgress: (attachmentId: string) => void;
+
   // State actions
   setStreaming: (streaming: boolean) => void;
   setConnectionStatus: (status: TransportStatus) => void;
@@ -103,6 +115,7 @@ export function createChatStore() {
     connectionStatus: "disconnected",
     streamingMessages: {},
     loadingSessionIds: {},
+    uploadProgress: {},
     sidebarOpen: true,
 
     // ── Message actions (active session) ──
@@ -408,6 +421,21 @@ export function createChatStore() {
           delete next[sessionId];
         }
         return { loadingSessionIds: next };
+      });
+    },
+
+    setUploadProgress: (attachmentId: string, fraction: number) => {
+      set((state) => ({
+        uploadProgress: { ...state.uploadProgress, [attachmentId]: fraction },
+      }));
+    },
+
+    clearUploadProgress: (attachmentId: string) => {
+      set((state) => {
+        if (!(attachmentId in state.uploadProgress)) return state;
+        const next = { ...state.uploadProgress };
+        delete next[attachmentId];
+        return { uploadProgress: next };
       });
     },
 

@@ -225,23 +225,52 @@ export class AGUITransport {
    *
    * Posts the file as multipart/form-data and returns
    * the server's Attachment response.
+   *
+   * ``onProgress`` fires repeatedly during the upload with a value in
+   * ``[0, 1]`` — useful for showing a progress bar. Implementation uses
+   * :class:`XMLHttpRequest` because the Fetch API does not expose
+   * upload-progress events for request bodies.
    */
-  async upload(file: File): Promise<Attachment> {
+  async upload(
+    file: File,
+    options: { onProgress?: (fraction: number) => void } = {},
+  ): Promise<Attachment> {
     const url = this.config.uploadUrl ?? "/chat/upload";
-    const formData = new FormData();
-    formData.append("file", file);
+    const authHeaders = await this._authHeaders();
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { ...(await this._authHeaders()) },
-      body: formData,
+    return new Promise<Attachment>((resolve, reject) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url, true);
+      for (const [k, v] of Object.entries(authHeaders)) {
+        xhr.setRequestHeader(k, v);
+      }
+      if (options.onProgress) {
+        xhr.upload.onprogress = (ev) => {
+          if (!ev.lengthComputable) return;
+          const frac = ev.total > 0 ? ev.loaded / ev.total : 0;
+          options.onProgress?.(Math.max(0, Math.min(1, frac)));
+        };
+      }
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const body = JSON.parse(xhr.responseText) as Attachment;
+            // One last 100% fire so listeners that only saw <100% close out.
+            options.onProgress?.(1);
+            resolve(body);
+          } catch (err) {
+            reject(new Error(`Upload response was not valid JSON: ${err}`));
+          }
+        } else {
+          reject(new Error(`Upload failed: ${xhr.status}`));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Upload network error"));
+      xhr.onabort = () => reject(new Error("Upload aborted"));
+      xhr.send(formData);
     });
-
-    if (!response.ok) {
-      throw new Error(`Upload failed: ${response.status}`);
-    }
-
-    return (await response.json()) as Attachment;
   }
 
   /**

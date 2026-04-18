@@ -14,9 +14,16 @@ export interface MessageListProps {
   messages: ChatMessage[];
   isStreaming?: boolean;
   onAction?: (action: A2UIAction) => void;
+  /** Per-attachment upload progress; forwarded to each MessageBubble. */
+  uploadProgress?: Record<string, number>;
 }
 
-export function MessageList({ messages, isStreaming, onAction }: MessageListProps) {
+export function MessageList({
+  messages,
+  isStreaming,
+  onAction,
+  uploadProgress,
+}: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Track content changes for scroll trigger.
@@ -49,7 +56,12 @@ export function MessageList({ messages, isStreaming, onAction }: MessageListProp
   return (
     <div className="chat-message-list" ref={containerRef}>
       {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} onAction={onAction} />
+        <MessageBubble
+          key={msg.id}
+          message={msg}
+          onAction={onAction}
+          uploadProgress={uploadProgress}
+        />
       ))}
     </div>
   );
