@@ -38,6 +38,7 @@ __all__ = [
     "AESGCMEncryptor",
     "DriveToken",
     "Encryptor",
+    "FileTokenStore",
     "FirestoreTokenStore",
     "InMemoryTokenStore",
     "NoOpEncryptor",
@@ -233,6 +234,96 @@ class InMemoryTokenStore(TokenStore):
     def delete(self, uid: str) -> None:
         with self._lock:
             self._data.pop(uid, None)
+
+
+# ---------------------------------------------------------------------------
+# FileTokenStore — localhost / single-node deployments without Firestore
+# ---------------------------------------------------------------------------
+
+
+class FileTokenStore(TokenStore):
+    """Filesystem-backed token store — one JSON file per Firebase UID.
+
+    Bridges the gap between :class:`InMemoryTokenStore` (no persistence)
+    and :class:`FirestoreTokenStore` (requires Admin SDK + a real
+    Firebase project). Fits any single-node deployment whose disk
+    survives restart — localhost dev, home-server style hosts, single
+    VM deployments.
+
+    Writes are atomic (write-to-tmp + rename) so a mid-write crash
+    can't leave a half-serialised record. Filename is URL-safe so
+    oddly-shaped uids (phone-auth, federated providers) round-trip
+    cleanly.
+
+    Encryption still happens at the :class:`Encryptor` layer — the
+    on-disk file contains AES-GCM blobs for refresh_token and
+    client_secret, not plaintext.
+    """
+
+    def __init__(
+        self,
+        root_dir: Any,  # str | Path — Path imported lazily in __init__
+        *,
+        encryptor: Encryptor,
+    ):
+        if encryptor is None:
+            raise ValueError("FileTokenStore requires an Encryptor")
+        from pathlib import Path
+
+        self._root = Path(str(root_dir))
+        self._encryptor = encryptor
+        self._root.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+    # ------------------------------------------------------------------ TokenStore
+
+    def save(self, token: DriveToken) -> None:
+        import json
+        from pathlib import Path
+
+        path = self._path_for(token.uid)
+        record = _to_record(token, self._encryptor)
+        tmp = Path(str(path) + ".tmp")
+        with self._lock:
+            with open(tmp, "w", encoding="utf-8") as fp:
+                json.dump(record, fp)
+            os.replace(tmp, path)
+
+    def load(self, uid: str) -> DriveToken | None:
+        import json
+
+        path = self._path_for(uid)
+        with self._lock:
+            if not path.exists():
+                return None
+            try:
+                with open(path, encoding="utf-8") as fp:
+                    record = json.load(fp)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("FileTokenStore: corrupt record at %s — %s", path, exc)
+                return None
+        return _from_record(record, self._encryptor)
+
+    def delete(self, uid: str) -> None:
+        path = self._path_for(uid)
+        with self._lock:
+            if path.exists():
+                try:
+                    path.unlink()
+                except OSError as exc:  # pragma: no cover — defensive
+                    logger.warning("FileTokenStore: delete failed at %s: %s", path, exc)
+
+    # ---------------------------------------------------------------- internal
+
+    def _path_for(self, uid: str):
+        """Return the on-disk path for ``uid``.
+
+        Filename is ``base64url(uid).json`` so arbitrary uid shapes
+        (including colons, slashes, phone numbers) can't escape the
+        root directory or collide.
+        """
+        safe = base64.urlsafe_b64encode(uid.encode("utf-8")).rstrip(b"=").decode("ascii")
+        return self._root / f"{safe}.json"
 
 
 # ---------------------------------------------------------------------------

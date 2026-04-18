@@ -104,6 +104,8 @@ export function UserBadge({ auth }: UserBadgeProps) {
     }
   };
 
+  const photoURL = auth.user.photoURL;
+
   return (
     <div className="user-badge">
       <button
@@ -113,12 +115,16 @@ export function UserBadge({ auth }: UserBadgeProps) {
         title={display}
         aria-label="Account menu"
       >
+        <UserAvatar photoURL={photoURL} display={display} size={22} />
         <span className="user-badge__email">{display}</span>
         {driveConnected && <span className="user-badge__drive-dot" aria-hidden="true" />}
       </button>
       {open && (
         <div className="user-badge__menu" role="menu">
-          <div className="user-badge__menu-email">{display}</div>
+          <div className="user-badge__menu-header">
+            <UserAvatar photoURL={photoURL} display={display} size={32} />
+            <div className="user-badge__menu-email">{display}</div>
+          </div>
           <div className="user-badge__menu-sep" aria-hidden="true" />
           {driveConfigured && (
             <>
@@ -164,5 +170,49 @@ export function UserBadge({ auth }: UserBadgeProps) {
         </div>
       )}
     </div>
+  );
+}
+
+
+/**
+ * Circular avatar: Google profile photo when available, else a
+ * coloured circle with the first letter of email / display name.
+ * Falls back to the initial if the <img> fails to load (403 from
+ * Google's referrer policy, broken URL, etc.).
+ */
+function UserAvatar({
+  photoURL,
+  display,
+  size,
+}: {
+  photoURL: string | null | undefined;
+  display: string;
+  size: number;
+}) {
+  const [broken, setBroken] = useState(false);
+  const initial = (display || "?").trim().charAt(0).toUpperCase();
+
+  if (!photoURL || broken) {
+    return (
+      <span
+        className="user-badge__avatar user-badge__avatar--fallback"
+        style={{ width: size, height: size, fontSize: Math.max(10, Math.round(size * 0.5)) }}
+        aria-hidden="true"
+      >
+        {initial}
+      </span>
+    );
+  }
+
+  return (
+    <img
+      className="user-badge__avatar"
+      src={photoURL}
+      alt=""
+      aria-hidden="true"
+      referrerPolicy="no-referrer"
+      onError={() => setBroken(true)}
+      style={{ width: size, height: size }}
+    />
   );
 }

@@ -301,5 +301,96 @@ class TestSerialization(unittest.TestCase):
         self.assertEqual(loaded.updated_at, tok.updated_at)
 
 
+class TestFileTokenStore(unittest.TestCase):
+    """The on-disk token store — bridges dev (InMemory) and prod (Firestore)."""
+
+    def setUp(self):
+        import tempfile
+
+        from openbench.integrations.firebase_auth import FileTokenStore
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.store = FileTokenStore(root_dir=self._tmp.name, encryptor=NoOpEncryptor())
+
+    def test_round_trip(self):
+        tok = _sample_token()
+        self.store.save(tok)
+        loaded = self.store.load(tok.uid)
+        assert loaded is not None
+        self.assertEqual(loaded.uid, tok.uid)
+        self.assertEqual(loaded.refresh_token, tok.refresh_token)
+        self.assertEqual(loaded.openbench_folder_id, tok.openbench_folder_id)
+
+    def test_load_missing_returns_none(self):
+        self.assertIsNone(self.store.load("never-saved"))
+
+    def test_delete(self):
+        tok = _sample_token()
+        self.store.save(tok)
+        self.store.delete(tok.uid)
+        self.assertIsNone(self.store.load(tok.uid))
+
+    def test_delete_missing_is_noop(self):
+        self.store.delete("never-saved")
+
+    def test_persists_across_instances(self):
+        from openbench.integrations.firebase_auth import FileTokenStore
+
+        tok = _sample_token("user-persist")
+        self.store.save(tok)
+        second = FileTokenStore(root_dir=self._tmp.name, encryptor=NoOpEncryptor())
+        loaded = second.load("user-persist")
+        assert loaded is not None
+        self.assertEqual(loaded.refresh_token, tok.refresh_token)
+
+    def test_filename_safe_for_odd_uid(self):
+        odd = _sample_token("auth0|oauth2/foo:bar")
+        self.store.save(odd)
+        files = os.listdir(self._tmp.name)
+        self.assertEqual(len(files), 1)
+        self.assertNotIn("/", files[0])
+        self.assertNotIn(":", files[0])
+        loaded = self.store.load("auth0|oauth2/foo:bar")
+        assert loaded is not None
+        self.assertEqual(loaded.uid, "auth0|oauth2/foo:bar")
+
+    def test_corrupt_file_returns_none(self):
+        tok = _sample_token("user-x")
+        self.store.save(tok)
+        files = [f for f in os.listdir(self._tmp.name) if f.endswith(".json")]
+        assert files
+        with open(os.path.join(self._tmp.name, files[0]), "w") as fp:
+            fp.write("{not valid json")
+        self.assertIsNone(self.store.load("user-x"))
+
+    def test_save_is_atomic_no_leftover_tmp(self):
+        tok = _sample_token("user-y")
+        self.store.save(tok)
+        entries = os.listdir(self._tmp.name)
+        self.assertTrue(any(e.endswith(".json") for e in entries))
+        self.assertFalse(any(e.endswith(".tmp") for e in entries))
+
+    def test_encryptor_applied(self):
+        import secrets as _secrets
+
+        from openbench.integrations.firebase_auth import FileTokenStore
+
+        enc = AESGCMEncryptor(_secrets.token_bytes(32))
+        store = FileTokenStore(root_dir=self._tmp.name, encryptor=enc)
+        tok = _sample_token("user-e")
+        store.save(tok)
+        loaded = store.load("user-e")
+        assert loaded is not None
+        self.assertEqual(loaded.refresh_token, tok.refresh_token)
+
+        # Plaintext refresh token must not appear on disk.
+        for name in os.listdir(self._tmp.name):
+            if name.endswith(".json"):
+                with open(os.path.join(self._tmp.name, name)) as fp:
+                    blob = fp.read()
+                self.assertNotIn(tok.refresh_token, blob)
+
+
 if __name__ == "__main__":
     unittest.main()

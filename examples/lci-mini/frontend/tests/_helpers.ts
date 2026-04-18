@@ -28,6 +28,7 @@ interface FakeUserOpts {
   uid?: string;
   email?: string | null;
   displayName?: string | null;
+  photoURL?: string | null;
 }
 
 export function fakeUser(opts: FakeUserOpts = {}) {
@@ -35,6 +36,7 @@ export function fakeUser(opts: FakeUserOpts = {}) {
     uid: opts.uid ?? "u-1",
     email: opts.email === undefined ? "jane@example.com" : opts.email,
     displayName: opts.displayName === undefined ? "Jane" : opts.displayName,
+    photoURL: opts.photoURL === undefined ? null : opts.photoURL,
     getIdToken: async () => "fake-id-token",
   } as never;
 }

@@ -21,10 +21,12 @@ import base64
 import hmac
 import json
 import logging
+import os
 import secrets
 import threading
 import time
 from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lci_mini.auth.config import AuthConfig, DriveOAuthConfig
@@ -172,8 +174,23 @@ def reset_token_store_for_tests() -> None:
 
 
 def _build_token_store() -> TokenStore:
+    """Pick a TokenStore backend based on environment.
+
+    Selection order (first match wins):
+
+    1. ``OPENBENCH_AUTH_DISABLED=1`` → :class:`InMemoryTokenStore` with
+       a no-op encryptor. Dev bypass only.
+    2. ``FIREBASE_ADMIN_CREDENTIALS`` points at a valid service account
+       → :class:`FirestoreTokenStore`. Prod path — survives multi-node
+       deployments.
+    3. Otherwise → :class:`FileTokenStore` rooted at
+       ``${LCI_MINI_STORAGE_ROOT}/drive_tokens/`` (default
+       ``examples/lci-mini/.openbench/drive_tokens/``). Survives single-
+       node restarts; loses data if disk goes away (Cloud Run).
+    """
     from openbench.integrations.firebase_auth import (
         AESGCMEncryptor,
+        FileTokenStore,
         FirestoreTokenStore,
         InMemoryTokenStore,
         NoOpEncryptor,
@@ -187,24 +204,29 @@ def _build_token_store() -> TokenStore:
     drive_cfg = DriveOAuthConfig.from_env()
     encryptor = AESGCMEncryptor.from_env(drive_cfg.token_encryption_key_env)
 
-    # FirestoreTokenStore needs an initialized firebase_admin app. We
-    # build a *named* app (so we don't fight whatever the host wired up
-    # as the default) using the service-account JSON that AuthConfig
-    # tracks. Without credentials Firestore can't be used — fall back
-    # to in-memory so at least the connect flow succeeds in localhost
-    # dev, with a warning so operators know tokens won't survive a
-    # restart.
+    # Path 2: Firestore when we have a service account. Multi-node safe.
     app = _build_firebase_admin_app(cfg)
-    if app is None:
-        logger.warning(
-            "Drive token store: InMemoryTokenStore — set "
-            "FIREBASE_ADMIN_CREDENTIALS=/path/to/service-account.json to "
-            "persist Drive tokens in Firestore across restarts."
-        )
-        return InMemoryTokenStore(encryptor=encryptor)
+    if app is not None:
+        logger.info("Drive token store: FirestoreTokenStore with AES-GCM encryption")
+        return FirestoreTokenStore(encryptor=encryptor, firebase_admin_app=app)
 
-    logger.info("Drive token store: FirestoreTokenStore with AES-GCM encryption")
-    return FirestoreTokenStore(encryptor=encryptor, firebase_admin_app=app)
+    # Path 3: Filesystem. Survives restart on a single node — the common
+    # dev case and plenty for single-VM deployments. We intentionally do
+    # NOT fall back to in-memory here: restart-invalidated tokens are
+    # worse UX than a 5 KB JSON file per user.
+    storage_root = os.getenv("LCI_MINI_STORAGE_ROOT")
+    if storage_root:
+        root = Path(storage_root) / "drive_tokens"
+    else:
+        from lci_mini import get_persona_dir
+
+        root = get_persona_dir().parent / ".openbench" / "drive_tokens"
+    logger.info(
+        "Drive token store: FileTokenStore rooted at %s (set "
+        "FIREBASE_ADMIN_CREDENTIALS to use Firestore for multi-node)",
+        root,
+    )
+    return FileTokenStore(root_dir=root, encryptor=encryptor)
 
 
 _FIREBASE_APP_NAME = "lci-mini-token-store"

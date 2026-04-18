@@ -206,4 +206,37 @@ describe("UserBadge", () => {
     render(<UserBadge auth={_auth({ configured: true, user })} />);
     expect(await screen.findByText("Jane")).toBeInTheDocument();
   });
+
+  it("renders Google profile photo when photoURL is provided", async () => {
+    _installFetchMock({ uid: "u", email: "jane@x.y", drive: { configured: true, connected: false } });
+    const user = fakeUser({ photoURL: "https://lh3.googleusercontent.com/a/abc=s96-c" });
+    const { container } = render(<UserBadge auth={_auth({ configured: true, user })} />);
+    const img = container.querySelector("img.user-badge__avatar") as HTMLImageElement | null;
+    expect(img).not.toBeNull();
+    expect(img?.src).toBe("https://lh3.googleusercontent.com/a/abc=s96-c");
+  });
+
+  it("falls back to initial avatar when photoURL is missing", async () => {
+    _installFetchMock({ uid: "u", email: "jane@x.y", drive: { configured: true, connected: false } });
+    render(<UserBadge auth={_auth({ configured: true, user: fakeUser({ photoURL: null }) })} />);
+    // No <img> for photo; instead a fallback span with the initial.
+    await screen.findByRole("button", { name: /Account menu/i });
+    expect(document.querySelector("img.user-badge__avatar")).toBeNull();
+    const fallback = document.querySelector(".user-badge__avatar--fallback");
+    expect(fallback?.textContent).toBe("J"); // First letter of "jane@x.y"
+  });
+
+  it("photoURL load failure swaps in the initial fallback", async () => {
+    _installFetchMock({ uid: "u", email: "jane@x.y", drive: { configured: true, connected: false } });
+    const user = fakeUser({ photoURL: "https://broken/img.png" });
+    const { container } = render(<UserBadge auth={_auth({ configured: true, user })} />);
+    const img = container.querySelector("img.user-badge__avatar") as HTMLImageElement | null;
+    expect(img).not.toBeNull();
+    // Simulate the image's onerror.
+    img?.dispatchEvent(new Event("error"));
+    await waitFor(() => {
+      expect(document.querySelector("img.user-badge__avatar")).toBeNull();
+      expect(document.querySelector(".user-badge__avatar--fallback")).not.toBeNull();
+    });
+  });
 });

@@ -500,15 +500,51 @@ body {
 .user-badge__trigger {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 999px;
   background: var(--ob-bg-primary, #fff);
   color: var(--ob-text-primary, #1a1a1a);
   font-size: 13px;
   cursor: pointer;
-  max-width: 200px;
+  max-width: 240px;
+}
+
+.user-badge__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--ob-bg-tertiary, rgba(0, 0, 0, 0.06));
+  color: var(--ob-text-primary, #1a1a1a);
+  font-weight: 600;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.user-badge__avatar--fallback {
+  /* Deterministic neutral hue — don't randomise, keeps UI predictable. */
+  background: linear-gradient(135deg, #5a6268, #343a40);
+  color: #fff;
+  letter-spacing: 0;
+}
+
+[data-theme="dark"] .user-badge__avatar--fallback {
+  background: linear-gradient(135deg, #495057, #212529);
+}
+
+.user-badge__menu-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.user-badge__menu-header .user-badge__menu-email {
+  padding: 0;
 }
 
 .user-badge__trigger:hover {
