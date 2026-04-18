@@ -29,6 +29,12 @@ export interface UseChatReturn {
   messages: ChatMessage[];
   sendMessage: (content: string, attachments?: Attachment[]) => void;
   isStreaming: boolean;
+  /**
+   * True while the active session is being hydrated from the server
+   * (switchSession fetches the full message list on demand). UI can
+   * surface a spinner to avoid "nothing happened" perception.
+   */
+  isLoadingSession: boolean;
 
   // Connection
   connectionStatus: TransportStatus;
@@ -68,6 +74,8 @@ export function useChat(config: ChatConfig): UseChatReturn {
   const isStreaming = useStore(store, (s) => s.isStreaming);
   const sessions = useStore(store, (s) => s.sessions);
   const activeSessionId = useStore(store, (s) => s.activeSessionId);
+  const loadingSessionIds = useStore(store, (s) => s.loadingSessionIds);
+  const isLoadingSession = activeSessionId !== null && !!loadingSessionIds[activeSessionId];
   const sidebarOpen = useStore(store, (s) => s.sidebarOpen);
 
   // Create stable transport instance (for upload + sendAction + status)
@@ -243,6 +251,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
       const session = store.getState().sessions.find((s) => s.id === id);
       if (session && session.messages.length === 0) {
         (async () => {
+          store.getState().setSessionLoading(id, true);
           try {
             const loaded = await transport.loadSession(id);
             if (loaded) {
@@ -250,6 +259,8 @@ export function useChat(config: ChatConfig): UseChatReturn {
             }
           } catch (err) {
             console.error("[useChat] loadSession failed:", err);
+          } finally {
+            store.getState().setSessionLoading(id, false);
           }
         })();
       }
@@ -287,6 +298,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
     messages,
     sendMessage,
     isStreaming,
+    isLoadingSession,
     connectionStatus,
     sessions,
     activeSessionId,

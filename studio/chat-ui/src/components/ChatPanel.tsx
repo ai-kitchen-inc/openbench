@@ -34,6 +34,7 @@ export function ChatPanel({
     messages,
     sendMessage,
     isStreaming,
+    isLoadingSession,
     connectionStatus,
     sendAction,
     sidebarOpen,
@@ -100,7 +101,9 @@ export function ChatPanel({
 
       {/* Messages or Welcome */}
       <div className="chat-panel__body">
-        {isEmpty ? (
+        {isLoadingSession && isEmpty ? (
+          <SessionLoading />
+        ) : isEmpty ? (
           <WelcomeScreen
             greeting={greeting}
             suggestions={suggestions}
@@ -114,6 +117,30 @@ export function ChatPanel({
       {/* Input */}
       <div className="chat-panel__footer">
         <ChatInput onSend={sendMessage} placeholder={placeholder} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Three shimmering message-shaped placeholders. Shown while a session
+ * is hydrating from the server so the user knows something is in
+ * flight instead of staring at an empty panel.
+ */
+function SessionLoading() {
+  return (
+    <div className="chat-loading" role="status" aria-live="polite" aria-busy="true">
+      <span className="chat-loading__sr">Loading chat history…</span>
+      <div className="chat-loading__bubble chat-loading__bubble--user">
+        <div className="chat-loading__line" style={{ width: "42%" }} />
+      </div>
+      <div className="chat-loading__bubble chat-loading__bubble--assistant">
+        <div className="chat-loading__line" style={{ width: "85%" }} />
+        <div className="chat-loading__line" style={{ width: "70%" }} />
+        <div className="chat-loading__line" style={{ width: "45%" }} />
+      </div>
+      <div className="chat-loading__bubble chat-loading__bubble--user">
+        <div className="chat-loading__line" style={{ width: "55%" }} />
       </div>
     </div>
   );

@@ -783,4 +783,39 @@ describe("ChatStore", () => {
       expect(state().messages).toHaveLength(0); // srv-1 is active, unaffected
     });
   });
+
+  // ── Loading state ──
+
+  describe("setSessionLoading", () => {
+    it("starts with empty loadingSessionIds", () => {
+      expect(state().loadingSessionIds).toEqual({});
+    });
+
+    it("marks a session as loading", () => {
+      state().setSessionLoading("sess-a", true);
+      expect(state().loadingSessionIds).toEqual({ "sess-a": true });
+    });
+
+    it("clears the loading flag when loading=false", () => {
+      state().setSessionLoading("sess-a", true);
+      state().setSessionLoading("sess-a", false);
+      expect(state().loadingSessionIds).toEqual({});
+    });
+
+    it("tracks multiple sessions independently", () => {
+      state().setSessionLoading("sess-a", true);
+      state().setSessionLoading("sess-b", true);
+      expect(state().loadingSessionIds).toEqual({
+        "sess-a": true,
+        "sess-b": true,
+      });
+      state().setSessionLoading("sess-a", false);
+      expect(state().loadingSessionIds).toEqual({ "sess-b": true });
+    });
+
+    it("clearing an unknown session is a no-op", () => {
+      state().setSessionLoading("never-loaded", false);
+      expect(state().loadingSessionIds).toEqual({});
+    });
+  });
 });

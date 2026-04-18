@@ -30,6 +30,13 @@ export interface ChatState {
   // Parallel streaming: messageId -> sessionId
   streamingMessages: Record<string, string>;
 
+  /**
+   * Session ids currently hydrating from the server. Keyed so switching
+   * between sessions while one is still loading each shows its own
+   * spinner. Entries are removed on success or error.
+   */
+  loadingSessionIds: Record<string, true>;
+
   // UI
   sidebarOpen: boolean;
 }
@@ -64,6 +71,7 @@ export interface ChatActions {
   // Server-backed session hydration
   hydrateSessions: (sessions: ChatSession[]) => void;
   hydrateSessionMessages: (sessionId: string, messages: ChatMessage[]) => void;
+  setSessionLoading: (sessionId: string, loading: boolean) => void;
 
   // State actions
   setStreaming: (streaming: boolean) => void;
@@ -94,6 +102,7 @@ export function createChatStore() {
     isStreaming: false,
     connectionStatus: "disconnected",
     streamingMessages: {},
+    loadingSessionIds: {},
     sidebarOpen: true,
 
     // ── Message actions (active session) ──
@@ -388,6 +397,18 @@ export function createChatStore() {
         sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, messages } : s)),
         messages: state.activeSessionId === sessionId ? [...messages] : state.messages,
       }));
+    },
+
+    setSessionLoading: (sessionId: string, loading: boolean) => {
+      set((state) => {
+        const next = { ...state.loadingSessionIds };
+        if (loading) {
+          next[sessionId] = true;
+        } else {
+          delete next[sessionId];
+        }
+        return { loadingSessionIds: next };
+      });
     },
 
     // ── State actions ──

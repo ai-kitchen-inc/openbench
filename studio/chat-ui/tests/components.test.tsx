@@ -3,6 +3,7 @@ import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentPreview } from "../src/components/AttachmentPreview";
 import { ChatInput } from "../src/components/ChatInput";
+import { ChatPanel } from "../src/components/ChatPanel";
 import { MessageBubble } from "../src/components/MessageBubble";
 import { MessageList } from "../src/components/MessageList";
 import { SessionSidebar } from "../src/components/SessionSidebar";
@@ -31,6 +32,7 @@ const mockChatContext = {
   messages: [],
   sendMessage: vi.fn(),
   isStreaming: false,
+  isLoadingSession: false,
   connectionStatus: "disconnected" as const,
   surfaces: [],
   sendAction: vi.fn(),
@@ -416,5 +418,55 @@ describe("SessionSidebar", () => {
     expect(mockChatContext.renameSession).not.toHaveBeenCalled();
     // Input should be gone, title should be back
     expect(screen.getByText("New Chat")).toBeDefined();
+  });
+});
+
+// ── ChatPanel: loading skeleton ──
+
+describe("ChatPanel — session loading state", () => {
+  beforeEach(() => {
+    mockChatContext.messages = [];
+    mockChatContext.isLoadingSession = false;
+  });
+
+  it("renders WelcomeScreen when empty and not loading", () => {
+    render(<ChatPanel greeting="Hi" />);
+    expect(screen.getByText("Hi")).toBeDefined();
+    expect(document.querySelector(".chat-loading")).toBeNull();
+  });
+
+  it("renders loading skeleton when empty + isLoadingSession=true", () => {
+    mockChatContext.isLoadingSession = true;
+    render(<ChatPanel greeting="Hi" />);
+    expect(document.querySelector(".chat-loading")).toBeDefined();
+    // Skeleton replaces the welcome greeting to avoid double-render.
+    expect(screen.queryByText("Hi")).toBeNull();
+    // A screen-reader-only status announces the load.
+    expect(screen.getByRole("status")).toBeDefined();
+  });
+
+  it("skeleton exposes aria-busy=true for a11y", () => {
+    mockChatContext.isLoadingSession = true;
+    render(<ChatPanel />);
+    const region = document.querySelector(".chat-loading") as HTMLElement | null;
+    expect(region?.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("shows existing messages even while isLoadingSession=true (subsequent refresh)", () => {
+    // Once a session has messages, a background refresh shouldn't
+    // blank the conversation; skeleton is only for empty sessions.
+    mockChatContext.messages = [
+      {
+        id: "m1",
+        role: "user",
+        content: "hello",
+        timestamp: new Date().toISOString(),
+        status: "complete",
+      },
+    ];
+    mockChatContext.isLoadingSession = true;
+    render(<ChatPanel />);
+    expect(screen.getByText("hello")).toBeDefined();
+    expect(document.querySelector(".chat-loading")).toBeNull();
   });
 });
