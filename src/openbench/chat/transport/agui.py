@@ -82,6 +82,51 @@ class AGUIHandler:
                 self._sessions[session_id] = ChatSession(session_id=session_id)
             return self._sessions[session_id]
 
+    def _on_session_resolved(self, session_id: str) -> None:
+        """Hook fired once per request after ``session`` has been resolved.
+
+        Default: no-op. Subclasses override to stash the id on a
+        thread-local for their :meth:`_create_request_agent` override.
+        """
+        return None
+
+    def _load_session_from_store(self, session_id: str) -> ChatSession | None:
+        """Load from the engine's session store if one is wired.
+
+        Returns None when the engine has no store, the session is absent,
+        or the load raises (logged and swallowed). Callers fall back to
+        the in-memory dict.
+        """
+        store = getattr(self.engine, "session_store", None)
+        if store is None:
+            return None
+        try:
+            loaded = store.load(session_id)
+        except Exception:
+            logger.exception("session_store.load failed for %s", session_id)
+            return None
+        if loaded is not None:
+            # Cache for next call so we don't hit the store every turn.
+            with self._sessions_lock:
+                self._sessions[session_id] = loaded
+        return loaded
+
+    def _persist_session(self, session: ChatSession) -> None:
+        """Save ``session`` to the engine's store, logging full tracebacks."""
+        store = getattr(self.engine, "session_store", None)
+        if store is None:
+            return
+        try:
+            store.save(session)
+            logger.info(
+                "session saved: session_id=%s, messages=%d, store=%s",
+                session.session_id,
+                len(session.messages),
+                type(store).__name__,
+            )
+        except Exception:
+            logger.exception("session_store.save failed for session_id=%s", session.session_id)
+
     def _create_request_agent(self) -> Any:
         """Create a request-scoped copy of the agent with fresh memory.
 
@@ -165,8 +210,17 @@ class AGUIHandler:
         forwarded = body.get("forwardedProps") or {}
         session_id = forwarded.get("sessionId") or thread_id
 
-        # Get or create per-session ChatSession
-        session = self._get_or_create_session(session_id)
+        # Get or create per-session ChatSession. If the engine has a
+        # persistent session store wired, try loading from there first
+        # so cross-request / cross-replica history actually carries over
+        # (the in-memory dict only survives within a single process).
+        session = self._load_session_from_store(session_id)
+        if session is None:
+            session = self._get_or_create_session(session_id)
+        # Give subclasses a hook to run per-request setup (e.g.
+        # stashing session_id on a thread-local). Runs regardless of
+        # which code path produced ``session`` above.
+        self._on_session_resolved(session_id)
 
         # Create a request-scoped agent copy with fresh memory
         request_agent = self._create_request_agent()
@@ -180,6 +234,7 @@ class AGUIHandler:
             # ── Step 1: Processing input ──
             yield encoder.encode(StepStartedEvent(step_name="Processing input"))
             session.add_user_message(content, attachments=attachments)
+            self._persist_session(session)
             yield encoder.encode(StepFinishedEvent(step_name="Processing input"))
 
             # ── Step 2: Agent execution (with streaming text + progress) ──
@@ -289,6 +344,7 @@ class AGUIHandler:
                 surfaces=[{"surfaceId": surface_id}] if surface_id else None,
                 metadata=metadata,
             )
+            self._persist_session(session)
 
             # Run finished
             yield encoder.encode(

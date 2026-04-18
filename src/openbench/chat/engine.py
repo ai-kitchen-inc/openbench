@@ -371,11 +371,21 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         remains the source of truth until the next save succeeds.
         """
         if self.session_store is None:
+            logger.debug("_persist_session: no session_store wired, skipping")
             return
         try:
             self.session_store.save(self.session)
-        except Exception as e:
-            logger.warning(f"session_store.save failed: {e}")
+            logger.info(
+                "session saved: session_id=%s, messages=%d, store=%s",
+                self.session.session_id,
+                len(self.session.messages),
+                type(self.session_store).__name__,
+            )
+        except Exception:
+            logger.exception(
+                "session_store.save failed for session_id=%s",
+                self.session.session_id,
+            )
 
     def _parse_input(self, input: Any) -> tuple[str, list[Attachment] | None]:
         """Parse input into content string and optional attachments."""

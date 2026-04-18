@@ -225,9 +225,8 @@ def _build_drive_backend(token: DriveToken) -> StorageBackend:
 
     assert token.openbench_folder_id is not None
     credentials = build_credentials(
-        # The access_token will be refreshed lazily by google-auth when
-        # the first Drive API call sees it expired.
-        access_token="",
+        # Omit access_token — google-auth will refresh from refresh_token
+        # on the first Drive API call.
         refresh_token=token.refresh_token,
         client_id=token.client_id,
         client_secret=token.client_secret,

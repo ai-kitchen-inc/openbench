@@ -50,9 +50,15 @@ __all__ = [
 
 def _missing_dep_message() -> str:
     return (
-        "FirebaseIDVerifier requires the 'firebase' extras. Install with:\n"
-        "    pip install openbench[firebase]\n"
-        "which pulls firebase-admin."
+        "FirebaseIDVerifier (check_revoked=True) requires firebase-admin. "
+        "Install with: pip install openbench[firebase]"
+    )
+
+
+def _missing_google_auth_message() -> str:
+    return (
+        "FirebaseIDVerifier's default verify path requires google-auth. "
+        "Install with: pip install google-auth"
     )
 
 
@@ -143,15 +149,26 @@ class FirebaseIDVerifier:
 
     # ------------------------------------------------------------------ public
 
-    def verify(self, id_token: str, *, check_revoked: bool = True) -> FirebaseUser:
+    def verify(self, id_token: str, *, check_revoked: bool = False) -> FirebaseUser:
         """Validate an ID token and return the authenticated user.
+
+        Uses the public ``google.oauth2.id_token`` verifier by default —
+        it fetches Firebase's public signing keys from a well-known URL
+        and verifies the JWT locally, **without** requiring any
+        credentials. Works on localhost with zero setup.
+
+        When ``check_revoked=True`` is passed, falls back to the
+        Firebase Admin SDK so it can additionally consult Firebase to
+        see whether the user's tokens have been revoked. That path
+        requires either an explicit service-account file
+        (:attr:`_service_account_file`) or Application Default
+        Credentials to be set up in the environment.
 
         Args:
             id_token: Raw JWT from the client's ``Authorization`` header.
-            check_revoked: When True, additionally consult Firebase to
-                ensure the token has not been revoked by an admin. Adds
-                one network call per verify; disable for high-throughput
-                endpoints if you can tolerate a few seconds of staleness.
+            check_revoked: When True, use the Admin SDK to check token
+                revocation. Adds one network call and a credentials
+                requirement. Defaults to False.
 
         Returns:
             :class:`FirebaseUser` with uid + claims.
@@ -160,24 +177,66 @@ class FirebaseIDVerifier:
             InvalidTokenError: Token is structurally invalid / wrong
                 signature / malformed.
             TokenExpiredError: Token's ``exp`` claim has passed.
-            TokenRevokedError: Token was revoked.
+            TokenRevokedError: Token was revoked (only raised when
+                ``check_revoked=True``).
             WrongProjectError: Token's ``aud`` does not match
                 ``self.project_id``.
         """
         if not id_token:
             raise InvalidTokenError("id_token is empty")
 
+        if check_revoked:
+            return self._verify_via_admin_sdk(id_token)
+        return self._verify_via_google_auth(id_token)
+
+    # ------------------------------------------------------------------ paths
+
+    def _verify_via_google_auth(self, id_token: str) -> FirebaseUser:
+        """Lightweight path — uses google-auth's JWKS-based verifier.
+
+        No credentials required. Validates signature, expiry, issuer,
+        and audience (``self.project_id``). Cannot detect revocation;
+        use :meth:`_verify_via_admin_sdk` for that.
+        """
+        try:
+            from google.auth.exceptions import GoogleAuthError
+            from google.auth.transport import requests as google_requests
+            from google.oauth2 import id_token as google_id_token
+        except ImportError as exc:
+            raise ImportError(_missing_google_auth_message()) from exc
+
+        try:
+            claims = google_id_token.verify_firebase_token(
+                id_token,
+                google_requests.Request(),
+                audience=self.project_id,
+            )
+        except ValueError as exc:
+            message = str(exc)
+            lower = message.lower()
+            if "expired" in lower:
+                raise TokenExpiredError(message) from exc
+            if "audience" in lower or "aud" in lower or "project" in lower:
+                raise WrongProjectError(message) from exc
+            raise InvalidTokenError(message) from exc
+        except GoogleAuthError as exc:
+            raise InvalidTokenError(str(exc)) from exc
+        return self._claims_to_user(claims)
+
+    def _verify_via_admin_sdk(self, id_token: str) -> FirebaseUser:
+        """Heavy path — uses firebase-admin's ``verify_id_token``.
+
+        Supports ``check_revoked=True``. Requires credentials (service
+        account file OR Application Default Credentials).
+        """
         auth = self._get_auth_module()
-        # Reference the specific exception types lazily so the module
-        # doesn't have to import them at the top and create a hard
-        # dependency on firebase_admin.
         fb_errors = self._get_firebase_errors()
 
         try:
             claims = auth.verify_id_token(
                 id_token,
                 app=self._get_app(),
-                check_revoked=check_revoked,
+                check_revoked=True,
             )
         except fb_errors.ExpiredIdTokenError as exc:
             raise TokenExpiredError(str(exc)) from exc
@@ -185,14 +244,10 @@ class FirebaseIDVerifier:
             raise TokenRevokedError(str(exc)) from exc
         except fb_errors.InvalidIdTokenError as exc:
             message = str(exc)
-            # Firebase raises the same InvalidIdTokenError for wrong-
-            # project tokens; recognize that signal and surface a more
-            # actionable exception class.
             if "audience" in message.lower() or "aud" in message.lower():
                 raise WrongProjectError(message) from exc
             raise InvalidTokenError(message) from exc
         except ValueError as exc:
-            # Raised for malformed / non-JWT input by google-auth layer.
             raise InvalidTokenError(str(exc)) from exc
 
         return self._claims_to_user(claims)

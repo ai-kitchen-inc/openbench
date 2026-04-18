@@ -84,6 +84,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
       streamUrl: config.streamUrl,
       store,
       maxConcurrent: config.maxConcurrentStreams ?? 3,
+      getAuthToken: config.getAuthToken,
     });
   }
   const streamManager = streamManagerRef.current;

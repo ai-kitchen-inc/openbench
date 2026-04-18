@@ -1,10 +1,16 @@
 /**
  * Tests for the Firebase → user-friendly error mapper.
+ *
+ * Kept after removing email/password flows: the Google popup flow still
+ * returns popup-blocked, popup-closed-by-user, unauthorized-domain, and
+ * network-request-failed in practice, and the mapper is what stops them
+ * from bubbling up as raw Firebase messages.
  */
 
 import { describe, expect, it } from "vitest";
 
 import { isPopupBlocked, toFriendlyAuthError } from "../src/auth/authErrors";
+
 
 function firebaseError(code: string, message = "raw firebase msg") {
   const err = new Error(message) as Error & { code: string };
@@ -12,37 +18,27 @@ function firebaseError(code: string, message = "raw firebase msg") {
   return err;
 }
 
+
 describe("toFriendlyAuthError", () => {
-  it("merges wrong-password and user-not-found into a single message", () => {
-    const a = toFriendlyAuthError(firebaseError("auth/wrong-password"));
-    const b = toFriendlyAuthError(firebaseError("auth/user-not-found"));
-    const c = toFriendlyAuthError(firebaseError("auth/invalid-credential"));
-    expect(a.message).toBe("Incorrect email or password.");
-    expect(b.message).toBe(a.message);
-    expect(c.message).toBe(a.message);
-    // Code is preserved so UI can still branch if needed.
-    expect(a.code).toBe("auth/wrong-password");
-    expect(b.code).toBe("auth/user-not-found");
+  it("maps popup-blocked to a redirect-fallback message", () => {
+    const e = toFriendlyAuthError(firebaseError("auth/popup-blocked"));
+    expect(e.message).toMatch(/popup was blocked/i);
+    expect(e.code).toBe("auth/popup-blocked");
   });
 
-  it("gives a shape-specific message for invalid-email", () => {
-    const e = toFriendlyAuthError(firebaseError("auth/invalid-email"));
-    expect(e.message).toMatch(/valid email address/i);
+  it("maps popup-closed-by-user to a retry message", () => {
+    const e = toFriendlyAuthError(firebaseError("auth/popup-closed-by-user"));
+    expect(e.message).toMatch(/closed before finishing/i);
   });
 
-  it("gives a registration-specific message for email-already-in-use", () => {
-    const e = toFriendlyAuthError(firebaseError("auth/email-already-in-use"));
-    expect(e.message).toMatch(/account already exists/i);
+  it("maps unauthorized-domain to a contact-support message", () => {
+    const e = toFriendlyAuthError(firebaseError("auth/unauthorized-domain"));
+    expect(e.message).toMatch(/isn't authorised/i);
   });
 
-  it("gives a specific message for weak-password", () => {
-    const e = toFriendlyAuthError(firebaseError("auth/weak-password"));
-    expect(e.message).toMatch(/too weak/i);
-  });
-
-  it("gives a rate-limit message for too-many-requests", () => {
-    const e = toFriendlyAuthError(firebaseError("auth/too-many-requests"));
-    expect(e.message).toMatch(/too many attempts/i);
+  it("maps network-request-failed to a retry message", () => {
+    const e = toFriendlyAuthError(firebaseError("auth/network-request-failed"));
+    expect(e.message).toMatch(/network error/i);
   });
 
   it("falls back to the raw message when code is unknown", () => {
@@ -64,6 +60,7 @@ describe("toFriendlyAuthError", () => {
   });
 });
 
+
 describe("isPopupBlocked", () => {
   it("returns true for auth/popup-blocked", () => {
     expect(isPopupBlocked("auth/popup-blocked")).toBe(true);
@@ -75,7 +72,6 @@ describe("isPopupBlocked", () => {
 
   it("returns false for other codes", () => {
     expect(isPopupBlocked("auth/popup-closed-by-user")).toBe(false);
-    expect(isPopupBlocked("auth/wrong-password")).toBe(false);
     expect(isPopupBlocked("auth/unknown")).toBe(false);
   });
 });

@@ -206,17 +206,27 @@ class TestFirebaseMode:
 
     @pytest.fixture(autouse=True)
     def _setup(self, monkeypatch):
+        """Patch the google-auth verify path — that's what
+        ``verify_firebase_token`` hits by default (no credentials
+        needed). The old Admin-SDK mock is still installed for the
+        legacy ``check_revoked=True`` path, but the dependency
+        doesn't use it.
+        """
+        import google.oauth2.id_token as gid
+
         monkeypatch.delenv("OPENBENCH_AUTH_DISABLED", raising=False)
         monkeypatch.setenv("FIREBASE_PROJECT_ID", "demo-project")
         _reset_verifier_singleton()
-        self.auth = _install_fake_firebase_admin(
-            claims={
+        _install_fake_firebase_admin()  # harmless; path not used by default
+        self.verify_mock = MagicMock(
+            return_value={
                 "uid": "user-42",
                 "email": "jane@example.com",
                 "name": "Jane",
                 "email_verified": True,
             }
         )
+        monkeypatch.setattr(gid, "verify_firebase_token", self.verify_mock)
         yield
         _remove_fake_firebase_admin()
         _reset_verifier_singleton()
@@ -242,35 +252,25 @@ class TestFirebaseMode:
         assert data["email"] == "jane@example.com"
         assert data["emailVerified"] is True
         # Verifier saw the raw token (scheme stripped)
-        self.auth.verify_id_token.assert_called_once()
-        call_args = self.auth.verify_id_token.call_args
-        assert call_args.args[0] == "valid.id.token"
+        self.verify_mock.assert_called_once()
+        assert self.verify_mock.call_args.args[0] == "valid.id.token"
 
     def test_expired_token_returns_401(self):
-        self.auth.verify_id_token.side_effect = self.auth.ExpiredIdTokenError("expired")
+        self.verify_mock.side_effect = ValueError("Token expired")
         client = TestClient(_build_app())
         resp = client.get("/me", headers={"Authorization": "Bearer tok"})
         assert resp.status_code == 401
         assert "expired" in resp.json()["detail"].lower()
 
-    def test_revoked_token_returns_401(self):
-        self.auth.verify_id_token.side_effect = self.auth.RevokedIdTokenError("revoked")
-        client = TestClient(_build_app())
-        resp = client.get("/me", headers={"Authorization": "Bearer tok"})
-        assert resp.status_code == 401
-        assert "revoked" in resp.json()["detail"].lower()
-
     def test_wrong_project_returns_401_with_specific_detail(self):
-        self.auth.verify_id_token.side_effect = self.auth.InvalidIdTokenError(
-            "audience does not match"
-        )
+        self.verify_mock.side_effect = ValueError("Invalid audience")
         client = TestClient(_build_app())
         resp = client.get("/me", headers={"Authorization": "Bearer tok"})
         assert resp.status_code == 401
         assert "different Firebase project" in resp.json()["detail"]
 
     def test_invalid_token_returns_401(self):
-        self.auth.verify_id_token.side_effect = self.auth.InvalidIdTokenError("bogus")
+        self.verify_mock.side_effect = ValueError("bogus signature")
         client = TestClient(_build_app())
         resp = client.get("/me", headers={"Authorization": "Bearer tok"})
         assert resp.status_code == 401

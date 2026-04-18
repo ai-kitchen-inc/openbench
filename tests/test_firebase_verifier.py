@@ -118,15 +118,14 @@ class TestConstructor(unittest.TestCase):
 
 
 class TestMissingDependency(unittest.TestCase):
-    def test_verify_without_extras_raises_install_hint(self):
+    def test_verify_with_check_revoked_without_extras_raises_install_hint(self):
+        """Only the check_revoked=True path requires firebase-admin."""
         v = FirebaseIDVerifier(project_id="demo", service_account_file="/x")
-        # Pretend firebase_admin is not installed: clear any cached
-        # fake installation and block the import.
         _remove_fake_firebase_admin()
         with patch.dict("sys.modules", {"firebase_admin": None}):
             with self.assertRaises(ImportError) as ctx:
-                v.verify("fake-token")
-            self.assertIn("pip install openbench[firebase]", str(ctx.exception))
+                v.verify("fake-token", check_revoked=True)
+            self.assertIn("firebase-admin", str(ctx.exception))
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +150,7 @@ class TestVerifyHappyPath(unittest.TestCase):
         _remove_fake_firebase_admin()
 
     def test_verify_returns_firebase_user(self):
-        user = self.verifier.verify("a.b.c")
+        user = self.verifier.verify("a.b.c", check_revoked=True)
         self.assertIsInstance(user, FirebaseUser)
         self.assertEqual(user.uid, "u-42")
         self.assertEqual(user.email, "jane@example.com")
@@ -159,22 +158,34 @@ class TestVerifyHappyPath(unittest.TestCase):
         self.assertTrue(user.email_verified)
 
     def test_verify_exposes_raw_claims(self):
-        user = self.verifier.verify("a.b.c")
+        user = self.verifier.verify("a.b.c", check_revoked=True)
         self.assertEqual(user.raw_claims["iss"], "https://securetoken.google.com/demo")
 
-    def test_verify_passes_check_revoked_through(self):
-        self.verifier.verify("tok", check_revoked=False)
+    def test_check_revoked_true_routes_to_admin_sdk(self):
+        self.verifier.verify("tok", check_revoked=True)
         call_kwargs = self.auth.verify_id_token.call_args.kwargs
-        self.assertIs(call_kwargs["check_revoked"], False)
+        # The Admin SDK path always passes check_revoked=True — the
+        # kwarg on verify() selects the path, not a pass-through.
+        self.assertIs(call_kwargs["check_revoked"], True)
+
+    def test_check_revoked_false_bypasses_admin_sdk(self):
+        """Default (check_revoked=False) must not call firebase_admin at all."""
+        import google.oauth2.id_token as gid
+
+        with patch.object(gid, "verify_firebase_token", return_value={"uid": "u"}) as mocked:
+            self.verifier.verify("tok")
+        # Admin SDK mock not touched; google-auth called instead.
+        self.assertEqual(self.auth.verify_id_token.call_count, 0)
+        self.assertEqual(mocked.call_count, 1)
 
     def test_verify_uses_sub_claim_when_uid_missing(self):
         self.auth.verify_id_token.return_value = {"sub": "sub-user", "email": None}
-        user = self.verifier.verify("tok")
+        user = self.verifier.verify("tok", check_revoked=True)
         self.assertEqual(user.uid, "sub-user")
 
     def test_empty_uid_when_neither_uid_nor_sub_present(self):
         self.auth.verify_id_token.return_value = {"email": "x@y.z"}
-        user = self.verifier.verify("tok")
+        user = self.verifier.verify("tok", check_revoked=True)
         self.assertEqual(user.uid, "")
 
 
@@ -198,12 +209,12 @@ class TestVerifyErrors(unittest.TestCase):
     def test_expired_token(self):
         self.auth.verify_id_token.side_effect = self.auth.ExpiredIdTokenError("token expired")
         with self.assertRaises(TokenExpiredError):
-            self.verifier.verify("tok")
+            self.verifier.verify("tok", check_revoked=True)
 
     def test_revoked_token(self):
         self.auth.verify_id_token.side_effect = self.auth.RevokedIdTokenError("revoked")
         with self.assertRaises(TokenRevokedError):
-            self.verifier.verify("tok")
+            self.verifier.verify("tok", check_revoked=True)
 
     def test_wrong_project_surfaces_as_wrong_project_error(self):
         """Firebase reports wrong-project as InvalidIdTokenError with 'audience' in the message."""
@@ -211,12 +222,12 @@ class TestVerifyErrors(unittest.TestCase):
             "The audience does not match"
         )
         with self.assertRaises(WrongProjectError):
-            self.verifier.verify("tok")
+            self.verifier.verify("tok", check_revoked=True)
 
     def test_generic_invalid_token(self):
         self.auth.verify_id_token.side_effect = self.auth.InvalidIdTokenError("bogus signature")
         with self.assertRaises(InvalidTokenError) as ctx:
-            self.verifier.verify("tok")
+            self.verifier.verify("tok", check_revoked=True)
         # Must be the base class, not one of the specific subclasses
         self.assertNotIsInstance(ctx.exception, TokenExpiredError)
         self.assertNotIsInstance(ctx.exception, TokenRevokedError)
@@ -226,7 +237,7 @@ class TestVerifyErrors(unittest.TestCase):
         """Malformed non-JWT strings raise ValueError in google-auth; we re-wrap."""
         self.auth.verify_id_token.side_effect = ValueError("malformed token")
         with self.assertRaises(InvalidTokenError):
-            self.verifier.verify("not-a-jwt")
+            self.verifier.verify("not-a-jwt", check_revoked=True)
 
 
 # ---------------------------------------------------------------------------
@@ -245,9 +256,9 @@ class TestAppLifecycle(unittest.TestCase):
         import firebase_admin
 
         verifier = FirebaseIDVerifier(project_id="demo", service_account_file="/x")
-        verifier.verify("tok-1")
-        verifier.verify("tok-2")
-        verifier.verify("tok-3")
+        verifier.verify("tok-1", check_revoked=True)
+        verifier.verify("tok-2", check_revoked=True)
+        verifier.verify("tok-3", check_revoked=True)
         self.assertEqual(firebase_admin.initialize_app.call_count, 1)
 
     def test_reuses_app_when_already_initialized(self):
@@ -257,8 +268,59 @@ class TestAppLifecycle(unittest.TestCase):
         firebase_admin.initialize_app.side_effect = ValueError("app already exists")
         verifier = FirebaseIDVerifier(project_id="demo", service_account_file="/x")
         # Should not raise
-        verifier.verify("tok")
+        verifier.verify("tok", check_revoked=True)
         firebase_admin.get_app.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# google-auth lightweight path (default when check_revoked=False)
+# ---------------------------------------------------------------------------
+
+
+class TestGoogleAuthVerifyPath(unittest.TestCase):
+    """The default path uses google.oauth2.id_token — no credentials needed."""
+
+    def setUp(self):
+        # No firebase_admin fake — this path must not touch it.
+        _remove_fake_firebase_admin()
+
+    def _verify_with_mock(self, *, return_value=None, side_effect=None):
+        import google.oauth2.id_token as gid
+
+        v = FirebaseIDVerifier(project_id="demo")
+        with patch.object(gid, "verify_firebase_token") as mocked:
+            if side_effect is not None:
+                mocked.side_effect = side_effect
+            else:
+                mocked.return_value = return_value
+            return v.verify("a.b.c"), mocked
+
+    def test_returns_firebase_user_on_success(self):
+        user, mocked = self._verify_with_mock(
+            return_value={"uid": "u-1", "email": "j@e.z", "email_verified": True},
+        )
+        self.assertEqual(user.uid, "u-1")
+        self.assertEqual(user.email, "j@e.z")
+        self.assertTrue(user.email_verified)
+        # Was called with the right audience (our project_id).
+        self.assertEqual(mocked.call_args.kwargs["audience"], "demo")
+
+    def test_expired_token_raises_typed_exception(self):
+        with self.assertRaises(TokenExpiredError):
+            self._verify_with_mock(side_effect=ValueError("Token expired"))
+
+    def test_wrong_audience_raises_typed_exception(self):
+        with self.assertRaises(WrongProjectError):
+            self._verify_with_mock(side_effect=ValueError("Invalid audience"))
+
+    def test_generic_invalid_value_error_maps_to_invalid(self):
+        with self.assertRaises(InvalidTokenError):
+            self._verify_with_mock(side_effect=ValueError("bad signature"))
+
+    def test_empty_token_raises_invalid_without_network(self):
+        v = FirebaseIDVerifier(project_id="demo")
+        with self.assertRaises(InvalidTokenError):
+            v.verify("")
 
 
 if __name__ == "__main__":

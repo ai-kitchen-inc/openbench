@@ -26,6 +26,7 @@ export class StreamContext {
 
   private streamUrl: string;
   private store: Store;
+  private getAuthToken?: () => Promise<string | null>;
   private subscription: { unsubscribe: () => void } | null = null;
   private _disposed = false;
 
@@ -34,11 +35,14 @@ export class StreamContext {
     messageId: string;
     streamUrl: string;
     store: Store;
+    /** Optional async hook that returns the current ID token. */
+    getAuthToken?: () => Promise<string | null>;
   }) {
     this.sessionId = config.sessionId;
     this.messageId = config.messageId;
     this.streamUrl = config.streamUrl;
     this.store = config.store;
+    this.getAuthToken = config.getAuthToken;
     this.processor = new A2UIMessageProcessor();
   }
 
@@ -52,7 +56,20 @@ export class StreamContext {
   async start(content: string, attachments?: unknown[]): Promise<void> {
     if (this._disposed) return;
 
-    const agent = new HttpAgent({ url: this.streamUrl });
+    // Resolve the Authorization header before the SSE connection is
+    // opened. Without this, auth-gated backends reject the stream with
+    // 401 (seen as "Missing Bearer token in Authorization header").
+    const headers: Record<string, string> = {};
+    if (this.getAuthToken) {
+      try {
+        const token = await this.getAuthToken();
+        if (token) headers.Authorization = `Bearer ${token}`;
+      } catch (err) {
+        console.error(`[StreamContext ${this.messageId}] getAuthToken threw:`, err);
+      }
+    }
+
+    const agent = new HttpAgent({ url: this.streamUrl, headers });
     const input = {
       threadId: this.sessionId,
       runId: generateId(),

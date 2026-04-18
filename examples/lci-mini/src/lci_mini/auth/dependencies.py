@@ -159,3 +159,14 @@ async def verify_firebase_token(
             detail="Invalid ID token",
             headers={"WWW-Authenticate": "Bearer error=invalid_token"},
         ) from exc
+    except ImportError as exc:
+        # firebase-admin isn't installed. This is a deployment bug, not
+        # a client error — respond 503 with an actionable message so the
+        # frontend can tell the operator what's wrong.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Firebase Admin SDK is not installed on the backend. "
+                "Run `pip install firebase-admin` and restart."
+            ),
+        ) from exc

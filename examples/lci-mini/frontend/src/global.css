@@ -338,6 +338,22 @@ body {
   text-align: left;
 }
 
+.auth-gate__code {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre;
+  overflow-x: auto;
+  margin: 4px 0;
+}
+
 .auth-gate__info {
   padding: 8px 12px;
   border: 1px solid rgba(16, 163, 127, 0.28);

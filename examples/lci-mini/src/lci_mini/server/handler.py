@@ -129,6 +129,13 @@ class LiciAGUIHandler(AGUIHandler):
         self._local.session_id = session_id
         return super()._get_or_create_session(session_id)
 
+    def _on_session_resolved(self, session_id):
+        # Fires every request regardless of whether the session came
+        # from the engine's session_store or the in-memory dict, so the
+        # PersistentMemory lookup in _create_request_agent has a valid
+        # session_id to key on.
+        self._local.session_id = session_id
+
     def _create_request_agent(self):
         agent = self.engine.agent
         if not isinstance(agent, BaseAgent):

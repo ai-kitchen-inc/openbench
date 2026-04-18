@@ -186,8 +186,66 @@ def _build_token_store() -> TokenStore:
 
     drive_cfg = DriveOAuthConfig.from_env()
     encryptor = AESGCMEncryptor.from_env(drive_cfg.token_encryption_key_env)
+
+    # FirestoreTokenStore needs an initialized firebase_admin app. We
+    # build a *named* app (so we don't fight whatever the host wired up
+    # as the default) using the service-account JSON that AuthConfig
+    # tracks. Without credentials Firestore can't be used — fall back
+    # to in-memory so at least the connect flow succeeds in localhost
+    # dev, with a warning so operators know tokens won't survive a
+    # restart.
+    app = _build_firebase_admin_app(cfg)
+    if app is None:
+        logger.warning(
+            "Drive token store: InMemoryTokenStore — set "
+            "FIREBASE_ADMIN_CREDENTIALS=/path/to/service-account.json to "
+            "persist Drive tokens in Firestore across restarts."
+        )
+        return InMemoryTokenStore(encryptor=encryptor)
+
     logger.info("Drive token store: FirestoreTokenStore with AES-GCM encryption")
-    return FirestoreTokenStore(encryptor=encryptor)
+    return FirestoreTokenStore(encryptor=encryptor, firebase_admin_app=app)
+
+
+_FIREBASE_APP_NAME = "lci-mini-token-store"
+
+
+def _build_firebase_admin_app(cfg: AuthConfig):
+    """Return a Firebase Admin app for Firestore, or None if unbuildable.
+
+    Requires ``FIREBASE_ADMIN_CREDENTIALS`` to point to a valid
+    service-account JSON. Application Default Credentials are
+    intentionally NOT consulted — localhost developers routinely have
+    ``GOOGLE_APPLICATION_CREDENTIALS`` pointing to a missing or
+    unrelated file, which would 500 the OAuth callback with a confusing
+    error.
+    """
+    if not cfg.firebase_admin_credentials:
+        return None
+
+    try:
+        import firebase_admin
+        from firebase_admin import credentials as fb_credentials
+    except ImportError:
+        return None
+
+    try:
+        cred = fb_credentials.Certificate(cfg.firebase_admin_credentials)
+    except Exception:
+        logger.exception(
+            "Could not load FIREBASE_ADMIN_CREDENTIALS from %s — falling back to in-memory tokens",
+            cfg.firebase_admin_credentials,
+        )
+        return None
+
+    options = {"projectId": cfg.firebase_project_id} if cfg.firebase_project_id else None
+    try:
+        return firebase_admin.initialize_app(cred, options=options, name=_FIREBASE_APP_NAME)
+    except ValueError as exc:
+        # Already initialized — reuse it.
+        if "already exists" in str(exc).lower():
+            return firebase_admin.get_app(_FIREBASE_APP_NAME)
+        raise
 
 
 # ---------------------------------------------------------------------------

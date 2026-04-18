@@ -12,6 +12,8 @@ import { useOptionalToast } from "./Toast";
 import type { UseAuthReturn } from "./useAuth";
 
 interface DriveStatus {
+  /** True when the backend has Drive OAuth env vars set up. */
+  configured?: boolean;
   connected: boolean;
   folderId: string | null;
   email: string | null;
@@ -57,6 +59,9 @@ export function UserBadge({ auth }: UserBadgeProps) {
 
   const display = auth.user.email || auth.user.displayName || auth.user.uid;
   const driveConnected = status?.drive?.connected ?? false;
+  // Drive OAuth is optional — only show the connect/disconnect menu
+  // items when the backend advertises it's configured.
+  const driveConfigured = status?.drive?.configured ?? false;
 
   const handleConnectDrive = async () => {
     const token = await auth.getIdToken();
@@ -115,32 +120,36 @@ export function UserBadge({ auth }: UserBadgeProps) {
         <div className="user-badge__menu" role="menu">
           <div className="user-badge__menu-email">{display}</div>
           <div className="user-badge__menu-sep" aria-hidden="true" />
-          {driveConnected ? (
-            <button
-              type="button"
-              className="user-badge__menu-item"
-              onClick={() => {
-                handleDisconnectDrive();
-                setOpen(false);
-              }}
-              role="menuitem"
-            >
-              Disconnect Google Drive
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="user-badge__menu-item"
-              onClick={() => {
-                handleConnectDrive();
-                setOpen(false);
-              }}
-              role="menuitem"
-            >
-              Connect Google Drive
-            </button>
+          {driveConfigured && (
+            <>
+              {driveConnected ? (
+                <button
+                  type="button"
+                  className="user-badge__menu-item"
+                  onClick={() => {
+                    handleDisconnectDrive();
+                    setOpen(false);
+                  }}
+                  role="menuitem"
+                >
+                  Disconnect Google Drive
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="user-badge__menu-item"
+                  onClick={() => {
+                    handleConnectDrive();
+                    setOpen(false);
+                  }}
+                  role="menuitem"
+                >
+                  Connect Google Drive
+                </button>
+              )}
+              <div className="user-badge__menu-sep" aria-hidden="true" />
+            </>
           )}
-          <div className="user-badge__menu-sep" aria-hidden="true" />
           <button
             type="button"
             className="user-badge__menu-item"

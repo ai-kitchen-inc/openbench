@@ -13,7 +13,7 @@ import { UserBadge } from "../src/auth/UserBadge";
 import { fakeAuth as _auth, fakeUser } from "./_helpers";
 
 function _user() {
-  return fakeUser({ uid: "u", emailVerified: true });
+  return fakeUser({ uid: "u" });
 }
 
 beforeEach(() => {
@@ -153,7 +153,7 @@ describe("AuthGate sign-in failure → toast", () => {
         </AuthGate>
       </ToastProvider>,
     );
-    await userEvent.click(screen.getByRole("button", { name: /Sign in with Google/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Continue with Google/i }));
     // The same message appears BOTH in the inline form error and the
     // toast — we just need to prove it surfaced somewhere.
     await waitFor(() =>
@@ -169,7 +169,11 @@ describe("UserBadge connect/disconnect failures → toast", () => {
       const url = input.toString();
       if (url === "/auth/me") {
         return new Response(
-          JSON.stringify({ uid: "u", email: "x@y.z", drive: { connected: false } }),
+          JSON.stringify({
+            uid: "u",
+            email: "x@y.z",
+            drive: { configured: true, connected: false },
+          }),
           { status: 200 },
         );
       }
@@ -203,8 +207,8 @@ describe("UserBadge connect/disconnect failures → toast", () => {
             uid: "u",
             email: "x@y.z",
             drive: connected
-              ? { connected: true, folderId: "f", email: "x@y.z" }
-              : { connected: false, folderId: null, email: null },
+              ? { configured: true, connected: true, folderId: "f", email: "x@y.z" }
+              : { configured: true, connected: false, folderId: null, email: null },
           }),
           { status: 200 },
         );

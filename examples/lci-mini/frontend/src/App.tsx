@@ -37,15 +37,31 @@ type PersonaSummary = {
   total_chars?: number;
 };
 
-function PersonaBadge() {
+function PersonaBadge({ auth }: { auth: UseAuthReturn }) {
   const [persona, setPersona] = useState<PersonaSummary | null>(null);
 
   useEffect(() => {
-    fetch("/persona")
-      .then((r) => r.json())
-      .then(setPersona)
-      .catch(() => setPersona({ loaded: false }));
-  }, []);
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await auth.getIdToken();
+        const headers: Record<string, string> = {};
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const resp = await fetch("/persona", { headers });
+        if (cancelled) return;
+        if (!resp.ok) {
+          setPersona({ loaded: false });
+          return;
+        }
+        setPersona(await resp.json());
+      } catch {
+        if (!cancelled) setPersona({ loaded: false });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.getIdToken]);
 
   if (!persona) return null;
   if (!persona.loaded) {
@@ -93,15 +109,31 @@ type SkillsResponse = {
   skills: SkillItem[];
 };
 
-function SkillBadge() {
+function SkillBadge({ auth }: { auth: UseAuthReturn }) {
   const [data, setData] = useState<SkillsResponse | null>(null);
 
   useEffect(() => {
-    fetch("/skills")
-      .then((r) => r.json())
-      .then(setData)
-      .catch(() => setData({ loaded: false, skills: [] }));
-  }, []);
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await auth.getIdToken();
+        const headers: Record<string, string> = {};
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const resp = await fetch("/skills", { headers });
+        if (cancelled) return;
+        if (!resp.ok) {
+          setData({ loaded: false, skills: [] });
+          return;
+        }
+        setData(await resp.json());
+      } catch {
+        if (!cancelled) setData({ loaded: false, skills: [] });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.getIdToken]);
 
   if (!data) return null;
   if (!data.loaded || data.skills.length === 0) {
@@ -190,8 +222,8 @@ function ChatLayout({ auth }: { auth: UseAuthReturn }) {
       {sidebarOpen && (
         <div className="lci-mini-sidebar">
           <SessionSidebar />
-          <PersonaBadge />
-          <SkillBadge />
+          <PersonaBadge auth={auth} />
+          <SkillBadge auth={auth} />
         </div>
       )}
       <ChatPanel

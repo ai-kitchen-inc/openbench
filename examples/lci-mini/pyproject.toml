@@ -12,6 +12,9 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "python-dotenv>=1.0",
+    # Firebase Auth (Admin SDK). Required whenever FIREBASE_PROJECT_ID
+    # is set in .env; harmless to install when it isn't.
+    "firebase-admin>=6.0",
     # XQL skill dependencies (Excel-as-RDBMS)
     "pandas>=2.0",
     "openpyxl>=3.1",

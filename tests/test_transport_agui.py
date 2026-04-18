@@ -674,5 +674,152 @@ class TestAGUIHandlerSessionIsolation(unittest.TestCase):
         self.assertFalse(any("quantum" in c for c in b_contents))
 
 
+class TestAGUIHandlerSessionPersistence(unittest.TestCase):
+    """The handler must save to + load from the engine's session_store.
+
+    Regression: a previous implementation maintained an in-memory
+    ``_sessions`` dict that bypassed the store entirely, so Drive/SQLite
+    backends silently did no persistence.
+    """
+
+    def _make_store(self):
+        """Minimal in-memory SessionStore that records every call."""
+        from openbench.chat.session_store import SessionStore
+
+        class _MemStore(SessionStore):
+            def __init__(self):
+                self.saved: list[Any] = []
+                self.loaded: list[str] = []
+                self._db: dict[str, Any] = {}
+                self.load_error: Exception | None = None
+
+            def save(self, session):
+                self.saved.append(session)
+                self._db[session.session_id] = session
+
+            def load(self, session_id):
+                self.loaded.append(session_id)
+                if self.load_error is not None:
+                    raise self.load_error
+                return self._db.get(session_id)
+
+            def list(self, limit=50, offset=0):
+                return []
+
+            def delete(self, session_id):
+                pass
+
+        return _MemStore()
+
+    def test_save_called_after_user_and_assistant_message(self):
+        store = self._make_store()
+        engine = ChatEngine(agent=MockAgent(response="hi"), session_store=store)
+        handler = AGUIHandler(engine=engine)
+
+        body = {
+            "content": "hello",
+            "forwardedProps": {"sessionId": "s-1"},
+        }
+        _run(_collect_events(handler, body))
+
+        # Two saves per turn: one after user append, one after assistant.
+        self.assertGreaterEqual(len(store.saved), 2)
+        # Both saves point at the same session id.
+        for saved in store.saved:
+            self.assertEqual(saved.session_id, "s-1")
+        # Final save includes both messages.
+        final = store.saved[-1]
+        roles = [str(m.role.value) for m in final.messages]
+        self.assertIn("user", roles)
+        self.assertIn("assistant", roles)
+
+    def test_load_consulted_before_in_memory_fallback(self):
+        store = self._make_store()
+        # Pre-seed the store with existing history for "s-1".
+        from openbench.chat.session import ChatMessage, ChatSession
+
+        seeded = ChatSession(session_id="s-1")
+        seeded.messages.append(
+            ChatMessage(id="m-old", role="user", content="earlier", timestamp="2026-01-01T00:00:00")
+        )
+        store._db["s-1"] = seeded
+
+        engine = ChatEngine(agent=MockAgent(response="hi"), session_store=store)
+        handler = AGUIHandler(engine=engine)
+
+        body = {"content": "new message", "forwardedProps": {"sessionId": "s-1"}}
+        _run(_collect_events(handler, body))
+
+        self.assertIn("s-1", store.loaded)
+        # Fresh session in handler's dict should carry the pre-seeded turn.
+        self.assertEqual(handler._sessions["s-1"].session_id, "s-1")
+        contents = [m.content for m in handler._sessions["s-1"].messages]
+        self.assertIn("earlier", contents)
+        self.assertIn("new message", contents)
+
+    def test_load_failure_falls_back_to_in_memory_and_keeps_going(self):
+        store = self._make_store()
+        store.load_error = RuntimeError("drive offline")
+        engine = ChatEngine(agent=MockAgent(), session_store=store)
+        handler = AGUIHandler(engine=engine)
+
+        body = {"content": "ping", "forwardedProps": {"sessionId": "s-err"}}
+        # Must not raise despite load failure.
+        events = _run(_collect_events(handler, body))
+        self.assertTrue(any(e.get("type") == "RUN_FINISHED" for e in events))
+        # Subsequent save is still attempted.
+        self.assertGreaterEqual(len(store.saved), 1)
+
+    def test_no_store_wired_is_a_no_op(self):
+        """engine.session_store = None → handler must not crash."""
+        engine = ChatEngine(agent=MockAgent())
+        self.assertIsNone(engine.session_store)
+        handler = AGUIHandler(engine=engine)
+
+        body = {"content": "ping", "forwardedProps": {"sessionId": "s-none"}}
+        events = _run(_collect_events(handler, body))
+        self.assertTrue(any(e.get("type") == "RUN_FINISHED" for e in events))
+
+    def test_on_session_resolved_hook_fires_once_per_request(self):
+        """Subclasses use this hook to set up per-request thread-local state."""
+
+        class _Recording(AGUIHandler):
+            def __init__(self, engine):
+                super().__init__(engine)
+                self.hook_calls: list[str] = []
+
+            def _on_session_resolved(self, session_id: str) -> None:
+                self.hook_calls.append(session_id)
+
+        engine = ChatEngine(agent=MockAgent())
+        handler = _Recording(engine)
+
+        body = {"content": "ping", "forwardedProps": {"sessionId": "abc"}}
+        _run(_collect_events(handler, body))
+        self.assertEqual(handler.hook_calls, ["abc"])
+
+    def test_hook_fires_when_session_loaded_from_store(self):
+        """Regression: hook must fire even on the load-from-store fast path."""
+        store = self._make_store()
+        from openbench.chat.session import ChatSession
+
+        store._db["loaded-id"] = ChatSession(session_id="loaded-id")
+
+        class _Recording(AGUIHandler):
+            def __init__(self, engine):
+                super().__init__(engine)
+                self.hook_calls: list[str] = []
+
+            def _on_session_resolved(self, session_id: str) -> None:
+                self.hook_calls.append(session_id)
+
+        engine = ChatEngine(agent=MockAgent(), session_store=store)
+        handler = _Recording(engine)
+
+        body = {"content": "ping", "forwardedProps": {"sessionId": "loaded-id"}}
+        _run(_collect_events(handler, body))
+        self.assertEqual(handler.hook_calls, ["loaded-id"])
+
+
 if __name__ == "__main__":
     unittest.main()

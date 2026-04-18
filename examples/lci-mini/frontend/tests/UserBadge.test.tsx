@@ -59,7 +59,7 @@ describe("UserBadge", () => {
   });
 
   it("shows the user's email in the trigger", async () => {
-    _installFetchMock({ uid: "u", email: "jane@example.com", drive: { connected: false } });
+    _installFetchMock({ uid: "u", email: "jane@example.com", drive: { configured: true, connected: false } });
     render(<UserBadge auth={_auth({ configured: true, user: _user() })} />);
     expect(await screen.findByText("jane@example.com")).toBeInTheDocument();
   });
@@ -68,7 +68,7 @@ describe("UserBadge", () => {
     const fetchMock = _installFetchMock({
       uid: "u",
       email: "jane@example.com",
-      drive: { connected: false },
+      drive: { configured: true, connected: false },
     });
     render(<UserBadge auth={_auth({ configured: true, user: _user() })} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -81,7 +81,7 @@ describe("UserBadge", () => {
     _installFetchMock({
       uid: "u",
       email: "jane@example.com",
-      drive: { connected: true, folderId: "f-1", email: "jane@example.com" },
+      drive: { configured: true, connected: true, folderId: "f-1", email: "jane@example.com" },
     });
     const { container } = render(<UserBadge auth={_auth({ configured: true, user: _user() })} />);
     await waitFor(() => {
@@ -90,7 +90,7 @@ describe("UserBadge", () => {
   });
 
   it("opening the menu reveals Connect Drive when not connected", async () => {
-    _installFetchMock({ uid: "u", email: "jane@x.y", drive: { connected: false } });
+    _installFetchMock({ uid: "u", email: "jane@x.y", drive: { configured: true, connected: false } });
     render(<UserBadge auth={_auth({ configured: true, user: _user() })} />);
     const trigger = await screen.findByRole("button", { name: /Account menu/i });
     await userEvent.click(trigger);
@@ -98,11 +98,27 @@ describe("UserBadge", () => {
     expect(screen.getByRole("menuitem", { name: /Sign out/i })).toBeInTheDocument();
   });
 
+  it("hides Connect Drive when backend reports Drive OAuth is not configured", async () => {
+    _installFetchMock({
+      uid: "u",
+      email: "jane@x.y",
+      drive: { configured: false, connected: false, folderId: null, email: null },
+    });
+    render(<UserBadge auth={_auth({ configured: true, user: _user() })} />);
+    const trigger = await screen.findByRole("button", { name: /Account menu/i });
+    await userEvent.click(trigger);
+    expect(
+      screen.queryByRole("menuitem", { name: /Connect Google Drive/i }),
+    ).not.toBeInTheDocument();
+    // Sign out still present, so the menu still renders.
+    expect(screen.getByRole("menuitem", { name: /Sign out/i })).toBeInTheDocument();
+  });
+
   it("menu reveals Disconnect Drive when connected", async () => {
     _installFetchMock({
       uid: "u",
       email: "jane@x.y",
-      drive: { connected: true, folderId: "f-1", email: "jane@x.y" },
+      drive: { configured: true, connected: true, folderId: "f-1", email: "jane@x.y" },
     });
     render(<UserBadge auth={_auth({ configured: true, user: _user() })} />);
     const trigger = await screen.findByRole("button", { name: /Account menu/i });
@@ -112,7 +128,7 @@ describe("UserBadge", () => {
 
   it("Connect Drive click POSTs to /auth/drive/connect and navigates to authorizeUrl", async () => {
     _installFetchMock(
-      { uid: "u", email: "jane@x.y", drive: { connected: false } },
+      { uid: "u", email: "jane@x.y", drive: { configured: true, connected: false } },
       {
         "/auth/drive/connect": {
           body: { authorizeUrl: "https://google/consent?state=x" },
@@ -146,8 +162,8 @@ describe("UserBadge", () => {
             uid: "u",
             email: "jane@x.y",
             drive: connected
-              ? { connected: true, folderId: "f", email: "jane@x.y" }
-              : { connected: false, folderId: null, email: null },
+              ? { configured: true, connected: true, folderId: "f", email: "jane@x.y" }
+              : { configured: true, connected: false, folderId: null, email: null },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
@@ -175,7 +191,7 @@ describe("UserBadge", () => {
   });
 
   it("Sign out click invokes auth.signOut", async () => {
-    _installFetchMock({ uid: "u", email: "jane@x.y", drive: { connected: false } });
+    _installFetchMock({ uid: "u", email: "jane@x.y", drive: { configured: true, connected: false } });
     const auth = _auth({ configured: true, user: _user() });
     render(<UserBadge auth={auth} />);
     const trigger = await screen.findByRole("button", { name: /Account menu/i });
@@ -185,7 +201,7 @@ describe("UserBadge", () => {
   });
 
   it("falls back to displayName when email is null", async () => {
-    _installFetchMock({ uid: "u", email: null, drive: { connected: false } });
+    _installFetchMock({ uid: "u", email: null, drive: { configured: true, connected: false } });
     const user = _user(null);
     render(<UserBadge auth={_auth({ configured: true, user })} />);
     expect(await screen.findByText("Jane")).toBeInTheDocument();

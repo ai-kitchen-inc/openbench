@@ -328,7 +328,7 @@ def load_client_secrets(path: str | Path) -> ClientSecrets:
 
 def build_credentials(
     *,
-    access_token: str,
+    access_token: str | None = None,
     refresh_token: str,
     client_id: str,
     client_secret: str,
@@ -338,9 +338,13 @@ def build_credentials(
     """Wrap stored OAuth tokens as a ``google.oauth2.credentials.Credentials``.
 
     The resulting object auto-refreshes when Drive API calls detect an
-    expired access token — this is how the ``credentials=`` parameter
-    on :class:`GoogleDriveStorageBackend` stays alive across requests
-    even with a short-lived access token.
+    expired or missing access token — this is how the ``credentials=``
+    parameter on :class:`GoogleDriveStorageBackend` stays alive across
+    requests even when only the refresh token is persisted.
+
+    Pass ``access_token=None`` (the default) or an empty string to force
+    a fresh refresh on first use; google-auth treats both as "no token"
+    and swaps in a new one via the ``refresh_token`` + ``token_uri``.
 
     Lazy-imports ``google-auth`` so this module loads without the
     ``[gdrive]`` extras installed.
@@ -352,8 +356,12 @@ def build_credentials(
             "build_credentials requires the 'gdrive' extras. Install with:\n"
             "    pip install openbench[gdrive]"
         ) from exc
+    # Empty string "" still looks like a valid token to google-auth and
+    # suppresses the refresh path — normalise to None so the first API
+    # call triggers refresh_access_token() via the refresh_token.
+    token = access_token if access_token else None
     return Credentials(
-        token=access_token,
+        token=token,
         refresh_token=refresh_token,
         token_uri=token_uri,
         client_id=client_id,

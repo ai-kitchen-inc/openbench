@@ -12,7 +12,6 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -90,10 +89,13 @@ def _build_display_backend() -> tuple[StorageBackend, str]:
 
 
 def create_app() -> FastAPI:
-    """Create and configure the LCI Mini FastAPI app."""
-    # Load .env from the example directory if present
-    load_dotenv(get_persona_dir().parent / ".env")
+    """Create and configure the LCI Mini FastAPI app.
 
+    Does NOT call :func:`load_dotenv` — that's the job of the entry
+    point (``server.py``). Keeping ``create_app()`` env-pure means tests
+    can monkeypatch the environment without a stray ``.env`` on disk
+    overwriting the test setup.
+    """
     # The request-scope module (see server/request_scope.py) builds a
     # per-request StorageBackend / BaseAgent / ChatEngine based on the
     # authenticated user. In "disabled" and "none" auth modes every
@@ -242,7 +244,13 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         return {"status": "ok", "service": "lci-mini"}
 
-    app.include_router(build_drive_router(redirect_home="/"))
+    # After the Drive OAuth dance, the browser is on the backend
+    # (e.g. http://localhost:8004/auth/drive/callback). Bounce it back
+    # to the frontend so the user lands on the chat UI, not on the
+    # backend's health JSON. Configurable via LCI_MINI_FRONTEND_URL so
+    # Cloud Run deployments can target the Firebase Hosting origin.
+    frontend_url = os.getenv("LCI_MINI_FRONTEND_URL", "http://localhost:5173/")
+    app.include_router(build_drive_router(redirect_home=frontend_url))
 
     @app.get("/auth/me")
     async def auth_me(user=Depends(require_firebase_user)) -> dict:
@@ -251,10 +259,17 @@ def create_app() -> FastAPI:
         The frontend reads this once on app bootstrap to:
         1. Build the "signed in as …" UI
         2. Decide whether to show the "Connect Google Drive" prompt
+           (only when Drive OAuth is configured on the backend AND the
+           user isn't already connected).
 
-        Returning both pieces of state in one round-trip avoids the
-        sign-in → /auth/me → /auth/drive/status → ... waterfall.
+        Returning everything in one round-trip avoids a
+        sign-in → /auth/me → /auth/drive/status waterfall.
         """
+        from lci_mini.auth.config import DriveOAuthConfig
+
+        drive_cfg = DriveOAuthConfig.from_env()
+        drive_configured = drive_cfg.enabled
+
         drive_connected = False
         drive_folder_id: str | None = None
         drive_email: str | None = None
@@ -273,6 +288,7 @@ def create_app() -> FastAPI:
             "emailVerified": user.email_verified,
             "mode": auth_mode,
             "drive": {
+                "configured": drive_configured,
                 "connected": drive_connected,
                 "folderId": drive_folder_id,
                 "email": drive_email,

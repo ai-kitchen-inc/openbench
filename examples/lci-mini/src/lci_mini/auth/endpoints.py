@@ -181,14 +181,25 @@ def build_drive_router(redirect_home: str = "/") -> APIRouter:
                 detail="State cookie missing uid",
             )
 
-        secrets = load_client_secrets(cfg.client_secrets_path)  # type: ignore[arg-type]
-        assert cfg.redirect_url is not None
-        tok = exchange_code(
-            client_id=secrets.client_id,
-            client_secret=secrets.client_secret,
-            redirect_uri=cfg.redirect_url,
-            code=code,
-        )
+        # ---- token exchange ----
+        try:
+            secrets = load_client_secrets(cfg.client_secrets_path)  # type: ignore[arg-type]
+            assert cfg.redirect_url is not None
+            tok = exchange_code(
+                client_id=secrets.client_id,
+                client_secret=secrets.client_secret,
+                redirect_uri=cfg.redirect_url,
+                code=code,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Token exchange failed for uid=%s", uid)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Token exchange with Google failed: {exc!s}",
+            ) from exc
+
         if not tok.refresh_token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -199,23 +210,50 @@ def build_drive_router(redirect_home: str = "/") -> APIRouter:
                 ),
             )
 
-        folder_id = ensure_openbench_folder(access_token=tok.access_token)
+        # ---- ensure folder ----
+        try:
+            folder_id = ensure_openbench_folder(access_token=tok.access_token)
+        except Exception as exc:
+            message = str(exc)
+            if "drive.googleapis.com" in message or "has not been used" in message:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=(
+                        "Google Drive API is not enabled for this Cloud "
+                        "project. Enable it in Google Cloud Console → "
+                        "APIs & Services → Library → 'Google Drive API'. "
+                        "Propagation takes a minute; retry after that."
+                    ),
+                ) from exc
+            logger.exception("Failed to ensure OpenBench folder for uid=%s", uid)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Google Drive returned an error: {message}",
+            ) from exc
 
-        store = get_token_store()
-        now = datetime.now(timezone.utc)
-        store.save(
-            DriveToken(
-                uid=uid,
-                refresh_token=tok.refresh_token,
-                client_id=secrets.client_id,
-                client_secret=secrets.client_secret,
-                scopes=tuple(cfg.scopes),
-                token_uri="https://oauth2.googleapis.com/token",
-                openbench_folder_id=folder_id,
-                created_at=now,
-                updated_at=now,
+        # ---- persist token ----
+        try:
+            store = get_token_store()
+            now = datetime.now(timezone.utc)
+            store.save(
+                DriveToken(
+                    uid=uid,
+                    refresh_token=tok.refresh_token,
+                    client_id=secrets.client_id,
+                    client_secret=secrets.client_secret,
+                    scopes=tuple(cfg.scopes),
+                    token_uri="https://oauth2.googleapis.com/token",
+                    openbench_folder_id=folder_id,
+                    created_at=now,
+                    updated_at=now,
+                )
             )
-        )
+        except Exception as exc:
+            logger.exception("Failed to persist Drive token for uid=%s", uid)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Could not save Drive token: {exc!s}",
+            ) from exc
         # Bounce back to the SPA. Clear the state cookie on the way out.
         response = RedirectResponse(url=redirect_home, status_code=302)
         response.delete_cookie(STATE_COOKIE_NAME, path="/auth/drive")
