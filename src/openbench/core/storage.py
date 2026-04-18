@@ -59,7 +59,18 @@ class StorageBackend(Protocol):
 
     def persona_source(self, name: str = "default") -> PersonaSource: ...
 
-    def file_store(self) -> FileStore: ...
+    def file_store(self) -> FileStore:
+        """Store for user-uploaded chat attachments (``uploads/``)."""
+        ...
+
+    def output_store(self) -> FileStore:
+        """Store for agent-produced downloadable artifacts (``downloads/``).
+
+        Same contract as :meth:`file_store` — different folder. Used by
+        export-excel, pdf-tools, and any other skill that writes a file
+        the frontend should be able to download.
+        """
+        ...
 
 
 class LocalStorageBackend:
@@ -128,6 +139,12 @@ class LocalStorageBackend:
         from openbench.chat.files import LocalFileStore
 
         return LocalFileStore(upload_dir=str(self.root / "uploads"))
+
+    def output_store(self) -> FileStore:
+        """Return a disk-backed :class:`FileStore` at ``<root>/downloads/``."""
+        from openbench.chat.files import LocalFileStore
+
+        return LocalFileStore(upload_dir=str(self.root / "downloads"))
 
     def __repr__(self) -> str:
         return f"LocalStorageBackend(root={str(self.root)!r})"

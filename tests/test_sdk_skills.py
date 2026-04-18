@@ -1074,5 +1074,101 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         self.assertGreater(summary["total_tools"], 0)
 
 
+# ---------------------------------------------------------------------------
+# export-excel — bound output_store path
+# ---------------------------------------------------------------------------
+
+
+class TestExportExcelBoundOutputStore(unittest.TestCase):
+    """When an output_store is bound, exports MUST go through it (not env).
+
+    Regression guard for the Drive-backed uploads/downloads story:
+    without this test, a silent skill refactor could bypass the bound
+    store and drop files on the server's disk instead of the user's
+    Drive. Uses ``LocalFileStore`` as a stand-in for any FileStore
+    impl — the contract we care about is the ``store`` / ``get`` /
+    ``get_local_path`` Protocol.
+    """
+
+    def setUp(self):
+        try:
+            import pandas  # noqa: F401
+        except ImportError:
+            self.skipTest("pandas not installed — export-excel tests require [data] extras")
+
+        import sys
+        import tempfile
+
+        from openbench.chat.files import LocalFileStore
+
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "export-excel")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+
+        mod_name = f"openbench_skill_{self.skill.name.replace('-', '_')}"
+        self.mod = sys.modules[mod_name]
+
+        self._store_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._store_dir.cleanup)
+
+        self.store = LocalFileStore(upload_dir=self._store_dir.name)
+        self.skill.bind(output_store=self.store, output_url_base="/downloads")
+        self.addCleanup(self.skill.bind, output_store=None, output_url_base=None)
+
+    def test_export_to_excel_routes_through_bound_store(self):
+        result = self.tools["export_to_excel"](
+            [{"a": 1, "b": 2}, {"a": 3, "b": 4}],
+            "report.xlsx",
+        )
+        self.assertNotIn("error", result)
+        # URL contract: /{base}/{id}/{name}
+        self.assertTrue(result["url"].startswith("/downloads/"))
+        # Store holds exactly one file and its id matches the URL.
+        file_id = result["url"].split("/")[2]
+        stored = self.store.get(file_id)
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertTrue(stored.name.startswith("report-"))
+        self.assertTrue(stored.name.endswith(".xlsx"))
+        self.assertGreater(stored.size_bytes, 0)
+
+    def test_export_multi_sheet_routes_through_bound_store(self):
+        result = self.tools["export_multi_sheet_excel"](
+            {"S1": [{"x": 1}], "S2": [{"y": 2}]},
+            "multi.xlsx",
+        )
+        self.assertNotIn("error", result)
+        self.assertEqual(sorted(result["sheets"]), ["S1", "S2"])
+        self.assertTrue(result["url"].startswith("/downloads/"))
+
+    def test_bound_store_takes_priority_over_env_var(self):
+        """Even with OPENBENCH_EXPORT_DIR set, the bound store should win."""
+        os.environ["OPENBENCH_EXPORT_DIR"] = "/does/not/exist/ignore-me"
+        self.addCleanup(os.environ.pop, "OPENBENCH_EXPORT_DIR", None)
+
+        result = self.tools["export_to_excel"]([{"a": 1}], "out.xlsx")
+        self.assertNotIn("error", result)
+        # URL is the bound one, not the env one.
+        self.assertTrue(result["url"].startswith("/downloads/"))
+
+    def test_tmp_file_deleted_after_bound_store_ingest(self):
+        """The intermediate disk write must not leak into /tmp forever."""
+        import tempfile
+
+        tmp_before = set(os.listdir(tempfile.gettempdir()))
+        result = self.tools["export_to_excel"]([{"a": 1}], "clean.xlsx")
+        self.assertNotIn("error", result)
+        tmp_after = set(os.listdir(tempfile.gettempdir()))
+        new_xlsx = [n for n in (tmp_after - tmp_before) if n.startswith("clean-")]
+        self.assertEqual(new_xlsx, [])
+
+    def test_url_base_can_be_omitted(self):
+        """Without a URL base, fall back to the store's local path."""
+        self.skill.bind(output_store=self.store, output_url_base=None)
+        result = self.tools["export_to_excel"]([{"a": 1}], "out.xlsx")
+        self.assertNotIn("error", result)
+        # Absolute filesystem path — still downloadable by CLI users.
+        self.assertTrue(os.path.isabs(result["url"]))
+
+
 if __name__ == "__main__":
     unittest.main()

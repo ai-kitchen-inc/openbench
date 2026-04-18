@@ -10,6 +10,7 @@ from openbench.core.providers import ProviderType, configure_provider
 from openbench.intelligence import BaseAgent, Persona
 
 if TYPE_CHECKING:
+    from openbench.chat.files import FileStore
     from openbench.intelligence.scratchpad import ScratchpadStore
 
 
@@ -67,6 +68,8 @@ def create_lici_agent(
     model: str = "gemini-3-flash-preview",
     temperature: float = 0.3,
     scratchpad: ScratchpadStore | None = None,
+    output_store: FileStore | None = None,
+    output_url_base: str | None = None,
 ) -> BaseAgent:
     """Create the Lici LCI consultant agent with persona + skills from disk.
 
@@ -119,4 +122,6 @@ def create_lici_agent(
         persona=persona,
         skills=get_skill_paths(include_scratchpad=scratchpad is not None),
         scratchpad=scratchpad,
+        output_store=output_store,
+        output_url_base=output_url_base,
     )

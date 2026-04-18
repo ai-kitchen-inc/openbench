@@ -553,6 +553,8 @@ class BaseAgent(Agent):
         memory_store: Any = None,
         session_id: str | None = None,
         scratchpad: Any = None,
+        output_store: Any = None,
+        output_url_base: str | None = None,
     ):
         """
         Initialize agent.
@@ -723,9 +725,17 @@ class BaseAgent(Agent):
             # a module-level ``bind(**kwargs)`` function in its tools.py.
             # Skills that do not declare ``bind`` are silently skipped. This
             # is how the bundled ``memory-scratchpad`` skill learns which
-            # ScratchpadStore to use (see §6 of the storage-layer RFC).
+            # ScratchpadStore to use (see §6 of the storage-layer RFC), and
+            # how ``export-excel`` learns where downloadable artifacts land.
+            bind_kwargs: dict[str, Any] = {}
             if scratchpad is not None:
-                self._skill_registry.bind(scratchpad=scratchpad)
+                bind_kwargs["scratchpad"] = scratchpad
+            if output_store is not None:
+                bind_kwargs["output_store"] = output_store
+            if output_url_base is not None:
+                bind_kwargs["output_url_base"] = output_url_base
+            if bind_kwargs:
+                self._skill_registry.bind(**bind_kwargs)
 
             skill_context = self._skill_registry.compose_context()
             if skill_context:

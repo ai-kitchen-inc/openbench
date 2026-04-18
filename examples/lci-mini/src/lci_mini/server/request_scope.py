@@ -300,11 +300,22 @@ def reset_agent_cache() -> None:
 
 
 def _build_agent_for_user(storage: StorageBackend) -> BaseAgent:
-    """Build a BaseAgent wired to the user's scratchpad."""
+    """Build a BaseAgent wired to the user's scratchpad + output store.
+
+    ``output_store`` routes skill-produced artifacts (Excel exports,
+    PDFs, etc.) into the same storage backend sessions and scratchpad
+    use, so a Drive-connected user's exports land in
+    ``OpenBench/downloads/`` instead of the server's disk.
+    """
     from lci_mini.agent import create_lici_agent
 
     scratchpad = storage.scratchpad_store()
-    return create_lici_agent(scratchpad=scratchpad)
+    output_store = storage.output_store()
+    return create_lici_agent(
+        scratchpad=scratchpad,
+        output_store=output_store,
+        output_url_base="/downloads",
+    )
 
 
 def resolve_agent(

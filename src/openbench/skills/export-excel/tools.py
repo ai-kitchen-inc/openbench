@@ -9,18 +9,20 @@ shape expected by ``openbench.chat.renderers.file.FileRenderer``:
 skill does not require the ``[data]`` extra at install time — the
 failure only surfaces when the agent actually calls one of the tools.
 
-Deployment config (read at tool-call time, not at import time):
+Two output paths:
 
-- ``OPENBENCH_EXPORT_DIR`` — absolute path where every exported file
-  should land. Defaults to the process CWD, which is almost never
-  what you want in production (files end up in the repo root).
-- ``OPENBENCH_EXPORT_URL_BASE`` — URL prefix used to build the
-  downloadable ``url`` field on the returned render item. For
-  example, ``/downloads`` makes the card link to
-  ``/downloads/<filename>``. When unset the render item falls back
-  to the absolute filesystem path, which the frontend cannot fetch
-  over HTTP — so in any deployed context you want BOTH env vars set
-  together.
+1. **Bound store (preferred)** — the host app calls
+   ``skill.bind(output_store=..., output_url_base=...)`` during agent
+   construction. Exports go through ``FileStore.store(...)``, which
+   routes to the user's Drive ``OpenBench/downloads/`` for
+   Drive-connected users or to disk for local deployments. The
+   returned ``url`` points at ``<output_url_base>/<id>/<name>`` — an
+   HTTP route the server resolves via ``output_store.get_local_path``.
+
+2. **Legacy env-var fallback** — when no store is bound, write
+   directly to ``OPENBENCH_EXPORT_DIR`` and expose at
+   ``OPENBENCH_EXPORT_URL_BASE/<filename>``. Preserves the original
+   behaviour for hosts that haven't migrated yet.
 """
 
 from __future__ import annotations
@@ -29,7 +31,10 @@ import contextlib
 import os
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from openbench.chat.files import FileStore
 
 __all__ = [
     "export_to_excel",
@@ -37,6 +42,40 @@ __all__ = [
     "EXPORT_TO_EXCEL_SCHEMA",
     "EXPORT_MULTI_SHEET_EXCEL_SCHEMA",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Bound output store (optional — populated by skill.bind() at agent build)
+# ---------------------------------------------------------------------------
+
+
+_output_store: FileStore | None = None
+_output_url_base: str | None = None
+
+
+def bind(
+    output_store: FileStore | None = None,
+    output_url_base: str | None = None,
+    **_: object,
+) -> None:
+    """Inject the FileStore the agent was configured with.
+
+    Called by :meth:`SkillRegistry.bind` during :class:`BaseAgent`
+    construction. Extra kwargs are ignored so future bindings (e.g.
+    ``scratchpad=``) can layer on without breaking this skill.
+
+    Args:
+        output_store: Optional file store for export artifacts. When
+            provided, supersedes the :envvar:`OPENBENCH_EXPORT_DIR`
+            flow — exports route through the store's
+            :meth:`~openbench.chat.files.FileStore.store`.
+        output_url_base: URL prefix the frontend uses to download stored
+            files. Joined with the :class:`StoredFile` id to build the
+            download URL.
+    """
+    global _output_store, _output_url_base
+    _output_store = output_store
+    _output_url_base = output_url_base
 
 
 # ---------------------------------------------------------------------------
@@ -86,14 +125,22 @@ def _resolve_output(filename: str, output_dir: str | None) -> Path:
 
     Precedence for the directory:
     1. Explicit ``output_dir`` argument (tool caller / tests)
-    2. ``OPENBENCH_EXPORT_DIR`` environment variable
-    3. Process CWD (legacy fallback — usually wrong in production)
+    2. If a FileStore is bound: an OS tempdir — the file is a
+       throwaway; bytes get shipped into the store and the local
+       copy unlinked right after.
+    3. ``OPENBENCH_EXPORT_DIR`` environment variable
+    4. Process CWD (legacy fallback — usually wrong in production)
 
     Parent directories are created on demand. The filename always
     gets a unique suffix so concurrent or repeated exports don't
     collide.
     """
-    target_dir = output_dir or _default_output_dir()
+    if output_dir is None and _output_store is not None:
+        import tempfile
+
+        target_dir: str | None = tempfile.gettempdir()
+    else:
+        target_dir = output_dir or _default_output_dir()
     unique_name = _unique_filename(filename)
     p = Path(target_dir) / unique_name if target_dir else Path(unique_name)
     p = p.resolve()
@@ -131,6 +178,56 @@ def _file_item(path: Path, sheets: list[str]) -> dict[str, Any]:
     }
     if size is not None:
         item["size"] = size
+    return item
+
+
+def _XLSX_MIME() -> str:
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _persist_via_bound_store(
+    filename: str, on_disk_path: Path, sheets: list[str]
+) -> dict[str, Any]:
+    """Read the workbook bytes, push through the bound output store,
+    and return a render item pointing at the store's HTTP URL.
+
+    Cleans up the local tempfile after reading so we don't double-
+    store. If :data:`_output_store` isn't bound, the caller should
+    fall through to the legacy flow.
+    """
+    assert _output_store is not None
+
+    try:
+        content = on_disk_path.read_bytes()
+    except OSError as exc:
+        return _error(f"Failed to read workbook bytes: {exc}")
+    # Clean up — the bytes live in the store now (plus its cache if
+    # Drive-backed).
+    with contextlib.suppress(OSError):
+        on_disk_path.unlink()
+
+    # Preserve the unique suffix added by ``_resolve_output`` — two
+    # consecutive ``export_to_excel(..., "report.xlsx")`` calls must
+    # land as distinct files, not overwrite each other.
+    stored = _output_store.store(on_disk_path.name, content, _XLSX_MIME())
+
+    # URL contract: host app exposes a route at <base>/<id>/<name>
+    # that streams bytes via output_store.get_local_path(id). When no
+    # base was bound, fall back to the local cache path so CLI callers
+    # can still open the file.
+    if _output_url_base:
+        base = _output_url_base.rstrip("/")
+        url = f"{base}/{stored.id}/{stored.name}"
+    else:
+        url = stored.path
+
+    item: dict[str, Any] = {
+        "name": stored.name,
+        "url": url,
+        "sheets": sheets,
+        "mimeType": stored.mime_type or _XLSX_MIME(),
+        "size": stored.size_bytes,
+    }
     return item
 
 
@@ -199,7 +296,10 @@ def export_to_excel(
     except Exception as e:
         return _error(f"Failed to write workbook: {e}")
 
-    item = _file_item(out_path, [sheet_name])
+    if _output_store is not None:
+        item = _persist_via_bound_store(filename, out_path, [sheet_name])
+    else:
+        item = _file_item(out_path, [sheet_name])
     # Push onto the shared render queue so ChatEngine surfaces an
     # ObFileCard in the next assistant turn. The return value is still
     # used as tool-result context for the LLM.
@@ -254,7 +354,10 @@ def export_multi_sheet_excel(
     except Exception as e:
         return _error(f"Failed to write workbook: {e}")
 
-    item = _file_item(out_path, list(frames.keys()))
+    if _output_store is not None:
+        item = _persist_via_bound_store(filename, out_path, list(frames.keys()))
+    else:
+        item = _file_item(out_path, list(frames.keys()))
     _push_to_render_queue(item)
     return item
 

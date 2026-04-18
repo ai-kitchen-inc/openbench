@@ -8,16 +8,16 @@
     "LDI-Pertamina Zona 9-00004": {
       "columns": [
         {
-          "physical_name": "Process Title",
-          "role": "process"
-        },
-        {
           "physical_name": "LDI Category",
           "role": "category"
         },
         {
           "physical_name": "Material Title",
           "role": "material"
+        },
+        {
+          "physical_name": "Process Title",
+          "role": "process"
         },
         {
           "physical_name": "Input or Output",
@@ -42,17 +42,9 @@
         {
           "physical_name": "Functional Unit Semberah EP - Gas",
           "role": "functional_unit"
-        },
-        {
-          "physical_name": "Data Source",
-          "role": "source"
-        },
-        {
-          "physical_name": "Notes",
-          "role": "description"
         }
       ]
     }
   },
-  "updated_at": "2026-04-12T15:31:47.993406+00:00"
+  "updated_at": "2026-04-18T14:32:28.240885+00:00"
 }

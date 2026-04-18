@@ -491,9 +491,35 @@ def create_app() -> FastAPI:
     # Serve uploaded files for frontend preview links
     app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
 
-    # Serve agent-produced downloads (export-excel, etc.). URL prefix
-    # matches OPENBENCH_EXPORT_URL_BASE so the file render items the
-    # export-excel skill builds actually resolve to real HTTP URLs.
+    # Agent-produced downloads (export-excel, etc.) now route through
+    # the per-request storage backend so Drive-connected users get
+    # their artifacts from their own Drive. The URL contract is
+    # ``/downloads/<file_id>/<name>`` — ``name`` is cosmetic (used by
+    # the browser for the filename); resolution is purely by id via
+    # ``storage.output_store().get_local_path(file_id)``.
+    @app.get("/downloads/{file_id}/{name}")
+    async def download_output(
+        file_id: str,
+        name: str,
+        storage: StorageBackend = Depends(resolve_storage_backend),
+    ):
+        out_store = storage.output_store()
+        local_path = await asyncio.to_thread(out_store.get_local_path, file_id)
+        if local_path is None:
+            from fastapi import HTTPException
+            from fastapi import status as http_status
+
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=f"Download not found: {file_id}",
+            )
+        return FileResponse(local_path, filename=name)
+
+    # Legacy static mount kept for hosts still using the old
+    # ``/downloads/<filename>.xlsx`` URL shape (env-var flow, not the
+    # bound-store flow). Harmless alongside the dynamic route above —
+    # FastAPI picks the more specific ``/downloads/{file_id}/{name}``
+    # before falling through to the static dir.
     app.mount("/downloads", StaticFiles(directory=download_dir), name="downloads")
 
     # Optional: serve built frontend in production (Cloud Run single-container mode)

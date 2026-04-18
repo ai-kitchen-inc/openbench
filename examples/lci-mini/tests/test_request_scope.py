@@ -400,6 +400,55 @@ class TestSessionsEndpointsResolveStorage:
 
 
 # ---------------------------------------------------------------------------
+# /downloads/{id}/{name} resolves via storage.output_store()
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadsEndpointResolvesOutputStore:
+    """The dynamic download route must go through the per-user
+    output_store so Drive-connected users get THEIR files, and local
+    users get files from THEIR per-user dir — no cross-contamination."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+        monkeypatch.setenv("OPENBENCH_AUTH_DISABLED", "1")
+        monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(tmp_path / "root"))
+        monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+        monkeypatch.delenv("LCI_MINI_DRIVE_ROOT", raising=False)
+        _reset_agent_cache()
+        _reset_token_store()
+        yield
+        _reset_agent_cache()
+        _reset_token_store()
+
+    def test_download_returns_file_bytes(self, tmp_path):
+        from lci_mini.server.app import create_app
+
+        from openbench.chat.files import LocalFileStore
+
+        # Seed a file via the SAME root the app resolves to.
+        store = LocalFileStore(upload_dir=str(tmp_path / "root" / "downloads"))
+        stored = store.store("result.xlsx", b"fake-xlsx-bytes", "application/vnd.ms-excel")
+
+        client = TestClient(create_app())
+        resp = client.get(f"/downloads/{stored.id}/{stored.name}")
+        assert resp.status_code == 200
+        assert resp.content == b"fake-xlsx-bytes"
+        # Filename preserved in the Content-Disposition so the browser
+        # downloads under the original name, not the file id.
+        cd = resp.headers.get("content-disposition", "")
+        assert "result.xlsx" in cd
+
+    def test_download_unknown_id_returns_404(self):
+        from lci_mini.server.app import create_app
+
+        client = TestClient(create_app())
+        resp = client.get("/downloads/never-stored/out.xlsx")
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # /awp preserves session across turns via threadId
 # ---------------------------------------------------------------------------
 

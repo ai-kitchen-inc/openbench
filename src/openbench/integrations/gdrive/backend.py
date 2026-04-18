@@ -70,6 +70,7 @@ class GoogleDriveStorageBackend:
     _MEMORY_SUBFOLDER = "memory"
     _PERSONAS_SUBFOLDER = "personas"
     _UPLOADS_SUBFOLDER = "uploads"
+    _DOWNLOADS_SUBFOLDER = "downloads"
 
     def __init__(
         self,
@@ -141,7 +142,19 @@ class GoogleDriveStorageBackend:
         folder_id = self._resolve_subfolder(self._UPLOADS_SUBFOLDER)
         return GoogleDriveFileStore(
             folder_id=folder_id,
-            cache_root=self._file_cache_root,
+            cache_root=self._file_cache_root / "uploads",
+            service_account_file=self._service_account_file,
+            credentials=self._explicit_credentials,
+        )
+
+    def output_store(self):
+        """Return a :class:`GoogleDriveFileStore` rooted at ``<root>/downloads/``."""
+        from openbench.integrations.gdrive.file_store import GoogleDriveFileStore
+
+        folder_id = self._resolve_subfolder(self._DOWNLOADS_SUBFOLDER)
+        return GoogleDriveFileStore(
+            folder_id=folder_id,
+            cache_root=self._file_cache_root / "downloads",
             service_account_file=self._service_account_file,
             credentials=self._explicit_credentials,
         )
