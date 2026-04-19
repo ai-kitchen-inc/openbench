@@ -4,11 +4,41 @@
 
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuthGate } from "../src/auth/AuthGate";
 import { ToastProvider } from "../src/auth/Toast";
 import { fakeAuth, fakeUser } from "./_helpers";
+
+
+/**
+ * Install a ``fetch`` stub that answers ``/auth/me`` with the given
+ * status + body. AuthGate's new approval gate hits this endpoint on
+ * every signed-in render, so without a stub the tests either log
+ * "fetch failed" warnings or hang waiting for the real network.
+ */
+function mockAuthMe(
+  status: number,
+  body: Record<string, unknown> = { uid: "u" },
+): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+    const url = input.toString();
+    if (url === "/auth/me") {
+      return new Response(JSON.stringify(body), { status });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+beforeEach(() => {
+  mockAuthMe(200);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 
 function renderGate(
@@ -55,9 +85,56 @@ describe("AuthGate — gating", () => {
     expect(screen.queryByText("chat shell")).not.toBeInTheDocument();
   });
 
-  it("passes through when configured + signed-in", () => {
+  it("passes through when configured + signed-in + approved", async () => {
+    mockAuthMe(200);
     renderGate(fakeAuth({ configured: true, user: fakeUser() }));
-    expect(screen.getByText("chat shell")).toBeInTheDocument();
+    // First paint shows the "Checking sign-in" spinner while the
+    // approval check is in flight; chat shell appears once /auth/me
+    // resolves 200.
+    await waitFor(() =>
+      expect(screen.getByText("chat shell")).toBeInTheDocument(),
+    );
+  });
+
+  it("renders pending-approval screen on 403 pending_approval", async () => {
+    mockAuthMe(403, { detail: "pending_approval" });
+    renderGate(fakeAuth({ configured: true, user: fakeUser() }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: /Waiting for approval/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("chat shell")).not.toBeInTheDocument();
+  });
+
+  it("renders account-disabled screen on 401 account_disabled", async () => {
+    mockAuthMe(401, { detail: "account_disabled" });
+    renderGate(fakeAuth({ configured: true, user: fakeUser() }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: /Account disabled/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("chat shell")).not.toBeInTheDocument();
+  });
+
+  it("lets the user in on transient /auth/me 500", async () => {
+    // An unrecognised error must NOT lock legit users out; the real
+    // chat request will surface the issue instead.
+    mockAuthMe(500, { detail: "internal_error" });
+    renderGate(fakeAuth({ configured: true, user: fakeUser() }));
+    await waitFor(() =>
+      expect(screen.getByText("chat shell")).toBeInTheDocument(),
+    );
+  });
+
+  it("pending-approval screen sign-out button calls auth.signOut", async () => {
+    mockAuthMe(403, { detail: "pending_approval" });
+    const auth = fakeAuth({ configured: true, user: fakeUser() });
+    renderGate(auth);
+    await screen.findByRole("heading", { name: /Waiting for approval/i });
+    await userEvent.click(screen.getByRole("button", { name: /Sign out/i }));
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -24,11 +24,28 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class AuthConfig:
-    """Immutable auth configuration loaded from the environment."""
+    """Immutable auth configuration loaded from the environment.
+
+    Attributes:
+        mode: ``"disabled"`` | ``"firebase"`` | ``"none"``.
+        firebase_project_id: Set in ``firebase`` mode.
+        firebase_admin_credentials: Path to Admin SDK key (optional).
+        check_revoked: When True, the verifier consults Firebase for
+            ``disabled`` / revoked status on every request. Adds ~30ms
+            latency but makes admin "Disable account" toggles take
+            effect instantly. Recommended for prod; localhost dev can
+            keep it off.
+        bootstrap_emails: Lowercased emails that bypass the auto-disable
+            on first sign-in. These are the "admin emails" you trust to
+            approve other users. Populated from ``AUTH_BOOTSTRAP_EMAILS``
+            (CSV). Normalised to lowercase so comparisons are stable.
+    """
 
     mode: str  # "disabled" | "firebase" | "none"
     firebase_project_id: str | None = None
     firebase_admin_credentials: str | None = None
+    check_revoked: bool = False
+    bootstrap_emails: frozenset[str] = frozenset()
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> AuthConfig:
@@ -47,10 +64,18 @@ class AuthConfig:
             return cls(mode="disabled")
         if project_id:
             creds = (e.get("FIREBASE_ADMIN_CREDENTIALS") or "").strip() or None
+            revoked_flag = (e.get("FIREBASE_CHECK_REVOKED") or "").strip().lower()
+            check_revoked = revoked_flag in ("1", "true", "yes")
+            bootstrap_raw = (e.get("AUTH_BOOTSTRAP_EMAILS") or "").strip()
+            bootstrap = frozenset(
+                part.strip().lower() for part in bootstrap_raw.split(",") if part.strip()
+            )
             return cls(
                 mode="firebase",
                 firebase_project_id=project_id,
                 firebase_admin_credentials=creds,
+                check_revoked=check_revoked,
+                bootstrap_emails=bootstrap,
             )
         return cls(mode="none")
 

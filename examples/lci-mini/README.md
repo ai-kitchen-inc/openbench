@@ -142,10 +142,7 @@ Tests verify (without making any real LLM calls):
 
 ## Production deployment (Firebase Auth + Drive OAuth)
 
-For a real deployment with sign-in, per-user storage, and rate-limited
-Drive OAuth: see [`docs/AUTH_SETUP.md`](docs/AUTH_SETUP.md).
-
-The short version:
+Short version:
 
 1. Create a Firebase project, enable Email/Google sign-in.
 2. Copy the web SDK config into `VITE_FIREBASE_*` env vars.

@@ -134,7 +134,7 @@ async def verify_firebase_token(
     )
 
     try:
-        return _get_verifier(config).verify(token)
+        user = _get_verifier(config).verify(token, check_revoked=config.check_revoked)
     except TokenExpiredError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -142,9 +142,13 @@ async def verify_firebase_token(
             headers={"WWW-Authenticate": "Bearer error=invalid_token"},
         ) from exc
     except TokenRevokedError as exc:
+        # Fires for both explicitly-revoked tokens AND admin-disabled
+        # accounts when ``check_revoked=True``. Surface a specific code
+        # so the frontend can show the "account disabled" message
+        # without string-matching the detail.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="ID token revoked",
+            detail="account_disabled",
             headers={"WWW-Authenticate": "Bearer error=invalid_token"},
         ) from exc
     except WrongProjectError as exc:
@@ -170,3 +174,22 @@ async def verify_firebase_token(
                 "Run `pip install firebase-admin` and restart."
             ),
         ) from exc
+
+    # Approval gate: upsert users/{uid}; first-time non-bootstrap users
+    # get auto-disabled and raise PendingApprovalError → 403.
+    from lci_mini.auth.user_registry import (
+        PendingApprovalError,
+        get_user_registry,
+    )
+
+    registry = get_user_registry()
+    if registry is not None:
+        try:
+            registry.ensure(user)
+        except PendingApprovalError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="pending_approval",
+            ) from exc
+
+    return user

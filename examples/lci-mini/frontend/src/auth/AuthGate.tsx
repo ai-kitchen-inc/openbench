@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { toFriendlyAuthError } from "./authErrors";
 import { useOptionalToast } from "./Toast";
+import { useApprovalStatus } from "./useApprovalStatus";
 import type { UseAuthReturn } from "./useAuth";
 
 
@@ -29,11 +30,18 @@ interface AuthGateProps {
 
 
 export function AuthGate({ auth, children, requireConfigured = true }: AuthGateProps) {
+  const approval = useApprovalStatus(auth);
+
   if (!auth.configured) {
     return requireConfigured ? <NotConfiguredScreen /> : <>{children}</>;
   }
   if (auth.loading) return <AuthLoading />;
   if (!auth.user) return <SignInScreen auth={auth} />;
+  // At this point Firebase says we're signed in. Consult the backend
+  // approval gate before rendering the app shell.
+  if (approval.status === "loading") return <AuthLoading />;
+  if (approval.status === "pending") return <PendingApprovalScreen auth={auth} />;
+  if (approval.status === "disabled") return <AccountDisabledScreen auth={auth} />;
   return <>{children}</>;
 }
 
@@ -84,7 +92,8 @@ VITE_FIREBASE_AUTH_DOMAIN=…
 VITE_FIREBASE_PROJECT_ID=…`}
         </pre>
         <p className="auth-gate__blurb">
-          See <code>docs/AUTH_SETUP.md</code> for the full guide.
+          Check <code>examples/lci-mini/.env.example</code> for all
+          available env vars.
         </p>
       </div>
     </div>
@@ -151,6 +160,101 @@ function SignInScreen({ auth }: { auth: UseAuthReturn }) {
         >
           <GoogleIcon />
           <span>{busy ? "Signing in…" : "Continue with Google"}</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Approval gate screens — shown after Firebase sign-in but before app access
+// ---------------------------------------------------------------------------
+
+
+function PendingApprovalScreen({ auth }: { auth: UseAuthReturn }) {
+  return (
+    <div className="auth-gate">
+      <div className="auth-gate__panel">
+        <div className="auth-gate__icon" aria-hidden="true">
+          <svg
+            width="40"
+            height="40"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 15 14" />
+          </svg>
+        </div>
+        <h1 className="auth-gate__title">Waiting for approval</h1>
+        <p className="auth-gate__blurb">
+          Your account{" "}
+          {auth.user?.email ? (
+            <strong>{auth.user.email}</strong>
+          ) : (
+            "is"
+          )}{" "}
+          was created and is waiting for an admin to approve access.
+        </p>
+        <p className="auth-gate__blurb">
+          Please contact the admin. You'll be able to sign in once your
+          account is enabled.
+        </p>
+        <button
+          type="button"
+          className="auth-gate__link auth-gate__link--center"
+          onClick={() => auth.signOut()}
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+function AccountDisabledScreen({ auth }: { auth: UseAuthReturn }) {
+  return (
+    <div className="auth-gate">
+      <div className="auth-gate__panel">
+        <div className="auth-gate__icon" aria-hidden="true">
+          <svg
+            width="40"
+            height="40"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+          </svg>
+        </div>
+        <h1 className="auth-gate__title">Account disabled</h1>
+        <p className="auth-gate__blurb">
+          {auth.user?.email ? (
+            <>
+              Access for <strong>{auth.user.email}</strong> has been
+              disabled by the admin.
+            </>
+          ) : (
+            "This account has been disabled by the admin."
+          )}
+        </p>
+        <p className="auth-gate__blurb">Contact support to restore access.</p>
+        <button
+          type="button"
+          className="auth-gate__link auth-gate__link--center"
+          onClick={() => auth.signOut()}
+        >
+          Sign out
         </button>
       </div>
     </div>
