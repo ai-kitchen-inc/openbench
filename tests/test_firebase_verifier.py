@@ -45,9 +45,12 @@ def _install_fake_firebase_admin(
 
     class _InvalidIdTokenError(Exception): ...
 
+    class _UserDisabledError(Exception): ...
+
     fake_auth.ExpiredIdTokenError = _ExpiredIdTokenError  # type: ignore[attr-defined]
     fake_auth.RevokedIdTokenError = _RevokedIdTokenError  # type: ignore[attr-defined]
     fake_auth.InvalidIdTokenError = _InvalidIdTokenError  # type: ignore[attr-defined]
+    fake_auth.UserDisabledError = _UserDisabledError  # type: ignore[attr-defined]
 
     verify = MagicMock()
     if raise_exc is not None:
@@ -213,6 +216,16 @@ class TestVerifyErrors(unittest.TestCase):
 
     def test_revoked_token(self):
         self.auth.verify_id_token.side_effect = self.auth.RevokedIdTokenError("revoked")
+        with self.assertRaises(TokenRevokedError):
+            self.verifier.verify("tok", check_revoked=True)
+
+    def test_disabled_user_surfaces_as_revoked(self):
+        """Admin-disabled account raises UserDisabledError; we map it to
+        TokenRevokedError so the caller can render the 'account disabled'
+        UX without caring which Firebase-internal exception fired."""
+        self.auth.verify_id_token.side_effect = self.auth.UserDisabledError(
+            "The user record is disabled."
+        )
         with self.assertRaises(TokenRevokedError):
             self.verifier.verify("tok", check_revoked=True)
 

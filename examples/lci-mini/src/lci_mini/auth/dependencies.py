@@ -175,8 +175,9 @@ async def verify_firebase_token(
             ),
         ) from exc
 
-    # Approval gate: upsert users/{uid}; first-time non-bootstrap users
-    # get auto-disabled and raise PendingApprovalError → 403.
+    # Approval gate: upsert users/{uid}; every first-time user gets
+    # auto-disabled and raises PendingApprovalError → 403. Admin
+    # re-enables them manually in Firebase Console.
     from lci_mini.auth.user_registry import (
         PendingApprovalError,
         get_user_registry,

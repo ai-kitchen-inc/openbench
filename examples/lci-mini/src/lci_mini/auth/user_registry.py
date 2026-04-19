@@ -4,10 +4,9 @@ On first sign-in, this module:
 
 1. Upserts a ``users/{uid}`` document in Firestore with profile metadata
    (email, display name, photo, provider, timestamps, sign-in count).
-2. Unless the user's email is in ``AUTH_BOOTSTRAP_EMAILS`` (the trusted
-   admin list), calls Firebase Admin SDK to set
-   ``disabled=true`` on the Auth record. The next request from that
-   user (with ``check_revoked=True`` in the verifier) gets 401.
+2. Calls Firebase Admin SDK to set ``disabled=true`` on the Auth
+   record. The next request from that user (with ``check_revoked=True``
+   in the verifier) gets 401.
 3. Raises :class:`PendingApprovalError` so the caller can return a 403
    with a machine-readable ``detail: "pending_approval"`` so the
    frontend redirects to the pending-approval screen.
@@ -18,6 +17,10 @@ Admin approval flow:
 - Sees the new user marked **Disabled**
 - Clicks **Enable account** → done
 - Next time the user signs in, they pass verify and can use the app.
+
+There is no bootstrap bypass: the very first admin also signs in once,
+gets auto-disabled, then self-enables via Firebase Console. That
+one-time manual step is the trusted path that unlocks the account.
 
 Why this shape: the Admin Console's built-in Disable/Enable toggle
 is the admin UI. Zero custom dashboard needed.
@@ -57,9 +60,7 @@ class PendingApprovalError(Exception):
     def __init__(self, uid: str, email: str | None = None) -> None:
         self.uid = uid
         self.email = email
-        super().__init__(
-            f"Account {email or uid} is pending admin approval"
-        )
+        super().__init__(f"Account {email or uid} is pending admin approval")
 
 
 @dataclass(frozen=True)
@@ -97,35 +98,43 @@ class UserRegistry:
         Raises :class:`PendingApprovalError` when the user is not yet
         approved. Returns quietly when:
             - user is already approved (i.e. not disabled in Firebase)
-            - user's email is in the bootstrap list (skip disable step)
             - Firestore / Admin SDK are unavailable (graceful degrade)
         """
+        logger.info("[approval-gate] ensure() uid=%s email=%s", user.uid, user.email)
         try:
             is_first_time = self._upsert_profile(user)
         except Exception:
             # Upsert failure must not block a legitimately-approved user.
-            logger.exception("users/%s upsert failed; continuing", user.uid)
+            logger.exception("[approval-gate] users/%s upsert failed; letting in", user.uid)
             return
 
         if not is_first_time:
-            return
-
-        email_lc = (user.email or "").strip().lower()
-        if email_lc and email_lc in self._cfg.bootstrap_emails:
             logger.info(
-                "bootstrap email %s — skipping auto-disable, auto-approving",
-                email_lc,
+                "[approval-gate] users/%s already in Firestore → skip disable (route=existing_doc)",
+                user.uid,
             )
             return
 
-        # First sign-in and not a bootstrap admin — disable until an
-        # admin flips the toggle in Firebase Console.
+        # First sign-in — disable until an admin flips the toggle in
+        # Firebase Console. No bypass: the first admin is expected to
+        # self-enable through that same console on their first sign-in.
+        logger.info(
+            "[approval-gate] first-time user %s → calling disable",
+            user.email or user.uid,
+        )
         try:
             self._disable_auth_user(user.uid)
         except Exception:
             # Don't leak internals to the client but leave a breadcrumb.
-            logger.exception("failed to disable new user %s; letting them in", user.uid)
+            logger.exception(
+                "[approval-gate] disable failed for %s; letting in (route=disable_failed)",
+                user.uid,
+            )
             return
+        logger.info(
+            "[approval-gate] disabled %s → raising PendingApprovalError (route=disabled)",
+            user.uid,
+        )
         raise PendingApprovalError(user.uid, user.email)
 
     # ---------------------------------------------------------------- internal
@@ -245,6 +254,9 @@ class UserRegistry:
 
 
 _registry_singleton: UserRegistry | None = None
+# Set to True once we've logged the "registry DISABLED" warning so we
+# don't spam it on every request. Reset by reset_user_registry_for_tests.
+_registry_disabled_warned: bool = False
 _registry_lock = threading.Lock()
 
 
@@ -263,8 +275,16 @@ def get_user_registry() -> UserRegistry | None:
     if _registry_singleton is not None:
         return _registry_singleton
 
+    global _registry_disabled_warned
+
     cfg = AuthConfig.from_env()
     if cfg.mode != "firebase":
+        if not _registry_disabled_warned:
+            logger.info(
+                "[approval-gate] registry off: auth mode=%s (need 'firebase')",
+                cfg.mode,
+            )
+            _registry_disabled_warned = True
         return None
 
     with _registry_lock:
@@ -276,17 +296,28 @@ def get_user_registry() -> UserRegistry | None:
         if app is None:
             # No service-account creds — can't write Firestore. Skip
             # the registry entirely and let users through as before.
-            logger.warning(
-                "UserRegistry disabled: no FIREBASE_ADMIN_CREDENTIALS. "
-                "New users will not be auto-disabled."
-            )
+            # Log exactly once so it doesn't spam request logs.
+            if not _registry_disabled_warned:
+                logger.warning(
+                    "[approval-gate] registry DISABLED: no "
+                    "FIREBASE_ADMIN_CREDENTIALS (or file unreadable). "
+                    "New users will NOT be auto-disabled. Fix by setting "
+                    "FIREBASE_ADMIN_CREDENTIALS in .env to a readable "
+                    "service-account JSON and restart."
+                )
+                _registry_disabled_warned = True
             return None
+        logger.info(
+            "[approval-gate] registry ACTIVE — check_revoked=%s",
+            cfg.check_revoked,
+        )
         _registry_singleton = UserRegistry(firebase_admin_app=app, cfg=cfg)
         return _registry_singleton
 
 
 def reset_user_registry_for_tests() -> None:
     """Drop the singleton so tests can swap in their own."""
-    global _registry_singleton
+    global _registry_singleton, _registry_disabled_warned
     with _registry_lock:
         _registry_singleton = None
+        _registry_disabled_warned = False

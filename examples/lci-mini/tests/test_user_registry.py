@@ -1,9 +1,9 @@
 """Tests for the UserRegistry approval gate (Path A: backend auto-disable).
 
 Exercises the full lifecycle via a fake Firestore + fake Admin Auth:
-first-time signin creates a doc and disables the user (unless
-bootstrap), repeat signin bumps counters, and bootstrap emails bypass
-the disable call entirely.
+first-time signin creates a doc and disables the user, repeat signin
+bumps counters. Every user (admin included) goes through the disable
+path — there is no bypass list.
 """
 
 from __future__ import annotations
@@ -147,52 +147,16 @@ class TestFirstTimeSignIn:
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap bypass
+# No bypass — every first-timer gets disabled
 # ---------------------------------------------------------------------------
 
 
-class TestBootstrapEmails:
-    def test_bootstrap_email_skips_disable(self):
-        cfg = AuthConfig(
-            mode="firebase",
-            firebase_project_id="fake",
-            bootstrap_emails=frozenset({"admin@example.com"}),
-        )
-        registry, _, auth_admin = _make_registry(cfg=cfg)
-        user = _make_fb_user(email="admin@example.com")
-
-        # Should NOT raise and NOT call update_user.
-        registry.ensure(user)
-        auth_admin.update_user.assert_not_called()
-
-    def test_bootstrap_is_case_insensitive(self):
-        cfg = AuthConfig(
-            mode="firebase",
-            firebase_project_id="fake",
-            bootstrap_emails=frozenset({"admin@example.com"}),
-        )
-        registry, _, auth_admin = _make_registry(cfg=cfg)
-        user = _make_fb_user(email="ADMIN@Example.COM")
-
-        registry.ensure(user)
-        auth_admin.update_user.assert_not_called()
-
-    def test_non_bootstrap_still_disabled(self):
-        cfg = AuthConfig(
-            mode="firebase",
-            firebase_project_id="fake",
-            bootstrap_emails=frozenset({"admin@example.com"}),
-        )
-        registry, _, auth_admin = _make_registry(cfg=cfg)
-        user = _make_fb_user(email="stranger@example.com")
-
-        with pytest.raises(PendingApprovalError):
-            registry.ensure(user)
-        auth_admin.update_user.assert_called_once()
-
-    def test_no_bootstrap_disables_everyone(self):
+class TestNoBootstrapBypass:
+    def test_every_first_time_user_is_disabled(self):
+        """There is no admin bypass. Admin accounts self-enable via
+        Firebase Console after their first sign-in, same as any user."""
         registry, _, auth_admin = _make_registry()
-        user = _make_fb_user(email="anyone@example.com")
+        user = _make_fb_user(email="admin@example.com")
 
         with pytest.raises(PendingApprovalError):
             registry.ensure(user)

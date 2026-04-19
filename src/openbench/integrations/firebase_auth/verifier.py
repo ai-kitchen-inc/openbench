@@ -242,6 +242,10 @@ class FirebaseIDVerifier:
             raise TokenExpiredError(str(exc)) from exc
         except fb_errors.RevokedIdTokenError as exc:
             raise TokenRevokedError(str(exc)) from exc
+        except fb_errors.UserDisabledError as exc:
+            # Admin flipped "Disable account" in the Firebase Console.
+            # Same UX as a revoked token — user cannot use the app.
+            raise TokenRevokedError(str(exc)) from exc
         except fb_errors.InvalidIdTokenError as exc:
             message = str(exc)
             if "audience" in message.lower() or "aud" in message.lower():
