@@ -18,12 +18,7 @@ export interface MessageListProps {
   uploadProgress?: Record<string, number>;
 }
 
-export function MessageList({
-  messages,
-  isStreaming,
-  onAction,
-  uploadProgress,
-}: MessageListProps) {
+export function MessageList({ messages, isStreaming, onAction, uploadProgress }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Track content changes for scroll trigger.

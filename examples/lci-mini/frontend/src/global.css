@@ -640,9 +640,9 @@ body {
   margin-top: 6px;
   background: linear-gradient(
     90deg,
-    rgba(0, 0, 0, 0.05) 0%,
-    rgba(0, 0, 0, 0.11) 50%,
-    rgba(0, 0, 0, 0.05) 100%
+    rgba(0, 0, 0, 0.09) 0%,
+    rgba(0, 0, 0, 0.22) 50%,
+    rgba(0, 0, 0, 0.09) 100%
   );
   background-size: 200% 100%;
   animation: badge-skeleton-shimmer 1.2s ease-in-out infinite;
@@ -651,9 +651,9 @@ body {
 [data-theme="dark"] .badge-skeleton__row {
   background: linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0.06) 0%,
-    rgba(255, 255, 255, 0.14) 50%,
-    rgba(255, 255, 255, 0.06) 100%
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    rgba(255, 255, 255, 0.12) 100%
   );
   background-size: 200% 100%;
 }

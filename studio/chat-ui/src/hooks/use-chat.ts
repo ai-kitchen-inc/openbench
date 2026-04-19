@@ -192,8 +192,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
                   const localFile = att.file;
                   try {
                     const uploaded = await transport.upload(localFile, {
-                      onProgress: (frac) =>
-                        store.getState().setUploadProgress(att.id, frac),
+                      onProgress: (frac) => store.getState().setUploadProgress(att.id, frac),
                     });
                     URL.revokeObjectURL(att.url);
                     config.onUploadSuccess?.(att.id, uploaded);

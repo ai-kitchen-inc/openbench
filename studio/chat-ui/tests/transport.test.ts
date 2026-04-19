@@ -38,7 +38,6 @@ function createMockAgent(events: Record<string, unknown>[]) {
   }));
 }
 
-
 /** Installs a fake ``XMLHttpRequest`` on ``globalThis`` that resolves
  *  to the given status/body. Returns an inspection handle so tests can
  *  assert on headers, open() args, and the request body.

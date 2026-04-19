@@ -88,11 +88,7 @@ function MessageAttachment({
   );
 }
 
-export function MessageBubble({
-  message,
-  onAction,
-  uploadProgress,
-}: MessageBubbleProps) {
+export function MessageBubble({ message, onAction, uploadProgress }: MessageBubbleProps) {
   const isStreaming = message.status === "streaming";
   const isError = message.status === "error";
   const hasSteps = message.steps && message.steps.length > 0;
