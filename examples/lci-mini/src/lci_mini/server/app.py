@@ -393,25 +393,46 @@ def create_app() -> FastAPI:
         forwarded = body.get("forwardedProps") or {}
         attachments_list = forwarded.get("attachments") or body.get("attachments") or []
 
-        # Resolve each attachment id to a local path via the
-        # per-request file store. For a Drive-backed user this triggers
-        # a download-to-cache; for local storage it's a dict lookup.
+        thread_id = body.get("threadId")
+        session_store = storage.session_store()
+        session = resolve_session_for_thread(thread_id, session_store)
+
+        # Collect file ids from BOTH the current turn and any prior user
+        # messages in this thread. The frontend only re-sends attachments
+        # on the turn they're added; without this, a restart (or the
+        # 5-minute agent cache TTL) would wipe the XQL catalog and leave
+        # the LLM thinking the upload was lost — the user would have to
+        # re-attach the same file on every turn.
+        file_ids: list[str] = []
+        seen_ids: set[str] = set()
+        for att in attachments_list:
+            fid = att.get("id")
+            if fid and fid not in seen_ids:
+                file_ids.append(fid)
+                seen_ids.add(fid)
+        for msg in session.messages:
+            for att in msg.attachments or []:
+                if att.id and att.id not in seen_ids:
+                    file_ids.append(att.id)
+                    seen_ids.add(att.id)
+
+        # Resolve each id to a local path via the per-request file store.
+        # For a Drive-backed user this triggers a download-to-cache; for
+        # local storage it's a dict lookup.
         user_file_store = storage.file_store()
         file_paths: list[str] = []
         unresolved: list[str] = []
-        for att in attachments_list:
-            file_id = att.get("id")
-            if not file_id:
-                continue
+        for file_id in file_ids:
             path = await asyncio.to_thread(user_file_store.get_local_path, file_id)
             if path is not None:
                 file_paths.append(path)
             else:
                 unresolved.append(file_id)
 
-        if attachments_list:
+        if file_ids:
             print(
-                f"  [awp] {len(attachments_list)} attachment(s): "
+                f"  [awp] {len(attachments_list)} new + "
+                f"{len(file_ids) - len(attachments_list)} prior attachment(s): "
                 f"resolved={len(file_paths)} unresolved={unresolved}"
             )
             if file_paths:
@@ -422,10 +443,15 @@ def create_app() -> FastAPI:
         xql_mod = sys.modules.get("openbench_skill_xql")
         if xql_mod is not None and hasattr(xql_mod, "set_uploaded_files"):
             xql_mod.set_uploaded_files(file_paths or None)
+            # Pre-warm the catalog so _STATE is populated even when the
+            # agent was just rebuilt (skill re-import resets _STATE to {}).
+            # Best-effort: catalog failures must not block the chat turn.
+            if file_paths and hasattr(xql_mod, "xql_catalog"):
+                try:
+                    await asyncio.to_thread(xql_mod.xql_catalog, files=file_paths)
+                except Exception as exc:
+                    print(f"  [awp] xql_catalog pre-warm failed: {exc!r}")
 
-        thread_id = body.get("threadId")
-        session_store = storage.session_store()
-        session = resolve_session_for_thread(thread_id, session_store)
         from lci_mini.server.request_scope import build_engine
 
         engine = build_engine(agent=agent, session=session, session_store=session_store)

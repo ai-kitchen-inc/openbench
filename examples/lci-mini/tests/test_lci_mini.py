@@ -736,6 +736,106 @@ def test_upload_then_catalog_via_contextvar(monkeypatch, tmp_path):
         assert rows["filtered_rows"] == 1
 
 
+def test_awp_recatalogs_from_prior_session_attachments(monkeypatch, tmp_path):
+    """Agent cache TTL + skill re-import clears XQL _STATE. When the user
+    sends a follow-up turn without re-attaching the file, /awp must still
+    pre-warm the catalog from attachments recorded in prior session
+    messages — otherwise the agent would hallucinate "connection lost"
+    and ask the user to upload again."""
+    import sys
+
+    import pandas as pd
+    from fastapi.testclient import TestClient
+    from lci_mini.server.handler import LiciAGUIHandler
+    from openbench.chat.session import Attachment, ChatSession, MessageRole
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    monkeypatch.setenv("OPENBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setenv("LCI_MINI_STORAGE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LCI_MINI_UPLOAD_DIR", str(tmp_path / "uploads"))
+
+    from lci_mini.server.app import create_app
+
+    xlsx_path = tmp_path / "prior_upload.xlsx"
+    pd.DataFrame(
+        {
+            "Proses": ["A", "B"],
+            "Kategori": ["x", "y"],
+            "Nama Bahan/Alat": ["m1", "m2"],
+            "Unit": ["kg", "kg"],
+            "Amount": [100.0, 200.0],
+        }
+    ).to_excel(xlsx_path, sheet_name="Sheet1", index=False)
+
+    # Short-circuit the AG-UI handler so the test doesn't need a real LLM.
+    async def _noop_handle(self, request):
+        from fastapi.responses import Response
+
+        return Response(status_code=200)
+
+    monkeypatch.setattr(LiciAGUIHandler, "handle", _noop_handle)
+
+    with TestClient(create_app()) as client:
+        # 1. Upload (turn 1 — file gets registered in the user's file store)
+        with xlsx_path.open("rb") as fh:
+            resp = client.post(
+                "/chat/upload",
+                files={
+                    "file": (
+                        "prior_upload.xlsx",
+                        fh,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+        assert resp.status_code == 200
+        file_id = resp.json()["id"]
+
+        # 2. Seed the session store with a prior user message that carried
+        #    the attachment — this is what the AG-UI handler would write
+        #    on the real turn-1 request.
+        thread_id = "thread-recatalog-test"
+        from lci_mini.server.request_scope import local_backend_for_uid
+
+        storage = local_backend_for_uid("dev")
+        session_store = storage.session_store()
+        session = ChatSession(session_id=thread_id)
+        session.add_user_message(
+            "Analisis file saya",
+            attachments=[
+                Attachment(
+                    id=file_id,
+                    type="file",
+                    name="prior_upload.xlsx",
+                    url=f"/uploads/{file_id}",
+                    mime_type=("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+                )
+            ],
+        )
+        session_store.save(session)
+
+        # 3. Reset catalog so we can prove the /awp handler re-populated it.
+        #    Note: the agent build inside /awp may re-import the skill under
+        #    the same sys.modules name, replacing this module object. Always
+        #    re-fetch from sys.modules when asserting.
+        sys.modules["openbench_skill_xql"]._reset_state()
+
+        # 4. Turn 2 — NO new attachments, but threadId matches the session.
+        resp = client.post(
+            "/awp",
+            json={"threadId": thread_id, "messages": [], "forwardedProps": {}},
+        )
+        assert resp.status_code == 200
+
+        # 5. Catalog must now contain the sheet from the prior attachment.
+        xql_mod_post = sys.modules["openbench_skill_xql"]
+        state = getattr(xql_mod_post, "_STATE", {})
+        assert any(k.endswith(".Sheet1") for k in state), (
+            "Expected XQL _STATE to be pre-warmed from prior-message "
+            f"attachment; got keys={list(state.keys())}"
+        )
+
+
 def test_xql_catalog_returns_error_when_no_files(monkeypatch):
     """xql_catalog() with no attachments should return a helpful error."""
     import sys
