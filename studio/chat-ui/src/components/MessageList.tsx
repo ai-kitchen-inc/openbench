@@ -16,9 +16,17 @@ export interface MessageListProps {
   onAction?: (action: A2UIAction) => void;
   /** Per-attachment upload progress; forwarded to each MessageBubble. */
   uploadProgress?: Record<string, number>;
+  /** Retry handler forwarded to aborted placeholder messages. */
+  onRetry?: (message: ChatMessage) => void;
 }
 
-export function MessageList({ messages, isStreaming, onAction, uploadProgress }: MessageListProps) {
+export function MessageList({
+  messages,
+  isStreaming,
+  onAction,
+  uploadProgress,
+  onRetry,
+}: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Track content changes for scroll trigger.
@@ -56,6 +64,7 @@ export function MessageList({ messages, isStreaming, onAction, uploadProgress }:
           message={msg}
           onAction={onAction}
           uploadProgress={uploadProgress}
+          onRetry={onRetry}
         />
       ))}
     </div>

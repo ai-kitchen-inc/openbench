@@ -231,15 +231,33 @@ export class StreamContext {
       surfaces = [];
     }
 
-    this.updateMessage((m) => ({
-      ...m,
-      status,
-      ...(metadata ? { metadata } : {}),
-      surfaces: surfaces.length > 0 ? [...surfaces] : m.surfaces,
-      content: !m.content && contentFallback ? contentFallback : m.content,
-      steps: (m.steps ?? []).map((s) =>
-        s.status === "active" ? { ...s, status: "complete" as const } : s,
-      ),
-    }));
+    this.updateMessage((m) => {
+      // On error, mirror the backend's aborted-turn placeholder semantics
+      // on the in-flight message so the retry button appears immediately —
+      // without this, the placeholder only surfaces after a session
+      // reload (backend persists a separate placeholder row to storage).
+      const mergedMetadata =
+        status === "error"
+          ? {
+              ...(m.metadata ?? {}),
+              ...(metadata ?? {}),
+              aborted: true as const,
+              error: (m.metadata?.error ?? metadata?.error ?? contentFallback ?? "").slice(0, 200),
+            }
+          : metadata
+            ? { ...(m.metadata ?? {}), ...metadata }
+            : m.metadata;
+
+      return {
+        ...m,
+        status,
+        metadata: mergedMetadata,
+        surfaces: surfaces.length > 0 ? [...surfaces] : m.surfaces,
+        content: !m.content && contentFallback ? contentFallback : m.content,
+        steps: (m.steps ?? []).map((s) =>
+          s.status === "active" ? { ...s, status: "complete" as const } : s,
+        ),
+      };
+    });
   }
 }

@@ -255,6 +255,50 @@ describe("MessageBubble", () => {
     const { container } = render(<MessageBubble message={userMessage} />);
     expect(container.querySelector('[data-message-id="msg-1"]')).not.toBeNull();
   });
+
+  // ── Aborted placeholder + retry button ──
+
+  const abortedMessage: ChatMessage = {
+    id: "msg-aborted",
+    role: "assistant",
+    content: "⚠️ Turn interrupted. Please retry.",
+    timestamp: new Date().toISOString(),
+    status: "error",
+    metadata: { aborted: true, error: "Gemini 500" },
+  };
+
+  it("renders retry button when metadata.aborted is true and onRetry is provided", () => {
+    const onRetry = vi.fn();
+    render(<MessageBubble message={abortedMessage} onRetry={onRetry} />);
+    const retryBtn = screen.getByRole("button", { name: /retry/i });
+    expect(retryBtn).toBeDefined();
+    retryBtn.click();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRetry).toHaveBeenCalledWith(abortedMessage);
+  });
+
+  it("hides retry button when onRetry is not provided", () => {
+    render(<MessageBubble message={abortedMessage} />);
+    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+  });
+
+  it("hides retry button when metadata.aborted is not true", () => {
+    const onRetry = vi.fn();
+    render(<MessageBubble message={assistantMessage} onRetry={onRetry} />);
+    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+  });
+
+  it("applies aborted CSS class when metadata.aborted is true", () => {
+    const { container } = render(<MessageBubble message={abortedMessage} />);
+    expect(container.querySelector(".chat-message--aborted")).not.toBeNull();
+  });
+
+  it("uses the error string as the retry button title for debugging", () => {
+    const onRetry = vi.fn();
+    render(<MessageBubble message={abortedMessage} onRetry={onRetry} />);
+    const retryBtn = screen.getByRole("button", { name: /retry/i });
+    expect(retryBtn.getAttribute("title")).toBe("Gemini 500");
+  });
 });
 
 // ── MessageList ──

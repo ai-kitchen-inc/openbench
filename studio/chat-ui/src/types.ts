@@ -30,6 +30,16 @@ export interface MessageMetadata {
   cost?: number;
   latencyMs?: number;
   toolCalls?: ToolCallInfo[];
+  /**
+   * True when the assistant turn never completed — the backend caught a
+   * mid-turn exception (Gemini 500, tool crash, process signal) and
+   * wrote a placeholder so the session doesn't dead-end on a bare user
+   * message. Paired with {@link error} for a short-form reason. The UI
+   * uses this flag to render a retry affordance on the message.
+   */
+  aborted?: boolean;
+  /** Short-form reason string written alongside {@link aborted}. */
+  error?: string;
 }
 
 export interface ToolCallInfo {

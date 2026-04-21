@@ -298,6 +298,17 @@ describe("StreamContext", () => {
       expect(msg?.status).toBe("error");
     });
 
+    it("marks RUN_ERROR message metadata as aborted so the retry UI can key off it", async () => {
+      setupHttpAgent([{ type: "RUN_STARTED" }, { type: "RUN_ERROR", message: "Gemini 500" }]);
+      const ctx = createContext();
+      await ctx.start("hi");
+
+      const msg = store._messages.get("msg-1");
+      expect(msg?.status).toBe("error");
+      expect(msg?.metadata?.aborted).toBe(true);
+      expect(msg?.metadata?.error).toContain("Gemini 500");
+    });
+
     it("ignores events after disposal", async () => {
       const ctrl = setupHttpAgentAsync();
       const ctx = createContext();

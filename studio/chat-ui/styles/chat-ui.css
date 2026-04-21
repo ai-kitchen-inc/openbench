@@ -401,6 +401,40 @@
   font-weight: 600;
 }
 
+.chat-message__retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--ob-border);
+  border-radius: var(--ob-radius-sm, 6px);
+  color: var(--ob-text);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 150ms ease, background 150ms ease;
+}
+
+.chat-message__retry:hover {
+  opacity: 1;
+  background: rgba(55, 53, 47, 0.06);
+}
+
+.chat-message__retry:active {
+  background: rgba(55, 53, 47, 0.1);
+}
+
+[data-theme="dark"] .chat-message__retry:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .chat-message__retry:active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 /* ── Message Attachments ── */
 
 .chat-message__attachments {

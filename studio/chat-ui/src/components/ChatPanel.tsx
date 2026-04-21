@@ -33,6 +33,7 @@ export function ChatPanel({
   const {
     messages,
     sendMessage,
+    retryMessage,
     isStreaming,
     isLoadingSession,
     uploadProgress,
@@ -116,6 +117,7 @@ export function ChatPanel({
             isStreaming={isStreaming}
             onAction={sendAction}
             uploadProgress={uploadProgress}
+            onRetry={retryMessage}
           />
         )}
       </div>

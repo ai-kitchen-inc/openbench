@@ -22,6 +22,14 @@ export interface MessageBubbleProps {
    * bubble renders a thin progress bar under its name.
    */
   uploadProgress?: Record<string, number>;
+  /**
+   * Called when the user clicks the retry affordance that appears on
+   * aborted placeholder messages (``message.metadata.aborted === true``).
+   * Consumers typically forward this to ``useChat().retryMessage``,
+   * which resends the prior user turn. When unset, the retry button
+   * is hidden.
+   */
+  onRetry?: (message: ChatMessage) => void;
 }
 
 function formatFileSize(bytes: number | undefined): string {
@@ -88,15 +96,17 @@ function MessageAttachment({
   );
 }
 
-export function MessageBubble({ message, onAction, uploadProgress }: MessageBubbleProps) {
+export function MessageBubble({ message, onAction, uploadProgress, onRetry }: MessageBubbleProps) {
   const isStreaming = message.status === "streaming";
   const isError = message.status === "error";
+  const isAborted = message.metadata?.aborted === true;
+  const canRetry = isAborted && Boolean(onRetry);
   const hasSteps = message.steps && message.steps.length > 0;
   const hasContent = message.content || message.surfaces?.length;
 
   return (
     <div
-      className={`chat-message chat-message--${message.role} ${isError ? "chat-message--error" : ""}`}
+      className={`chat-message chat-message--${message.role} ${isError ? "chat-message--error" : ""} ${isAborted ? "chat-message--aborted" : ""}`}
       data-message-id={message.id}
     >
       <div className="chat-message__content">
@@ -156,6 +166,32 @@ export function MessageBubble({ message, onAction, uploadProgress }: MessageBubb
             <span className="chat-message__model">{message.metadata.model}</span>
           )}
           {isError && <span className="chat-message__error-badge">Error</span>}
+          {canRetry && (
+            <button
+              type="button"
+              className="chat-message__retry"
+              onClick={() => onRetry?.(message)}
+              title={message.metadata?.error || "Retry the previous turn"}
+            >
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 12a9 9 0 0 1 15.9-5.7L21 8" />
+                <path d="M21 3v5h-5" />
+                <path d="M21 12a9 9 0 0 1-15.9 5.7L3 16" />
+                <path d="M3 21v-5h5" />
+              </svg>
+              <span>Retry</span>
+            </button>
+          )}
         </div>
       </div>
     </div>

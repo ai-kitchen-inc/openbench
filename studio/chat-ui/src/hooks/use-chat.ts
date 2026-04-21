@@ -28,6 +28,14 @@ export interface UseChatReturn {
   // Messages
   messages: ChatMessage[];
   sendMessage: (content: string, attachments?: Attachment[]) => void;
+  /**
+   * Re-send the user turn that preceded ``message`` — intended to be
+   * wired to the retry button on aborted placeholder messages
+   * (``metadata.aborted === true``). Walks backward from ``message``
+   * to the nearest user message and calls ``sendMessage`` with its
+   * content + attachments. No-op if no preceding user turn is found.
+   */
+  retryMessage: (message: ChatMessage) => void;
   isStreaming: boolean;
   /**
    * True while the active session is being hydrated from the server
@@ -221,6 +229,26 @@ export function useChat(config: ChatConfig): UseChatReturn {
     [store, transport, streamManager],
   );
 
+  // Retry — walk backward from the given message to the nearest user
+  // turn and re-send its content + attachments. Used by the retry
+  // button that appears on aborted placeholder messages.
+  const retryMessage = useCallback(
+    (message: ChatMessage) => {
+      const state = store.getState();
+      const allMessages = state.messages;
+      const idx = allMessages.findIndex((m) => m.id === message.id);
+      if (idx <= 0) return;
+      for (let i = idx - 1; i >= 0; i--) {
+        const prior = allMessages[i];
+        if (prior && prior.role === "user") {
+          sendMessage(prior.content, prior.attachments);
+          return;
+        }
+      }
+    },
+    [store, sendMessage],
+  );
+
   // Send A2UI action — routes response to correct message's processor
   const sendAction = useCallback(
     async (action: A2UIAction) => {
@@ -326,6 +354,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
   return {
     messages,
     sendMessage,
+    retryMessage,
     isStreaming,
     isLoadingSession,
     isUploading,
