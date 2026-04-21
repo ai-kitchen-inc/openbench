@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +40,24 @@ from openbench.core.abstractions import (
 from openbench.core.chainable import Chainable, RunnableConfig
 
 logger = logging.getLogger(__name__)
+
+
+# Placeholder assistant content written when a turn is interrupted (agent
+# exception, process signal caught upstream, transport disconnect, …). The
+# frontend can key off ``metadata["aborted"] == True`` to render a retry
+# affordance without the assistant message looking like real output.
+_PLACEHOLDER_TURN_INTERRUPTED = "⚠️ Turn interrupted. Please retry."
+
+
+def _placeholder_on_abort_enabled() -> bool:
+    """Gate the aborted-turn placeholder via env var.
+
+    Default ``"1"`` (on). Set ``OPENBENCH_PLACEHOLDER_ON_ABORT=0`` to
+    suppress — e.g. test suites that want the session to end with a bare
+    user message instead of the placeholder.
+    """
+    flag = os.environ.get("OPENBENCH_PLACEHOLDER_ON_ABORT", "1").strip().lower()
+    return flag in ("1", "true", "yes", "on")
 
 
 def _get_default_renderers() -> list[ContentRenderer]:
@@ -126,47 +145,56 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         #    turns would otherwise bleed into this response)
         self._clear_render_items()
 
-        # 4. Execute agent
-        agent_result = self._execute_agent(content, config, attachments=attachments)
+        try:
+            # 4. Execute agent
+            agent_result = self._execute_agent(content, config, attachments=attachments)
 
-        # 4. Extract agent output + render items from visualization tools
-        agent_output = self._extract_output(agent_result)
-        metadata = self._extract_metadata(agent_result)
-        extra_items = self._render_items_fn() if self._render_items_fn else None
+            # 5. Extract agent output + render items from visualization tools
+            agent_output = self._extract_output(agent_result)
+            metadata = self._extract_metadata(agent_result)
+            extra_items = self._render_items_fn() if self._render_items_fn else None
 
-        # 5. Render content to A2UI components.
-        # If the agent returned a failed ExecutionResult, surface the error
-        # as an ObCallout instead of silently rendering an empty message.
-        failed, err_msg = self._result_failed(agent_result)
-        if failed:
-            components = self._build_error_components(err_msg)
-            data_model = None
-        else:
-            components, data_model = self._render_content(agent_output, extra_items)
+            # 6. Render content to A2UI components.
+            # If the agent returned a failed ExecutionResult, surface the
+            # error as an ObCallout instead of silently rendering an empty
+            # message.
+            failed, err_msg = self._result_failed(agent_result)
+            if failed:
+                components = self._build_error_components(err_msg)
+                data_model = None
+            else:
+                components, data_model = self._render_content(agent_output, extra_items)
 
-        # 6. Ensure root component
-        components = self._ensure_root(components)
+            # 7. Ensure root component
+            components = self._ensure_root(components)
 
-        # 7. Build A2UI JSONL messages
-        surface_id = f"s-{uuid.uuid4().hex[:8]}"
-        messages = self.builder.build_surface(surface_id, components, data_model=data_model)
+            # 8. Build A2UI JSONL messages
+            surface_id = f"s-{uuid.uuid4().hex[:8]}"
+            messages = self.builder.build_surface(surface_id, components, data_model=data_model)
 
-        # 8. Build text content for session history
-        text_content = self._extract_text_content(agent_output)
+            # 9. Build text content for session history
+            text_content = self._extract_text_content(agent_output)
 
-        # 9. Add assistant message to session
-        self.session.add_assistant_message(
-            content=text_content,
-            surfaces=[{"surfaceId": surface_id}],
-            metadata=metadata,
-        )
-        self._persist_session()
+            # 10. Add assistant message to session
+            self.session.add_assistant_message(
+                content=text_content,
+                surfaces=[{"surfaceId": surface_id}],
+                metadata=metadata,
+            )
+            self._persist_session()
 
-        return {
-            "messages": messages,
-            "session": self.session,
-            "metadata": metadata,
-        }
+            return {
+                "messages": messages,
+                "session": self.session,
+                "metadata": metadata,
+            }
+        except Exception as exc:
+            # Agent blew up (network, Gemini 400, tool exception escaped,
+            # process signal). Write a placeholder assistant message so the
+            # session doesn't end on a dangling user turn — UI can key off
+            # ``metadata["aborted"]`` to surface a retry button.
+            self._write_aborted_placeholder(None, exc)
+            raise
 
     def stream(self, input: Any, config: RunnableConfig | None = None) -> Iterator[str]:
         """Stream A2UI v0.10 JSONL lines with step-by-step progress.
@@ -251,6 +279,11 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
 
         except Exception as e:
             logger.error(f"Stream error: {e}")
+            # Drop the aborted-turn placeholder into the session before
+            # emitting the error, so a reload after this crash shows the
+            # user their "please retry" hint rather than a dangling user
+            # message. Swallows its own errors — never mask the original.
+            self._write_aborted_placeholder(None, e)
             error = StreamMessage(
                 type=StreamMessageType.ERROR,
                 message_id=message_id,
@@ -340,6 +373,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
 
         except Exception as e:
             logger.error(f"Stream error: {e}")
+            self._write_aborted_placeholder(None, e)
             yield json.dumps(
                 StreamMessage(
                     type=StreamMessageType.ERROR,
@@ -361,6 +395,50 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             self._clear_render_items_fn()
         except Exception as e:
             logger.warning(f"clear_render_items_fn raised: {e}")
+
+    def _write_aborted_placeholder(
+        self,
+        session: ChatSession | None,
+        exc: BaseException,
+    ) -> None:
+        """Append a placeholder assistant message after a failed turn.
+
+        Called from the ``except`` branch of :meth:`invoke`, :meth:`stream`,
+        :meth:`async_stream`, and the AG-UI transport so the session
+        always ends on an assistant turn — even if that turn is just
+        "please retry". The placeholder's metadata carries
+        ``aborted: True`` plus the short-form error, which transport
+        layers can surface as a retry affordance.
+
+        Args:
+            session: The :class:`ChatSession` to mutate. Pass ``None``
+                to default to ``self.session`` (used by ``invoke`` and
+                ``stream``). Transport handlers that hold a
+                per-request session pass it explicitly.
+            exc: The exception that caused the abort — its str form is
+                truncated and stored in metadata for debugging.
+
+        Gated by :func:`_placeholder_on_abort_enabled` so tests and
+        operators can disable it. The persist step uses the same
+        best-effort wrapper as every other save — a storage failure
+        here is logged but never re-raised (the original exception is
+        still propagating up the stack).
+        """
+        if not _placeholder_on_abort_enabled():
+            return
+        target = session if session is not None else self.session
+        try:
+            target.add_assistant_message(
+                content=_PLACEHOLDER_TURN_INTERRUPTED,
+                metadata={"aborted": True, "error": str(exc)[:200]},
+            )
+            if self.session_store is not None:
+                self.session_store.save(target)
+        except Exception:
+            logger.exception(
+                "Failed to write aborted-turn placeholder for session_id=%s",
+                getattr(target, "session_id", "<unknown>"),
+            )
 
     def _persist_session(self) -> None:
         """Save the current session to ``session_store`` if configured.

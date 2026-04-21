@@ -332,6 +332,41 @@ class TestAGUIHandlerErrorHandling(unittest.TestCase):
         self.assertIn("message", error_events[0])
         self.assertEqual(error_events[0]["code"], "AGENT_ERROR")
 
+    def test_error_writes_aborted_placeholder(self):
+        """Layer 2b — agent crash must leave an 'aborted' placeholder
+        assistant message in the session + persistent store, so a
+        reloaded thread doesn't dead-end on a bare user turn."""
+        import tempfile
+        from pathlib import Path
+
+        from openbench.chat.stores.sqlite import SQLiteSessionStore
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = SQLiteSessionStore(str(Path(tmpdir) / "sessions.db"))
+            engine = ChatEngine(agent=ErrorMockAgent(), session_store=store)
+            handler = AGUIHandler(engine=engine)
+
+            events = _run(
+                _collect_events(
+                    handler,
+                    {"threadId": "thread-err-1", "content": "Hello"},
+                )
+            )
+
+            # Error event emitted
+            self.assertTrue(any(e["type"] == "RUN_ERROR" for e in events))
+
+            # Session reloaded from store ends on aborted placeholder
+            reloaded = store.load("thread-err-1")
+            self.assertIsNotNone(reloaded)
+            assert reloaded is not None
+            self.assertEqual(len(reloaded.messages), 2)
+            self.assertEqual(reloaded.messages[0].content, "Hello")
+            last = reloaded.messages[1]
+            self.assertIn("Turn interrupted", last.content)
+            self.assertTrue(last.metadata.get("aborted"))
+            self.assertIn("Agent crashed", last.metadata.get("error", ""))
+
 
 class TestAGUIHandlerContentExtraction(unittest.TestCase):
     """Tests for _extract_content() -- dual format support."""

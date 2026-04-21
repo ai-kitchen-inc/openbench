@@ -1009,5 +1009,163 @@ class TestChatEngineSessionStore(unittest.TestCase):
         self.assertIsNone(self.store.load(engine.session.session_id))
 
 
+class _RaisingAgent(Agent):
+    """Agent that always raises to simulate a mid-turn crash."""
+
+    def __init__(self, exc: BaseException):
+        self._exc = exc
+
+    @property
+    def agent_type(self) -> str:
+        return "raising"
+
+    def execute(self, context):
+        raise self._exc
+
+    def estimate_cost(self, context):
+        return 0.0
+
+
+class TestChatEngineAbortPlaceholder(unittest.TestCase):
+    """Layer 2b — aborted-turn placeholder.
+
+    When ``_execute_agent`` raises, ``invoke`` / ``stream`` /
+    ``async_stream`` must leave the session ending on a placeholder
+    assistant message (``metadata["aborted"] == True``) and propagate
+    the exception (for invoke) or emit a stream ERROR (for stream).
+    """
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from openbench.chat.stores.sqlite import SQLiteSessionStore
+
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.store = SQLiteSessionStore(str(Path(self._tmpdir.name) / "sessions.db"))
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def test_invoke_writes_placeholder_on_crash(self):
+        engine = ChatEngine(
+            agent=_RaisingAgent(RuntimeError("Gemini 500")),
+            session_store=self.store,
+        )
+        with self.assertRaises(RuntimeError):
+            engine.invoke("analyze this")
+
+        # In-memory session ended on placeholder
+        msgs = engine.session.messages
+        self.assertEqual(len(msgs), 2)
+        self.assertEqual(msgs[0].role, MessageRole.USER)
+        self.assertEqual(msgs[0].content, "analyze this")
+        self.assertEqual(msgs[1].role, MessageRole.ASSISTANT)
+        self.assertIn("Turn interrupted", msgs[1].content)
+        self.assertTrue(msgs[1].metadata.get("aborted"))
+        self.assertIn("Gemini 500", msgs[1].metadata.get("error", ""))
+
+        # Session saved to store with both messages
+        reloaded = self.store.load(engine.session.session_id)
+        assert reloaded is not None
+        self.assertEqual(len(reloaded.messages), 2)
+        self.assertTrue(reloaded.messages[1].metadata.get("aborted"))
+
+    def test_stream_writes_placeholder_on_crash(self):
+        engine = ChatEngine(
+            agent=_RaisingAgent(RuntimeError("tool exploded")),
+            session_store=self.store,
+        )
+        # Consume the stream so the except handler runs
+        output = [line for line in engine.stream("something")]
+        # Last emitted stream message is an ERROR type
+        last = json.loads(output[-1])
+        self.assertEqual(last["type"], "error")
+
+        # Placeholder persisted
+        reloaded = self.store.load(engine.session.session_id)
+        assert reloaded is not None
+        self.assertEqual(len(reloaded.messages), 2)
+        self.assertTrue(reloaded.messages[1].metadata.get("aborted"))
+        self.assertIn("Turn interrupted", reloaded.messages[1].content)
+
+    def test_async_stream_writes_placeholder_on_crash(self):
+        engine = ChatEngine(
+            agent=_RaisingAgent(RuntimeError("async boom")),
+            session_store=self.store,
+        )
+
+        async def _collect():
+            out: list[str] = []
+            async for line in engine.async_stream("hi"):
+                out.append(line)
+            return out
+
+        loop = asyncio.new_event_loop()
+        try:
+            output = loop.run_until_complete(_collect())
+        finally:
+            loop.close()
+        self.assertEqual(json.loads(output[-1])["type"], "error")
+
+        reloaded = self.store.load(engine.session.session_id)
+        assert reloaded is not None
+        self.assertEqual(len(reloaded.messages), 2)
+        self.assertTrue(reloaded.messages[1].metadata.get("aborted"))
+
+    def test_placeholder_disabled_by_env(
+        self,
+    ):
+        """With the env flag off, the session ends on the user message —
+        matches pre-Layer-2b behaviour, useful as a rollback lever."""
+        import os
+
+        os.environ["OPENBENCH_PLACEHOLDER_ON_ABORT"] = "0"
+        try:
+            engine = ChatEngine(
+                agent=_RaisingAgent(RuntimeError("x")),
+                session_store=self.store,
+            )
+            with self.assertRaises(RuntimeError):
+                engine.invoke("q")
+
+            # No placeholder added
+            self.assertEqual(len(engine.session.messages), 1)
+            self.assertEqual(engine.session.messages[0].role, MessageRole.USER)
+
+            # Store has only the user message (from the upfront save)
+            reloaded = self.store.load(engine.session.session_id)
+            assert reloaded is not None
+            self.assertEqual(len(reloaded.messages), 1)
+        finally:
+            del os.environ["OPENBENCH_PLACEHOLDER_ON_ABORT"]
+
+    def test_placeholder_store_failure_does_not_mask_original_exception(self):
+        """If the placeholder save itself raises, the ORIGINAL exception
+        from the agent must still propagate unchanged."""
+
+        class BrokenStore:
+            def save(self, session):
+                raise OSError("disk full")
+
+            def load(self, session_id):
+                return None
+
+            def list(self, limit=50, offset=0):
+                return []
+
+            def delete(self, session_id):
+                pass
+
+        engine = ChatEngine(
+            agent=_RaisingAgent(RuntimeError("original")),
+            session_store=BrokenStore(),
+        )
+        with self.assertRaises(RuntimeError) as cm:
+            engine.invoke("hi")
+        # The original exception propagates — not the disk-full OSError
+        self.assertIn("original", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

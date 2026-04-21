@@ -360,6 +360,18 @@ class AGUIHandler:
 
         except Exception as e:
             logger.error(f"AG-UI stream error: {e}")
+            # Drop a placeholder assistant message into the session before
+            # emitting the error event. Otherwise the reloaded thread
+            # ends on a dangling user turn, which looks to the user like
+            # their message disappeared. The engine owns the placeholder
+            # helper so the behaviour matches ChatEngine.invoke/stream.
+            try:
+                self.engine._write_aborted_placeholder(session, e)
+            except Exception:
+                logger.exception(
+                    "Failed to write aborted-turn placeholder for session_id=%s",
+                    session.session_id,
+                )
             yield encoder.encode(RunErrorEvent(message=str(e), code="AGENT_ERROR"))
 
     def _extract_content(self, body: dict[str, Any]) -> tuple[str, list | None]:
