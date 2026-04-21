@@ -105,8 +105,15 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
 
     @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
     def test_tool_message_converted(self, mock_client):
-        """Test tool result message becomes function_response."""
+        """Test tool result message becomes function_response when paired
+        with a preceding assistant tool_call (memory validator requires
+        both sides of the pair)."""
         messages = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "c0", "name": "calc", "arguments": {}}],
+            },
             {
                 "role": "tool",
                 "content": '{"result": "42"}',
@@ -115,9 +122,11 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
             },
         ]
         _system, contents = self.provider._convert_messages(messages)
-        self.assertEqual(len(contents), 1)
-        # Tool results go as user role in Gemini
-        self.assertEqual(contents[0].role, "user")
+        self.assertEqual(len(contents), 2)
+        # Assistant with function_call
+        self.assertEqual(contents[0].role, "model")
+        # Tool result goes as user role in Gemini
+        self.assertEqual(contents[1].role, "user")
 
     @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
     def test_assistant_with_tool_calls(self, mock_client):
@@ -127,12 +136,18 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
                 "role": "assistant",
                 "content": "",
                 "tool_calls": [
-                    {"name": "search", "arguments": {"query": "test"}},
+                    {"id": "call_0", "name": "search", "arguments": {"query": "test"}},
                 ],
-            }
+            },
+            {
+                "role": "tool",
+                "content": '{"results": []}',
+                "name": "search",
+                "tool_call_id": "call_0",
+            },
         ]
         _system, contents = self.provider._convert_messages(messages)
-        self.assertEqual(len(contents), 1)
+        self.assertEqual(len(contents), 2)
         self.assertEqual(contents[0].role, "model")
         # Should have function_call part
         parts = contents[0].parts
@@ -148,7 +163,7 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
                 "role": "assistant",
                 "content": "I'll search for X.",
                 "tool_calls": [
-                    {"name": "search", "arguments": {"query": "X"}},
+                    {"id": "call_0", "name": "search", "arguments": {"query": "X"}},
                 ],
             },
             {

@@ -37,8 +37,20 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 from openbench.core.abstractions import LLMProvider, LLMResponse
+from openbench.intelligence.memory_validator import validate_tool_call_pairs
 
 logger = logging.getLogger(__name__)
+
+
+def _memory_validator_enabled() -> bool:
+    """Gate the orphan-tool-call validator via env var.
+
+    Default ``"1"`` (on). Set ``OPENBENCH_MEMORY_VALIDATOR=0`` to bypass
+    when debugging a suspected false-positive drop.
+    """
+    flag = os.environ.get("OPENBENCH_MEMORY_VALIDATOR", "1").strip().lower()
+    return flag in ("1", "true", "yes", "on")
+
 
 # Cost per 1M tokens in USD (converted to per-1K for compatibility with config.py)
 _GEMINI_COSTS: dict[str, dict[str, float]] = {
@@ -122,6 +134,17 @@ class GeminiLLMProvider(LLMProvider):
             Tuple of (system_instruction, contents) for Gemini API.
         """
         from google.genai import types
+
+        if _memory_validator_enabled():
+            messages, drops = validate_tool_call_pairs(messages)
+            for drop in drops:
+                logger.warning(
+                    "[memory-validator] dropped %s at index %d (id=%s): %s",
+                    drop.reason,
+                    drop.message_index,
+                    drop.tool_call_id,
+                    drop.detail,
+                )
 
         system_instruction = None
         contents = []
