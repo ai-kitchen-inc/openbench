@@ -1077,7 +1077,7 @@ class TestChatEngineAbortPlaceholder(unittest.TestCase):
             session_store=self.store,
         )
         # Consume the stream so the except handler runs
-        output = [line for line in engine.stream("something")]
+        output = list(engine.stream("something"))
         # Last emitted stream message is an ERROR type
         last = json.loads(output[-1])
         self.assertEqual(last["type"], "error")
@@ -1096,10 +1096,7 @@ class TestChatEngineAbortPlaceholder(unittest.TestCase):
         )
 
         async def _collect():
-            out: list[str] = []
-            async for line in engine.async_stream("hi"):
-                out.append(line)
-            return out
+            return [line async for line in engine.async_stream("hi")]
 
         loop = asyncio.new_event_loop()
         try:
