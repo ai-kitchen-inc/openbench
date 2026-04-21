@@ -20,12 +20,13 @@ import json
 import logging
 import math
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
 from openbench.core.abstractions import (
@@ -85,6 +86,17 @@ class AgentMemory:
     messages: list[Message] = field(default_factory=list)
     max_messages: int = 100
     max_tokens: int | None = None
+
+    @contextmanager
+    def turn(self) -> Iterator[None]:
+        """Atomic turn context. Base ``AgentMemory`` is a no-op.
+
+        :class:`PersistentMemory` overrides this to buffer writes during
+        the turn and flush atomically at the end, so a process crash
+        mid-turn cannot leave the backing store with orphan
+        ``tool_calls`` that lack matching tool responses.
+        """
+        yield
 
     def _estimate_tokens(self) -> int:
         """Rough token estimate: ~4 chars per token."""
@@ -1106,147 +1118,159 @@ Provide clear, actionable responses."""
         try:
             llm = self._get_llm()
 
-            while iterations < self.max_iterations:
-                iterations += 1
-                iter_start = time.monotonic()
+            # Run the ReAct loop inside an atomic memory turn. If the
+            # process dies or an exception escapes before the assistant
+            # final message is appended, the turn rolls back and the
+            # store never sees a half-written assistant(tool_calls) row
+            # that would poison subsequent requests with Gemini's
+            # "function response turn must come immediately after a
+            # function call turn" 400. The user-message add (line
+            # above) is intentionally OUTSIDE the turn so the user's
+            # own text survives a failed turn.
+            with self.memory.turn():
+                while iterations < self.max_iterations:
+                    iterations += 1
+                    iter_start = time.monotonic()
 
-                # Emit progress for LLM call phase
-                if iterations == 1:
-                    _emit_progress(on_progress, "Thinking")
-                else:
-                    _emit_progress(on_progress, "Analyzing results")
-
-                gen_kwargs: dict[str, Any] = {
-                    "prompt": self.memory.get_messages(),
-                    "model": self.model,
-                    "tools": self.tools.get_schemas() or None,
-                    "temperature": self.temperature,
-                }
-
-                if use_stream:
-                    # Streaming path: yield deltas via on_chunk
-                    full_text = ""
-                    final_response = None
-                    for chunk in llm.generate_stream(**gen_kwargs):
-                        if chunk.text:
-                            on_chunk(chunk.text)
-                            full_text += chunk.text
-                        final_response = chunk
-
-                    if final_response is None:
-                        response = LLMResponse(text="", model=self.model, tokens_used=0, cost=0.0)
+                    # Emit progress for LLM call phase
+                    if iterations == 1:
+                        _emit_progress(on_progress, "Thinking")
                     else:
-                        response = final_response
-                        # Ensure full accumulated text (stream yields deltas)
-                        if full_text and not getattr(response, "tool_calls", None):
-                            response.text = full_text
-                else:
-                    # Non-streaming path (backward compatible)
-                    response = llm.generate(**gen_kwargs)
+                        _emit_progress(on_progress, "Analyzing results")
 
-                total_tokens += response.tokens_used
-                total_cost += response.cost
+                    gen_kwargs: dict[str, Any] = {
+                        "prompt": self.memory.get_messages(),
+                        "model": self.model,
+                        "tools": self.tools.get_schemas() or None,
+                        "temperature": self.temperature,
+                    }
 
-                # Track per-iteration token breakdown
-                iter_prompt = response.metadata.get("prompt_tokens", 0)
-                iter_completion = response.metadata.get("completion_tokens", 0)
-                total_prompt_tokens += iter_prompt
-                total_completion_tokens += iter_completion
+                    if use_stream:
+                        # Streaming path: yield deltas via on_chunk
+                        full_text = ""
+                        final_response = None
+                        for chunk in llm.generate_stream(**gen_kwargs):
+                            if chunk.text:
+                                on_chunk(chunk.text)
+                                full_text += chunk.text
+                            final_response = chunk
 
-                # Check for tool calls
-                tool_calls = self._parse_tool_calls(response)
-
-                iter_stat = {
-                    "iteration": iterations,
-                    "prompt_tokens": iter_prompt,
-                    "completion_tokens": iter_completion,
-                    "cost": response.cost,
-                    "tool_calls": [tc["name"] for tc in tool_calls],
-                    "duration_seconds": round(time.monotonic() - iter_start, 3),
-                }
-                iteration_stats.append(iter_stat)
-
-                # Get raw content for replaying (preserves thought_signature)
-                raw_content = getattr(response, "raw_content", None)
-
-                if not tool_calls:
-                    # No tool calls. If the model also produced no text this
-                    # is a Gemini 3 "Confidence Dropout" — the model spent
-                    # thinking tokens but didn't commit to an answer. Retry
-                    # instead of accepting a blank result, up to a cap.
-                    if not response.text.strip() and _empty_retries < _MAX_EMPTY_RETRIES:
-                        _empty_retries += 1
-                        diagnostics = response.metadata.get("empty_response_diagnostics")
-                        logger.warning(
-                            "Empty response on iteration %d (retry %d/%d, diagnostics=%s). "
-                            "Retrying — NOT adding empty turn to memory.",
-                            iterations,
-                            _empty_retries,
-                            _MAX_EMPTY_RETRIES,
-                            diagnostics,
-                        )
-                        # Do NOT add the empty response to memory — that would
-                        # poison the conversation with a blank assistant turn and
-                        # Gemini might follow the pattern. Just retry.
-                        continue
-
-                    # Non-empty text OR max retries exhausted — we're done.
-                    if not response.text.strip() and _empty_retries >= _MAX_EMPTY_RETRIES:
-                        logger.warning(
-                            "Empty response persists after %d retries. Accepting empty result.",
-                            _MAX_EMPTY_RETRIES,
-                        )
-                    self.memory.add_assistant(response.text, raw_content=raw_content)
-                    break
-
-                # Execute tool calls.
-                # Snapshot memory length so we can roll back on failure —
-                # without this, a mid-loop exception leaves an orphaned
-                # assistant(tool_calls) message in persistent memory that
-                # Gemini will reject ("function response turn must come
-                # immediately after a function call turn") on every
-                # subsequent request in the same session.
-                all_tools_used.extend(tc["name"] for tc in tool_calls)
-                pre_tools_len = len(self.memory.messages)
-                self.memory.add_assistant(
-                    response.text, tool_calls=tool_calls, raw_content=raw_content
-                )
-
-                # Emit progress with tool names
-                tool_names = [tc["name"] for tc in tool_calls]
-                _emit_progress(on_progress, f"Running {', '.join(tool_names)}")
-
-                try:
-                    if self.parallel_tool_execution and len(tool_calls) > 1:
-                        # Parallel execution for multiple tool calls
-                        results = self.tools.execute_parallel(tool_calls)
-                        for r in results:
-                            tc = r["call"]
-                            if r["error"] is not None:
-                                result_str = f"Error: {r['error']}"
-                            else:
-                                result_str = _tool_result_to_json(r["result"])
-                            self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                        if final_response is None:
+                            response = LLMResponse(
+                                text="", model=self.model, tokens_used=0, cost=0.0
+                            )
+                        else:
+                            response = final_response
+                            # Ensure full accumulated text (stream yields deltas)
+                            if full_text and not getattr(response, "tool_calls", None):
+                                response.text = full_text
                     else:
-                        # Sequential execution (default)
-                        for tc in tool_calls:
-                            try:
-                                result = self.tools.execute(tc["name"], **tc["arguments"])
-                                result_str = _tool_result_to_json(result)
-                            except Exception as e:
-                                result_str = f"Error: {e!s}"
-                            self.memory.add_tool_result(tc["id"], tc["name"], result_str)
-                except Exception:
-                    # Tool execution loop itself blew up (e.g. memory.add_tool_result
-                    # raised on SQLite error). Roll back the half-written turn so
-                    # memory stays in a Gemini-acceptable state, then propagate.
-                    # NOTE: use truncate_to(), not direct list slicing, so
-                    # PersistentMemory can also delete the orphaned rows from
-                    # its backing store. A plain slice would leave the assistant
-                    # (tool_calls=...) message in SQLite where it resurrects on
-                    # the next session load and retriggers the same Gemini error.
-                    self.memory.truncate_to(pre_tools_len)
-                    raise
+                        # Non-streaming path (backward compatible)
+                        response = llm.generate(**gen_kwargs)
+
+                    total_tokens += response.tokens_used
+                    total_cost += response.cost
+
+                    # Track per-iteration token breakdown
+                    iter_prompt = response.metadata.get("prompt_tokens", 0)
+                    iter_completion = response.metadata.get("completion_tokens", 0)
+                    total_prompt_tokens += iter_prompt
+                    total_completion_tokens += iter_completion
+
+                    # Check for tool calls
+                    tool_calls = self._parse_tool_calls(response)
+
+                    iter_stat = {
+                        "iteration": iterations,
+                        "prompt_tokens": iter_prompt,
+                        "completion_tokens": iter_completion,
+                        "cost": response.cost,
+                        "tool_calls": [tc["name"] for tc in tool_calls],
+                        "duration_seconds": round(time.monotonic() - iter_start, 3),
+                    }
+                    iteration_stats.append(iter_stat)
+
+                    # Get raw content for replaying (preserves thought_signature)
+                    raw_content = getattr(response, "raw_content", None)
+
+                    if not tool_calls:
+                        # No tool calls. If the model also produced no text this
+                        # is a Gemini 3 "Confidence Dropout" — the model spent
+                        # thinking tokens but didn't commit to an answer. Retry
+                        # instead of accepting a blank result, up to a cap.
+                        if not response.text.strip() and _empty_retries < _MAX_EMPTY_RETRIES:
+                            _empty_retries += 1
+                            diagnostics = response.metadata.get("empty_response_diagnostics")
+                            logger.warning(
+                                "Empty response on iteration %d (retry %d/%d, diagnostics=%s). "
+                                "Retrying — NOT adding empty turn to memory.",
+                                iterations,
+                                _empty_retries,
+                                _MAX_EMPTY_RETRIES,
+                                diagnostics,
+                            )
+                            # Do NOT add the empty response to memory — that would
+                            # poison the conversation with a blank assistant turn and
+                            # Gemini might follow the pattern. Just retry.
+                            continue
+
+                        # Non-empty text OR max retries exhausted — we're done.
+                        if not response.text.strip() and _empty_retries >= _MAX_EMPTY_RETRIES:
+                            logger.warning(
+                                "Empty response persists after %d retries. Accepting empty result.",
+                                _MAX_EMPTY_RETRIES,
+                            )
+                        self.memory.add_assistant(response.text, raw_content=raw_content)
+                        break
+
+                    # Execute tool calls.
+                    # Snapshot memory length so we can roll back on failure —
+                    # without this, a mid-loop exception leaves an orphaned
+                    # assistant(tool_calls) message in persistent memory that
+                    # Gemini will reject ("function response turn must come
+                    # immediately after a function call turn") on every
+                    # subsequent request in the same session.
+                    all_tools_used.extend(tc["name"] for tc in tool_calls)
+                    pre_tools_len = len(self.memory.messages)
+                    self.memory.add_assistant(
+                        response.text, tool_calls=tool_calls, raw_content=raw_content
+                    )
+
+                    # Emit progress with tool names
+                    tool_names = [tc["name"] for tc in tool_calls]
+                    _emit_progress(on_progress, f"Running {', '.join(tool_names)}")
+
+                    try:
+                        if self.parallel_tool_execution and len(tool_calls) > 1:
+                            # Parallel execution for multiple tool calls
+                            results = self.tools.execute_parallel(tool_calls)
+                            for r in results:
+                                tc = r["call"]
+                                if r["error"] is not None:
+                                    result_str = f"Error: {r['error']}"
+                                else:
+                                    result_str = _tool_result_to_json(r["result"])
+                                self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                        else:
+                            # Sequential execution (default)
+                            for tc in tool_calls:
+                                try:
+                                    result = self.tools.execute(tc["name"], **tc["arguments"])
+                                    result_str = _tool_result_to_json(result)
+                                except Exception as e:
+                                    result_str = f"Error: {e!s}"
+                                self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                    except Exception:
+                        # Tool execution loop itself blew up (e.g. memory.add_tool_result
+                        # raised on SQLite error). Roll back the half-written turn so
+                        # memory stays in a Gemini-acceptable state, then propagate.
+                        # NOTE: use truncate_to(), not direct list slicing, so
+                        # PersistentMemory can also delete the orphaned rows from
+                        # its backing store. A plain slice would leave the assistant
+                        # (tool_calls=...) message in SQLite where it resurrects on
+                        # the next session load and retriggers the same Gemini error.
+                        self.memory.truncate_to(pre_tools_len)
+                        raise
 
             total_duration = round(time.monotonic() - start_time, 3)
 

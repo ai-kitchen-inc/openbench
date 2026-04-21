@@ -253,11 +253,13 @@ class TestConverterIntegration:
 
 def test_validation_drop_is_frozen_dataclass():
     """ValidationDrop must be hashable/frozen so callers can put them in sets."""
+    from dataclasses import FrozenInstanceError
+
     d = ValidationDrop(
         reason="orphan_tool_call",
         message_index=0,
         tool_call_id="x",
         detail="",
     )
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         d.reason = "other"  # type: ignore[misc]

@@ -13,14 +13,30 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openbench.intelligence.base import AgentMemory, Message, MessageRole
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 logger = logging.getLogger(__name__)
+
+
+def _turn_transaction_enabled() -> bool:
+    """Gate the per-turn memory transaction via env var.
+
+    Default ``"1"`` (on). Set ``OPENBENCH_TURN_TRANSACTION=0`` to revert
+    to per-message autocommit — the legacy behaviour, useful as a
+    rollback lever if the transaction introduces unexpected issues.
+    """
+    flag = os.environ.get("OPENBENCH_TURN_TRANSACTION", "1").strip().lower()
+    return flag in ("1", "true", "yes", "on")
 
 
 class MemoryStore(ABC):
@@ -281,14 +297,27 @@ class PersistentMemory(AgentMemory):
         super().__init__(max_messages=max_messages, max_tokens=max_tokens)
         self.store = store
         self.session_id = session_id
+        # Turn transaction state — see turn() below.
+        self._in_turn: bool = False
+        self._turn_buffer: list[Message] = []
+        self._turn_add_count: int = 0
         # Load previous conversation
         self.messages = self.store.load(session_id)
 
     def add(self, role: MessageRole, content: str, **kwargs: Any) -> None:
-        """Add message and persist to store."""
+        """Add message and persist to store.
+
+        Inside a :meth:`turn` context, the store write is buffered and
+        flushed atomically at turn-end; a process crash mid-turn leaves
+        the store untouched. Outside a turn (legacy path), every add is
+        autocommitted — same behaviour as pre-transaction code.
+        """
         super().add(role, content, **kwargs)
-        # Persist the newly added message
-        self.store.save(self.session_id, [self.messages[-1]])
+        if self._in_turn:
+            self._turn_buffer.append(self.messages[-1])
+            self._turn_add_count += 1
+        else:
+            self.store.save(self.session_id, [self.messages[-1]])
 
     def search_history(self, query: str, limit: int = 5) -> list[Message]:
         """Search across all past sessions.
@@ -314,6 +343,10 @@ class PersistentMemory(AgentMemory):
         failed agent turn also deletes the orphaned rows from the backing
         store — otherwise ``PersistentMemory.__init__`` would resurrect
         them on the next session load.
+
+        Inside a :meth:`turn` context, the store has not been written to
+        yet, so this only truncates the in-memory list and the pending
+        buffer.
         """
         if length < 0:
             length = 0
@@ -321,6 +354,17 @@ class PersistentMemory(AgentMemory):
         if length >= current_len:
             return
         delta = current_len - length
+
+        if self._in_turn:
+            # Buffered writes haven't touched the store; sync in-memory
+            # and the pending buffer only.
+            super().truncate_to(length)
+            drop = min(delta, len(self._turn_buffer))
+            if drop:
+                del self._turn_buffer[-drop:]
+            self._turn_add_count = max(0, self._turn_add_count - delta)
+            return
+
         # Truncate in-memory first so callers see a consistent view even
         # if the store call raises.
         super().truncate_to(length)
@@ -334,3 +378,53 @@ class PersistentMemory(AgentMemory):
                 e,
             )
             raise
+
+    @contextmanager
+    def turn(self) -> Iterator[None]:
+        """Buffer writes during one agent turn; flush atomically on exit.
+
+        Normal exit (``return``): buffered messages are saved to the
+        store in a single ``save()`` call. Exception exit (including
+        ``KeyboardInterrupt`` / ``SystemExit``): buffered messages are
+        discarded and the in-memory list is truncated back to its
+        pre-turn length. The store is never touched mid-turn, so a
+        process kill between ``add_assistant(tool_calls=...)`` and the
+        subsequent ``add_tool_result`` calls cannot corrupt the session.
+
+        Nested calls raise :class:`RuntimeError`. When
+        ``OPENBENCH_TURN_TRANSACTION=0``, this is a no-op and the
+        existing per-message autocommit path is used.
+        """
+        if not _turn_transaction_enabled():
+            yield
+            return
+
+        if self._in_turn:
+            raise RuntimeError("Nested PersistentMemory.turn() is not supported")
+
+        self._in_turn = True
+        self._turn_buffer = []
+        self._turn_add_count = 0
+        success = False
+        try:
+            yield
+            success = True
+        finally:
+            # Clear flag BEFORE the store call so a failure there doesn't
+            # strand the object in a half-in-turn state.
+            self._in_turn = False
+            buffer = self._turn_buffer
+            add_count = self._turn_add_count
+            self._turn_buffer = []
+            self._turn_add_count = 0
+
+            if success:
+                if buffer:
+                    self.store.save(self.session_id, buffer)
+            elif add_count > 0:
+                # Remove turn-added messages from the in-memory tail.
+                # _trim_oldest() during the turn removes from the front,
+                # so the last add_count entries are still our adds.
+                remove = min(add_count, len(self.messages))
+                if remove:
+                    del self.messages[-remove:]
