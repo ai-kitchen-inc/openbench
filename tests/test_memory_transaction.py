@@ -10,6 +10,7 @@ back to the pre-turn state so a subsequent retry starts clean.
 from __future__ import annotations
 
 import pytest
+
 from openbench.intelligence.base import MessageRole
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
 
@@ -59,11 +60,10 @@ class TestTurnRollback:
         class Boom(Exception):
             pass
 
-        with pytest.raises(Boom):
-            with memory.turn():
-                memory.add_user("hello")
-                memory.add_assistant("thinking", tool_calls=[{"id": "c1", "name": "t"}])
-                raise Boom("tool exec died")
+        with pytest.raises(Boom), memory.turn():
+            memory.add_user("hello")
+            memory.add_assistant("thinking", tool_calls=[{"id": "c1", "name": "t"}])
+            raise Boom("tool exec died")
 
         # Nothing persisted
         assert store.load("sess-1") == []
@@ -74,12 +74,11 @@ class TestTurnRollback:
         memory.add_user("pre-existing")
         pre_len = len(memory.messages)
 
-        with pytest.raises(RuntimeError):
-            with memory.turn():
-                memory.add_assistant("working", tool_calls=[{"id": "c1", "name": "t"}])
-                memory.add_tool_result("c1", "t", '{"x": 1}')
-                assert len(memory.messages) == pre_len + 2
-                raise RuntimeError("simulated")
+        with pytest.raises(RuntimeError), memory.turn():
+            memory.add_assistant("working", tool_calls=[{"id": "c1", "name": "t"}])
+            memory.add_tool_result("c1", "t", '{"x": 1}')
+            assert len(memory.messages) == pre_len + 2
+            raise RuntimeError("simulated")
 
         assert len(memory.messages) == pre_len
         assert memory.messages[-1].content == "pre-existing"
@@ -92,14 +91,13 @@ class TestTurnRollback:
         memory.add_user("pre")
         pre_len = len(memory.messages)
 
-        with pytest.raises(Exception, match="tool died"):
-            with memory.turn():
-                memory.add_assistant("calling", tool_calls=[{"id": "c1", "name": "t"}])
-                assert len(memory.messages) == pre_len + 1
-                # Simulate BaseAgent's rollback before re-raise
-                memory.truncate_to(pre_len)
-                assert len(memory.messages) == pre_len
-                raise Exception("tool died")
+        with pytest.raises(Exception, match="tool died"), memory.turn():
+            memory.add_assistant("calling", tool_calls=[{"id": "c1", "name": "t"}])
+            assert len(memory.messages) == pre_len + 1
+            # Simulate BaseAgent's rollback before re-raise
+            memory.truncate_to(pre_len)
+            assert len(memory.messages) == pre_len
+            raise Exception("tool died")
 
         # Store never saw the orphan
         assert store.load("sess-1") == [memory.messages[0]]
@@ -111,9 +109,8 @@ class TestTurnMisc:
     def test_nested_turn_raises(self, memory):
         """Nested turns are not supported — explicit failure beats silent
         inconsistency if someone accidentally nests."""
-        with memory.turn(), pytest.raises(RuntimeError, match="[Nn]ested"):
-            with memory.turn():
-                pass
+        with memory.turn(), pytest.raises(RuntimeError, match=r"[Nn]ested"), memory.turn():
+            pass
 
     def test_disabled_by_env_falls_back_to_autocommit(self, memory, store, monkeypatch):
         """``OPENBENCH_TURN_TRANSACTION=0`` reverts to per-message commit.
@@ -126,13 +123,12 @@ class TestTurnMisc:
         class Boom(Exception):
             pass
 
-        with pytest.raises(Boom):
-            with memory.turn():  # no-op context
-                memory.add_user("hello")
-                # With flag off, add() autocommits each message
-                assert len(store.load("sess-1")) == 1
-                memory.add_assistant("working", tool_calls=[{"id": "c1", "name": "t"}])
-                raise Boom("no transaction to roll back")
+        with pytest.raises(Boom), memory.turn():  # no-op context
+            memory.add_user("hello")
+            # With flag off, add() autocommits each message
+            assert len(store.load("sess-1")) == 1
+            memory.add_assistant("working", tool_calls=[{"id": "c1", "name": "t"}])
+            raise Boom("no transaction to roll back")
 
         # With flag off, the orphan assistant reaches the store —
         # this is exactly the bug Layer 2a prevents when the flag is on.
