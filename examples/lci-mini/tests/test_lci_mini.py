@@ -747,7 +747,8 @@ def test_awp_recatalogs_from_prior_session_attachments(monkeypatch, tmp_path):
     import pandas as pd
     from fastapi.testclient import TestClient
     from lci_mini.server.handler import LiciAGUIHandler
-    from openbench.chat.session import Attachment, ChatSession, MessageRole
+
+    from openbench.chat.session import Attachment, ChatSession
 
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
     monkeypatch.setenv("OPENBENCH_AUTH_DISABLED", "1")

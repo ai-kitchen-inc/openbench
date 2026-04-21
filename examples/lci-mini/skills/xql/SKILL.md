@@ -1,107 +1,73 @@
 # xql
 
-Treat Excel sheets as relational tables. XQL (Excel Query Language) gives
-Lici SQL-like primitives — SELECT / WHERE / PROJECT / GROUP BY / JOIN /
-UNION / PIVOT / PARETO — that operate over messy LCI workbooks without
-the user writing Python or SQL.
-
-This skill exists to solve a real problem in LCI work: data lives across
-multiple Excel files with inconsistent schemas (renamed columns, multi-row
-headers, mixed units), and analysts resort to copy-paste, VLOOKUP chains,
-or one-off Python scripts. XQL treats each sheet as a named table with a
-canonical alias-based schema, so queries are portable across files.
+Treat Excel sheets as relational tables. XQL gives Lici SQL-like
+primitives — SELECT / WHERE / PROJECT / GROUP BY / JOIN / UNION / PIVOT
+/ PARETO — that operate over messy LCI workbooks without the user
+writing Python or SQL.
 
 ## Triggers
 
-- User uploads or points at an .xlsx workbook
-- User asks about specific columns, categories, or flows in a sheet
-- User asks for totals, averages, rankings, or Pareto breakdowns
-- User wants to join or compare data across two sheets or two files
-- User wants to build an IO table or a pivoted summary
-- User mentions "LCI", "LDI", "inventory", "raw materials", "emissions",
-  "aggregate by", "top N", "group by", "compare", "merge"
-
-## Dependencies
-
-- pandas (already a lci-mini dependency)
-- openpyxl (Excel reader)
-- pyyaml (load config/*.yaml at skill initialization)
+- User attaches or references an `.xlsx` workbook.
+- User asks about columns, categories, flows, totals, rankings, or
+  Pareto breakdowns.
+- User wants to join/compare data across sheets or files, or build an
+  IO table.
+- User mentions LCI, LDI, inventory, raw materials, emissions,
+  "aggregate by", "top N", "group by", "compare", "merge".
 
 ## Version
 
 0.1.0
 
-## Architecture
+## Column Resolution Protocol
 
-Three layers, all implemented in ``tools.py``:
+When querying an attached file, follow this order:
 
-- **Layer 0 — CATALOG**: ``xql_catalog``, ``xql_list_tables``,
-  ``xql_describe_table``. Discovers every sheet as a named table with a
-  normalized schema. Handles multi-row headers, unnamed columns, and
-  schema drift via a column alias registry.
-- **Layer 1 — QUERY**: ``xql_select``, ``xql_project``, ``xql_where``,
-  ``xql_order``, ``xql_group``, ``xql_distinct``, ``xql_pareto``.
-  Single-table relational operators. Alias-first column resolution.
-- **Layer 2 — TRANSFORM**: ``xql_join``, ``xql_union``, ``xql_pivot``,
-  ``xql_build_io_table``. Multi-table operators and LCI-specific helpers.
-
-Configuration lives in ``config/``:
-
-- ``aliases.yaml``   — logical column name -> list of physical names
-  (UNIVERSAL names only — no site-specific columns)
-- ``units.yaml``     — unit conversion factors (mass, volume, energy)
-- ``lci_rules.yaml`` — Pareto thresholds, grouping rules, exclusions
-
-## Column Resolution Strategy
-
-XQL uses a TWO-TIER column resolution:
-
-1. **Alias config** (config/aliases.yaml) — maps universal logical
-   names (category, material, unit, io) to common physical names.
-   Works for standard columns present in every LCI file.
-
-2. **LLM inference + Column Profile** (data-context-extractor SDK skill)
-   — for site-specific columns (amount, functional unit, custom metrics).
-   The agent reads xql_describe_table output, identifies the correct
-   column by name + dtype, then persists the mapping via
-   save_column_profile. Next session: profile loaded from disk, zero
-   re-mapping cost.
-
-Site-specific columns like "Semberah EP", "Cirebon Plant", or
-"FU - Clinker" do NOT belong in aliases.yaml. They are mapped
-dynamically by the LLM and cached by the column profile system.
-
-All queries return results inline (JSON-serializable list of row dicts)
-unless the caller asks to persist them. Source .xlsx files are **never**
-modified.
+1. `extract_file_context(path)` — check `profile_status`.
+   - `cached` → use the returned `column_roles` directly, skip to
+     querying.
+   - `needs_mapping` → continue.
+2. `xql_describe_table(table_id)` — get columns, dtypes, samples.
+3. Map each column:
+   - Standard columns (category / material / unit / io / process) use
+     alias names; XQL resolves them via `config/aliases.yaml`.
+   - Numeric columns without standard names (site/plant columns, FU
+     columns, custom metrics):
+     - Site/plant/location name → role `amount`.
+     - Contains "FU", "Functional Unit", "Per" → role
+       `functional_unit`.
+     - Ambiguous or multiple candidates → **ask the user** which one
+       they want analyzed.
+4. `save_column_profile(path, mappings)` — persist inferred roles so
+   the next session skips re-mapping.
+5. Always use physical column names (from describe/profile) in xql_*
+   calls. Alias names also work for standard columns.
+6. Never hardcode column names from prior conversations; each file may
+   have different headers. If the user corrects a mapping, call
+   `update_column_profile(path, column, role)`.
 
 ## Natural Language Mapping
 
 | User says | Primitives |
 |---|---|
-| "Tampilkan bahan pendukung cair" | ``xql_where(category="Liquid Supporting Material")`` |
-| "Total listrik per proses" | ``xql_where(category="Electricity")`` → ``xql_group(process, {amount: sum})`` |
-| "Bandingkan Semberah EP vs Tanjung" | ``xql_join(file1.sheet, file2.sheet, on=[process, category, material])`` |
-| "Top 80% emisi CO2" | ``xql_pareto(filter={material: "CO2"}, threshold=0.80)`` |
-| "Buat IO Table" | ``xql_build_io_table(source, products, rules)`` |
-| "Berapa jenis material di tiap kategori?" | ``xql_group(category, {material: nunique})`` |
-| "Gabungkan data kedua file" | ``xql_union([left_table, right_table])`` |
-| "Distinct kategori yang ada?" | ``xql_distinct(columns=[category])`` |
+| "Tampilkan bahan pendukung cair" | `xql_where(category="Liquid Supporting Material")` |
+| "Total listrik per proses" | `xql_where(category="Electricity")` → `xql_group(process, {amount: sum})` |
+| "Bandingkan Semberah EP vs Tanjung" | `xql_join(file1.sheet, file2.sheet, on=[process, category, material])` |
+| "Top 80% emisi CO2" | `xql_pareto(filter={material: "CO2"}, threshold=0.80)` |
+| "Buat IO Table" | `xql_build_io_table(source, products, rules)` |
+| "Berapa jenis material di tiap kategori?" | `xql_group(category, {material: nunique})` |
+| "Gabungkan data kedua file" | `xql_union([left_table, right_table])` |
+| "Distinct kategori yang ada?" | `xql_distinct(columns=[category])` |
 
-## Execution Flow (example)
+## Typical Flow
 
-User: *"berapa total diesel yang dipakai per proses?"*
-
-1. ``xql_catalog(files=["input.xlsx"])`` — register every sheet
-2. ``xql_list_tables()`` — find a sheet that mentions Liquid Fuels
-3. ``xql_where(table_id=..., conditions=[(category, "==", "Liquid Fuels"), (material, "LIKE", "Diesel")])``
-4. ``xql_group(group_by=["process"], agg={"amount": "sum"})``
-5. ``xql_order(by="amount_sum", ascending=False)``
-6. Display as a table
+`xql_catalog()` (no args — server injects paths) → `xql_list_tables()`
+→ pick `table_id` → `xql_where` / `xql_group` / `xql_order` / `xql_pareto`.
 
 ## Hard Boundaries
 
-- Never mutate source .xlsx files — output always goes to new tables
-- Never fabricate data — if a join has zero matches, surface it clearly
-- Always normalize units before aggregating across rows
-- Warn (don't error) on mixed-unit sums; show conversion factor used
+- Never mutate source `.xlsx` files — results go to new tables.
+- Never fabricate data — if a join has zero matches, surface it.
+- Always normalize units before aggregating.
+- Warn (don't error) on mixed-unit sums; show the conversion factor
+  used.
