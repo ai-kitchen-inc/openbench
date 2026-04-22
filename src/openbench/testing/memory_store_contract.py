@@ -28,9 +28,12 @@ execute against your impl.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 from openbench.intelligence.base import Message, MessageRole
-from openbench.intelligence.memory import MemoryStore
+
+if TYPE_CHECKING:
+    from openbench.intelligence.memory import MemoryStore
 
 
 class MemoryStoreContract(ABC):
@@ -51,13 +54,14 @@ class MemoryStoreContract(ABC):
         sessions — contract tests create their own.
         """
 
-    def cleanup_store(self, store: MemoryStore) -> None:
-        """Optional teardown hook.
+    def cleanup_store(self, store: MemoryStore) -> None:  # noqa: B027
+        """Optional teardown hook — intentionally a default no-op.
 
-        Default is a no-op — many backends can skip this (SQLite in a
-        tmp file, Drive mock cleared by its own fixture). Override for
-        backends that need explicit cleanup between tests (Postgres
-        TRUNCATE, Redis FLUSHDB, …).
+        Many backends can skip this (SQLite in a tmp file, Drive mock
+        cleared by its own fixture). Override for backends that need
+        explicit cleanup between tests (Postgres TRUNCATE, Redis
+        FLUSHDB, …). This is a Template Method hook, not an abstract
+        method — subclasses only override when needed.
         """
 
     # ── Helper for test messages ──

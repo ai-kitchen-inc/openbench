@@ -13,11 +13,15 @@ will add a second subclass here once landed.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
 from openbench.intelligence.memory import LocalSQLiteMemoryStore
 from openbench.testing import MemoryStoreContract
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestLocalSQLiteMemoryStore(MemoryStoreContract):
