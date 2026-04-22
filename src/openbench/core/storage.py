@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from openbench.chat.files import FileStore
     from openbench.chat.session_store import SessionStore
+    from openbench.intelligence.memory import MemoryStore
     from openbench.intelligence.persona_source import PersonaSource
     from openbench.intelligence.scratchpad import ScratchpadStore
 
@@ -54,6 +55,21 @@ class StorageBackend(Protocol):
     """
 
     def session_store(self) -> SessionStore: ...
+
+    def memory_store(self) -> MemoryStore:
+        """Store for LLM-internal agent conversation memory.
+
+        Distinct from :meth:`session_store`: session is the UI-facing
+        chat transcript (user + assistant final text), while memory is
+        the LLM-internal turn history including tool_calls and tool
+        responses. Same session_id links the two — but they can use
+        different backends (e.g. Drive for sessions, Postgres for
+        memory).
+
+        See the RFC-UNIFIED-MEMORY-STORAGE document for the full
+        backend-agnostic composition pattern.
+        """
+        ...
 
     def scratchpad_store(self) -> ScratchpadStore: ...
 
@@ -80,13 +96,19 @@ class LocalStorageBackend:
 
         ~/.openbench/
         ├── sessions.db         # SQLiteSessionStore
-        ├── memory/             # LocalMarkdownScratchpad
+        ├── memory.db           # LocalSQLiteMemoryStore (agent memory)
+        ├── memory/             # LocalMarkdownScratchpad (user-editable)
         │   └── <key>.md
         └── personas/           # FilesystemPersonaSource, per-name
             └── <name>/
                 ├── SOUL.md
                 ├── STYLE.md
                 └── AGENTS.md
+
+    Note: the ``memory/`` directory (scratchpad) and ``memory.db``
+    (agent memory) are distinct — the former is user-facing markdown
+    the agent reads/writes via the memory-scratchpad skill, the latter
+    is LLM-internal turn history.
 
     Project-scoped usage — pass ``./.openbench/`` to isolate storage to
     the current working directory:
@@ -113,6 +135,18 @@ class LocalStorageBackend:
         from openbench.chat.stores.sqlite import SQLiteSessionStore
 
         return SQLiteSessionStore(db_path=str(self.root / "sessions.db"))
+
+    def memory_store(self) -> MemoryStore:
+        """Return a SQLite-backed :class:`MemoryStore` at ``<root>/memory.db``.
+
+        Shipped as :class:`LocalSQLiteMemoryStore` — a thin alias for
+        the pre-existing :class:`SQLiteMemoryStore` that follows the
+        ``Local<Technology><Concept>Store`` naming convention used by
+        the other storage classes.
+        """
+        from openbench.intelligence.memory import LocalSQLiteMemoryStore
+
+        return LocalSQLiteMemoryStore(db_path=str(self.root / "memory.db"))
 
     def scratchpad_store(self) -> ScratchpadStore:
         """Return a markdown-backed :class:`ScratchpadStore` at ``<root>/memory/``."""

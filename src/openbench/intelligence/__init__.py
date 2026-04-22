@@ -44,7 +44,12 @@ from openbench.intelligence.layer import AgentFactory
 from openbench.intelligence.llm_providers import GeminiLLMProvider
 
 # Memory (persistent conversation memory)
-from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
+from openbench.intelligence.memory import (
+    LocalSQLiteMemoryStore,
+    MemoryStore,
+    PersistentMemory,
+    SQLiteMemoryStore,
+)
 
 # Persona Layer (file-based agent identity)
 from openbench.intelligence.persona import Persona
@@ -87,8 +92,10 @@ __all__ = [
     "Skill",
     "SkillRegistry",
     # Memory
+    "MemoryStore",
     "PersistentMemory",
     "SQLiteMemoryStore",
+    "LocalSQLiteMemoryStore",
     # Planning
     "TaskPlan",
     "TaskPlanner",

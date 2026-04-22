@@ -124,6 +124,24 @@ class GoogleDriveStorageBackend:
             credentials=self._explicit_credentials,
         )
 
+    def memory_store(self):
+        """Return a memory store — Phase 1 fallback to local SQLite.
+
+        Phase 2 of RFC-UNIFIED-MEMORY-STORAGE introduces a true
+        :class:`GoogleDriveMemoryStore`. Until then, Drive-backed users
+        get the same SQLite memory as non-Drive users — matching the
+        pre-RFC hardcoded behaviour in lci-mini. Zero behaviour change
+        for existing deployments.
+
+        The returned path defaults to a per-process tempdir so multiple
+        Drive-backed users on the same backend instance don't collide;
+        lci-mini continues to manage its own SQLite path via
+        ``LCI_MINI_MEMORY_DB`` until Phase 2 lands.
+        """
+        from openbench.intelligence.memory import LocalSQLiteMemoryStore
+
+        return LocalSQLiteMemoryStore(db_path=str(self._fallback_memory_db_path()))
+
     def scratchpad_store(self) -> ScratchpadStore:
         """Return a :class:`GoogleDriveScratchpad` rooted at ``<root>/memory/``."""
         from openbench.integrations.gdrive.scratchpad import GoogleDriveScratchpad
@@ -184,6 +202,20 @@ class GoogleDriveStorageBackend:
         return f"GoogleDriveStorageBackend(root_folder_id={self.root_folder_id!r})"
 
     # ---------------------------------------------------------------- internals
+
+    def _fallback_memory_db_path(self) -> Path:
+        """Return the path for Phase 1's SQLite memory fallback.
+
+        Until :class:`GoogleDriveMemoryStore` lands in Phase 2, every
+        Drive-backed backend instance shares a single SQLite memory DB
+        in the system tempdir, keyed by root folder id so two backends
+        pointing at different Drive roots do not collide.
+        """
+        import tempfile
+
+        safe_root = self.root_folder_id.replace("/", "_")
+        path = Path(tempfile.gettempdir()) / f"openbench-memory-{safe_root}.db"
+        return path
 
     def _resolve_subfolder(self, path: str, *, parent_id: str | None = None) -> str:
         """Return the Drive folder id for ``path``, creating it if missing.

@@ -104,6 +104,11 @@ class TestProtocolDuckTyping(unittest.TestCase):
             def session_store(self):
                 return SQLiteSessionStore(":memory:")
 
+            def memory_store(self):
+                from openbench.intelligence.memory import LocalSQLiteMemoryStore
+
+                return LocalSQLiteMemoryStore(":memory:")
+
             def scratchpad_store(self):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     return LocalMarkdownScratchpad(tmpdir)

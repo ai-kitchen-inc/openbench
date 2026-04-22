@@ -40,64 +40,94 @@ def _turn_transaction_enabled() -> bool:
 
 
 class MemoryStore(ABC):
-    """Abstract memory storage backend."""
+    """Public ABC for backends that persist agent conversation memory.
+
+    Part of OpenBench's stable public API surface — third-party
+    backends (Postgres, MySQL, Redis, S3, Firestore, in-memory for
+    tests, …) implement this ABC to plug into the storage protocol.
+    Same extensibility commitment as :class:`LLMProvider`,
+    :class:`DataStore`, :class:`SessionStore`, :class:`FileStore`,
+    :class:`ScratchpadStore`, and :class:`PersonaSource`.
+
+    **Stability guarantee**: additive-only across minor versions. New
+    optional methods may be added with sensible defaults; existing
+    signatures never break within a minor version. Third-party
+    implementations are safe to build against this ABC across patch
+    and minor bumps.
+
+    **Validating your impl**: use
+    :class:`openbench.testing.MemoryStoreContract` — inherit, override
+    ``make_store``, and get a parametrized suite of conformance tests
+    for free. The SDK's own SQLite + Drive impls use the same base.
+
+    **Method semantics**:
+
+    - :meth:`save` — **append** ``messages`` to the session, preserving
+      existing messages. This matches the current PersistentMemory
+      hot-path (one message per add). Backends with blob semantics
+      (e.g. Drive) must read-modify-write internally; Layer 2a's
+      ``memory.turn()`` context batches writes so blob-backed impls
+      pay at most one write per turn.
+    - :meth:`load` — return the full ordered message history for
+      ``session_id``, or an empty list if the session is unknown.
+    - :meth:`search` — full-text or keyword search across sessions.
+      Default returns empty; backends without natural search support
+      should keep the default.
+    - :meth:`list_sessions` — enumerate known session ids.
+    - :meth:`delete_session` — remove the session entirely.
+    - :meth:`delete_tail` — remove the last N messages. Default
+      implementation reloads the session and re-saves the head;
+      backends should override for efficiency when possible.
+    """
 
     @abstractmethod
     def save(self, session_id: str, messages: list[Message]) -> None:
-        """Persist messages for a session.
+        """Append ``messages`` to ``session_id``'s history.
 
         Args:
             session_id: Unique session identifier.
-            messages: Messages to save.
+            messages: Messages to append. Order is preserved.
+
+        Behavioral note: this is **append**, not replace. To replace a
+        full session, call :meth:`delete_session` followed by
+        :meth:`save` with the new list. :class:`PersistentMemory` calls
+        ``save`` per message (outside a turn) or once with the turn
+        buffer (inside a turn).
         """
 
     @abstractmethod
     def load(self, session_id: str) -> list[Message]:
-        """Load messages for a session.
+        """Return ``session_id``'s message history in insertion order.
 
-        Args:
-            session_id: Unique session identifier.
-
-        Returns:
-            List of messages for the session, ordered by insertion time.
+        Returns empty list for unknown sessions — never raises.
         """
 
     @abstractmethod
     def search(self, query: str, limit: int = 5) -> list[Message]:
         """Search across all sessions for matching messages.
 
-        Args:
-            query: Search query string.
-            limit: Maximum number of results.
-
-        Returns:
-            List of matching messages.
+        Default contract for backends without native search: return an
+        empty list and optionally log a warning. Implementers should
+        override only when natural search support exists (SQLite FTS,
+        Postgres tsvector, Elasticsearch, …).
         """
 
     @abstractmethod
     def list_sessions(self) -> list[str]:
-        """List all session IDs.
-
-        Returns:
-            List of session IDs.
-        """
+        """List all session IDs known to this store."""
 
     @abstractmethod
     def delete_session(self, session_id: str) -> None:
-        """Delete all messages for a session.
-
-        Args:
-            session_id: Session to delete.
-        """
+        """Delete all messages for a session. Idempotent."""
 
     def delete_tail(self, session_id: str, count: int) -> None:
         """Delete the last ``count`` messages for a session.
 
-        Used by ``PersistentMemory.truncate_to`` to roll back a failed
-        agent turn. The default implementation reloads the full session,
-        drops the tail in-memory, then replaces the session in the store.
-        Subclasses should override with a more efficient implementation
-        when possible.
+        Used by :meth:`PersistentMemory.truncate_to` to roll back a
+        failed agent turn. The default implementation reloads the full
+        session, drops the tail in-memory, then replaces the session in
+        the store — correct but inefficient for large sessions.
+        Subclasses should override with a targeted delete when possible.
 
         Args:
             session_id: Session to truncate.
@@ -134,7 +164,22 @@ class SQLiteMemoryStore(MemoryStore):
         self._init_db()
 
     def _init_db(self) -> None:
-        """Initialize database schema."""
+        """Initialize database schema, with idempotent upgrades.
+
+        ``CREATE TABLE IF NOT EXISTS`` handles fresh installs. For
+        deployments upgrading from a pre-RFC-UNIFIED-MEMORY-STORAGE
+        version, we run ``ADD COLUMN`` inside a try/except per new
+        column — SQLite raises ``OperationalError`` on duplicate column
+        which we swallow. This is safe on any SQLite ≥ 3.35 (Python
+        3.10+ stdlib ships 3.31+, Python 3.12+ ships 3.40+).
+
+        New columns (additive, never used by Phase 1, reserved for
+        Phase 2 Drive backend):
+        - ``pending_sync INTEGER DEFAULT 0`` — flag for rows queued for
+          Drive sync when the Drive backend is offline.
+        - ``drive_etag TEXT`` — last-seen ETag of the Drive blob for
+          this session, enabling optimistic-locking reconciliation.
+        """
         conn = sqlite3.connect(self.db_path)
         try:
             conn.execute("""
@@ -151,6 +196,19 @@ class SQLiteMemoryStore(MemoryStore):
                 )
                 """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session ON messages(session_id)")
+
+            # Phase 1 additive schema upgrade — idempotent ALTER TABLE.
+            # Each column added inside its own try/except so the second
+            # start-up (both columns already present) is a silent no-op.
+            for alter in (
+                "ALTER TABLE messages ADD COLUMN pending_sync INTEGER DEFAULT 0",
+                "ALTER TABLE messages ADD COLUMN drive_etag TEXT",
+            ):
+                try:
+                    conn.execute(alter)
+                except sqlite3.OperationalError as e:
+                    if "duplicate column" not in str(e).lower():
+                        raise
             conn.commit()
         finally:
             conn.close()
@@ -269,6 +327,14 @@ class SQLiteMemoryStore(MemoryStore):
             conn.commit()
         finally:
             conn.close()
+
+
+# Forward-looking alias that mirrors the naming convention used by the
+# other storage layers (`LocalFileStore`, `LocalMarkdownScratchpad`,
+# `SQLiteSessionStore`). Both names refer to the same class; new code
+# should prefer ``LocalSQLiteMemoryStore`` for consistency, existing
+# imports of ``SQLiteMemoryStore`` continue to work unchanged.
+LocalSQLiteMemoryStore = SQLiteMemoryStore
 
 
 class PersistentMemory(AgentMemory):
