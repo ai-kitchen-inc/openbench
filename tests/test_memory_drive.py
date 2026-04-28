@@ -14,7 +14,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from openbench.integrations.gdrive._etag_cache import _EtagCache
 from openbench.integrations.gdrive.memory_store import GoogleDriveMemoryStore
+from openbench.intelligence.base import Message, MessageRole
 from openbench.testing.memory_store_contract import MemoryStoreContract
 
 # ---------------------------------------------------------------------------
@@ -327,3 +329,235 @@ def test_build_service_raises_when_gapi_missing():
         pytest.raises(ImportError, match="gdrive"),
     ):
         store._build_service()
+
+
+# ---------------------------------------------------------------------------
+# Read cache integration — load/save/delete interaction with _EtagCache
+# ---------------------------------------------------------------------------
+
+
+def test_load_hits_cache_and_skips_drive_on_repeat():
+    """Two loads of the same session id round-trip Drive once."""
+    store, fake = _new_store()
+    store.save("s1", [Message(role=MessageRole.USER, content="hi")])
+    # Save calls list (find blob) + create. Reset counters to isolate
+    # the load behavior.
+    fake.list_calls = 0
+    fake.get_media_calls = 0
+
+    first = store.load("s1")
+    after_first_list = fake.list_calls
+    after_first_media = fake.get_media_calls
+    second = store.load("s1")
+
+    assert [m.content for m in first] == ["hi"]
+    assert [m.content for m in second] == ["hi"]
+    # Second load is a pure cache hit — no Drive calls.
+    assert fake.list_calls == after_first_list
+    assert fake.get_media_calls == after_first_media
+
+
+def test_save_warms_cache_so_next_load_skips_drive():
+    """``save`` populates the cache directly with the merged history."""
+    store, fake = _new_store()
+    store.save("s1", [Message(role=MessageRole.USER, content="hi")])
+    fake.list_calls = 0
+    fake.get_media_calls = 0
+
+    loaded = store.load("s1")
+    assert [m.content for m in loaded] == ["hi"]
+    assert fake.list_calls == 0
+    assert fake.get_media_calls == 0
+
+
+def test_delete_session_invalidates_cache_entry():
+    """After delete, load returns ``[]`` even if the cache had warmth."""
+    store, _fake = _new_store()
+    store.save("s1", [Message(role=MessageRole.USER, content="hi")])
+    # Confirm cache is warm.
+    assert "s1" in store._cache  # type: ignore[operator]
+
+    store.delete_session("s1")
+    assert "s1" not in store._cache  # type: ignore[operator]
+    assert store.load("s1") == []
+
+
+def test_enable_cache_false_disables_caching():
+    """When ``enable_cache=False``, every load round-trips Drive."""
+    fake = FakeMemoryDrive()
+    store = GoogleDriveMemoryStore(
+        folder_id="root-folder",
+        credentials=MagicMock(),
+        enable_cache=False,
+    )
+    store._service = fake
+    store.save("s1", [Message(role=MessageRole.USER, content="hi")])
+    fake.list_calls = 0
+    fake.get_media_calls = 0
+
+    store.load("s1")
+    store.load("s1")
+
+    assert store._cache is None
+    assert fake.list_calls > 0
+    assert fake.get_media_calls > 0
+
+
+def test_load_after_ttl_expiry_falls_through_to_drive():
+    """An entry past its TTL is dropped on access and refetched."""
+    fake = FakeMemoryDrive()
+    store = GoogleDriveMemoryStore(
+        folder_id="root-folder",
+        credentials=MagicMock(),
+        cache_ttl_seconds=10.0,
+    )
+    store._service = fake
+    store.save("s1", [Message(role=MessageRole.USER, content="hi")])
+
+    # Fast-forward time past the TTL by patching ``time.monotonic``
+    # inside the cache module.
+    fake.list_calls = 0
+    fake.get_media_calls = 0
+    with patch(
+        "openbench.integrations.gdrive._etag_cache.time.monotonic",
+        return_value=1e9,  # arbitrary far-future timestamp
+    ):
+        store.load("s1")
+    # Cache miss → Drive round-trip happened.
+    assert fake.list_calls > 0 or fake.get_media_calls > 0
+
+
+def test_cache_constructor_params_are_validated():
+    """Invalid cache settings surface as ValueError at __init__."""
+    with pytest.raises(ValueError, match="ttl_seconds"):
+        GoogleDriveMemoryStore(
+            folder_id="x",
+            credentials=MagicMock(),
+            cache_ttl_seconds=0,
+        )
+    with pytest.raises(ValueError, match="max_sessions"):
+        GoogleDriveMemoryStore(
+            folder_id="x",
+            credentials=MagicMock(),
+            cache_max_sessions=0,
+        )
+
+
+# ---------------------------------------------------------------------------
+# _EtagCache unit tests — pure data-structure behavior
+# ---------------------------------------------------------------------------
+
+
+def _stub_messages(*contents: str) -> list[Message]:
+    return [Message(role=MessageRole.USER, content=c) for c in contents]
+
+
+def test_etag_cache_get_returns_none_on_miss():
+    cache = _EtagCache()
+    assert cache.get("never-saved") is None
+
+
+def test_etag_cache_put_then_get_returns_copy():
+    cache = _EtagCache()
+    original = _stub_messages("a", "b")
+    cache.put("s1", original)
+    fetched = cache.get("s1")
+    assert fetched == original
+    # Mutating the fetched list must not corrupt the cache.
+    assert fetched is not None
+    fetched.append(Message(role=MessageRole.USER, content="oops"))
+    again = cache.get("s1")
+    assert again is not None
+    assert [m.content for m in again] == ["a", "b"]
+
+
+def test_etag_cache_get_after_ttl_returns_none_and_drops_entry():
+    cache = _EtagCache(ttl_seconds=10.0)
+    cache.put("s1", _stub_messages("a"))
+    with patch(
+        "openbench.integrations.gdrive._etag_cache.time.monotonic",
+        return_value=1e9,
+    ):
+        assert cache.get("s1") is None
+    assert "s1" not in cache
+
+
+def test_etag_cache_put_resets_ttl_clock():
+    cache = _EtagCache(ttl_seconds=10.0)
+    with patch(
+        "openbench.integrations.gdrive._etag_cache.time.monotonic",
+        return_value=0.0,
+    ):
+        cache.put("s1", _stub_messages("a"))
+    with patch(
+        "openbench.integrations.gdrive._etag_cache.time.monotonic",
+        return_value=15.0,
+    ):
+        # Re-put refreshes the entry → still fresh at t=15+5
+        cache.put("s1", _stub_messages("a", "b"))
+    with patch(
+        "openbench.integrations.gdrive._etag_cache.time.monotonic",
+        return_value=20.0,
+    ):
+        fetched = cache.get("s1")
+    assert fetched is not None
+    assert [m.content for m in fetched] == ["a", "b"]
+
+
+def test_etag_cache_invalidate_drops_single_entry():
+    cache = _EtagCache()
+    cache.put("s1", _stub_messages("a"))
+    cache.put("s2", _stub_messages("b"))
+    cache.invalidate("s1")
+    assert "s1" not in cache
+    assert "s2" in cache
+
+
+def test_etag_cache_invalidate_unknown_is_noop():
+    cache = _EtagCache()
+    cache.invalidate("nope")  # must not raise
+
+
+def test_etag_cache_clear_drops_all_entries():
+    cache = _EtagCache()
+    cache.put("s1", _stub_messages("a"))
+    cache.put("s2", _stub_messages("b"))
+    cache.clear()
+    assert len(cache) == 0
+
+
+def test_etag_cache_lru_evicts_oldest_at_max():
+    cache = _EtagCache(max_sessions=2)
+    cache.put("s1", _stub_messages("a"))
+    cache.put("s2", _stub_messages("b"))
+    cache.put("s3", _stub_messages("c"))  # evicts s1
+    assert "s1" not in cache
+    assert "s2" in cache
+    assert "s3" in cache
+
+
+def test_etag_cache_get_marks_entry_most_recently_used():
+    cache = _EtagCache(max_sessions=2)
+    cache.put("s1", _stub_messages("a"))
+    cache.put("s2", _stub_messages("b"))
+    # Touch s1 — now s2 is least recently used.
+    cache.get("s1")
+    cache.put("s3", _stub_messages("c"))  # should evict s2, not s1
+    assert "s1" in cache
+    assert "s2" not in cache
+    assert "s3" in cache
+
+
+def test_etag_cache_constructor_rejects_zero_or_negative():
+    with pytest.raises(ValueError, match="max_sessions"):
+        _EtagCache(max_sessions=0)
+    with pytest.raises(ValueError, match="ttl_seconds"):
+        _EtagCache(ttl_seconds=0)
+
+
+def test_etag_cache_contains_only_returns_true_for_strings():
+    cache = _EtagCache()
+    cache.put("s1", _stub_messages("a"))
+    assert "s1" in cache
+    assert 123 not in cache  # non-string key
+    assert object() not in cache

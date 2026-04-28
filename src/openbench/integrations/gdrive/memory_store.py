@@ -20,17 +20,20 @@ Each blob is a JSON document::
       ]
     }
 
-**v1 scope (RFC-UNIFIED-MEMORY-STORAGE Phase 2)**: correctness-first.
-Implements full :class:`MemoryStore` ABC and passes
-:class:`MemoryStoreContract`. Deferred to follow-up commits — the ABC
-does not need them for correctness, only for performance / resilience:
+**v1.5 scope (RFC-UNIFIED-MEMORY-STORAGE Phase 2)**: correctness +
+TTL-based read cache. Implements full :class:`MemoryStore` ABC,
+passes :class:`MemoryStoreContract`, and skips redundant Drive reads
+inside the cache freshness window (default 30s, see
+:class:`_EtagCache`). Deferred to follow-up commits:
 
-- ETag-validated client cache (RFC §6.8 + Q16.6) — every load/save
-  currently round-trips to Drive.
+- ETag/version validation on the cached entry (the cache currently
+  trusts the TTL only; future iteration can add a HEAD against
+  ``files.get(fields="version")`` so cross-device updates invalidate
+  faster than the TTL).
 - Optimistic concurrency via ``If-Match`` (RFC §6.3) — concurrent
   writes are last-write-wins for now. Tolerable in v1: per-user
-  concurrency on the same session_id is rare (one user, one device at
-  a time in the typical flow).
+  concurrency on the same session_id is rare (one user, one device
+  at a time in the typical flow).
 - Pending-sync fallback to local SQLite on Drive failure (RFC §8) —
   v1 surfaces Drive errors directly via raised exceptions, letting
   the caller (e.g. PersistentMemory.turn() rollback) handle them.
@@ -44,6 +47,7 @@ import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from openbench.integrations.gdrive._etag_cache import _EtagCache
 from openbench.intelligence.base import Message, MessageRole
 from openbench.intelligence.memory import MemoryStore
 
@@ -164,6 +168,9 @@ class GoogleDriveMemoryStore(MemoryStore):
         service_account_file: str | Path | None = None,
         credentials: Any | None = None,
         subfolder_name: str = "memory",
+        cache_ttl_seconds: float = 30.0,
+        cache_max_sessions: int = 100,
+        enable_cache: bool = True,
     ):
         if not folder_id:
             raise ValueError("folder_id must be a non-empty string")
@@ -183,6 +190,14 @@ class GoogleDriveMemoryStore(MemoryStore):
         # Cached subfolder id, resolved on first use. None until then.
         self._subfolder_id: str | None = None
         self._subfolder_lock = threading.Lock()
+        # Read-side cache. Enabled by default; pass ``enable_cache=False``
+        # for tests / callers that need to assert every load round-trips
+        # to Drive.
+        self._cache: _EtagCache | None = (
+            _EtagCache(max_sessions=cache_max_sessions, ttl_seconds=cache_ttl_seconds)
+            if enable_cache
+            else None
+        )
 
     # ------------------------------------------------------------------ MemoryStore
 
@@ -190,20 +205,30 @@ class GoogleDriveMemoryStore(MemoryStore):
         """Append ``messages`` to ``session_id``'s history.
 
         Blob-store semantics: read existing, append, write back. Empty
-        ``messages`` is a no-op (matches the contract).
+        ``messages`` is a no-op (matches the contract). Updates the
+        read cache with the merged history so the next ``load`` is a
+        cache hit instead of a Drive round-trip.
         """
         if not messages:
             return
         existing = self.load(session_id)
         merged = existing + list(messages)
         self._write_session(session_id, merged)
+        if self._cache is not None:
+            self._cache.put(session_id, merged)
 
     def load(self, session_id: str) -> list[Message]:
         """Return the full message history for ``session_id``.
 
         Returns ``[]`` for unknown sessions — never raises for a
-        missing blob (matches :class:`SQLiteMemoryStore`).
+        missing blob (matches :class:`SQLiteMemoryStore`). Hits the
+        in-process cache first; falls through to Drive on miss or
+        TTL expiry.
         """
+        if self._cache is not None:
+            cached = self._cache.get(session_id)
+            if cached is not None:
+                return cached
         service = self._get_service()
         subfolder_id = self._resolve_subfolder(service, create_if_missing=False)
         if subfolder_id is None:
@@ -213,7 +238,10 @@ class GoogleDriveMemoryStore(MemoryStore):
             return []
         data = service.files().get_media(fileId=file_id).execute()
         text = data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data)
-        return _parse_blob(text)
+        messages = _parse_blob(text)
+        if self._cache is not None and messages:
+            self._cache.put(session_id, messages)
+        return messages
 
     def search(self, query: str, limit: int = 5) -> list[Message]:
         """No-op for Drive backend.
@@ -259,7 +287,13 @@ class GoogleDriveMemoryStore(MemoryStore):
         return ids
 
     def delete_session(self, session_id: str) -> None:
-        """Delete a session's blob; no-op if missing."""
+        """Delete a session's blob; no-op if missing.
+
+        Also drops the cache entry so a subsequent ``load`` returns
+        ``[]`` instead of stale-cached messages.
+        """
+        if self._cache is not None:
+            self._cache.invalidate(session_id)
         service = self._get_service()
         subfolder_id = self._resolve_subfolder(service, create_if_missing=False)
         if subfolder_id is None:
