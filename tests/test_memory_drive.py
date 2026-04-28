@@ -15,8 +15,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openbench.integrations.gdrive._etag_cache import _EtagCache
+from openbench.integrations.gdrive._pending_sync_worker import (
+    _PendingSyncWorker,
+    get_pending_sync_worker,
+    reset_pending_sync_worker_for_tests,
+)
 from openbench.integrations.gdrive.memory_store import GoogleDriveMemoryStore
 from openbench.intelligence.base import Message, MessageRole
+from openbench.intelligence.memory import LocalSQLiteMemoryStore
 from openbench.testing.memory_store_contract import MemoryStoreContract
 
 # ---------------------------------------------------------------------------
@@ -44,6 +50,11 @@ class FakeMemoryDrive:
         self.list_calls = 0
         self.delete_calls = 0
         self.get_media_calls = 0
+        # Failure injection knobs — set to True to make every matching
+        # operation raise. Used by pending-sync tests to simulate Drive
+        # outages without standing up real network errors.
+        self.fail_writes = False
+        self.fail_reads = False
 
     # ---- gapi surface -------------------------------------------------------
 
@@ -104,6 +115,8 @@ class FakeMemoryDrive:
 
     def _create(self, **kwargs: Any) -> Any:
         self.create_calls += 1
+        if self.fail_writes:
+            raise RuntimeError("simulated Drive write failure")
         body = kwargs.get("body") or {}
         media_body = kwargs.get("media_body")
         fid = self._mint_id()
@@ -125,6 +138,8 @@ class FakeMemoryDrive:
 
     def _update(self, **kwargs: Any) -> Any:
         self.update_calls += 1
+        if self.fail_writes:
+            raise RuntimeError("simulated Drive write failure")
         fid = kwargs.get("fileId")
         media_body = kwargs.get("media_body")
         if fid in self.files_by_id and media_body is not None:
@@ -143,6 +158,8 @@ class FakeMemoryDrive:
 
     def _get_media(self, **kwargs: Any) -> Any:
         self.get_media_calls += 1
+        if self.fail_reads:
+            raise RuntimeError("simulated Drive read failure")
         fid = kwargs.get("fileId")
         meta = self.files_by_id.get(fid)
         execute = MagicMock()
@@ -561,3 +578,287 @@ def test_etag_cache_contains_only_returns_true_for_strings():
     assert "s1" in cache
     assert 123 not in cache  # non-string key
     assert object() not in cache
+
+
+# ---------------------------------------------------------------------------
+# LocalSQLiteMemoryStore pending-sync queue API
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def local_store(tmp_path):
+    return LocalSQLiteMemoryStore(db_path=str(tmp_path / "memory.db"))
+
+
+def test_save_pending_appends_with_pending_flag(local_store):
+    local_store.save("s1", _stub_messages("regular"))
+    local_store.save_pending("s1", _stub_messages("pending"))
+
+    # Both rows are loadable via the regular load path.
+    loaded = local_store.load("s1")
+    assert [m.content for m in loaded] == ["regular", "pending"]
+    # But only the pending one is enumerated by list_pending_session_ids.
+    assert local_store.list_pending_session_ids() == ["s1"]
+
+
+def test_save_pending_empty_list_is_noop(local_store):
+    local_store.save_pending("s1", [])
+    assert local_store.list_pending_session_ids() == []
+
+
+def test_pop_pending_returns_and_deletes_pending_rows_only(local_store):
+    local_store.save("s1", _stub_messages("regular"))
+    local_store.save_pending("s1", _stub_messages("p1", "p2"))
+
+    popped = local_store.pop_pending("s1")
+    assert [m.content for m in popped] == ["p1", "p2"]
+
+    # Regular rows survived; pending rows are gone.
+    remaining = local_store.load("s1")
+    assert [m.content for m in remaining] == ["regular"]
+    assert local_store.list_pending_session_ids() == []
+
+
+def test_pop_pending_empty_session_returns_empty_list(local_store):
+    local_store.save("s1", _stub_messages("regular"))
+    assert local_store.pop_pending("s1") == []
+
+
+def test_pop_pending_unknown_session_returns_empty_list(local_store):
+    assert local_store.pop_pending("never-existed") == []
+
+
+def test_list_pending_session_ids_distinct_and_sorted(local_store):
+    local_store.save_pending("s2", _stub_messages("a"))
+    local_store.save_pending("s1", _stub_messages("a"))
+    local_store.save_pending("s1", _stub_messages("b"))  # second pending row, same session
+
+    ids = local_store.list_pending_session_ids()
+    assert ids == ["s1", "s2"]
+
+
+def test_pop_pending_preserves_tool_call_fields(local_store):
+    local_store.save_pending(
+        "s1",
+        [
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="ran tool",
+                tool_calls=[{"id": "call_x", "name": "tool", "arguments": {}}],
+            ),
+            Message(
+                role=MessageRole.TOOL,
+                content='{"ok": true}',
+                name="tool",
+                tool_call_id="call_x",
+            ),
+        ],
+    )
+    popped = local_store.pop_pending("s1")
+    assert popped[0].tool_calls is not None
+    assert popped[0].tool_calls[0]["id"] == "call_x"
+    assert popped[1].tool_call_id == "call_x"
+    assert popped[1].name == "tool"
+
+
+# ---------------------------------------------------------------------------
+# _PendingSyncWorker — class-level behavior
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_global_worker():
+    """Each test gets a fresh global worker, isolated registrations."""
+    reset_pending_sync_worker_for_tests()
+    yield
+    reset_pending_sync_worker_for_tests()
+
+
+def test_worker_register_is_idempotent(local_store):
+    drive_store, _ = _new_store()
+    worker = _PendingSyncWorker(interval_seconds=300.0)
+    worker.register(drive_store, local_store)
+    worker.register(drive_store, local_store)
+    assert worker.registered_pair_count() == 1
+    worker.stop()
+
+
+def test_worker_unregister_removes_pair(local_store):
+    drive_store, _ = _new_store()
+    worker = _PendingSyncWorker(interval_seconds=300.0)
+    worker.register(drive_store, local_store)
+    assert worker.registered_pair_count() == 1
+    worker.unregister(drive_store, local_store)
+    assert worker.registered_pair_count() == 0
+    worker.stop()
+
+
+def test_worker_tick_with_no_pairs_is_noop():
+    worker = _PendingSyncWorker(interval_seconds=300.0)
+    assert worker.tick() == 0
+    worker.stop()
+
+
+def test_worker_tick_replays_pending_to_drive(local_store):
+    drive_store, _fake = _new_store()
+    drive_store._fallback_store = local_store
+    worker = _PendingSyncWorker(interval_seconds=300.0)
+    worker.register(drive_store, local_store)
+
+    # Stash pending rows that the worker should replay.
+    local_store.save_pending("s1", _stub_messages("a", "b"))
+    assert local_store.list_pending_session_ids() == ["s1"]
+
+    attempts = worker.tick()
+    assert attempts == 1
+    # Pending rows are gone after a successful replay.
+    assert local_store.list_pending_session_ids() == []
+    # Drive received the replayed history.
+    loaded = drive_store.load("s1")
+    assert [m.content for m in loaded] == ["a", "b"]
+    worker.stop()
+
+
+def test_worker_tick_re_queues_on_drive_failure(local_store):
+    drive_store, fake = _new_store()
+    drive_store._fallback_store = local_store
+    worker = _PendingSyncWorker(interval_seconds=300.0)
+    worker.register(drive_store, local_store)
+
+    local_store.save_pending("s1", _stub_messages("a"))
+    fake.fail_writes = True
+
+    worker.tick()
+    # Replay failed → rows re-queued so the next tick retries.
+    assert local_store.list_pending_session_ids() == ["s1"]
+
+    # Recovery: clear the fault, run again, rows drain.
+    fake.fail_writes = False
+    worker.tick()
+    assert local_store.list_pending_session_ids() == []
+    worker.stop()
+
+
+def test_get_pending_sync_worker_returns_singleton():
+    a = get_pending_sync_worker()
+    b = get_pending_sync_worker()
+    assert a is b
+
+
+def test_reset_pending_sync_worker_for_tests_drops_singleton():
+    first = get_pending_sync_worker()
+    reset_pending_sync_worker_for_tests()
+    second = get_pending_sync_worker()
+    assert first is not second
+
+
+def test_worker_constructor_rejects_zero_or_negative_interval():
+    with pytest.raises(ValueError, match="interval_seconds"):
+        _PendingSyncWorker(interval_seconds=0)
+
+
+# ---------------------------------------------------------------------------
+# GoogleDriveMemoryStore + fallback integration
+# ---------------------------------------------------------------------------
+
+
+def test_save_without_fallback_raises_on_drive_failure():
+    """Existing behavior preserved when no fallback is wired."""
+    store, fake = _new_store()
+    fake.fail_writes = True
+    with pytest.raises(RuntimeError, match="simulated Drive"):
+        store.save("s1", _stub_messages("hi"))
+
+
+def test_save_with_fallback_stashes_pending_on_drive_failure(local_store):
+    """Drive failure → fallback receives pending rows + caller sees success."""
+    fake = FakeMemoryDrive()
+    store = GoogleDriveMemoryStore(
+        folder_id="root-folder",
+        credentials=MagicMock(),
+        fallback_store=local_store,
+    )
+    store._service = fake
+    fake.fail_writes = True
+
+    # No exception raised — caller's turn isn't aborted by the Drive blip.
+    store.save("s1", _stub_messages("hi"))
+
+    # Pending row landed in the fallback ready for the worker.
+    assert local_store.list_pending_session_ids() == ["s1"]
+
+
+def test_save_with_fallback_registers_pair_with_global_worker(local_store):
+    fake = FakeMemoryDrive()
+    store = GoogleDriveMemoryStore(
+        folder_id="root-folder",
+        credentials=MagicMock(),
+        fallback_store=local_store,
+    )
+    store._service = fake
+    fake.fail_writes = True
+
+    store.save("s1", _stub_messages("hi"))
+    worker = get_pending_sync_worker()
+    assert worker.registered_pair_count() == 1
+
+
+def test_replay_pending_appends_to_drive(local_store):
+    fake = FakeMemoryDrive()
+    store = GoogleDriveMemoryStore(
+        folder_id="root-folder",
+        credentials=MagicMock(),
+        fallback_store=local_store,
+    )
+    store._service = fake
+
+    # Seed Drive with an existing turn.
+    store.save("s1", _stub_messages("turn-1"))
+    # Now replay a pending batch (simulating what the worker would do).
+    store._replay_pending("s1", _stub_messages("turn-2"))
+
+    loaded = store.load("s1")
+    assert [m.content for m in loaded] == ["turn-1", "turn-2"]
+
+
+def test_replay_pending_raises_on_drive_failure(local_store):
+    fake = FakeMemoryDrive()
+    store = GoogleDriveMemoryStore(
+        folder_id="root-folder",
+        credentials=MagicMock(),
+        fallback_store=local_store,
+    )
+    store._service = fake
+    fake.fail_writes = True
+
+    with pytest.raises(RuntimeError, match="simulated Drive"):
+        store._replay_pending("s1", _stub_messages("hi"))
+
+
+def test_save_recovers_when_drive_returns_after_failure(local_store):
+    """End-to-end: save during outage → tick after recovery → Drive consistent."""
+    fake = FakeMemoryDrive()
+    store = GoogleDriveMemoryStore(
+        folder_id="root-folder",
+        credentials=MagicMock(),
+        fallback_store=local_store,
+    )
+    store._service = fake
+
+    # Phase A: Drive up — first turn lands directly.
+    store.save("s1", _stub_messages("a"))
+
+    # Phase B: Drive down — second turn stashed in fallback.
+    fake.fail_writes = True
+    store.save("s1", _stub_messages("b"))
+    assert local_store.list_pending_session_ids() == ["s1"]
+
+    # Phase C: Drive recovers — worker tick replays the pending batch.
+    fake.fail_writes = False
+    worker = get_pending_sync_worker()
+    worker.tick()
+    assert local_store.list_pending_session_ids() == []
+
+    # Drive has the full history end-to-end.
+    loaded = store.load("s1")
+    assert [m.content for m in loaded] == ["a", "b"]

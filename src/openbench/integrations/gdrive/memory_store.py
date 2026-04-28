@@ -20,23 +20,21 @@ Each blob is a JSON document::
       ]
     }
 
-**v1.5 scope (RFC-UNIFIED-MEMORY-STORAGE Phase 2)**: correctness +
-TTL-based read cache. Implements full :class:`MemoryStore` ABC,
-passes :class:`MemoryStoreContract`, and skips redundant Drive reads
-inside the cache freshness window (default 30s, see
-:class:`_EtagCache`). Deferred to follow-up commits:
+**v1.6 scope (RFC-UNIFIED-MEMORY-STORAGE Phase 2)**: correctness +
+TTL-based read cache + pending-sync fallback. Implements the full
+:class:`MemoryStore` ABC, passes :class:`MemoryStoreContract`, skips
+redundant Drive reads inside the cache freshness window (default 30s,
+see :class:`_EtagCache`), and on Drive failure stashes the incremental
+messages in a :class:`LocalSQLiteMemoryStore` fallback for the
+:class:`_PendingSyncWorker` to replay when the network recovers.
 
-- ETag/version validation on the cached entry (the cache currently
-  trusts the TTL only; future iteration can add a HEAD against
-  ``files.get(fields="version")`` so cross-device updates invalidate
-  faster than the TTL).
+Deferred to follow-up commits:
+
+- ETag/version validation on cached entries (currently TTL-only).
 - Optimistic concurrency via ``If-Match`` (RFC §6.3) — concurrent
-  writes are last-write-wins for now. Tolerable in v1: per-user
-  concurrency on the same session_id is rare (one user, one device
-  at a time in the typical flow).
-- Pending-sync fallback to local SQLite on Drive failure (RFC §8) —
-  v1 surfaces Drive errors directly via raised exceptions, letting
-  the caller (e.g. PersistentMemory.turn() rollback) handle them.
+  writes are last-write-wins for now. Tolerable: per-user concurrency
+  on the same session_id is rare (one user, one device at a time in
+  the typical flow).
 """
 
 from __future__ import annotations
@@ -48,11 +46,14 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from openbench.integrations.gdrive._etag_cache import _EtagCache
+from openbench.integrations.gdrive._pending_sync_worker import get_pending_sync_worker
 from openbench.intelligence.base import Message, MessageRole
 from openbench.intelligence.memory import MemoryStore
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from openbench.intelligence.memory import LocalSQLiteMemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +172,7 @@ class GoogleDriveMemoryStore(MemoryStore):
         cache_ttl_seconds: float = 30.0,
         cache_max_sessions: int = 100,
         enable_cache: bool = True,
+        fallback_store: LocalSQLiteMemoryStore | None = None,
     ):
         if not folder_id:
             raise ValueError("folder_id must be a non-empty string")
@@ -198,6 +200,11 @@ class GoogleDriveMemoryStore(MemoryStore):
             if enable_cache
             else None
         )
+        # Optional fallback for Drive write failures. When provided,
+        # ``save`` stashes the incremental messages into this local
+        # store (with ``pending_sync=1``) and registers the pair with
+        # the singleton :class:`_PendingSyncWorker` for retry.
+        self._fallback_store = fallback_store
 
     # ------------------------------------------------------------------ MemoryStore
 
@@ -208,11 +215,54 @@ class GoogleDriveMemoryStore(MemoryStore):
         ``messages`` is a no-op (matches the contract). Updates the
         read cache with the merged history so the next ``load`` is a
         cache hit instead of a Drive round-trip.
+
+        If a ``fallback_store`` was passed at construction and the
+        Drive call fails (any exception during load or write), the
+        incremental messages are stashed in the fallback with
+        ``pending_sync=1`` and the pair is registered with the
+        singleton :class:`_PendingSyncWorker` for retry. The caller
+        sees a successful return so the agent's turn isn't aborted by
+        a transient Drive blip — the rollback path stays reserved for
+        true failures (no fallback configured).
         """
         if not messages:
             return
+        try:
+            existing = self.load(session_id)
+            merged = existing + list(messages)
+            self._write_session(session_id, merged)
+        except Exception as exc:
+            if self._fallback_store is None:
+                raise
+            logger.warning(
+                "Drive save failed for session %s: %s. "
+                "Stashing in pending-sync fallback for retry.",
+                session_id,
+                exc,
+            )
+            self._fallback_store.save_pending(session_id, list(messages))
+            worker = get_pending_sync_worker()
+            worker.register(self, self._fallback_store)
+            worker.start()
+            # The cache is intentionally NOT updated on this path —
+            # cache mirrors Drive truth, not the local fallback queue.
+            return
+        if self._cache is not None:
+            self._cache.put(session_id, merged)
+
+    def _replay_pending(self, session_id: str, pending_messages: list[Message]) -> None:
+        """Append pending fallback messages to Drive without re-stashing on failure.
+
+        Internal hook used by :class:`_PendingSyncWorker`. Mirrors the
+        happy path of :meth:`save` but raises on any Drive failure so
+        the worker can re-queue the rows for the next tick. Cache is
+        warmed on success so an immediately-following load doesn't
+        round-trip Drive again.
+        """
+        if not pending_messages:
+            return
         existing = self.load(session_id)
-        merged = existing + list(messages)
+        merged = existing + list(pending_messages)
         self._write_session(session_id, merged)
         if self._cache is not None:
             self._cache.put(session_id, merged)

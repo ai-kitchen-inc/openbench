@@ -328,6 +328,114 @@ class SQLiteMemoryStore(MemoryStore):
         finally:
             conn.close()
 
+    # ------------------------------------------------------------------
+    # Pending-sync queue API (RFC-UNIFIED-MEMORY-STORAGE Phase 2 §8)
+    # ------------------------------------------------------------------
+    #
+    # When the Drive backend can't persist a turn (network flake, quota
+    # exhaustion, transient 5xx), the GoogleDriveMemoryStore falls back
+    # to writing the *incremental* messages here with ``pending_sync=1``.
+    # The :class:`_PendingSyncWorker` daemon polls
+    # :meth:`list_pending_session_ids`, replays the pending messages to
+    # Drive via :meth:`pop_pending`, and only commits the dequeue once
+    # the Drive write succeeds — so a worker crash mid-sync leaves the
+    # rows in place for the next attempt.
+
+    def save_pending(self, session_id: str, messages: list[Message]) -> None:
+        """Append messages with ``pending_sync=1`` so the worker picks them up.
+
+        Same wire format as :meth:`save`; only the flag column differs.
+        Empty input is a no-op.
+        """
+        if not messages:
+            return
+        conn = self._connect()
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            for msg in messages:
+                tool_calls_json = json.dumps(msg.tool_calls) if msg.tool_calls else None
+                conn.execute(
+                    "INSERT INTO messages "
+                    "(session_id, role, content, name, tool_call_id, tool_calls, "
+                    "timestamp, metadata, pending_sync) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                    (
+                        session_id,
+                        msg.role.value,
+                        msg.content,
+                        msg.name,
+                        msg.tool_call_id,
+                        tool_calls_json,
+                        now,
+                        None,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def pop_pending(self, session_id: str) -> list[Message]:
+        """Return + delete pending rows for a session, atomically.
+
+        Used by :class:`_PendingSyncWorker` after a successful Drive
+        replay. The fetch and delete share a single ``BEGIN IMMEDIATE``
+        transaction — SQLite acquires a reserved write lock at BEGIN,
+        so two concurrent ``pop_pending`` calls (e.g. the daemon
+        thread + a manual flush) serialize cleanly: one wins the lock
+        and pops the rows, the other waits, then sees no pending rows
+        and returns an empty list. A crash between SELECT and DELETE
+        rolls back, leaving the rows for the next attempt.
+        """
+        conn = self._connect()
+        # ``isolation_level=None`` puts ``conn`` in autocommit mode so
+        # the explicit ``BEGIN IMMEDIATE`` is the sole transaction
+        # boundary. Without this, sqlite3's implicit transaction
+        # management runs first and ``BEGIN IMMEDIATE`` would error.
+        conn.isolation_level = None
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                "SELECT id, role, content, name, tool_call_id, tool_calls "
+                "FROM messages WHERE session_id = ? AND pending_sync = 1 "
+                "ORDER BY id",
+                (session_id,),
+            ).fetchall()
+            if not rows:
+                conn.execute("COMMIT")
+                return []
+            messages = [
+                Message(
+                    role=MessageRole(row[1]),
+                    content=row[2],
+                    name=row[3],
+                    tool_call_id=row[4],
+                    tool_calls=json.loads(row[5]) if row[5] else None,
+                )
+                for row in rows
+            ]
+            ids = [row[0] for row in rows]
+            placeholders = ",".join("?" * len(ids))
+            conn.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", ids)
+            conn.execute("COMMIT")
+            return messages
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def list_pending_session_ids(self) -> list[str]:
+        """Distinct session ids that currently have at least one pending row."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT session_id FROM messages "
+                "WHERE pending_sync = 1 ORDER BY session_id"
+            ).fetchall()
+            return [row[0] for row in rows]
+        finally:
+            conn.close()
+
 
 # Forward-looking alias that mirrors the naming convention used by the
 # other storage layers (`LocalFileStore`, `LocalMarkdownScratchpad`,

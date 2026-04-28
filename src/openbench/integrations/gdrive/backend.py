@@ -157,21 +157,28 @@ class GoogleDriveStorageBackend:
         The Drive-backed store writes blobs under
         ``<root>/agent-memory/`` (separate from
         :class:`GoogleDriveScratchpad`'s legacy ``<root>/memory/`` path)
-        so the two never collide on filenames.
+        so the two never collide on filenames. A
+        :class:`LocalSQLiteMemoryStore` at the fallback path is also
+        injected as a pending-sync queue: Drive write failures stash
+        the incremental messages there with ``pending_sync=1`` and
+        :class:`_PendingSyncWorker` replays them when the network
+        recovers.
         """
-        if _unified_memory_enabled():
-            from openbench.integrations.gdrive.memory_store import GoogleDriveMemoryStore
-
-            return GoogleDriveMemoryStore(
-                folder_id=self.root_folder_id,
-                service_account_file=self._service_account_file,
-                credentials=self._explicit_credentials,
-                subfolder_name=self._AGENT_MEMORY_SUBFOLDER,
-            )
-
         from openbench.intelligence.memory import LocalSQLiteMemoryStore
 
-        return LocalSQLiteMemoryStore(db_path=str(self._fallback_memory_db_path()))
+        local = LocalSQLiteMemoryStore(db_path=str(self._fallback_memory_db_path()))
+        if not _unified_memory_enabled():
+            return local
+
+        from openbench.integrations.gdrive.memory_store import GoogleDriveMemoryStore
+
+        return GoogleDriveMemoryStore(
+            folder_id=self.root_folder_id,
+            service_account_file=self._service_account_file,
+            credentials=self._explicit_credentials,
+            subfolder_name=self._AGENT_MEMORY_SUBFOLDER,
+            fallback_store=local,
+        )
 
     def scratchpad_store(self) -> ScratchpadStore:
         """Return a :class:`GoogleDriveScratchpad` rooted at ``<root>/memory/``."""
