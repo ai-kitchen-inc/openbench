@@ -7,8 +7,11 @@ validate against is the same bar the SDK itself meets.
 Currently covers:
 - :class:`LocalSQLiteMemoryStore` (SQLite, local filesystem)
 
-Drive-backed impl (to be added in RFC-UNIFIED-MEMORY-STORAGE Phase 2)
-will add a second subclass here once landed.
+The Drive-backed conformance subclass lives in
+``tests/test_memory_drive.py`` next to its in-memory ``FakeMemoryDrive``
+helper — keeping the fixture and the subclass in the same file avoids
+the otherwise-circular dependency between this file and the Drive
+test module.
 """
 
 from __future__ import annotations
