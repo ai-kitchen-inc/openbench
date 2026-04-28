@@ -1,0 +1,65 @@
+# gcloud build context ignore (mirrors .gitignore but allows files needed in Cloud Build context).
+# Without this file, gcloud falls back to .gitignore — which excludes baked-in service account
+# credentials. This file pulls those back in.
+
+# ── Inherited exclusions (mirror of .gitignore essentials) ──
+.git/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+ENV/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Node / frontend
+node_modules/
+**/node_modules/
+**/.next/
+**/dist/
+**/.cache/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Env (keep .env.example)
+.env.local
+.env.*.local
+
+# Misc
+.tmp/
+*.tmp
+.code-review-graph/
+.firebase/
+*.bak
+*.orig
+
+# Build artifacts (paths that should NOT enter image)
+examples/lci-mini/uploads/
+examples/lci-mini/downloads/
+examples/lci-mini/profiles/
+examples/lci-mini/.openbench/
+examples/lci-mini/lci_mini_memory.db
+examples/lci-mini/frontend/dist/
+examples/lci-ignite-x/uploads/
+examples/lci-ignite-x/.firebase/
+examples/lci-ignite-x/frontend/dist/
+
+# ── Re-include files needed for the Docker build ──
+!examples/lci-mini/firebase-admin-sdk.json

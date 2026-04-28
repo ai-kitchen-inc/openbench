@@ -56,6 +56,27 @@
         }
       },
       {
+        "source": "/auth/**",
+        "run": {
+          "serviceId": "lci-ignite-x",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/sessions/**",
+        "run": {
+          "serviceId": "lci-ignite-x",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/sessions",
+        "run": {
+          "serviceId": "lci-ignite-x",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

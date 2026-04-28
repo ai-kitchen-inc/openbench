@@ -21,6 +21,12 @@ COPY examples/lci-mini/server.py examples/lci-mini/
 COPY examples/lci-mini/soul/ examples/lci-mini/soul/
 COPY examples/lci-mini/skills/ examples/lci-mini/skills/
 
+# Firebase admin service-account credentials (gitignored, baked into image)
+COPY examples/lci-mini/firebase-admin-sdk.json examples/lci-mini/firebase-admin-sdk.json
+
+# Google OAuth client secret for Drive OAuth flow (gitignored, baked into image)
+COPY examples/lci-mini/google-oauth-client-secret.json examples/lci-mini/google-oauth-client-secret.json
+
 RUN pip install --no-cache-dir ./examples/lci-mini/
 
 # Create data dirs

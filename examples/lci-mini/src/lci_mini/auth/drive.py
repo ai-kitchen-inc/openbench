@@ -48,7 +48,13 @@ __all__ = [
 ]
 
 
-STATE_COOKIE_NAME = "ob_drive_state"
+# Firebase Hosting CDN strips all cookies except "__session" from incoming
+# requests to backend rewrites (run/functions). Using "__session" here is
+# the only name that survives the edge — see
+# https://firebase.google.com/docs/hosting/full-config#serve-dynamic-content
+# Cookie path is scoped to "/auth/drive" so it doesn't collide with any other
+# eventual __session usage in the app.
+STATE_COOKIE_NAME = "__session"
 STATE_COOKIE_MAX_AGE = 600  # seconds — 10 min is plenty for the redirect round-trip
 STATE_COOKIE_SALT = "openbench.drive.oauth.state.v1"
 OPENBENCH_FOLDER_NAME = "OpenBench"

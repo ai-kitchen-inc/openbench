@@ -430,6 +430,12 @@ credentials/
 *.pfx
 .secrets
 service-account*.json
+firebase-adminsdk*.json
+firebase-admin-sdk*.json
+**/firebase-admin-sdk.json
+client_secret*.json
+google-oauth-client-secret*.json
+**/google-oauth-client-secret.json
 
 # Configuration overrides
 config.local.*
@@ -468,6 +474,10 @@ docs/.vitepress/cache/
 # Docker
 # ==========================================
 .dockerignore
+# Root-level Dockerfile is a transient artifact from examples/*/deploy.sh
+# (copied during gcloud run deploy --source . and meant to be removed after).
+# Anchored with leading slash so nested Dockerfiles (examples/*/Dockerfile) stay tracked.
+/Dockerfile
 
 # ==========================================
 # Terraform
