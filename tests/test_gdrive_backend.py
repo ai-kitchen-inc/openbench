@@ -253,6 +253,95 @@ class TestAuthPropagation(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# memory_store() factory — env-flag-gated dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryStoreFlag(unittest.TestCase):
+    """``OPENBENCH_UNIFIED_MEMORY`` flag controls SQLite vs Drive routing."""
+
+    def test_flag_off_returns_sqlite(self):
+        from openbench.intelligence.memory import LocalSQLiteMemoryStore
+
+        backend = _make_backend(FakeFolderDrive())
+        with patch.dict("os.environ", {"OPENBENCH_UNIFIED_MEMORY": "0"}, clear=False):
+            store = backend.memory_store()
+        self.assertIsInstance(store, LocalSQLiteMemoryStore)
+
+    def test_flag_unset_returns_sqlite(self):
+        """Default behaviour — no env var, no Drive."""
+        from openbench.intelligence.memory import LocalSQLiteMemoryStore
+
+        env = {k: v for k, v in __import__("os").environ.items() if k != "OPENBENCH_UNIFIED_MEMORY"}
+        backend = _make_backend(FakeFolderDrive())
+        with patch.dict("os.environ", env, clear=True):
+            store = backend.memory_store()
+        self.assertIsInstance(store, LocalSQLiteMemoryStore)
+
+    def test_flag_on_returns_drive_store(self):
+        from openbench.integrations.gdrive.memory_store import GoogleDriveMemoryStore
+
+        backend = _make_backend(FakeFolderDrive())
+        with patch.dict("os.environ", {"OPENBENCH_UNIFIED_MEMORY": "1"}, clear=False):
+            store = backend.memory_store()
+        self.assertIsInstance(store, GoogleDriveMemoryStore)
+        # Backend root folder propagates through; Drive store creates its
+        # own ``agent-memory/`` subfolder lazily on first write.
+        self.assertEqual(store.folder_id, "root-1")
+        self.assertEqual(store.subfolder_name, "agent-memory")
+
+    def test_flag_truthy_variants_all_enable_drive(self):
+        from openbench.integrations.gdrive.memory_store import GoogleDriveMemoryStore
+
+        backend = _make_backend(FakeFolderDrive())
+        for raw in ("1", "true", "True", "TRUE", "yes", "Yes", "on", "ON"):
+            with patch.dict("os.environ", {"OPENBENCH_UNIFIED_MEMORY": raw}, clear=False):
+                store = backend.memory_store()
+            self.assertIsInstance(
+                store,
+                GoogleDriveMemoryStore,
+                msg=f"value {raw!r} should enable Drive memory store",
+            )
+
+    def test_flag_falsy_variants_all_keep_sqlite(self):
+        from openbench.intelligence.memory import LocalSQLiteMemoryStore
+
+        backend = _make_backend(FakeFolderDrive())
+        for raw in ("0", "false", "FALSE", "no", "off", "", "  "):
+            with patch.dict("os.environ", {"OPENBENCH_UNIFIED_MEMORY": raw}, clear=False):
+                store = backend.memory_store()
+            self.assertIsInstance(
+                store,
+                LocalSQLiteMemoryStore,
+                msg=f"value {raw!r} should keep SQLite fallback",
+            )
+
+    def test_drive_memory_store_inherits_credentials(self):
+        from openbench.integrations.gdrive.memory_store import GoogleDriveMemoryStore
+
+        marker = object()
+        backend = GoogleDriveStorageBackend(root_folder_id="r", credentials=marker)
+        backend._service = MagicMock()
+        with patch.dict("os.environ", {"OPENBENCH_UNIFIED_MEMORY": "1"}, clear=False):
+            store = backend.memory_store()
+        self.assertIsInstance(store, GoogleDriveMemoryStore)
+        self.assertIs(store._explicit_credentials, marker)
+
+    def test_drive_memory_store_inherits_service_account_file(self):
+        from openbench.integrations.gdrive.memory_store import GoogleDriveMemoryStore
+
+        backend = GoogleDriveStorageBackend(
+            root_folder_id="r",
+            service_account_file="/secrets/creds.json",
+        )
+        backend._service = MagicMock()
+        with patch.dict("os.environ", {"OPENBENCH_UNIFIED_MEMORY": "1"}, clear=False):
+            store = backend.memory_store()
+        self.assertIsInstance(store, GoogleDriveMemoryStore)
+        self.assertEqual(store._service_account_file, "/secrets/creds.json")
+
+
+# ---------------------------------------------------------------------------
 # Shared-drive flag plumbing
 # ---------------------------------------------------------------------------
 

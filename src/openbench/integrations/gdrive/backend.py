@@ -30,12 +30,14 @@ Example:
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from openbench.chat.session_store import SessionStore
+    from openbench.intelligence.memory import MemoryStore
     from openbench.intelligence.persona_source import PersonaSource
     from openbench.intelligence.scratchpad import ScratchpadStore
 
@@ -58,6 +60,19 @@ def _missing_dep_message() -> str:
     )
 
 
+def _unified_memory_enabled() -> bool:
+    """Gate the Drive-backed memory store via env var.
+
+    Per RFC-UNIFIED-MEMORY-STORAGE Phase 4 rollout plan, default is
+    ``"0"`` (off) — the backend keeps returning the legacy SQLite
+    fallback so zero behaviour changes for existing deployments.
+    Flip to ``"1"`` once the soak gate on RFC-TOOL-CALL-INTEGRITY
+    Layer 2a clears.
+    """
+    flag = os.environ.get("OPENBENCH_UNIFIED_MEMORY", "0").strip().lower()
+    return flag in ("1", "true", "yes", "on")
+
+
 class GoogleDriveStorageBackend:
     """Drive-backed :class:`StorageBackend` Protocol implementation.
 
@@ -71,6 +86,11 @@ class GoogleDriveStorageBackend:
     _PERSONAS_SUBFOLDER = "personas"
     _UPLOADS_SUBFOLDER = "uploads"
     _DOWNLOADS_SUBFOLDER = "downloads"
+    # Phase 2 RFC-UNIFIED-MEMORY-STORAGE: agent memory blobs live in a
+    # separate subfolder from scratchpad markdown (which uses
+    # ``_MEMORY_SUBFOLDER`` for legacy reasons). Gated by the
+    # ``OPENBENCH_UNIFIED_MEMORY`` env flag.
+    _AGENT_MEMORY_SUBFOLDER = "agent-memory"
 
     def __init__(
         self,
@@ -124,20 +144,31 @@ class GoogleDriveStorageBackend:
             credentials=self._explicit_credentials,
         )
 
-    def memory_store(self):
-        """Return a memory store — Phase 1 fallback to local SQLite.
+    def memory_store(self) -> MemoryStore:
+        """Return a memory store — Drive-backed when the flag is on.
 
-        Phase 2 of RFC-UNIFIED-MEMORY-STORAGE introduces a true
-        :class:`GoogleDriveMemoryStore`. Until then, Drive-backed users
-        get the same SQLite memory as non-Drive users — matching the
-        pre-RFC hardcoded behaviour in lci-mini. Zero behaviour change
-        for existing deployments.
+        Returns :class:`GoogleDriveMemoryStore` when
+        ``OPENBENCH_UNIFIED_MEMORY=1``, otherwise falls back to a
+        per-folder :class:`LocalSQLiteMemoryStore`. The flag default is
+        ``"0"`` per RFC-UNIFIED-MEMORY-STORAGE Phase 4 — flip to
+        ``"1"`` once the soak gate on RFC-TOOL-CALL-INTEGRITY Layer 2a
+        clears.
 
-        The returned path defaults to a per-process tempdir so multiple
-        Drive-backed users on the same backend instance don't collide;
-        lci-mini continues to manage its own SQLite path via
-        ``LCI_MINI_MEMORY_DB`` until Phase 2 lands.
+        The Drive-backed store writes blobs under
+        ``<root>/agent-memory/`` (separate from
+        :class:`GoogleDriveScratchpad`'s legacy ``<root>/memory/`` path)
+        so the two never collide on filenames.
         """
+        if _unified_memory_enabled():
+            from openbench.integrations.gdrive.memory_store import GoogleDriveMemoryStore
+
+            return GoogleDriveMemoryStore(
+                folder_id=self.root_folder_id,
+                service_account_file=self._service_account_file,
+                credentials=self._explicit_credentials,
+                subfolder_name=self._AGENT_MEMORY_SUBFOLDER,
+            )
+
         from openbench.intelligence.memory import LocalSQLiteMemoryStore
 
         return LocalSQLiteMemoryStore(db_path=str(self._fallback_memory_db_path()))
