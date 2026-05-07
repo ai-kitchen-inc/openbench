@@ -1,8 +1,13 @@
 """General Chat — document-aware chat assistant demo.
 
 Run:
-    export GOOGLE_API_KEY=...
-    uvicorn server:app --port 8005 --reload
+    Linux/macOS:
+        export GOOGLE_API_KEY=...
+        uvicorn server:app --port 8005 --reload
+
+    Windows (PowerShell):
+        $env:GOOGLE_API_KEY="..."
+        uvicorn server:app --port 8005 --reload
 """
 
 import logging
