@@ -21,6 +21,23 @@ console = Console()
 _SCRIPT_SUFFIXES = ("_demo.py", "_workflow.py")
 
 
+def _resolve_pnpm_command() -> list[str] | None:
+    """Resolve pnpm command across platforms and installations."""
+    if os.name == "nt":
+        # On Windows, prefer the .cmd shim for CreateProcess compatibility.
+        if shutil.which("pnpm.cmd"):
+            return ["pnpm.cmd"]
+        if shutil.which("pnpm"):
+            return ["pnpm"]
+    else:
+        if shutil.which("pnpm"):
+            return ["pnpm"]
+    # Fallback when pnpm is managed through Corepack
+    if shutil.which("corepack"):
+        return ["corepack", "pnpm"]
+    return None
+
+
 def _find_project_root() -> Path:
     """Walk up from this file to find the directory containing pyproject.toml."""
     current = Path(__file__).resolve()
@@ -37,7 +54,7 @@ def _detect_port(server_py: Path) -> int:
     ``port=8005`` / ``port = 8005`` in uvicorn.run() calls.
     """
     try:
-        text = server_py.read_text()
+        text = server_py.read_text(encoding="utf-8")
         # --port 8005
         match = re.search(r"--port\s+(\d+)", text)
         if match:
@@ -54,7 +71,7 @@ def _detect_port(server_py: Path) -> int:
 def _get_description(readme: Path) -> str:
     """Get first non-empty, non-heading line from README.md."""
     try:
-        for line in readme.read_text().splitlines():
+        for line in readme.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if stripped and not stripped.startswith("#"):
                 return _truncate(stripped)
@@ -66,7 +83,7 @@ def _get_description(readme: Path) -> str:
 def _get_script_description(script: Path) -> str:
     """Get module docstring first line from a Python script."""
     try:
-        tree = ast.parse(script.read_text())
+        tree = ast.parse(script.read_text(encoding="utf-8"))
         docstring = ast.get_docstring(tree)
         if docstring:
             first_line = docstring.strip().splitlines()[0].strip()
@@ -80,9 +97,22 @@ def _get_script_description(script: Path) -> str:
 
 def _truncate(text: str, max_len: int = 55) -> str:
     """Truncate text for CLI display."""
+    text = _console_safe(text)
     if len(text) > max_len:
         return text[: max_len - 3] + "..."
     return text
+
+
+def _console_safe(text: str) -> str:
+    """Return text that can be written to the active console encoding."""
+    text = (
+        text.replace("\u2192", "->")
+        .replace("\u2014", "--")
+        .replace("\u2013", "-")
+        .replace("\u2026", "...")
+    )
+    encoding = getattr(console.file, "encoding", None) or sys.getdefaultencoding()
+    return text.encode(encoding, errors="replace").decode(encoding)
 
 
 def _wait_for_port(port: int, timeout: int = 15) -> bool:
@@ -280,10 +310,15 @@ def _ensure_chat_ui_built(root: Path) -> bool:
 
     console.print("\n[yellow]@openbench/chat-ui not built yet.[/yellow] Building automatically...")
 
+    pnpm_cmd = _resolve_pnpm_command()
+    if not pnpm_cmd:
+        console.print("[red]Error:[/red] pnpm not found (or not resolvable via corepack).")
+        return False
+
     # Install deps
     console.print("[green]  pnpm install[/green] (studio/chat-ui)")
     result = subprocess.run(
-        ["pnpm", "install"],
+        [*pnpm_cmd, "install"],
         cwd=str(chat_ui_dir),
         stdout=sys.stdout,
         stderr=sys.stderr,
@@ -295,7 +330,7 @@ def _ensure_chat_ui_built(root: Path) -> bool:
     # Build
     console.print("[green]  pnpm build[/green] (studio/chat-ui)")
     result = subprocess.run(
-        ["pnpm", "build"],
+        [*pnpm_cmd, "build"],
         cwd=str(chat_ui_dir),
         stdout=sys.stdout,
         stderr=sys.stderr,
@@ -345,8 +380,10 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
     backend_port = port or info["port"]
     has_frontend = info["has_frontend"] and not no_frontend
 
+    pnpm_cmd = _resolve_pnpm_command()
+
     # Check pnpm if frontend needed
-    if has_frontend and not shutil.which("pnpm"):
+    if has_frontend and not pnpm_cmd:
         console.print(
             "[yellow]Warning:[/yellow] pnpm not found. "
             "Frontend won't start. Use --no-frontend to suppress this warning."
@@ -418,45 +455,75 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
         frontend_started = False
         if has_frontend:
             frontend_dir = demo_dir / "frontend"
-
-            if not no_install:
-                console.print("[green]Installing frontend dependencies:[/green] pnpm install")
-                install_result = subprocess.run(
-                    ["pnpm", "install"],
-                    cwd=str(frontend_dir),
-                    stdout=sys.stdout,
-                    stderr=sys.stderr,
+            if not frontend_dir.is_dir():
+                console.print(
+                    f"[yellow]Warning:[/yellow] Frontend directory not found: {frontend_dir}. "
+                    "Running backend only."
                 )
-                if install_result.returncode != 0:
+                has_frontend = False
+
+            if has_frontend and not no_install:
+                console.print("[green]Installing frontend dependencies:[/green] pnpm install")
+                try:
+                    install_result = subprocess.run(
+                        [*(pnpm_cmd or ["pnpm"]), "install"],
+                        cwd=str(frontend_dir),
+                        stdout=sys.stdout,
+                        stderr=sys.stderr,
+                    )
+                except FileNotFoundError as exc:
                     console.print(
-                        "[red]Error:[/red] pnpm install failed (exit code "
-                        f"{install_result.returncode}). Skipping frontend.\n"
-                        f"  Try running manually: cd {frontend_dir} && pnpm install"
+                        "[yellow]Warning:[/yellow] Could not run pnpm install. "
+                        "pnpm may be missing from PATH or frontend directory is unavailable. "
+                        "Running backend only.\n"
+                        f"  command: {' '.join([*(pnpm_cmd or ['pnpm']), 'install'])}\n"
+                        f"  cwd: {frontend_dir}\n"
+                        f"  details: {exc}"
                     )
                     has_frontend = False
+                else:
+                    if install_result.returncode != 0:
+                        console.print(
+                            "[red]Error:[/red] pnpm install failed (exit code "
+                            f"{install_result.returncode}). Skipping frontend.\n"
+                            f"  Try running manually: cd {frontend_dir} && pnpm install"
+                        )
+                        has_frontend = False
 
         if has_frontend:
             frontend_dir = demo_dir / "frontend"
             console.print("[green]Starting frontend:[/green] pnpm dev")
-            frontend = subprocess.Popen(
-                ["pnpm", "dev"],
-                cwd=str(frontend_dir),
-                stdout=sys.stdout,
-                stderr=sys.stderr,
-            )
-            processes.append(frontend)
-
-            # Brief health check -- give Vite a moment to crash or start
-            time.sleep(2)
-            if frontend.poll() is not None:
-                console.print(
-                    f"[red]Error:[/red] Frontend exited immediately (code {frontend.returncode}). "
-                    "Running backend only.\n"
-                    f"  Try running manually: cd {frontend_dir} && pnpm dev"
+            try:
+                frontend = subprocess.Popen(
+                    [*(pnpm_cmd or ["pnpm"]), "dev"],
+                    cwd=str(frontend_dir),
+                    stdout=sys.stdout,
+                    stderr=sys.stderr,
                 )
-                processes.remove(frontend)
+            except FileNotFoundError as exc:
+                console.print(
+                    "[yellow]Warning:[/yellow] Could not start frontend with pnpm dev. "
+                    "Running backend only.\n"
+                    f"  command: {' '.join([*(pnpm_cmd or ['pnpm']), 'dev'])}\n"
+                    f"  cwd: {frontend_dir}\n"
+                    f"  details: {exc}"
+                )
+                frontend = None
+            if frontend is None:
+                has_frontend = False
             else:
-                frontend_started = True
+                processes.append(frontend)
+                # Brief health check -- give Vite a moment to crash or start
+                time.sleep(2)
+                if frontend.poll() is not None:
+                    console.print(
+                        f"[red]Error:[/red] Frontend exited immediately (code {frontend.returncode}). "
+                        "Running backend only.\n"
+                        f"  Try running manually: cd {frontend_dir} && pnpm dev"
+                    )
+                    processes.remove(frontend)
+                else:
+                    frontend_started = True
 
         # Print summary
         lines = [f"[cyan]Backend:[/cyan]  http://localhost:{backend_port}"]

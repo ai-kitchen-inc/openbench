@@ -6,6 +6,7 @@ import { ChatInput } from "./ChatInput";
 import { useChatContext } from "./ChatProvider";
 import { MessageList } from "./MessageList";
 import { WelcomeScreen } from "./WelcomeScreen";
+import type { Attachment } from "../types";
 
 export interface ChatPanelProps {
   /** Additional CSS class. */
@@ -20,6 +21,8 @@ export interface ChatPanelProps {
   title?: string;
   /** Extra content rendered in the header-right area (e.g. theme toggle). */
   headerRight?: React.ReactNode;
+  /** Attachments that should be included with every sent message. */
+  persistentAttachments?: Attachment[];
 }
 
 export function ChatPanel({
@@ -29,6 +32,7 @@ export function ChatPanel({
   suggestions,
   title,
   headerRight,
+  persistentAttachments,
 }: ChatPanelProps) {
   const {
     messages,
@@ -45,6 +49,10 @@ export function ChatPanel({
 
   const isEmpty = messages.length === 0;
   const headerTitle = title || (isEmpty ? "New Chat" : "Chat");
+  const sendWithPersistentAttachments = (content: string, attachments?: Attachment[]) => {
+    const merged = [...(attachments ?? []), ...(persistentAttachments ?? [])];
+    sendMessage(content, merged.length > 0 ? merged : undefined);
+  };
 
   return (
     <div className={`chat-panel ${className}`}>
@@ -109,7 +117,7 @@ export function ChatPanel({
           <WelcomeScreen
             greeting={greeting}
             suggestions={suggestions}
-            onSuggestionClick={(s) => sendMessage(s)}
+            onSuggestionClick={(s) => sendWithPersistentAttachments(s)}
           />
         ) : (
           <MessageList
@@ -124,7 +132,7 @@ export function ChatPanel({
 
       {/* Input */}
       <div className="chat-panel__footer">
-        <ChatInput onSend={sendMessage} placeholder={placeholder} />
+        <ChatInput onSend={sendWithPersistentAttachments} placeholder={placeholder} />
       </div>
     </div>
   );

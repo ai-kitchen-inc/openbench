@@ -518,7 +518,15 @@ examples/lci-mini/uploads/
 examples/lci-mini/downloads/
 examples/lci-mini/profiles/
 examples/lci-mini/.openbench/
+examples/general-chat/.openbench/
 examples/lci-mini/lci_mini_memory.db
 examples/lci-mini/frontend/dist/
+
+# Local AI assistant artifacts
+.claude/worktrees/
+.claude/settings.local.json
+.codex/
+.agents/
+prompt-debug/
 # Added by code-review-graph
 .code-review-graph/
