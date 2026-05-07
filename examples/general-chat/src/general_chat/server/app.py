@@ -6,6 +6,7 @@ Docling, and a general-purpose Gemini agent. No authentication required.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -18,7 +19,9 @@ from general_chat.agent import create_agent, get_persona_dir
 from general_chat.extractor import DoclingContentExtractor
 from general_chat.server.handler import GeneralChatHandler
 from general_chat.sources import (
+    DEFAULT_DISCOVERY_LIMIT,
     SourceParserRegistry,
+    SearchDiscoveryAdapter,
     SourceStore,
     max_source_bytes_from_env,
     source_record_from_file,
@@ -30,6 +33,8 @@ from openbench.chat import ChatEngine, render_queue as shared_render_queue
 from openbench.chat.files import LocalFileStore
 from openbench.chat.transport import AGUIActionHandler
 from openbench.chat.transport.sessions import AGUISessionHandler
+
+logger = logging.getLogger(__name__)
 
 _ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -43,6 +48,7 @@ _ALLOWED_MIME_TYPES = {
     "text/csv",
     "text/markdown",
     "application/json",
+    "image/png",
     "application/octet-stream",  # browser fallback
 }
 
@@ -59,6 +65,7 @@ _EXT_MIME_MAP = {
     ".csv": "text/csv",
     ".md": "text/markdown",
     ".json": "application/json",
+    ".png": "image/png",
 }
 
 
@@ -104,6 +111,7 @@ def create_app() -> FastAPI:
     extractor = DoclingContentExtractor()
     source_parser = SourceParserRegistry(document_extractor=extractor)
     source_store = SourceStore(storage_root)
+    discovery_adapter = SearchDiscoveryAdapter()
     max_source_bytes = max_source_bytes_from_env()
     agent = create_agent()
 
@@ -251,6 +259,31 @@ def create_app() -> FastAPI:
         result["url"] = record.url or attachment.url
         result["type"] = attachment.type
         return result
+
+    @app.get("/chat/sources/discover")
+    async def discover_sources(q: str = "", limit: int = DEFAULT_DISCOVERY_LIMIT) -> dict:
+        query = q.strip()
+        if not query:
+            return {"query": "", "results": []}
+        try:
+            response = discovery_adapter.search(query, limit=limit)
+        except Exception as exc:
+            # External discovery providers (DuckDuckGo/Grounded search) can fail due to
+            # transient network, SSL, or upstream provider issues. Keep the API stable
+            # for the frontend and degrade to an empty result set instead of raising 500.
+            logger.warning("Source discovery failed for query %r: %s", query, exc, exc_info=True)
+            return {
+                "query": query,
+                "results": [],
+                "warning": "Discovery provider is temporarily unavailable. Try again later.",
+            }
+        payload = {
+            "query": response.query,
+            "results": [result.to_dict() for result in response.results],
+        }
+        if response.warning:
+            payload["warning"] = response.warning
+        return payload
 
     @app.get("/chat/sources/{thread_id}")
     async def list_sources(thread_id: str) -> list[dict]:

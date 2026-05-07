@@ -1,50 +1,88 @@
-"""Document content extractor using Docling for rich file types."""
+"""Document and image content extraction using Docling."""
 
 from __future__ import annotations
 
 import logging
+import struct
 from pathlib import Path
+from typing import Any
 
 from openbench.chat.files import FileContentExtractor, StoredFile
 
 logger = logging.getLogger(__name__)
 
-# MIME types that Docling handles well
 _DOCLING_MIME_TYPES = {
     "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
-    "application/msword",  # .doc
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
-    "application/vnd.ms-powerpoint",  # .ppt
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.ms-powerpoint",
 }
-
-# Extension-based fallback when browser sends application/octet-stream
 _DOCLING_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt"}
 
-# MIME types / extensions that python-docx can handle as a secondary fallback
 _DOCX_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/msword",
 }
 _DOCX_EXTENSIONS = {".docx", ".doc"}
 
+_IMAGE_MIME_TYPES = {"image/png"}
+_IMAGE_EXTENSIONS = {".png"}
+
 _fallback = FileContentExtractor()
 
 
 class DoclingContentExtractor:
-    """Extract text from documents using Docling, with fallback chain for Word files.
-
-    Extraction priority:
-      1. Docling — PDF, DOCX, DOC, PPTX, PPT (best quality, markdown output).
-      2. python-docx — DOCX/DOC only, when Docling is not installed or fails.
-      3. FileContentExtractor — everything else (Excel, CSV, plain text, images).
-    """
+    """Extract text and image OCR using Docling, with narrow fallbacks."""
 
     def extract(self, stored_file: StoredFile) -> str:
         ext = Path(stored_file.name).suffix.lower()
         if stored_file.mime_type in _DOCLING_MIME_TYPES or ext in _DOCLING_EXTENSIONS:
             return self._extract_with_docling(stored_file)
         return _fallback.extract(stored_file)
+
+    def extract_image(self, stored_file: StoredFile) -> dict[str, Any]:
+        ext = Path(stored_file.name).suffix.lower()
+        if stored_file.mime_type not in _IMAGE_MIME_TYPES and ext not in _IMAGE_EXTENSIONS:
+            raise ValueError(f"Unsupported image source type: {ext or stored_file.mime_type}")
+
+        try:
+            from docling.document_converter import DocumentConverter
+        except ImportError as exc:
+            raise RuntimeError("docling is required for PNG OCR support.") from exc
+
+        try:
+            converter = DocumentConverter()
+            result = converter.convert(stored_file.path)
+            markdown = result.document.export_to_markdown().strip()
+        except Exception as exc:
+            logger.warning("Docling image extraction failed for %s: %s", stored_file.name, exc)
+            raise ValueError(f"Image extraction failed: {exc}") from exc
+
+        if not markdown:
+            raise ValueError(f"No OCR text could be extracted from {stored_file.name}.")
+
+        dimensions = _png_dimensions(stored_file.path)
+        width = dimensions.get("width")
+        height = dimensions.get("height")
+        description = _image_description(stored_file.name, width, height, markdown)
+        search_text = _build_image_search_text(
+            stored_file.name,
+            description,
+            markdown,
+            dimensions,
+        )
+
+        return {
+            "description": description,
+            "ocr_text": markdown,
+            "search_text": search_text,
+            "metadata": {
+                "format": "png",
+                "width": width,
+                "height": height,
+            },
+        }
 
     def _extract_with_docling(self, stored_file: StoredFile) -> str:
         try:
@@ -64,20 +102,14 @@ class DoclingContentExtractor:
         except Exception as exc:
             logger.warning("Docling extraction failed for %s: %s", stored_file.name, exc)
             ext = Path(stored_file.name).suffix.lower()
-            if (
-                stored_file.mime_type in _DOCX_MIME_TYPES
-                or ext in _DOCX_EXTENSIONS
-            ):
-                logger.info(
-                    "Falling back to python-docx for %s", stored_file.name
-                )
+            if stored_file.mime_type in _DOCX_MIME_TYPES or ext in _DOCX_EXTENSIONS:
+                logger.info("Falling back to python-docx for %s", stored_file.name)
                 return self._extract_with_python_docx(stored_file)
             return f"[{stored_file.name}] (extraction failed: {exc})"
 
     def _extract_with_python_docx(self, stored_file: StoredFile) -> str:
-        """Extract text from a Word document using python-docx."""
         try:
-            import docx  # python-docx
+            import docx
 
             doc = docx.Document(stored_file.path)
             parts: list[str] = []
@@ -87,7 +119,6 @@ class DoclingContentExtractor:
                 if text:
                     parts.append(text)
 
-            # Also pull text from tables
             for table in doc.tables:
                 for row in table.rows:
                     row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
@@ -99,12 +130,53 @@ class DoclingContentExtractor:
                 return f"[{stored_file.name}] (document appears empty after extraction)"
             return full_text
         except ImportError:
-            logger.warning(
-                "python-docx not installed; install it with: pip install python-docx"
-            )
+            logger.warning("python-docx not installed; install it with: pip install python-docx")
             return _fallback.extract(stored_file)
         except Exception as exc:
             logger.warning(
                 "python-docx extraction failed for %s: %s", stored_file.name, exc
             )
             return _fallback.extract(stored_file)
+
+
+def _png_dimensions(path: str) -> dict[str, int | None]:
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(24)
+    except OSError:
+        return {"width": None, "height": None}
+
+    if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
+        return {"width": None, "height": None}
+
+    width, height = struct.unpack(">II", header[16:24])
+    return {"width": int(width), "height": int(height)}
+
+
+def _image_description(name: str, width: int | None, height: int | None, ocr_text: str) -> str:
+    size = f"{width}x{height}" if width and height else "unknown size"
+    if ocr_text.strip():
+        return f"PNG image source {name} ({size}) with OCR-detected text."
+    return f"PNG image source {name} ({size}) with no OCR text detected."
+
+
+def _build_image_search_text(
+    name: str,
+    description: str,
+    ocr_text: str,
+    dimensions: dict[str, int | None],
+) -> str:
+    width = dimensions.get("width")
+    height = dimensions.get("height")
+    lines = [
+        f"## {name}",
+        "",
+        "### Image summary",
+        description,
+        f"Format: PNG",
+        f"Dimensions: {width or 'unknown'} x {height or 'unknown'}",
+        "",
+        "### Detected text",
+        ocr_text.strip() or "(No OCR text detected.)",
+    ]
+    return "\n".join(lines).strip()

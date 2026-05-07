@@ -5,12 +5,16 @@ from __future__ import annotations
 import sys
 import unittest
 import uuid
+from contextlib import ExitStack
+from os import environ
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import requests
 from openbench.chat.files import StoredFile
 from openbench.chat.engine import ChatEngine
 from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult
+from fastapi.testclient import TestClient
 
 
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
@@ -20,9 +24,14 @@ if str(GENERAL_CHAT_SRC) not in sys.path:
 from general_chat.server.app import _resolve_request_session_id  # noqa: E402
 from general_chat.server.handler import GeneralChatHandler  # noqa: E402
 from general_chat.sources import (  # noqa: E402
+    SearchDiscoveryResponse,
+    SearchDiscoveryResult,
+    SearchProviderFailure,
+    SearchProviderResponse,
     SourceParserRegistry,
     SourceRecord,
     SourceStore,
+    TavilySearchDiscoveryProvider,
     clean_html_text,
     source_record_from_file,
     source_record_from_text,
@@ -200,7 +209,8 @@ class TestGeneralChatSources(unittest.TestCase):
             stored_at="2026-01-01T00:00:00+00:00",
         )
 
-        self.assertEqual(parser.parse_file(stored), "Docling markdown")
+        parsed = parser.parse_file(stored)
+        self.assertEqual(parsed.text, "Docling markdown")
         extractor.extract.assert_called_once_with(stored)
 
     def test_xlsx_multi_sheet_extraction(self):
@@ -233,17 +243,94 @@ class TestGeneralChatSources(unittest.TestCase):
                 stored_at="2026-01-01T00:00:00+00:00",
             )
 
-            text = SourceParserRegistry().parse_file(stored)
+            parsed = SourceParserRegistry().parse_file(stored)
         finally:
             if path.exists():
                 path.unlink()
             if tmpdir.exists():
                 tmpdir.rmdir()
 
+        text = parsed.text
         self.assertIn("Sheet: People", text)
         self.assertIn("Ada", text)
         self.assertIn("Sheet: Inventory", text)
         self.assertIn("Widget", text)
+
+    def test_png_ocr_success_creates_searchable_image_source(self):
+        extractor = Mock()
+        extractor.extract_image.return_value = {
+            "description": "PNG image source diagram.png (640x480) with OCR-detected text.",
+            "ocr_text": "Launch checklist",
+            "search_text": "## diagram.png\n\n### Image summary\nPNG image source diagram.png (640x480) with OCR-detected text.\n\n### Detected text\nLaunch checklist",
+            "metadata": {"format": "png", "width": 640, "height": 480},
+        }
+        parser = SourceParserRegistry(document_extractor=extractor)
+        stored = StoredFile(
+            id="file-2",
+            name="diagram.png",
+            path="diagram.png",
+            mime_type="image/png",
+            size_bytes=24,
+            stored_at="2026-01-01T00:00:00+00:00",
+        )
+
+        record = source_record_from_file(
+            session_id="s1",
+            stored_file=stored,
+            parser=parser,
+            max_bytes=1024,
+        )
+
+        self.assertEqual(record.status, "ready")
+        self.assertEqual(record.kind, "image")
+        self.assertIn("Launch checklist", record.text)
+        self.assertEqual(record.metadata["width"], 640)
+        self.assertIn("OCR-detected text", str(record.metadata["description"]))
+        extractor.extract_image.assert_called_once_with(stored)
+
+    def test_png_ocr_failure_creates_failed_image_source(self):
+        extractor = Mock()
+        extractor.extract_image.side_effect = ValueError("Image extraction failed: OCR pipeline unavailable")
+        parser = SourceParserRegistry(document_extractor=extractor)
+        stored = StoredFile(
+            id="file-3",
+            name="scan.png",
+            path="scan.png",
+            mime_type="image/png",
+            size_bytes=24,
+            stored_at="2026-01-01T00:00:00+00:00",
+        )
+
+        record = source_record_from_file(
+            session_id="s1",
+            stored_file=stored,
+            parser=parser,
+            max_bytes=1024,
+        )
+
+        self.assertEqual(record.status, "failed")
+        self.assertIn("OCR pipeline unavailable", record.error or "")
+
+    def test_invalid_image_type_is_rejected(self):
+        parser = SourceParserRegistry()
+        stored = StoredFile(
+            id="file-4",
+            name="photo.jpg",
+            path="photo.jpg",
+            mime_type="image/jpeg",
+            size_bytes=24,
+            stored_at="2026-01-01T00:00:00+00:00",
+        )
+
+        record = source_record_from_file(
+            session_id="s1",
+            stored_file=stored,
+            parser=parser,
+            max_bytes=1024,
+        )
+
+        self.assertEqual(record.status, "failed")
+        self.assertIn("Unsupported", record.error or "")
 
     def test_url_validation(self):
         self.assertEqual(validate_url("https://example.com/page"), "https://example.com/page")
@@ -328,6 +415,233 @@ class TestGeneralChatSources(unittest.TestCase):
                 sources_dir.rmdir()
             if tmpdir.exists():
                 tmpdir.rmdir()
+
+    def test_discovery_endpoint_ignores_empty_query(self):
+        client = self._build_test_client()
+        response = client.get("/chat/sources/discover?q=   ")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"query": "", "results": []})
+
+    def test_discovery_endpoint_normalizes_results(self):
+        adapter = Mock()
+        adapter.search.return_value = SearchDiscoveryResponse(
+            query="test",
+            results=[
+                SearchDiscoveryResult(
+                    id="discover-1",
+                    title="Example result",
+                    url="https://example.com/page",
+                    domain="example.com",
+                    snippet="Useful summary text",
+                    favicon_url="https://example.com/favicon.ico",
+                )
+            ],
+        )
+        client = self._build_test_client(discovery_adapter=adapter)
+
+        response = client.get("/chat/sources/discover?q=test")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["query"], "test")
+        self.assertEqual(payload["results"][0]["title"], "Example result")
+        self.assertEqual(payload["results"][0]["domain"], "example.com")
+        self.assertEqual(
+            payload["results"][0]["faviconUrl"],
+            "https://example.com/favicon.ico",
+        )
+        adapter.search.assert_called_once_with("test", limit=8)
+
+    def test_discovery_endpoint_handles_provider_errors_without_500(self):
+        adapter = Mock()
+        adapter.search.return_value = SearchDiscoveryResponse(
+            query="test",
+            results=[],
+            warning="Discovery provider is temporarily unavailable. Try again later.",
+        )
+        client = self._build_test_client(discovery_adapter=adapter)
+
+        response = client.get("/chat/sources/discover?q=test")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["query"], "test")
+        self.assertEqual(payload["results"], [])
+        self.assertIn("warning", payload)
+        adapter.search.assert_called_once_with("test", limit=8)
+
+    def test_tavily_provider_normalizes_successful_results(self):
+        transport = Mock()
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "results": [
+                {
+                    "title": "Top food in Indonesia",
+                    "url": "https://example.com/foods",
+                    "content": "A guide to Indonesian food.",
+                }
+            ]
+        }
+        transport.post.return_value = response
+        provider = TavilySearchDiscoveryProvider(transport=transport, api_key="test-key")
+
+        result = provider.search("top food indonesia", limit=5)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.provider, "tavily")
+        self.assertEqual(len(result.results), 1)
+        self.assertEqual(result.results[0].title, "Top food in Indonesia")
+        self.assertEqual(result.results[0].domain, "example.com")
+        self.assertIn("Indonesian food", result.results[0].snippet)
+
+    def test_tavily_provider_missing_api_key_is_graceful(self):
+        provider = TavilySearchDiscoveryProvider(transport=Mock(), api_key="")
+
+        result = provider.search("top food indonesia")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure.category, "config")
+        self.assertIn("TAVILY_API_KEY", result.failure.message)
+
+    def test_tavily_provider_invalid_api_key_is_graceful(self):
+        transport = Mock()
+        response = Mock()
+        response.status_code = 403
+        transport.post.return_value = response
+        provider = TavilySearchDiscoveryProvider(transport=transport, api_key="bad-key")
+
+        result = provider.search("top food indonesia")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure.category, "auth")
+
+    def test_tavily_provider_timeout_is_graceful(self):
+        transport = Mock()
+        transport.post.side_effect = requests.exceptions.Timeout("timed out")
+        provider = TavilySearchDiscoveryProvider(transport=transport, api_key="test-key")
+
+        result = provider.search("top food indonesia")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure.category, "timeout")
+
+    def test_tavily_provider_rate_limit_is_graceful(self):
+        transport = Mock()
+        response = Mock()
+        response.status_code = 429
+        transport.post.return_value = response
+        provider = TavilySearchDiscoveryProvider(transport=transport, api_key="test-key")
+
+        result = provider.search("top food indonesia")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure.category, "rate_limit")
+
+    def test_tavily_provider_empty_results_are_supported(self):
+        transport = Mock()
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {"results": []}
+        transport.post.return_value = response
+        provider = TavilySearchDiscoveryProvider(transport=transport, api_key="test-key")
+
+        result = provider.search("top food indonesia")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.results, [])
+
+    def test_tavily_provider_network_failure_is_graceful(self):
+        transport = Mock()
+        transport.post.side_effect = requests.exceptions.ConnectionError("offline")
+        provider = TavilySearchDiscoveryProvider(transport=transport, api_key="test-key")
+
+        result = provider.search("top food indonesia")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure.category, "network")
+
+    def test_search_discovery_adapter_does_not_cache_failed_provider_fallback(self):
+        primary = Mock()
+        primary.provider_name = "tavily"
+        primary.search.side_effect = [
+            SearchProviderResponse(
+                provider="tavily",
+                results=[],
+                failure=SearchProviderFailure(
+                    provider="tavily",
+                    category="network",
+                    message="offline",
+                    exception_class="ConnectionError",
+                ),
+            ),
+            SearchProviderResponse(
+                provider="tavily",
+                results=[
+                    SearchDiscoveryResult(
+                        id="discover-2",
+                        title="Recovered result",
+                        url="https://example.com/recovered",
+                        domain="example.com",
+                        snippet="Recovered snippet",
+                    )
+                ],
+            ),
+        ]
+        from general_chat.sources import SearchDiscoveryAdapter
+
+        adapter = SearchDiscoveryAdapter(provider_name="tavily")
+        adapter._providers = [primary]
+
+        first = adapter.search("top food indonesia")
+        second = adapter.search("top food indonesia")
+
+        self.assertEqual(first.results, [])
+        self.assertIsNotNone(first.warning)
+        self.assertEqual(second.results[0].title, "Recovered result")
+        self.assertEqual(primary.search.call_count, 2)
+
+    def _build_test_client(self, discovery_adapter: Mock | None = None) -> TestClient:
+        tmpdir = Path("tests/.tmp") / f"app-{uuid.uuid4().hex}"
+        tmpdir.mkdir(parents=True, exist_ok=True)
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.callback(self._cleanup_path_tree, tmpdir)
+        stack.enter_context(
+            patch.dict(
+                environ,
+                {
+                    "GENERAL_CHAT_STORAGE_ROOT": str(tmpdir / "storage"),
+                    "GENERAL_CHAT_UPLOAD_DIR": str(tmpdir / "uploads"),
+                    "GENERAL_CHAT_DOWNLOAD_DIR": str(tmpdir / "downloads"),
+                    "OPENBENCH_PROFILE_DIR": str(tmpdir / "profiles"),
+                },
+                clear=False,
+            )
+        )
+        agent = Mock()
+        agent.model = "mock-model"
+        agent._persona = None
+        agent._skill_registry = None
+        stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
+        if discovery_adapter is not None:
+            stack.enter_context(
+                patch("general_chat.server.app.SearchDiscoveryAdapter", return_value=discovery_adapter)
+            )
+        from general_chat.server.app import create_app
+
+        return TestClient(create_app())
+
+    def _cleanup_path_tree(self, root: Path) -> None:
+        if not root.exists():
+            return
+        for path in sorted(root.rglob("*"), reverse=True):
+            if path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                path.rmdir()
+        root.rmdir()
 
 
 if __name__ == "__main__":

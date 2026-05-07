@@ -20,6 +20,9 @@ about the content.
 You also need a **Google API key** with the Gemini API enabled.
 Get one at [aistudio.google.com](https://aistudio.google.com/app/apikey).
 
+For internet source discovery, you should also configure a **Tavily API key**.
+Get one at [tavily.com](https://tavily.com/).
+
 ---
 
 ## 1 — Install OpenBench (parent package)
@@ -56,6 +59,7 @@ Open `.env` and set at minimum:
 
 ```dotenv
 GOOGLE_API_KEY=YOUR_KEY_HERE
+TAVILY_API_KEY=YOUR_TAVILY_KEY_HERE
 ```
 
 The other variables in `.env` are optional overrides:
@@ -68,6 +72,8 @@ The other variables in `.env` are optional overrides:
 | `GENERAL_CHAT_STORAGE_ROOT` | `.openbench/` | Session + source JSON storage |
 | `GENERAL_CHAT_MEMORY_DB` | `general_chat_memory.db` | SQLite persistent memory |
 | `GENERAL_CHAT_MAX_SOURCE_BYTES` | `26214400` (25 MB) | Max size per uploaded source |
+| `GENERAL_CHAT_DISCOVERY_PROVIDER` | `tavily` | Primary internet search provider |
+| `GENERAL_CHAT_DISCOVERY_PROVIDERS` | `tavily` | Ordered fallback provider list |
 | `OPENBENCH_AUTH_DISABLED` | `1` | Disable auth (keep `1` for local dev) |
 
 ---
@@ -118,7 +124,7 @@ pip install -e .
 ```
 
 This installs `fastapi`, `uvicorn`, `docling`, `python-docx`, `pandas`,
-`openpyxl`, and the other deps listed in `pyproject.toml`.
+`openpyxl`, `tavily-python`, and the other deps listed in `pyproject.toml`.
 
 ### 4.2 Start backend
 
@@ -198,6 +204,7 @@ Max file size: 25 MB per source (override with `GENERAL_CHAT_MAX_SOURCE_BYTES`).
 | `GET` | `/health` | Health check |
 | `POST` | `/awp` | AG-UI SSE chat endpoint |
 | `POST` | `/chat/upload` | Upload a source file |
+| `GET` | `/chat/sources/discover?q=...` | Search the internet for candidate sources |
 | `GET` | `/chat/sources/{thread_id}` | List sources for a session |
 | `POST` | `/chat/sources/{thread_id}/url` | Add a URL source |
 | `POST` | `/chat/sources/{thread_id}/text` | Add a plain-text source |
@@ -238,6 +245,21 @@ uvicorn server:app --port 8005 --reload
 Windows (PowerShell):
 ```powershell
 $env:GOOGLE_API_KEY="YOUR_KEY_HERE"
+uvicorn server:app --port 8005 --reload
+```
+
+**Internet search returns a configuration warning**
+Set `TAVILY_API_KEY` in `.env` to enable source discovery search.
+
+Linux/macOS:
+```bash
+export TAVILY_API_KEY=YOUR_KEY_HERE
+uvicorn server:app --port 8005 --reload
+```
+
+Windows (PowerShell):
+```powershell
+$env:TAVILY_API_KEY="YOUR_KEY_HERE"
 uvicorn server:app --port 8005 --reload
 ```
 

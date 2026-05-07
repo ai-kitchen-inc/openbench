@@ -7,6 +7,11 @@ export default defineConfig({
   resolve: {
     dedupe: ["react", "react-dom"],
   },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: "./src/setupTests.ts",
+  },
   server: {
     proxy: {
       "/awp": { target: "http://localhost:8005", changeOrigin: true },
