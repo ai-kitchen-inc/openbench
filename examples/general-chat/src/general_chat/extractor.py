@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import struct
 from pathlib import Path
 from typing import Any
 
@@ -26,8 +25,8 @@ _DOCX_MIME_TYPES = {
 }
 _DOCX_EXTENSIONS = {".docx", ".doc"}
 
-_IMAGE_MIME_TYPES = {"image/png"}
-_IMAGE_EXTENSIONS = {".png"}
+_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 _fallback = FileContentExtractor()
 
@@ -49,7 +48,7 @@ class DoclingContentExtractor:
         try:
             from docling.document_converter import DocumentConverter
         except ImportError as exc:
-            raise RuntimeError("docling is required for PNG OCR support.") from exc
+            raise RuntimeError("docling is required for image OCR support.") from exc
 
         try:
             converter = DocumentConverter()
@@ -62,12 +61,14 @@ class DoclingContentExtractor:
         if not markdown:
             raise ValueError(f"No OCR text could be extracted from {stored_file.name}.")
 
-        dimensions = _png_dimensions(stored_file.path)
+        image_format = _image_format(stored_file.name, stored_file.mime_type)
+        dimensions = _image_dimensions(stored_file.path)
         width = dimensions.get("width")
         height = dimensions.get("height")
-        description = _image_description(stored_file.name, width, height, markdown)
+        description = _image_description(stored_file.name, image_format, width, height, markdown)
         search_text = _build_image_search_text(
             stored_file.name,
+            image_format,
             description,
             markdown,
             dimensions,
@@ -78,7 +79,7 @@ class DoclingContentExtractor:
             "ocr_text": markdown,
             "search_text": search_text,
             "metadata": {
-                "format": "png",
+                "format": image_format.lower(),
                 "width": width,
                 "height": height,
             },
@@ -139,29 +140,42 @@ class DoclingContentExtractor:
             return _fallback.extract(stored_file)
 
 
-def _png_dimensions(path: str) -> dict[str, int | None]:
+def _image_dimensions(path: str) -> dict[str, int | None]:
     try:
-        with open(path, "rb") as handle:
-            header = handle.read(24)
-    except OSError:
+        from PIL import Image
+    except ImportError:
         return {"width": None, "height": None}
 
-    if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+    except Exception:
         return {"width": None, "height": None}
 
-    width, height = struct.unpack(">II", header[16:24])
     return {"width": int(width), "height": int(height)}
 
 
-def _image_description(name: str, width: int | None, height: int | None, ocr_text: str) -> str:
+def _image_format(name: str, mime_type: str) -> str:
+    ext = Path(name).suffix.lower()
+    if ext in {".jpg", ".jpeg"} or mime_type == "image/jpeg":
+        return "JPEG"
+    if ext == ".webp" or mime_type == "image/webp":
+        return "WEBP"
+    return "PNG"
+
+
+def _image_description(
+    name: str, image_format: str, width: int | None, height: int | None, ocr_text: str
+) -> str:
     size = f"{width}x{height}" if width and height else "unknown size"
     if ocr_text.strip():
-        return f"PNG image source {name} ({size}) with OCR-detected text."
-    return f"PNG image source {name} ({size}) with no OCR text detected."
+        return f"{image_format} image source {name} ({size}) with OCR-detected text."
+    return f"{image_format} image source {name} ({size}) with no OCR text detected."
 
 
 def _build_image_search_text(
     name: str,
+    image_format: str,
     description: str,
     ocr_text: str,
     dimensions: dict[str, int | None],
@@ -173,7 +187,7 @@ def _build_image_search_text(
         "",
         "### Image summary",
         description,
-        f"Format: PNG",
+        f"Format: {image_format}",
         f"Dimensions: {width or 'unknown'} x {height or 'unknown'}",
         "",
         "### Detected text",

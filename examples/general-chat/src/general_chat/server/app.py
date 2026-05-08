@@ -49,6 +49,8 @@ _ALLOWED_MIME_TYPES = {
     "text/markdown",
     "application/json",
     "image/png",
+    "image/jpeg",
+    "image/webp",
     "application/octet-stream",  # browser fallback
 }
 
@@ -66,6 +68,9 @@ _EXT_MIME_MAP = {
     ".md": "text/markdown",
     ".json": "application/json",
     ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
 }
 
 

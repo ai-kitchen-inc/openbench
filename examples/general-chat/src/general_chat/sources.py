@@ -47,8 +47,8 @@ EXCEL_EXTENSIONS = {".xlsx", ".xls"}
 TEXT_MIME_TYPES = {"application/json"}
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json"}
 
-IMAGE_MIME_TYPES = {"image/png"}
-IMAGE_EXTENSIONS = {".png"}
+IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 ALLOWED_EXTENSIONS = (
     DOCUMENT_EXTENSIONS | EXCEL_EXTENSIONS | TEXT_EXTENSIONS | IMAGE_EXTENSIONS

@@ -13,7 +13,8 @@ import { ToastProvider, useToast } from "./Toast";
 import "./global.css";
 
 const STREAM_URL = "/awp";
-const SOURCE_ACCEPT = ".xlsx,.xls,.pdf,.docx,.doc,.pptx,.ppt,.txt,.md,.csv,.json,.png";
+const SOURCE_ACCEPT =
+  ".xlsx,.xls,.pdf,.docx,.doc,.pptx,.ppt,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.webp";
 
 const SUGGESTIONS = [
   "Summarize the uploaded source files",
@@ -264,7 +265,7 @@ function sourceKindLabel(source: SourceItem): string {
   if (source.kind === "url") return "WEB";
   if (source.kind === "text") return "TEXT";
   if (source.kind === "spreadsheet") return "XLSX";
-  if (source.kind === "image") return "PNG";
+  if (source.kind === "image") return "IMAGE";
   return source.kind.toUpperCase();
 }
 

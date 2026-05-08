@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import types
 import unittest
 import uuid
 from contextlib import ExitStack
@@ -21,8 +22,9 @@ GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-c
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
-from general_chat.server.app import _resolve_request_session_id  # noqa: E402
+from general_chat.server.app import _resolve_mime, _resolve_request_session_id  # noqa: E402
 from general_chat.server.handler import GeneralChatHandler  # noqa: E402
+from general_chat.extractor import DoclingContentExtractor  # noqa: E402
 from general_chat.sources import (  # noqa: E402
     SearchDiscoveryResponse,
     SearchDiscoveryResult,
@@ -167,6 +169,8 @@ class TestGeneralChatSources(unittest.TestCase):
 
     def test_file_type_and_size_validation(self):
         validate_file_source("report.pdf", "application/pdf", 10, max_bytes=20)
+        validate_file_source("photo.jpg", "image/jpeg", 10, max_bytes=20)
+        validate_file_source("graphic.webp", "image/webp", 10, max_bytes=20)
 
         with self.assertRaisesRegex(ValueError, "Unsupported"):
             validate_file_source("archive.zip", "application/zip", 10, max_bytes=20)
@@ -311,8 +315,15 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(record.status, "failed")
         self.assertIn("OCR pipeline unavailable", record.error or "")
 
-    def test_invalid_image_type_is_rejected(self):
-        parser = SourceParserRegistry()
+    def test_jpeg_ocr_success_creates_searchable_image_source(self):
+        extractor = Mock()
+        extractor.extract_image.return_value = {
+            "description": "JPEG image source photo.jpg (640x480) with OCR-detected text.",
+            "ocr_text": "Roadmap draft",
+            "search_text": "## photo.jpg\n\n### Image summary\nJPEG image source photo.jpg (640x480) with OCR-detected text.\n\n### Detected text\nRoadmap draft",
+            "metadata": {"format": "jpeg", "width": 640, "height": 480},
+        }
+        parser = SourceParserRegistry(document_extractor=extractor)
         stored = StoredFile(
             id="file-4",
             name="photo.jpg",
@@ -329,8 +340,69 @@ class TestGeneralChatSources(unittest.TestCase):
             max_bytes=1024,
         )
 
+        self.assertEqual(record.status, "ready")
+        self.assertEqual(record.kind, "image")
+        self.assertIn("Roadmap draft", record.text)
+        self.assertEqual(record.metadata["format"], "jpeg")
+        extractor.extract_image.assert_called_once_with(stored)
+
+    def test_webp_ocr_success_creates_searchable_image_source(self):
+        extractor = Mock()
+        extractor.extract_image.return_value = {
+            "description": "WEBP image source poster.webp (1200x675) with OCR-detected text.",
+            "ocr_text": "Q2 campaign",
+            "search_text": "## poster.webp\n\n### Image summary\nWEBP image source poster.webp (1200x675) with OCR-detected text.\n\n### Detected text\nQ2 campaign",
+            "metadata": {"format": "webp", "width": 1200, "height": 675},
+        }
+        parser = SourceParserRegistry(document_extractor=extractor)
+        stored = StoredFile(
+            id="file-5",
+            name="poster.webp",
+            path="poster.webp",
+            mime_type="image/webp",
+            size_bytes=24,
+            stored_at="2026-01-01T00:00:00+00:00",
+        )
+
+        record = source_record_from_file(
+            session_id="s1",
+            stored_file=stored,
+            parser=parser,
+            max_bytes=1024,
+        )
+
+        self.assertEqual(record.status, "ready")
+        self.assertEqual(record.kind, "image")
+        self.assertIn("Q2 campaign", record.text)
+        self.assertEqual(record.metadata["format"], "webp")
+        extractor.extract_image.assert_called_once_with(stored)
+
+    def test_invalid_image_type_is_rejected(self):
+        parser = SourceParserRegistry()
+        stored = StoredFile(
+            id="file-6",
+            name="animation.gif",
+            path="animation.gif",
+            mime_type="image/gif",
+            size_bytes=24,
+            stored_at="2026-01-01T00:00:00+00:00",
+        )
+
+        record = source_record_from_file(
+            session_id="s1",
+            stored_file=stored,
+            parser=parser,
+            max_bytes=1024,
+        )
+
         self.assertEqual(record.status, "failed")
         self.assertIn("Unsupported", record.error or "")
+
+    def test_resolve_mime_recognizes_supported_image_extensions(self):
+        self.assertEqual(_resolve_mime("photo.jpg", "application/octet-stream"), "image/jpeg")
+        self.assertEqual(_resolve_mime("photo.jpeg", "application/octet-stream"), "image/jpeg")
+        self.assertEqual(_resolve_mime("poster.webp", "application/octet-stream"), "image/webp")
+
 
     def test_url_validation(self):
         self.assertEqual(validate_url("https://example.com/page"), "https://example.com/page")
@@ -642,6 +714,54 @@ class TestGeneralChatSources(unittest.TestCase):
             elif path.is_dir():
                 path.rmdir()
         root.rmdir()
+
+
+class TestDoclingImageExtractor(unittest.TestCase):
+    def _mock_docling_module(self, markdown: str):
+        converter_instance = Mock()
+        converter_instance.convert.return_value = types.SimpleNamespace(
+            document=types.SimpleNamespace(export_to_markdown=Mock(return_value=markdown))
+        )
+        converter_cls = Mock(return_value=converter_instance)
+        module = types.ModuleType("docling.document_converter")
+        module.DocumentConverter = converter_cls
+        return module
+
+    def test_extract_image_accepts_jpeg_extension_and_sets_format_metadata(self):
+        extractor = DoclingContentExtractor()
+        stored = StoredFile(
+            id="file-jpeg",
+            name="photo.jpg",
+            path="photo.jpg",
+            mime_type="application/octet-stream",
+            size_bytes=123,
+            stored_at="2026-01-01T00:00:00+00:00",
+        )
+        fake_docling = self._mock_docling_module("Detected text")
+        with patch.dict(sys.modules, {"docling.document_converter": fake_docling}):
+            payload = extractor.extract_image(stored)
+
+        self.assertEqual(payload["metadata"]["format"], "jpeg")
+        self.assertIn("Format: JPEG", payload["search_text"])
+        self.assertIn("JPEG image source", payload["description"])
+
+    def test_extract_image_accepts_webp_mime_and_sets_format_metadata(self):
+        extractor = DoclingContentExtractor()
+        stored = StoredFile(
+            id="file-webp",
+            name="poster.webp",
+            path="poster.webp",
+            mime_type="image/webp",
+            size_bytes=123,
+            stored_at="2026-01-01T00:00:00+00:00",
+        )
+        fake_docling = self._mock_docling_module("Campaign headline")
+        with patch.dict(sys.modules, {"docling.document_converter": fake_docling}):
+            payload = extractor.extract_image(stored)
+
+        self.assertEqual(payload["metadata"]["format"], "webp")
+        self.assertIn("Format: WEBP", payload["search_text"])
+        self.assertIn("WEBP image source", payload["description"])
 
 
 if __name__ == "__main__":
