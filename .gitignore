@@ -478,6 +478,8 @@ docs/.vitepress/cache/
 # (copied during gcloud run deploy --source . and meant to be removed after).
 # Anchored with leading slash so nested Dockerfiles (examples/*/Dockerfile) stay tracked.
 /Dockerfile
+/Dockerfile.general-chat
+/cloudbuild.general-chat.yaml
 
 # ==========================================
 # Terraform
@@ -519,6 +521,7 @@ examples/lci-mini/downloads/
 examples/lci-mini/profiles/
 examples/lci-mini/.openbench/
 examples/general-chat/.openbench/
+examples/general-chat/env.cloudrun.yaml
 examples/lci-mini/lci_mini_memory.db
 examples/lci-mini/frontend/dist/
 

@@ -1,0 +1,22 @@
+{
+  "hosting": {
+    "public": "frontend/dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      { "source": "/awp", "run": { "serviceId": "general-chat", "region": "us-central1" } },
+      { "source": "/chat/**", "run": { "serviceId": "general-chat", "region": "us-central1" } },
+      { "source": "/uploads/**", "run": { "serviceId": "general-chat", "region": "us-central1" } },
+      { "source": "/downloads/**", "run": { "serviceId": "general-chat", "region": "us-central1" } },
+      { "source": "/persona", "run": { "serviceId": "general-chat", "region": "us-central1" } },
+      { "source": "/skills", "run": { "serviceId": "general-chat", "region": "us-central1" } },
+      { "source": "/health", "run": { "serviceId": "general-chat", "region": "us-central1" } },
+      { "source": "/sessions/**", "run": { "serviceId": "general-chat", "region": "us-central1" } },
+      { "source": "/sessions", "run": { "serviceId": "general-chat", "region": "us-central1" } },
+      { "source": "**", "destination": "/index.html" }
+    ]
+  }
+}
