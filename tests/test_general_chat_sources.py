@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import types
 import unittest
@@ -12,19 +13,19 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import requests
-from openbench.chat.files import StoredFile
-from openbench.chat.engine import ChatEngine
-from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult
 from fastapi.testclient import TestClient
 
+from openbench.chat.engine import ChatEngine
+from openbench.chat.files import StoredFile
+from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult
 
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
+from general_chat.extractor import DoclingContentExtractor  # noqa: E402
 from general_chat.server.app import _resolve_mime, _resolve_request_session_id  # noqa: E402
 from general_chat.server.handler import GeneralChatHandler  # noqa: E402
-from general_chat.extractor import DoclingContentExtractor  # noqa: E402
 from general_chat.sources import (  # noqa: E402
     SearchDiscoveryResponse,
     SearchDiscoveryResult,
@@ -414,14 +415,16 @@ class TestGeneralChatSources(unittest.TestCase):
     def test_website_ingestion_success_with_mocked_fetch(self):
         parser = SourceParserRegistry()
         html = "<html><head><title>Example Title</title></head><body><script>x()</script><p>Hello web source.</p></body></html>"
-        with patch.object(parser, "_parse_url_with_docling", side_effect=RuntimeError("skip")):
-            with patch("general_chat.sources.fetch_url_text", return_value=(html, "text/html")):
-                record = source_record_from_url(
-                    session_id="s1",
-                    url="https://example.com",
-                    parser=parser,
-                    max_bytes=1000,
-                )
+        with (
+            patch.object(parser, "_parse_url_with_docling", side_effect=RuntimeError("skip")),
+            patch("general_chat.sources.fetch_url_text", return_value=(html, "text/html")),
+        ):
+            record = source_record_from_url(
+                session_id="s1",
+                url="https://example.com",
+                parser=parser,
+                max_bytes=1000,
+            )
 
         self.assertEqual(record.status, "ready")
         self.assertEqual(record.name, "Example Title")
@@ -704,6 +707,132 @@ class TestGeneralChatSources(unittest.TestCase):
         from general_chat.server.app import create_app
 
         return TestClient(create_app())
+
+    def test_create_agent_mcp_disabled_by_default(self):
+        import general_chat.agent as agent_module
+
+        with patch.dict(environ, {"GOOGLE_API_KEY": "test-key"}, clear=False):
+            environ.pop("GENERAL_CHAT_MCP_ENABLED", None)
+            with patch.object(agent_module, "configure_provider"):
+                agent = agent_module.create_agent()
+
+        self.assertFalse(agent._mcp_enabled)
+        self.assertEqual(agent._mcp_tools, [])
+        self.assertEqual(len(agent.tools), 0)
+
+    def test_create_agent_mcp_enabled_loads_allowlisted_adapters(self):
+        import general_chat.agent as agent_module
+
+        with patch.dict(
+            environ,
+            {
+                "GOOGLE_API_KEY": "test-key",
+                "GENERAL_CHAT_MCP_ENABLED": "1",
+                "GENERAL_CHAT_MCP_MODE": "local",
+                "GENERAL_CHAT_MCP_APPROVED_TOOLS": (
+                    "openbench.filter_records,"
+                    "openbench.distinct_values,"
+                    "openbench.group_and_aggregate,"
+                    "openbench.top_n_records"
+                ),
+            },
+            clear=False,
+        ), patch.object(agent_module, "configure_provider"):
+            agent = agent_module.create_agent()
+
+        names = {tool.namespaced_name for tool in agent._mcp_tools}
+        self.assertTrue(agent._mcp_enabled)
+        self.assertEqual(
+            names,
+            {
+                "openbench.filter_records",
+                "openbench.distinct_values",
+                "openbench.group_and_aggregate",
+                "openbench.top_n_records",
+            },
+        )
+        self.assertEqual(len(agent.tools), 4)
+
+    def test_mcp_tools_endpoint_disabled_by_default(self):
+        client = self._build_test_client()
+        response = client.get("/mcp/tools")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["enabled"])
+        self.assertEqual(payload["tool_count"], 0)
+        self.assertEqual(payload["tools"], [])
+
+    def test_mcp_tools_endpoint_reports_loaded_tools(self):
+        tmpdir = Path("tests/.tmp") / f"mcp-app-{uuid.uuid4().hex}"
+        tmpdir.mkdir(parents=True, exist_ok=True)
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.callback(self._cleanup_path_tree, tmpdir)
+        stack.enter_context(
+            patch.dict(
+                environ,
+                {
+                    "GENERAL_CHAT_STORAGE_ROOT": str(tmpdir / "storage"),
+                    "GENERAL_CHAT_UPLOAD_DIR": str(tmpdir / "uploads"),
+                    "GENERAL_CHAT_DOWNLOAD_DIR": str(tmpdir / "downloads"),
+                    "OPENBENCH_PROFILE_DIR": str(tmpdir / "profiles"),
+                },
+                clear=False,
+            )
+        )
+        agent = Mock()
+        agent.model = "mock-model"
+        agent._persona = None
+        agent._skill_registry = None
+        agent._mcp_summary = {
+            "enabled": True,
+            "mode": "local",
+            "tools": [
+                {
+                    "name": "openbench.filter_records",
+                    "adapter_name": "openbench_filter_records",
+                    "description": "Filter rows",
+                }
+            ],
+            "approved_tools": ["openbench.filter_records"],
+        }
+        stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
+
+        from general_chat.server.app import create_app
+
+        client = TestClient(create_app())
+        response = client.get("/mcp/tools")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["enabled"])
+        self.assertEqual(payload["tool_count"], 1)
+        self.assertEqual(payload["namespaced_tool_names"], ["openbench.filter_records"])
+        self.assertEqual(payload["provider_tool_names"], ["openbench_filter_records"])
+
+    def test_external_filesystem_mcp_example_config_and_sample_data(self):
+        from openbench.mcp.config import MCPConfig
+
+        example_root = Path(__file__).resolve().parents[1] / "examples" / "general-chat"
+        sandbox = example_root / "mcp-sandbox"
+        config_path = example_root / "mcp" / "filesystem-mcp.yaml"
+
+        with patch.dict(environ, {"GENERAL_CHAT_MCP_SANDBOX": str(sandbox)}, clear=False):
+            config = MCPConfig.from_file(config_path)
+
+        server = config.client_config().servers["filesystem"]
+        self.assertEqual(server.transport, "stdio")
+        self.assertEqual(server.command, "npx")
+        self.assertEqual(server.namespace, "filesystem")
+        self.assertTrue(server.allowed)
+        self.assertEqual(server.args[-1], str(sandbox))
+        self.assertIn("@modelcontextprotocol/server-filesystem", server.args)
+
+        customers = json.loads((sandbox / "customers.json").read_text(encoding="utf-8"))
+        highest = max(customers, key=lambda item: item["arr"])
+        self.assertEqual(highest["account"], "Borneo Analytics")
+        self.assertEqual(highest["arr"], 220000)
 
     def _cleanup_path_tree(self, root: Path) -> None:
         if not root.exists():

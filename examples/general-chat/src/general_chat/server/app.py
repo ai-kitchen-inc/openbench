@@ -20,8 +20,8 @@ from general_chat.extractor import DoclingContentExtractor
 from general_chat.server.handler import GeneralChatHandler
 from general_chat.sources import (
     DEFAULT_DISCOVERY_LIMIT,
-    SourceParserRegistry,
     SearchDiscoveryAdapter,
+    SourceParserRegistry,
     SourceStore,
     max_source_bytes_from_env,
     source_record_from_file,
@@ -29,7 +29,8 @@ from general_chat.sources import (
     source_record_from_url,
 )
 from openbench import LocalStorageBackend
-from openbench.chat import ChatEngine, render_queue as shared_render_queue
+from openbench.chat import ChatEngine
+from openbench.chat import render_queue as shared_render_queue
 from openbench.chat.files import LocalFileStore
 from openbench.chat.transport import AGUIActionHandler
 from openbench.chat.transport.sessions import AGUISessionHandler
@@ -226,6 +227,26 @@ def create_app() -> FastAPI:
             "loaded": True,
             "summary": registry.summary(),
             "skills": items,
+        }
+
+    @app.get("/mcp/tools")
+    async def mcp_tools_info() -> dict:
+        summary = getattr(agent, "_mcp_summary", None)
+        if not isinstance(summary, dict):
+            return {
+                "enabled": False,
+                "mode": os.getenv("GENERAL_CHAT_MCP_MODE", "local"),
+                "tools": [],
+                "tool_count": 0,
+                "provider_tool_names": [],
+                "namespaced_tool_names": [],
+            }
+        tools = summary.get("tools", [])
+        return {
+            **summary,
+            "tool_count": len(tools),
+            "provider_tool_names": [item.get("adapter_name") for item in tools],
+            "namespaced_tool_names": [item.get("name") for item in tools],
         }
 
     @app.post("/chat/upload")

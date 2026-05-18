@@ -112,8 +112,14 @@ chat = [
     "ag-ui-protocol>=0.1.0",
 ]
 
+mcp = [
+    "mcp[cli]>=1,<2",
+    "httpx>=0.27",
+    "opentelemetry-api>=1.24",
+]
+
 all = [
-    "openbench[dev,data,intelligence,output,security,google,vector,search,extraction,chat]"
+    "openbench[dev,data,intelligence,output,security,google,vector,search,extraction,chat,mcp]"
 ]
 
 [project.urls]
@@ -197,6 +203,7 @@ module = [
     "langextract.*",
     "tavily.*",
     "ag_ui.*",
+    "mcp.*",
     "yaml.*",
 ]
 ignore_missing_imports = true

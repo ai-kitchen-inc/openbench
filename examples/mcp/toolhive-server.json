@@ -1,0 +1,59 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "dev.openbench/openbench-mcp",
+  "description": "Expose OpenBench SDK and project workflow tools through MCP.",
+  "title": "OpenBench MCP",
+  "repository": {
+    "url": "https://github.com/ai-kitchen-inc/openbench",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/ai-kitchen-inc/openbench-mcp:0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "GOOGLE_API_KEY",
+          "description": "Optional key for web-search tools.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://example.invalid/mcp"
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "dev.openbench": {
+        "ghcr.io/ai-kitchen-inc/openbench-mcp:0.1.0": {
+          "tier": "Community",
+          "status": "Active",
+          "tags": ["workflow", "agents", "data", "analytics"],
+          "tools": ["set_during_runtime"],
+          "permissions": {
+            "network": {
+              "outbound": {
+                "allow_port": [443]
+              }
+            }
+          }
+        },
+        "https://example.invalid/mcp": {
+          "tier": "Community",
+          "status": "Active",
+          "tags": ["remote", "workflow", "agents"],
+          "tools": ["set_during_runtime"]
+        }
+      }
+    }
+  }
+}

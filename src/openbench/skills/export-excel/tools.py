@@ -160,7 +160,7 @@ def _public_url(path: Path) -> str:
     """
     base = _url_base()
     if base is None:
-        return str(path)
+        return path.as_posix()
     return f"{base}/{path.name}"
 
 

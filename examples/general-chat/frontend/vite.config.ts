@@ -23,6 +23,7 @@ export default defineConfig({
       "/downloads": { target: "http://localhost:8005", changeOrigin: true },
       "/persona": { target: "http://localhost:8005", changeOrigin: true },
       "/skills": { target: "http://localhost:8005", changeOrigin: true },
+      "/mcp/tools": { target: "http://localhost:8005", changeOrigin: true },
     },
   },
 });

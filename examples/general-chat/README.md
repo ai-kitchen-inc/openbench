@@ -75,6 +75,10 @@ The other variables in `.env` are optional overrides:
 | `GENERAL_CHAT_DISCOVERY_PROVIDER` | `tavily` | Primary internet search provider |
 | `GENERAL_CHAT_DISCOVERY_PROVIDERS` | `tavily` | Ordered fallback provider list |
 | `OPENBENCH_AUTH_DISABLED` | `1` | Disable auth (keep `1` for local dev) |
+| `GENERAL_CHAT_MCP_ENABLED` | `0` | Enable opt-in MCP tool adapters for testing |
+| `GENERAL_CHAT_MCP_MODE` | `local` | `local` uses in-process OpenBench MCP; `external` uses configured MCP servers |
+| `GENERAL_CHAT_MCP_CONFIG` | `mcp/openbench-mcp.yaml` | MCP config file for General Chat |
+| `GENERAL_CHAT_MCP_APPROVED_TOOLS` | query tools | Comma-separated namespaced MCP tools exposed to the chat agent |
 
 ---
 
@@ -213,6 +217,7 @@ Max file size: 25 MB per source (override with `GENERAL_CHAT_MAX_SOURCE_BYTES`).
 | `DELETE` | `/sessions/{session_id}` | Delete a session |
 | `GET` | `/persona` | Inspect loaded persona |
 | `GET` | `/skills` | Inspect loaded skills |
+| `GET` | `/mcp/tools` | Inspect opt-in MCP tool adapters loaded into the chat agent |
 
 ---
 
@@ -228,6 +233,34 @@ soul/
 ```
 
 Edit these files to change the agent's personality without touching code.
+
+---
+
+## MCP tool testing
+
+General Chat is tool-free by default so uploaded PDF, Word, and PowerPoint text
+is answered from the injected chat context. To test MCP tools through the chat
+agent, enable the opt-in MCP mode:
+
+```powershell
+$env:GENERAL_CHAT_MCP_ENABLED="1"
+$env:GENERAL_CHAT_MCP_MODE="local"
+$env:GENERAL_CHAT_MCP_CONFIG="mcp/openbench-mcp.yaml"
+uvicorn server:app --port 8005 --reload
+```
+
+Then verify:
+
+```powershell
+Invoke-RestMethod http://localhost:8005/mcp/tools
+```
+
+For a complete walkthrough, see [MCP_TUTORIAL.md](MCP_TUTORIAL.md).
+
+The tutorial also includes a real external MCP server path using the official
+`@modelcontextprotocol/server-filesystem` package. It reads only from
+`mcp-sandbox/` and includes a `customers.json` prompt that should return
+`Borneo Analytics` as the highest ARR account.
 
 ---
 
