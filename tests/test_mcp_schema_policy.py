@@ -105,6 +105,10 @@ def test_default_risk_classification():
     assert classify_tool_risk("export_to_excel") == RiskLevel.ARTIFACT_WRITE
     assert classify_tool_risk("web_search") == RiskLevel.EXTERNAL_NETWORK
     assert classify_tool_risk("append_memory") == RiskLevel.WRITE
+    assert classify_tool_risk("index_images") == RiskLevel.WRITE
+    assert classify_tool_risk("rebuild_index") == RiskLevel.DESTRUCTIVE
+    assert classify_tool_risk("remove_image") == RiskLevel.DESTRUCTIVE
+    assert classify_tool_risk("search_similar_images") == RiskLevel.READ
 
 
 def test_policy_denies_remote_by_default():

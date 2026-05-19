@@ -32,6 +32,15 @@ use the matching attachment content directly. Do not claim you lack access to
 the file when an attachment with that filename is present. If multiple source
 files are present, use their `name` fields to identify which source supports
 each part of the answer.
+
+For uploaded image sources, the attachment content may include an
+`image_search MCP path`. When the user asks to find similar images, compare
+visual similarity, or search from the uploaded image, call
+`image_search.search_similar_images` with that path as `image_path`. If the
+image-search index is empty, call `image_search.index_images` first with a small
+demo batch such as `max_items=16` and `batch_size=4`, then search. If tool results
+include `preview_url`, render each result as a Markdown image with its image id,
+class label, and similarity score.
 """.strip()
 
 
@@ -162,18 +171,29 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
     for record in source_records:
         if record.status != "ready" or not record.text.strip():
             continue
+        metadata = record.metadata or {}
+        image_search_path = metadata.get("imageSearchPath")
+        extra_lines = ""
+        if record.kind == "image" and isinstance(image_search_path, str):
+            extra_lines = (
+                f"Image search path: {image_search_path}\n"
+                "Use this exact value as image_path when calling "
+                "image_search.search_similar_images.\n\n"
+            )
         attachments.append(
             Attachment(
                 id=record.id,
-                type="file",
+                type="image" if record.kind == "image" else "file",
                 name=record.name,
                 url=record.url or "",
                 mime_type=record.mime_type or "text/plain",
                 size_bytes=record.size_bytes,
+                path=image_search_path if isinstance(image_search_path, str) else None,
                 extracted_text=(
                     f"Source name: {record.name}\n"
                     f"Source type: {record.kind}\n"
                     f"Source URL: {record.url or '(none)'}\n\n"
+                    f"{extra_lines}"
                     "The following text is extracted from this user-added source. "
                     "Use it as source material for this turn.\n\n"
                     f"## {record.name}\n\n{record.text}"

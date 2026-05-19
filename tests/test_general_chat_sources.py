@@ -143,6 +143,45 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(attachments[0].name, "notes.txt")
         self.assertIn("Alpha roadmap", attachments[0].extracted_text or "")
 
+    def test_image_source_attachment_includes_mcp_path(self):
+        agent = MockAgent()
+        engine = ChatEngine(agent=agent)
+        source = SourceRecord.create(
+            session_id="chat-session",
+            name="photo.jpg",
+            kind="image",
+            mime_type="image/jpeg",
+            size_bytes=20,
+            url="/uploads/file-1/photo.jpg",
+            text="Image source: photo.jpg",
+            metadata={"imageSearchPath": "/general-chat/uploads/file-1/photo.jpg"},
+        )
+        handler = GeneralChatHandler(
+            engine=engine,
+            db_path=":memory:",
+            source_records=[source],
+        )
+
+        content, attachments = handler._extract_content(
+            {
+                "messages": [{"id": "m1", "role": "user", "content": "find similar images"}],
+                "forwardedProps": {"sessionId": "chat-session"},
+            }
+        )
+
+        self.assertEqual(content, "find similar images")
+        self.assertIsNotNone(attachments)
+        assert attachments is not None
+        self.assertEqual(attachments[0].type, "image")
+        self.assertEqual(attachments[0].path, "/general-chat/uploads/file-1/photo.jpg")
+        self.assertIn("/general-chat/uploads/file-1/photo.jpg", attachments[0].extracted_text or "")
+
+        engine._execute_agent(content, None, attachments=attachments)
+
+        self.assertIsNotNone(agent.context)
+        assert agent.context is not None
+        self.assertEqual(agent.context.data["attachments"][0]["path"], "/general-chat/uploads/file-1/photo.jpg")
+
     def test_plain_text_source_success(self):
         parser = SourceParserRegistry()
         record = source_record_from_text(
@@ -290,10 +329,12 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(record.kind, "image")
         self.assertIn("Launch checklist", record.text)
         self.assertEqual(record.metadata["width"], 640)
+        self.assertEqual(record.metadata["imageSearchPath"], "/general-chat/uploads/file-2/diagram.png")
+        self.assertEqual(record.metadata["imageSearchPreviewUrl"], "/uploads/file-2/diagram.png")
         self.assertIn("OCR-detected text", str(record.metadata["description"]))
         extractor.extract_image.assert_called_once_with(stored)
 
-    def test_png_ocr_failure_creates_failed_image_source(self):
+    def test_png_ocr_failure_still_creates_searchable_image_source(self):
         extractor = Mock()
         extractor.extract_image.side_effect = ValueError("Image extraction failed: OCR pipeline unavailable")
         parser = SourceParserRegistry(document_extractor=extractor)
@@ -313,8 +354,12 @@ class TestGeneralChatSources(unittest.TestCase):
             max_bytes=1024,
         )
 
-        self.assertEqual(record.status, "failed")
-        self.assertIn("OCR pipeline unavailable", record.error or "")
+        self.assertEqual(record.status, "ready")
+        self.assertEqual(record.kind, "image")
+        self.assertIsNone(record.error)
+        self.assertIn("OCR pipeline unavailable", record.text)
+        self.assertEqual(record.metadata["imageSearchPath"], "/general-chat/uploads/file-3/scan.png")
+        self.assertEqual(record.metadata["imageSearchPreviewUrl"], "/uploads/file-3/scan.png")
 
     def test_jpeg_ocr_success_creates_searchable_image_source(self):
         extractor = Mock()

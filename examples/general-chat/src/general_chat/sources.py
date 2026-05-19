@@ -49,6 +49,7 @@ TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json"}
 
 IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT = "/general-chat/uploads"
 
 ALLOWED_EXTENSIONS = (
     DOCUMENT_EXTENSIONS | EXCEL_EXTENSIONS | TEXT_EXTENSIONS | IMAGE_EXTENSIONS
@@ -1012,6 +1013,36 @@ def validate_file_source(filename: str, mime_type: str, size_bytes: int, *, max_
         raise ValueError("Unsupported source MIME type: application/octet-stream")
 
 
+def image_search_metadata(stored_file: StoredFile, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return metadata that lets image-search MCP read an uploaded image."""
+    root = os.getenv("GENERAL_CHAT_IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT", IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT)
+    image_path = f"{root.rstrip('/')}/{stored_file.id}/{stored_file.name}"
+    result = dict(metadata or {})
+    result["imageSearchPath"] = image_path
+    result["imageSearchPreviewUrl"] = f"/uploads/{stored_file.id}/{stored_file.name}"
+    return result
+
+
+def image_search_text(stored_file: StoredFile, *, parsed_text: str = "", error: str | None = None) -> str:
+    """Build attachment text with explicit image-search MCP instructions."""
+    metadata = image_search_metadata(stored_file)
+    parts = [
+        f"Image source: {stored_file.name}",
+        f"Browser URL: {metadata['imageSearchPreviewUrl']}",
+        f"image_search MCP path: {metadata['imageSearchPath']}",
+        "",
+        (
+            "To find visually similar CIFAR-10 images for this uploaded image, call "
+            f"image_search.search_similar_images with image_path=\"{metadata['imageSearchPath']}\"."
+        ),
+    ]
+    if parsed_text.strip():
+        parts.extend(["", "Extracted image context:", parsed_text.strip()])
+    if error:
+        parts.extend(["", f"Image text extraction note: {error}"])
+    return "\n".join(parts).strip()
+
+
 def source_record_from_file(
     *,
     session_id: str,
@@ -1027,7 +1058,7 @@ def source_record_from_file(
             stored_file.size_bytes,
             max_bytes=max_bytes,
         )
-        parsed = parser.parse_file(stored_file)
+    except Exception as exc:
         return SourceRecord.create(
             session_id=session_id,
             name=stored_file.name,
@@ -1035,10 +1066,41 @@ def source_record_from_file(
             mime_type=stored_file.mime_type,
             size_bytes=stored_file.size_bytes,
             url=f"/uploads/{stored_file.id}/{stored_file.name}",
-            text=parsed.text,
-            metadata=parsed.metadata,
+            text="",
+            status="failed",
+            error=str(exc),
+        )
+
+    try:
+        parsed = parser.parse_file(stored_file)
+        metadata = parsed.metadata
+        text = parsed.text
+        if kind == "image":
+            metadata = image_search_metadata(stored_file, metadata)
+            text = image_search_text(stored_file, parsed_text=parsed.text)
+        return SourceRecord.create(
+            session_id=session_id,
+            name=stored_file.name,
+            kind=kind,
+            mime_type=stored_file.mime_type,
+            size_bytes=stored_file.size_bytes,
+            url=f"/uploads/{stored_file.id}/{stored_file.name}",
+            text=text,
+            metadata=metadata,
         )
     except Exception as exc:
+        if kind == "image":
+            metadata = image_search_metadata(stored_file, {"extractionError": str(exc)})
+            return SourceRecord.create(
+                session_id=session_id,
+                name=stored_file.name,
+                kind=kind,
+                mime_type=stored_file.mime_type,
+                size_bytes=stored_file.size_bytes,
+                url=f"/uploads/{stored_file.id}/{stored_file.name}",
+                text=image_search_text(stored_file, error=str(exc)),
+                metadata=metadata,
+            )
         return SourceRecord.create(
             session_id=session_id,
             name=stored_file.name,

@@ -100,6 +100,17 @@ def create_app() -> FastAPI:
     download_dir = str(Path(os.getenv("GENERAL_CHAT_DOWNLOAD_DIR", str(default_download_dir))).resolve())
     os.makedirs(download_dir, exist_ok=True)
 
+    default_image_search_preview_dir = example_root.parent / "image-search-mcp" / "data" / "previews"
+    image_search_preview_dir = str(
+        Path(
+            os.getenv(
+                "GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR",
+                str(default_image_search_preview_dir),
+            )
+        ).resolve()
+    )
+    os.makedirs(image_search_preview_dir, exist_ok=True)
+
     default_storage_root = example_root / ".openbench"
     storage_root = str(Path(os.getenv("GENERAL_CHAT_STORAGE_ROOT", str(default_storage_root))).resolve())
 
@@ -181,6 +192,7 @@ def create_app() -> FastAPI:
         print(f"  Storage root   : {storage_root}")
         print(f"  Upload dir     : {upload_dir}")
         print(f"  Download dir   : {download_dir}")
+        print(f"  Image previews : {image_search_preview_dir}")
         print(f"  Source max     : {max_source_bytes} bytes")
         print("  AG-UI          : POST /awp")
         print("  Upload         : POST /chat/upload")
@@ -422,6 +434,11 @@ def create_app() -> FastAPI:
 
     app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
     app.mount("/downloads", StaticFiles(directory=download_dir), name="downloads")
+    app.mount(
+        "/image-search/previews",
+        StaticFiles(directory=image_search_preview_dir),
+        name="image-search-previews",
+    )
 
     static_dir = os.environ.get("GENERAL_CHAT_STATIC_DIR")
     if static_dir and os.path.isdir(static_dir):

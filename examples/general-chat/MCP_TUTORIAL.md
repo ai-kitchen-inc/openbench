@@ -242,6 +242,63 @@ If you previously saw `ClosedResourceError`, fully stop the running `uvicorn`
 process and start a new backend process before retesting. Also create a new chat
 session so old failed tool results do not remain in the prompt history.
 
+## 9. Image Search MCP Server
+
+General Chat can also use the Dockerized DINOv3 CIFAR-10 image-search MCP
+server from `examples/image-search-mcp`.
+
+From the repository root, build the image:
+
+```powershell
+docker compose -f examples\image-search-mcp\docker-compose.yml --profile cpu build
+```
+
+Confirm the standalone MCP server works:
+
+```powershell
+python examples\image-search-mcp\scripts\test_mcp_server.py --mode docker
+```
+
+Start General Chat with the image-search MCP config:
+
+```powershell
+cd examples/general-chat
+.\scripts\run_with_image_search_mcp.ps1
+```
+
+Check discovery:
+
+```powershell
+Invoke-RestMethod http://localhost:8005/mcp/tools
+```
+
+Expected `namespaced_tool_names` includes:
+
+```text
+image_search.list_index_stats
+image_search.index_images
+image_search.search_similar_images
+image_search.rebuild_index
+```
+
+Use this prompt in the UI:
+
+```text
+Use the image_search MCP tools to index 16 CIFAR-10 training images with batch size 4, then search similar images for CIFAR-10 test image index 0 and return the top 3 results with image ids, labels, and similarity scores.
+```
+
+To search from your own image, upload a `.png`, `.jpg`, `.jpeg`, or `.webp`
+file in the Sources panel, then ask:
+
+```text
+Use the uploaded image source with image_search.search_similar_images. Index 16 CIFAR-10 training images with batch size 4 if needed, then return the top 3 similar images with visible thumbnails, image ids, labels, and similarity scores.
+```
+
+If the image-search model fails with a gated Hugging Face error, run
+`hf auth login` on the host and make sure
+`%USERPROFILE%\.cache\huggingface\token` exists. The launcher mounts that cache
+read-only into the Docker container.
+
 For Docker MCP Gateway or ToolHive, change:
 
 ```powershell

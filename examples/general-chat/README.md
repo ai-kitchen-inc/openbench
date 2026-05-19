@@ -262,6 +262,60 @@ The tutorial also includes a real external MCP server path using the official
 `mcp-sandbox/` and includes a `customers.json` prompt that should return
 `Borneo Analytics` as the highest ARR account.
 
+### Image Search MCP
+
+General Chat can also load the local Dockerized DINOv3 CIFAR-10 image search
+MCP server. First build the image-search container from the repo root:
+
+```powershell
+docker compose -f examples\image-search-mcp\docker-compose.yml --profile cpu build
+```
+
+Make sure Hugging Face access is available on the host:
+
+```powershell
+hf auth login
+```
+
+Then start General Chat with the image-search MCP config:
+
+```powershell
+cd examples/general-chat
+.\scripts\run_with_image_search_mcp.ps1
+```
+
+Verify the image-search tools are loaded:
+
+```powershell
+Invoke-RestMethod http://localhost:8005/mcp/tools
+```
+
+Expected namespaced tools include:
+
+```text
+image_search.list_index_stats
+image_search.index_images
+image_search.search_similar_images
+image_search.rebuild_index
+```
+
+In the UI, use explicit tool-forcing prompts:
+
+```text
+Use the image_search MCP tool to list the image index stats.
+```
+
+```text
+Use the image_search MCP tools to index 16 CIFAR-10 training images with batch size 4, then search similar images for CIFAR-10 test image index 0 and return the top 3 results with image ids, labels, and similarity scores.
+```
+
+You can also upload a random `.png`, `.jpg`, `.jpeg`, or `.webp` image in the
+Sources panel and ask:
+
+```text
+Use the uploaded image source with image_search.search_similar_images. Index 16 CIFAR-10 training images with batch size 4 if needed, then return the top 3 similar images with visible thumbnails, image ids, labels, and similarity scores.
+```
+
 ---
 
 ## Troubleshooting

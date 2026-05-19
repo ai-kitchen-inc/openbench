@@ -38,6 +38,8 @@ READ_TOOLS = {
     "top_n_records",
     "read_memory",
     "list_memory_keys",
+    "list_index_stats",
+    "search_similar_images",
 }
 
 WRITE_TOOLS = {
@@ -45,6 +47,7 @@ WRITE_TOOLS = {
     "update_column_profile",
     "write_memory",
     "append_memory",
+    "index_images",
 }
 
 ARTIFACT_TOOLS = {
@@ -57,12 +60,19 @@ ARTIFACT_TOOLS = {
 
 NETWORK_TOOLS = {"web_search", "web_search_multi"}
 
+DESTRUCTIVE_TOOLS = {
+    "rebuild_index",
+    "remove_image",
+}
+
 
 def classify_tool_risk(tool_name: str) -> RiskLevel:
     """Return the default risk classification for a tool name."""
     short_name = tool_name.rsplit(".", 1)[-1]
     if short_name in NETWORK_TOOLS:
         return RiskLevel.EXTERNAL_NETWORK
+    if short_name in DESTRUCTIVE_TOOLS:
+        return RiskLevel.DESTRUCTIVE
     if short_name in ARTIFACT_TOOLS:
         return RiskLevel.ARTIFACT_WRITE
     if short_name in WRITE_TOOLS:
