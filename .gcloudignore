@@ -39,6 +39,8 @@ node_modules/
 Thumbs.db
 
 # Env (keep .env.example)
+.env
+**/.env
 .env.local
 .env.*.local
 
@@ -60,6 +62,16 @@ examples/lci-mini/frontend/dist/
 examples/lci-ignite-x/uploads/
 examples/lci-ignite-x/.firebase/
 examples/lci-ignite-x/frontend/dist/
+examples/general-chat/uploads/
+examples/general-chat/downloads/
+examples/general-chat/profiles/
+examples/general-chat/.openbench/
+examples/general-chat/.firebase/
+examples/general-chat/general_chat_memory.db
+examples/general-chat/frontend/dist/
+examples/image-search-mcp/.venv/
+examples/image-search-mcp/data/
+examples/image-search-mcp/models/
 
 # ── Re-include files needed for the Docker build ──
 !examples/lci-mini/firebase-admin-sdk.json

@@ -25,6 +25,9 @@ _DOCX_MIME_TYPES = {
 }
 _DOCX_EXTENSIONS = {".docx", ".doc"}
 
+_PDF_MIME_TYPES = {"application/pdf"}
+_PDF_EXTENSIONS = {".pdf"}
+
 _IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -96,16 +99,42 @@ class DoclingContentExtractor:
                 return f"[{stored_file.name}] (document appears empty after extraction)"
             return text
         except ImportError:
-            logger.warning(
-                "docling not installed; trying python-docx for %s", stored_file.name
-            )
+            if _is_pdf(stored_file):
+                logger.warning("docling not installed; trying pypdf for %s", stored_file.name)
+                return self._extract_with_pypdf(stored_file)
+            logger.warning("docling not installed; trying python-docx for %s", stored_file.name)
             return self._extract_with_python_docx(stored_file)
         except Exception as exc:
             logger.warning("Docling extraction failed for %s: %s", stored_file.name, exc)
             ext = Path(stored_file.name).suffix.lower()
+            if _is_pdf(stored_file):
+                logger.info("Falling back to pypdf for %s", stored_file.name)
+                return self._extract_with_pypdf(stored_file)
             if stored_file.mime_type in _DOCX_MIME_TYPES or ext in _DOCX_EXTENSIONS:
                 logger.info("Falling back to python-docx for %s", stored_file.name)
                 return self._extract_with_python_docx(stored_file)
+            return f"[{stored_file.name}] (extraction failed: {exc})"
+
+    def _extract_with_pypdf(self, stored_file: StoredFile) -> str:
+        try:
+            from pypdf import PdfReader
+        except ImportError as exc:
+            logger.warning("pypdf not installed; install it with: pip install pypdf")
+            return f"[{stored_file.name}] (extraction failed: pypdf is required for PDF extraction)"
+
+        try:
+            reader = PdfReader(stored_file.path)
+            parts: list[str] = []
+            for index, page in enumerate(reader.pages, start=1):
+                text = (page.extract_text() or "").strip()
+                if text:
+                    parts.append(f"### Page {index}\n\n{text}")
+            full_text = "\n\n".join(parts).strip()
+            if not full_text:
+                return f"[{stored_file.name}] (document appears empty after extraction)"
+            return full_text
+        except Exception as exc:
+            logger.warning("pypdf extraction failed for %s: %s", stored_file.name, exc)
             return f"[{stored_file.name}] (extraction failed: {exc})"
 
     def _extract_with_python_docx(self, stored_file: StoredFile) -> str:
@@ -138,6 +167,11 @@ class DoclingContentExtractor:
                 "python-docx extraction failed for %s: %s", stored_file.name, exc
             )
             return _fallback.extract(stored_file)
+
+
+def _is_pdf(stored_file: StoredFile) -> bool:
+    ext = Path(stored_file.name).suffix.lower()
+    return stored_file.mime_type in _PDF_MIME_TYPES or ext in _PDF_EXTENSIONS
 
 
 def _image_dimensions(path: str) -> dict[str, int | None]:

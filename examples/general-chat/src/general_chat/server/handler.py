@@ -13,7 +13,7 @@ from typing import Any
 
 from openbench.chat.session import Attachment
 from openbench.chat.transport import AGUIHandler
-from openbench.core.abstractions import LLMProvider, LLMResponse
+from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult, LLMProvider, LLMResponse
 from openbench.intelligence.base import AgentMemory, BaseAgent, Message, MessageRole
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
 
@@ -26,12 +26,20 @@ _SOURCE_SYSTEM_INSTRUCTIONS = f"""
 
 {_SOURCE_SYSTEM_MARKER}
 The current request may include uploaded source files in Context data under
-`attachments`. Treat these as authoritative user-provided sources. When the
-user asks to summarize, quote, extract, compare, or answer about a named file,
-use the matching attachment content directly. Do not claim you lack access to
+`attachments`. Treat only these current-turn attachments as authoritative
+user-provided sources. Do not use document text from earlier conversation turns,
+cached client attachments, memory, or removed sources. When the user asks to
+summarize, quote, extract, compare, or answer about a named file, use the
+matching current attachment content directly. Do not claim you lack access to
 the file when an attachment with that filename is present. If multiple source
 files are present, use their `name` fields to identify which source supports
 each part of the answer.
+
+Answer document/source questions only from the current attachments. If no
+current source is provided, ask the user to add a document/source first. If the
+question is unrelated to the current source, refuse briefly. If the answer is
+not found in the current source, say: "The answer is not in the provided
+document."
 
 For uploaded image sources, the attachment content may include an
 `image_search MCP path`. When the user asks to find similar images, compare
@@ -42,6 +50,70 @@ demo batch such as `max_items=16` and `batch_size=4`, then search. If tool resul
 include `preview_url`, render each result as a Markdown image with its image id,
 class label, and similarity score.
 """.strip()
+
+_NO_SOURCE_REFUSAL = "Please add a document/source first."
+_UNRELATED_REFUSAL = "I can only answer questions related to the current document/source."
+_NOT_FOUND_INSTRUCTION = (
+    'If the answer is not found in the current source, say exactly: '
+    '"The answer is not in the provided document."'
+)
+_REDACTED_ATTACHMENT_CONTEXT = (
+    "Context data: [previous General Chat source attachment content redacted; "
+    "use only current-turn attachments]"
+)
+_STOPWORDS = {
+    "about",
+    "after",
+    "again",
+    "also",
+    "answer",
+    "based",
+    "before",
+    "brief",
+    "current",
+    "document",
+    "documents",
+    "does",
+    "file",
+    "from",
+    "give",
+    "have",
+    "into",
+    "only",
+    "please",
+    "provided",
+    "question",
+    "show",
+    "source",
+    "sources",
+    "summarize",
+    "summary",
+    "tell",
+    "that",
+    "this",
+    "what",
+    "when",
+    "where",
+    "which",
+    "with",
+}
+_DOCUMENT_ACTION_TERMS = {
+    "summarize",
+    "summary",
+    "compare",
+    "extract",
+    "quote",
+    "list",
+    "find",
+    "key",
+    "main",
+    "claims",
+    "dates",
+    "milestones",
+    "briefing",
+    "action",
+    "items",
+}
 
 
 def _debug_prompt_dir() -> Path | None:
@@ -203,6 +275,61 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
     return attachments
 
 
+def _tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{3,}", text.lower())
+        if token not in _STOPWORDS
+    }
+
+
+def _attachment_corpus(attachments: list[Attachment]) -> str:
+    return "\n\n".join(
+        f"{attachment.name}\n{attachment.extracted_text or ''}" for attachment in attachments
+    )
+
+
+def _is_related_to_sources(content: str, attachments: list[Attachment]) -> bool:
+    question_tokens = _tokens(content)
+    if not question_tokens:
+        return True
+    if question_tokens & _DOCUMENT_ACTION_TERMS:
+        return True
+    source_tokens = _tokens(_attachment_corpus(attachments))
+    return bool(question_tokens & source_tokens)
+
+
+def _with_grounding_instruction(content: str) -> str:
+    if _NOT_FOUND_INSTRUCTION in content:
+        return content
+    return f"{content}\n\n{_NOT_FOUND_INSTRUCTION}"
+
+
+def _redact_stale_source_context(messages: list[Message]) -> tuple[list[Message], bool]:
+    changed = False
+    redacted: list[Message] = []
+    for message in messages:
+        if message.role != MessageRole.USER or "Context data:" not in message.content:
+            redacted.append(message)
+            continue
+        if '"attachments"' not in message.content and "user-added source" not in message.content:
+            redacted.append(message)
+            continue
+        goal = message.content.split("\n\nContext data:", 1)[0].strip()
+        redacted.append(
+            Message(
+                role=message.role,
+                content=f"{goal}\n\n{_REDACTED_ATTACHMENT_CONTEXT}",
+                name=message.name,
+                tool_call_id=message.tool_call_id,
+                tool_calls=message.tool_calls,
+                raw_content=message.raw_content,
+            )
+        )
+        changed = True
+    return redacted, changed
+
+
 def sanitize_messages(messages: list[Message]) -> list[Message]:
     """Remove invalid conversation-turn sequences that break Gemini's API."""
     if not messages:
@@ -262,6 +389,79 @@ def sanitize_messages(messages: list[Message]) -> list[Message]:
     return out
 
 
+class _SourceGroundedAgent(Agent):
+    """Request wrapper that enforces current-source-only document grounding."""
+
+    def __init__(self, inner: Agent):
+        self.inner = inner
+
+    @property
+    def agent_type(self) -> str:
+        return self.inner.agent_type
+
+    def execute(
+        self,
+        context: ExecutionContext,
+        on_chunk=None,
+        on_progress=None,
+    ) -> ExecutionResult:
+        attachments = [
+            item
+            for item in (context.data or {}).get("attachments", [])
+            if isinstance(item, dict) and str(item.get("content") or "").strip()
+        ]
+        if not attachments:
+            return self._refuse(_NO_SOURCE_REFUSAL, on_chunk=on_chunk)
+
+        source_attachments = [
+            Attachment(
+                id=str(item.get("id") or item.get("name") or "source"),
+                type=str(item.get("type") or "file"),
+                name=str(item.get("name") or "source"),
+                url="",
+                mime_type=str(item.get("mime_type") or "text/plain"),
+                extracted_text=str(item.get("content") or ""),
+            )
+            for item in attachments
+        ]
+        if not _is_related_to_sources(context.goal, source_attachments):
+            return self._refuse(_UNRELATED_REFUSAL, on_chunk=on_chunk)
+
+        grounded_context = ExecutionContext(
+            goal=_with_grounding_instruction(context.goal),
+            data=context.data,
+            tools=context.tools,
+            memory=context.memory,
+            constraints=context.constraints,
+        )
+        try:
+            return self.inner.execute(
+                grounded_context,
+                on_chunk=on_chunk,
+                on_progress=on_progress,
+            )
+        except TypeError:
+            if on_chunk:
+                try:
+                    return self.inner.execute(grounded_context, on_chunk=on_chunk)  # type: ignore[call-arg]
+                except TypeError:
+                    pass
+            return self.inner.execute(grounded_context)
+
+    def estimate_cost(self, context: ExecutionContext) -> float:
+        return self.inner.estimate_cost(context)
+
+    @staticmethod
+    def _refuse(message: str, *, on_chunk=None) -> ExecutionResult:
+        if on_chunk:
+            on_chunk(message)
+        return ExecutionResult(
+            output=message,
+            status="success",
+            metadata={"grounding_refusal": True},
+        )
+
+
 class GeneralChatHandler(AGUIHandler):
     """AG-UI handler with SQLite-backed persistent memory per session."""
 
@@ -279,14 +479,24 @@ class GeneralChatHandler(AGUIHandler):
         self._source_records = source_records or []
 
     def _extract_content(self, body):
-        content, attachments = super()._extract_content(body)
+        messages = body.get("messages")
+        if messages and isinstance(messages, list):
+            for msg in reversed(messages):
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    content = msg.get("content", "")
+                    break
+            else:
+                content = ""
+        else:
+            content = body.get("content", "")
+        attachments: list[Attachment] = []
         if self._source_records:
             source_attachments = _source_record_attachments(self._source_records)
-            attachments = [*(attachments or []), *source_attachments]
+            attachments = [*attachments, *source_attachments]
         if self._doc_context:
             source_attachments = _source_context_attachments(self._doc_context)
-            attachments = [*(attachments or []), *source_attachments]
-        return content, attachments
+            attachments = [*attachments, *source_attachments]
+        return content, attachments or None
 
     def _get_or_create_session(self, session_id):
         self._local.session_id = session_id
@@ -310,12 +520,19 @@ class GeneralChatHandler(AGUIHandler):
             )
             original = list(agent_copy.memory.messages)
             sanitized = sanitize_messages(original)
-            if len(sanitized) != len(original):
+            redacted, redacted_changed = _redact_stale_source_context(sanitized)
+            if len(sanitized) != len(original) or redacted_changed:
                 dropped = len(original) - len(sanitized)
                 print(
                     f"  [general-chat] sanitized session {session_id}: "
-                    f"dropped {dropped} orphaned message(s)"
+                    f"dropped {dropped} orphaned message(s), "
+                    f"redacted_stale_sources={redacted_changed}"
                 )
+                agent_copy.memory.messages = redacted
+                self._memory_store.delete_session(session_id)
+                if redacted:
+                    self._memory_store.save(session_id, redacted)
+            else:
                 agent_copy.memory.messages = sanitized
         else:
             agent_copy.memory = AgentMemory()
@@ -338,4 +555,4 @@ class GeneralChatHandler(AGUIHandler):
                 session_id=session_id,
             )
         agent_copy.tools = agent.tools
-        return agent_copy
+        return _SourceGroundedAgent(agent_copy)

@@ -17,7 +17,10 @@ from fastapi.testclient import TestClient
 
 from openbench.chat.engine import ChatEngine
 from openbench.chat.files import StoredFile
-from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult
+from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult, LLMProvider, LLMResponse
+from openbench.intelligence import BaseAgent
+from openbench.intelligence.base import Message, MessageRole
+from openbench.intelligence.memory import SQLiteMemoryStore
 
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
 if str(GENERAL_CHAT_SRC) not in sys.path:
@@ -58,6 +61,24 @@ class MockAgent(Agent):
 
     def estimate_cost(self, context: ExecutionContext) -> float:
         return 0.0
+
+
+class MockLLMProvider(LLMProvider):
+    def __init__(self, response: str = "Mock response"):
+        self.response = response
+        self.prompts: list[object] = []
+
+    @property
+    def provider_name(self) -> str:
+        return "mock"
+
+    def generate(self, prompt, model: str = "", **params) -> LLMResponse:
+        self.prompts.append(prompt)
+        return LLMResponse(text=self.response, model=model, tokens_used=0, cost=0.0)
+
+    def generate_stream(self, prompt, model: str = "", **params):
+        self.prompts.append(prompt)
+        yield self.response
 
 
 class TestGeneralChatSources(unittest.TestCase):
@@ -142,6 +163,47 @@ class TestGeneralChatSources(unittest.TestCase):
         assert attachments is not None
         self.assertEqual(attachments[0].name, "notes.txt")
         self.assertIn("Alpha roadmap", attachments[0].extracted_text or "")
+
+    def test_forwarded_client_attachments_are_ignored_when_source_records_exist(self):
+        agent = MockAgent()
+        engine = ChatEngine(agent=agent)
+        source = SourceRecord.create(
+            session_id="chat-session",
+            name="current.txt",
+            kind="text",
+            mime_type="text/plain",
+            size_bytes=20,
+            text="Current source only.",
+        )
+        handler = GeneralChatHandler(
+            engine=engine,
+            db_path=":memory:",
+            source_records=[source],
+        )
+
+        _content, attachments = handler._extract_content(
+            {
+                "messages": [{"id": "m1", "role": "user", "content": "what is current?"}],
+                "forwardedProps": {
+                    "sessionId": "chat-session",
+                    "attachments": [
+                        {
+                            "id": "old",
+                            "type": "file",
+                            "name": "removed.txt",
+                            "mimeType": "text/plain",
+                            "extractedText": "Removed source must not leak.",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertIsNotNone(attachments)
+        assert attachments is not None
+        joined = "\n".join(attachment.extracted_text or "" for attachment in attachments)
+        self.assertIn("Current source only", joined)
+        self.assertNotIn("Removed source must not leak", joined)
 
     def test_image_source_attachment_includes_mcp_path(self):
         agent = MockAgent()
@@ -256,6 +318,44 @@ class TestGeneralChatSources(unittest.TestCase):
         parsed = parser.parse_file(stored)
         self.assertEqual(parsed.text, "Docling markdown")
         extractor.extract.assert_called_once_with(stored)
+
+    def test_pdf_falls_back_to_pypdf_when_docling_fails(self):
+        extractor = DoclingContentExtractor()
+        stored = StoredFile(
+            id="file-1",
+            name="report.pdf",
+            path="report.pdf",
+            mime_type="application/pdf",
+            size_bytes=10,
+            stored_at="2026-01-01T00:00:00+00:00",
+        )
+        converter_instance = Mock()
+        converter_instance.convert.side_effect = RuntimeError("docling failed")
+        docling_module = types.ModuleType("docling.document_converter")
+        docling_module.DocumentConverter = Mock(return_value=converter_instance)
+        pypdf_module = types.ModuleType("pypdf")
+        pypdf_module.PdfReader = Mock(
+            return_value=types.SimpleNamespace(
+                pages=[
+                    types.SimpleNamespace(extract_text=Mock(return_value="Alpha page")),
+                    types.SimpleNamespace(extract_text=Mock(return_value="Beta page")),
+                ]
+            )
+        )
+
+        with patch.dict(
+            sys.modules,
+            {
+                "docling.document_converter": docling_module,
+                "pypdf": pypdf_module,
+            },
+        ):
+            text = extractor.extract(stored)
+
+        self.assertIn("### Page 1", text)
+        self.assertIn("Alpha page", text)
+        self.assertIn("### Page 2", text)
+        self.assertIn("Beta page", text)
 
     def test_xlsx_multi_sheet_extraction(self):
         try:
@@ -721,6 +821,142 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertIsNotNone(first.warning)
         self.assertEqual(second.results[0].title, "Recovered result")
         self.assertEqual(primary.search.call_count, 2)
+
+    def test_no_current_source_refuses_before_llm(self):
+        llm = MockLLMProvider("Should not be used")
+        agent = BaseAgent(goal="Strict source QA")
+        agent._llm = llm
+        engine = ChatEngine(agent=agent)
+        handler = GeneralChatHandler(engine=engine, db_path=":memory:", source_records=[])
+        request_agent = handler._create_request_agent()
+
+        result = request_agent.execute(ExecutionContext(goal="What does the document say?"))
+
+        self.assertEqual(result.output, "Please add a document/source first.")
+        self.assertEqual(llm.prompts, [])
+
+    def test_unrelated_question_refuses_before_llm(self):
+        llm = MockLLMProvider("Should not be used")
+        agent = BaseAgent(goal="Strict source QA")
+        agent._llm = llm
+        source = SourceRecord.create(
+            session_id="chat-session",
+            name="roadmap.txt",
+            kind="text",
+            mime_type="text/plain",
+            size_bytes=20,
+            text="Alpha launch is planned for June.",
+        )
+        engine = ChatEngine(agent=agent)
+        handler = GeneralChatHandler(
+            engine=engine,
+            db_path=":memory:",
+            source_records=[source],
+        )
+        content, attachments = handler._extract_content(
+            {
+                "messages": [{"id": "m1", "role": "user", "content": "What is the capital of France?"}],
+                "forwardedProps": {"sessionId": "chat-session"},
+            }
+        )
+        request_agent = handler._create_request_agent()
+
+        result = engine._execute_agent(content, None, attachments=attachments, agent=request_agent)
+
+        self.assertEqual(
+            result.output,
+            "I can only answer questions related to the current document/source.",
+        )
+        self.assertEqual(llm.prompts, [])
+
+    def test_missing_answer_instruction_reaches_llm_for_related_question(self):
+        llm = MockLLMProvider("The answer is not in the provided document.")
+        agent = BaseAgent(goal="Strict source QA")
+        agent._llm = llm
+        source = SourceRecord.create(
+            session_id="chat-session",
+            name="acme.txt",
+            kind="text",
+            mime_type="text/plain",
+            size_bytes=20,
+            text="Acme revenue was 10 million dollars.",
+        )
+        engine = ChatEngine(agent=agent)
+        handler = GeneralChatHandler(
+            engine=engine,
+            db_path=":memory:",
+            source_records=[source],
+        )
+        content, attachments = handler._extract_content(
+            {
+                "messages": [{"id": "m1", "role": "user", "content": "What was Acme profit?"}],
+                "forwardedProps": {"sessionId": "chat-session"},
+            }
+        )
+        request_agent = handler._create_request_agent()
+
+        result = engine._execute_agent(content, None, attachments=attachments, agent=request_agent)
+
+        self.assertEqual(result.output, "The answer is not in the provided document.")
+        self.assertTrue(llm.prompts)
+        self.assertIn(
+            "The answer is not in the provided document.",
+            json.dumps(llm.prompts[-1]),
+        )
+
+    def test_removed_source_text_is_redacted_from_persistent_memory(self):
+        tmpdir = Path("tests/.tmp") / f"memory-{uuid.uuid4().hex}"
+        tmpdir.mkdir(parents=True, exist_ok=True)
+        db_path = tmpdir / "memory.db"
+        try:
+            store = SQLiteMemoryStore(str(db_path))
+            store.save(
+                "chat-session",
+                [
+                    Message(role=MessageRole.SYSTEM, content="system"),
+                    Message(
+                        role=MessageRole.USER,
+                        content=(
+                            "Goal: What is old?\n\nContext data:\n"
+                            '{"attachments": [{"name": "removed.txt", '
+                            '"content": "Removed source secret"}]}'
+                        ),
+                    ),
+                    Message(role=MessageRole.ASSISTANT, content="Old answer"),
+                ],
+            )
+            agent = BaseAgent(goal="Strict source QA")
+            agent._llm = MockLLMProvider("Current answer")
+            engine = ChatEngine(agent=agent)
+            current = SourceRecord.create(
+                session_id="chat-session",
+                name="current.txt",
+                kind="text",
+                mime_type="text/plain",
+                size_bytes=20,
+                text="Current source secret",
+            )
+            handler = GeneralChatHandler(
+                engine=engine,
+                db_path=str(db_path),
+                source_records=[current],
+            )
+            handler._on_session_resolved("chat-session")
+
+            request_agent = handler._create_request_agent()
+
+            persisted = "\n".join(message.content for message in store.load("chat-session"))
+            self.assertNotIn("Removed source secret", persisted)
+            self.assertIn("previous General Chat source attachment content redacted", persisted)
+            self.assertNotIn(
+                "Removed source secret",
+                "\n".join(message.content for message in request_agent.inner.memory.messages),
+            )
+        finally:
+            if db_path.exists():
+                db_path.unlink()
+            if tmpdir.exists():
+                tmpdir.rmdir()
 
     def _build_test_client(self, discovery_adapter: Mock | None = None) -> TestClient:
         tmpdir = Path("tests/.tmp") / f"app-{uuid.uuid4().hex}"
