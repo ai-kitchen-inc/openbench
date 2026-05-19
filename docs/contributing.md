@@ -8,7 +8,7 @@ OpenBench welcomes documentation, tests, bug fixes, examples, and feature work. 
 - Search for existing patterns and helpers before adding new abstractions.
 - Verify imports, class names, and method signatures from the repository.
 - Add or update tests for behavior changes.
-- Run the relevant Python and/or TypeScript test commands.
+- Run the relevant Python tests and any integration checks for the area you touched.
 - Keep commits focused and use conventional prefixes such as `feat:`, `fix:`, `docs:`, `refactor:`, and `test:`.
 
 ## Local Workflow
@@ -20,13 +20,12 @@ python -m pip install -e ".[dev]"
 python -m unittest discover tests -v
 ```
 
-For frontend work:
+For Open WebUI work:
 
-```bash
-cd studio/chat-ui
-pnpm install
-pnpm build
-pnpm test:run
+```powershell
+cd studio\open-webui
+Copy-Item .env.example .env
+docker compose --env-file .env up
 ```
 
 ## Documentation Contributions

@@ -297,18 +297,22 @@ def _run_script(info: dict):
 
 
 def _ensure_chat_ui_built(root: Path) -> bool:
-    """Build studio/chat-ui if dist/ doesn't exist. Returns True on success."""
+    """Build legacy studio/chat-ui if it is still present."""
     chat_ui_dir = root / "studio" / "chat-ui"
+    package_json = chat_ui_dir / "package.json"
     dist_dir = chat_ui_dir / "dist"
 
     if dist_dir.exists() and any(dist_dir.iterdir()):
         return True
 
-    if not chat_ui_dir.exists():
-        console.print("[red]Error:[/red] studio/chat-ui not found.")
+    if not package_json.exists():
+        console.print(
+            "[yellow]Warning:[/yellow] studio/chat-ui React SDK is excluded. "
+            "Use studio/open-webui for the active chat interface."
+        )
         return False
 
-    console.print("\n[yellow]@openbench/chat-ui not built yet.[/yellow] Building automatically...")
+    console.print("\n[yellow]Legacy @openbench/chat-ui not built yet.[/yellow] Building automatically...")
 
     pnpm_cmd = _resolve_pnpm_command()
     if not pnpm_cmd:
@@ -390,13 +394,13 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
         )
         has_frontend = False
 
-    # Auto-build chat-ui if frontend needed and dist/ missing
+    # Auto-build legacy chat-ui only if the SDK package is still present.
     if has_frontend and not no_install:
         root = _find_project_root()
         if not _ensure_chat_ui_built(root):
             console.print(
-                "[yellow]Warning:[/yellow] chat-ui build failed. "
-                "Frontend may not work. Use --no-frontend to skip."
+                "[yellow]Warning:[/yellow] legacy frontend may not work. "
+                "Use Open WebUI or --no-frontend to skip."
             )
 
     # Auto-install Python deps if pyproject.toml exists

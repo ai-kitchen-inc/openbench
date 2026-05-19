@@ -1,0 +1,21 @@
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openbench-open-webui
+    ports:
+      - "${OPEN_WEBUI_PORT:-3000}:8080"
+    environment:
+      ENABLE_OLLAMA_API: "${ENABLE_OLLAMA_API:-false}"
+      ENABLE_OPENAI_API: "true"
+      OPENAI_API_BASE_URL: "${OPENBENCH_OPENAI_BASE_URL:-http://host.docker.internal:8005/v1}"
+      OPENAI_API_KEY: "${OPENBENCH_OPENAI_API_KEY:-not-needed}"
+      WEBUI_AUTH: "${WEBUI_AUTH:-false}"
+      DEFAULT_PINNED_MODELS: "${OPENBENCH_OPENAI_MODEL_ID:-openbench-chat}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - open-webui:/app/backend/data
+    restart: unless-stopped
+
+volumes:
+  open-webui:

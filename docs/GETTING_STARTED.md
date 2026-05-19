@@ -26,7 +26,7 @@ pip install -e ".[security]"     # Credential encryption
 
 ```bash
 python -m unittest discover tests -v
-# Expected: 1214 Python tests + 231 TypeScript tests
+# Expected: Python unit tests pass
 ```
 
 ---
@@ -69,10 +69,13 @@ python examples/core/orchestration_demo.py           # L1/L2 two-level compositi
 python examples/workflows/reports/sustainability_report.py  # Complete E2E workflow
 ```
 
-Full-stack application example with backend + React frontend:
+Full-stack chat example with Open WebUI:
 
 ```bash
-openbench demo run lci-ignite-x    # Auto-installs deps, builds chat-ui, starts :8003 + :5173
+openbench demo run general-chat-OpenUI
+cd studio/open-webui
+cp .env.example .env
+docker compose --env-file .env up
 ```
 
 ---
@@ -182,12 +185,12 @@ python -m unittest discover tests -v
 python -m unittest tests.test_abstractions -v  # Specific file
 ```
 
-**Test coverage (1214 Python, 231 TypeScript):**
+**Test coverage:**
 - Core abstractions (16), Registry (45), Chainable (18)
 - L2 layers (17), Workflow (15), Provider service (32)
 - Config (20), Intelligence base (31)
 - Chat engine (45), Chat session, A2UI builder, Content renderers
-- TypeScript: A2UI components, data-binding, functions, store, transport
+- OpenAI-compatible chat transport for Open WebUI
 
 ---
 
@@ -197,7 +200,7 @@ python -m unittest tests.test_abstractions -v  # Specific file
 
 **Chat Layer Complete:** ChatEngine, A2UI v0.10 builder, 11 content renderers (text, chart, code, form, file, media, list, tabs, modal, table, callout), SSE + REST transport, ChatLayer L2.
 
-**Chat UI SDK Complete:** @openbench/chat-ui React SDK — 18 standard + 6 custom A2UI components, hooks, SSE transport, Zustand store, Notion-inspired design system.
+**Open WebUI Integration Complete:** OpenAI-compatible `/v1/models` and `/v1/chat/completions` transport for Open WebUI. The old `@openbench/chat-ui` React SDK is excluded from the active UI path.
 
 ---
 

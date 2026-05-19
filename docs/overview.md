@@ -9,7 +9,7 @@ OpenBench is a workflow orchestrator, agent runtime, and control plane for AI wo
 - **Built-in agent runtime** through `BaseAgent`, tool execution, memory, planning, RAG helpers, personas, and skills.
 - **Framework adapters** for LangChain, CrewAI, AG2, E2B, and Google ADK.
 - **Data and storage abstractions** for sources, stores, chunking, embeddings, and search.
-- **Chat layer** with `ChatEngine`, AG-UI transport, A2UI v0.10 message building, content renderers, and a React SDK in `studio/chat-ui`.
+- **Chat layer** with `ChatEngine`, AG-UI transport, A2UI v0.10 message building, content renderers, and OpenAI-compatible Open WebUI integration.
 - **Output generation** for PDF, Markdown, PowerPoint, dashboards, and audio workflows.
 
 ## Package Status
@@ -24,6 +24,7 @@ The package metadata currently declares version `0.1.0` and Python `>=3.10`. The
 - `src/openbench/chat/`: chat orchestration, sessions, A2UI, renderers, and AG-UI transport.
 - `src/openbench/output/`: output generators and output factory helpers.
 - `src/openbench/adapters/`: external framework adapters.
-- `studio/chat-ui/`: TypeScript React SDK for OpenBench chat interfaces.
+- `studio/open-webui/`: Docker Compose workspace for Open WebUI connected to OpenBench `/v1`.
+- `studio/chat-ui/`: migration note for the excluded React SDK.
 - `examples/`: runnable workflows and applications.
-- `tests/`: Python test suite plus frontend tests under `studio/chat-ui/tests/`.
+- `tests/`: Python test suite, including OpenAI-compatible chat transport coverage.

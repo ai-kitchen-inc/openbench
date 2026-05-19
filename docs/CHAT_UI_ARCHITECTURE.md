@@ -1,5 +1,9 @@
 # Chat UI SDK Architecture
 
+> Legacy note: the bundled `@openbench/chat-ui` React SDK is excluded from the
+> active UI path. New OpenBench chat apps should use Open WebUI through
+> `create_openai_compatible_router`; see `docs/OPENWEBUI.md`.
+
 ## Overview
 
 The Chat UI system spans two packages:

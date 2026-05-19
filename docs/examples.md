@@ -33,18 +33,16 @@ The CLI can discover and run example applications:
 
 ```bash
 openbench demo list
-openbench demo run general-chat
+openbench demo run general-chat-OpenUI
 ```
 
-The launcher detects Python scripts and frontend projects under `examples/`. Some demos install frontend dependencies, start backend servers, or require environment variables.
+The launcher detects Python scripts and server apps under `examples/`. Some demos install dependencies, start backend servers, or require environment variables.
 
-## Chat UI Examples
+## Open WebUI Chat Example
 
-The chat examples combine the Python backend chat layer with the React SDK:
+The migrated chat example combines the Python backend chat layer with Open WebUI:
 
-- `examples/chat/`: AG-UI backend plus React frontend.
-- `examples/general-chat/`: general-purpose chat app with persona files and persistent sessions.
-- `examples/lci-mini/`: LCA-focused app with domain skills and Firebase/Drive integrations.
-- `examples/sales-analytics/`: sales analytics chat app.
+- `examples/general-chat-OpenUI/`: general-purpose document-aware chat app with persona files, persistent sessions, and OpenAI-compatible `/v1` endpoints for Open WebUI.
 
-See `examples/README.md` and the README in each example directory for exact commands.
+Legacy React frontend examples still exist in `examples/`, but the bundled
+`@openbench/chat-ui` SDK is excluded from the active framework UI path.

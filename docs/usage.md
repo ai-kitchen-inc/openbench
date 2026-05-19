@@ -56,8 +56,11 @@ Personas can be loaded from a directory containing `SOUL.md`, `STYLE.md`, and `A
 - A2UI v0.10 builders produce structured UI messages.
 - Content renderers translate text, charts, tables, files, forms, media, tabs, modals, code, lists, and callouts.
 - AG-UI transport streams server-sent events and handles REST actions.
+- OpenAI-compatible transport exposes `/v1/models` and `/v1/chat/completions` for Open WebUI.
 
-The React SDK lives in `studio/chat-ui` and is published as `@openbench/chat-ui`.
+The bundled React SDK has been excluded from the active UI path. Use
+`studio/open-webui` and mount `create_openai_compatible_router(...)` from your
+FastAPI backend with `app.include_router(..., prefix="/v1")`.
 
 ## Output Layer
 

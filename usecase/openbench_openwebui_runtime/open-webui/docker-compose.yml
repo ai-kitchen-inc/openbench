@@ -1,0 +1,21 @@
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openbench-openwebui-notebook-demo
+    ports:
+      - "${OPEN_WEBUI_PORT:-3000}:8080"
+    environment:
+      ENABLE_OLLAMA_API: "false"
+      ENABLE_OPENAI_API: "true"
+      OPENAI_API_BASE_URL: "${OPENBENCH_OPENAI_BASE_URL}"
+      OPENAI_API_KEY: "${OPENBENCH_OPENAI_API_KEY:-not-needed}"
+      WEBUI_AUTH: "${WEBUI_AUTH:-false}"
+      DEFAULT_PINNED_MODELS: "${OPENBENCH_OPENAI_MODEL_ID:-openbench-openwebui-demo}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - openbench-openwebui-data:/app/backend/data
+    restart: unless-stopped
+
+volumes:
+  openbench-openwebui-data:

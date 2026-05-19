@@ -55,6 +55,9 @@
 .. automodule:: openbench.chat.transport.agui
    :members:
 
+.. automodule:: openbench.chat.transport.openai_compat
+   :members:
+
 .. automodule:: openbench.chat.transport.agui_actions
    :members:
 ```

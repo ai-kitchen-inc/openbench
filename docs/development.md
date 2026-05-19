@@ -1,6 +1,6 @@
 # Development Setup
 
-This page covers local development for the Python SDK, documentation, and chat UI package.
+This page covers local development for the Python SDK, documentation, and Open WebUI integration.
 
 ## Python SDK
 
@@ -44,20 +44,19 @@ cd docs
 
 The generated HTML is written to `docs/_build/html/`.
 
-## Chat UI SDK
+## Open WebUI
 
-The frontend SDK is a TypeScript/React package in `studio/chat-ui`.
+The active chat UI path is Open WebUI connected to OpenBench through the
+OpenAI-compatible chat transport.
 
-```bash
-cd studio/chat-ui
-pnpm install
-pnpm build
-pnpm typecheck
-pnpm test:run
-pnpm lint
+```powershell
+cd studio\open-webui
+Copy-Item .env.example .env
+docker compose --env-file .env up
 ```
 
-The package exports React components, hooks, A2UI rendering utilities, and CSS.
+The old `studio/chat-ui` React SDK is excluded for now and kept only as a
+migration note.
 
 ## Working With Optional Integrations
 

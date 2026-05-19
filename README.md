@@ -226,25 +226,33 @@ Python, Click, Pydantic, Google GenAI, LangChain, CrewAI, AG2, Pinecone, ReportL
 - [ ] **Q3 2026**: Edge deployment for air-gapped environments
 - [ ] **Q4 2026**: Multi-modal agent support (vision, audio, code)
 
-## Frontend SDK
+## Open WebUI Integration
 
-**`@openbench/chat-ui`** is a standalone React component library for building chat interfaces powered by OpenBench.
+OpenBench chat engines now expose an OpenAI-compatible `/v1` provider for
+Open WebUI. The old `@openbench/chat-ui` React SDK is excluded from the active
+UI path; use Open WebUI as the default chat interface.
 
-- 24 A2UI v0.10 components (18 standard + 6 custom) with declarative JSON streaming
-- AG-UI protocol transport (SSE event streaming + REST actions)
-- Headless core (Zustand store, transport, message processor) + pre-built components
-- Notion-inspired design system with Lucide icons
+```python
+from fastapi import FastAPI
+from openbench.chat import ChatEngine, create_openai_compatible_router
+from openbench.intelligence.base import BaseAgent
 
-```bash
-cd studio/chat-ui
-pnpm install              # Install dependencies
-pnpm build                # Build library (ESM + .d.ts)
-pnpm dev                  # Dev server
-pnpm tsc --noEmit         # Type check
-pnpm vitest               # Run tests
+app = FastAPI()
+engine = ChatEngine(agent=BaseAgent(goal="Help the user", model="gemini-2.5-flash"))
+
+app.include_router(
+    create_openai_compatible_router(engine=engine, model_id="openbench-chat"),
+    prefix="/v1",
+)
 ```
 
-See [studio/chat-ui/README.md](studio/chat-ui/README.md) for full documentation.
+```bash
+cd studio/open-webui
+cp .env.example .env
+docker compose --env-file .env up
+```
+
+See [studio/open-webui/README.md](studio/open-webui/README.md) for setup.
 
 ---
 
@@ -269,17 +277,6 @@ python -m unittest discover tests -v
 
 # Run tests with coverage
 pytest tests/ --cov=openbench --cov-report=term-missing
-```
-
-### TypeScript (studio/chat-ui)
-
-```bash
-cd studio/chat-ui
-pnpm install              # Install dependencies
-pnpm build                # Build library
-pnpm tsc --noEmit         # Type check
-pnpm vitest               # Run tests
-npx @biomejs/biome check src/  # Lint
 ```
 
 ## Contributing

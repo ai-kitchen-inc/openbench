@@ -42,6 +42,7 @@ from openbench.chat.session import (
     MessageRole,
 )
 from openbench.chat.session_store import SessionStore, SessionSummary
+from openbench.chat.transport import OpenAICompatHandler, create_openai_compatible_router
 
 __all__ = [
     # Engine + Layer
@@ -57,6 +58,8 @@ __all__ = [
     "Attachment",
     "SessionStore",
     "SessionSummary",
+    "OpenAICompatHandler",
+    "create_openai_compatible_router",
     # A2UI
     "A2UI_VERSION",
     "A2UIComponent",
