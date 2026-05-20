@@ -181,4 +181,4 @@ class LocalStorageBackend:
         return LocalFileStore(upload_dir=str(self.root / "downloads"))
 
     def __repr__(self) -> str:
-        return f"LocalStorageBackend(root={str(self.root)!r})"
+        return f"LocalStorageBackend(root={self.root})"

@@ -163,6 +163,7 @@ class StdioMCPTransport(MCPTransport):
             command=self.config.command,
             args=self.config.args,
             env=self.config.env or None,
+            cwd=self.config.cwd,
         )
         read, write = await self._exit_stack.enter_async_context(stdio_client(params))
         self._session = await self._exit_stack.enter_async_context(ClientSession(read, write))

@@ -162,85 +162,49 @@ To test artifact tools later, add `openbench.export_to_excel` to
 `GENERAL_CHAT_MCP_APPROVED_TOOLS`, restart the backend, and make sure you are
 comfortable with file writes to the configured downloads directory.
 
-## 8. External MCP Servers
+## 8. Register Standard MCP JSON
 
-The default tutorial uses `GENERAL_CHAT_MCP_MODE=local`. To test a real external
-MCP server without Docker, use the official filesystem MCP server:
+Open the MCP Servers panel in the UI and paste standard MCP client JSON:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "mcp/playwright"
+      ]
+    }
+  }
+}
+```
+
+The app validates and saves the server config without starting the process.
+Choose **Load tools** when you want General Chat to start the MCP server and
+discover its tools. Discovered tools appear under the server with names,
+descriptions, parameter summaries, and per-tool enable toggles.
+
+You can also register from the API:
 
 ```powershell
-cd examples/general-chat
-$env:GENERAL_CHAT_MCP_SANDBOX=(Resolve-Path .\mcp-sandbox).Path
-$env:GENERAL_CHAT_MCP_ENABLED="1"
-$env:GENERAL_CHAT_MCP_MODE="external"
-$env:GENERAL_CHAT_MCP_CONFIG="mcp/filesystem-mcp.yaml"
-$env:GENERAL_CHAT_MCP_APPROVED_TOOLS="filesystem.list_allowed_directories,filesystem.list_directory,filesystem.read_text_file,filesystem.read_file,filesystem.get_file_info"
-uvicorn server:app --port 8005 --reload
+$body = @{
+  config = '{
+    "mcpServers": {
+      "playwright": {
+        "command": "docker",
+        "args": ["run", "-i", "--rm", "mcp/playwright"]
+      }
+    }
+  }'
+} | ConvertTo-Json
+Invoke-RestMethod http://localhost:8005/mcp/catalogs/import -Method Post -ContentType "application/json" -Body $body
 ```
 
-The config launches:
-
-```powershell
-npx -y @modelcontextprotocol/server-filesystem $env:GENERAL_CHAT_MCP_SANDBOX
-```
-
-The server is restricted to `examples/general-chat/mcp-sandbox`, which includes
-`customers.json`.
-
-Check discovery:
-
-```powershell
-Invoke-RestMethod http://localhost:8005/mcp/tools
-```
-
-Expected fields:
-
-- `enabled: true`
-- `tool_count` is greater than `0`
-- `namespaced_tool_names` includes `filesystem.list_directory`
-- `namespaced_tool_names` includes `filesystem.read_text_file` or `filesystem.read_file`
-
-You can also verify the exact adapter path General Chat uses:
-
-```powershell
-cd ..\..
-$env:GENERAL_CHAT_MCP_SANDBOX=(Resolve-Path .\examples\general-chat\mcp-sandbox).Path
-@'
-from pathlib import Path
-from openbench.mcp.config import MCPConfig
-from openbench.mcp.adapters import load_mcp_tools
-
-config = MCPConfig.from_file(Path("examples/general-chat/mcp/filesystem-mcp.yaml"))
-tools = {tool.namespaced_name: tool for tool in load_mcp_tools(config)}
-print(tools["filesystem.list_allowed_directories"].execute())
-print(tools["filesystem.read_text_file"].execute(path=str(Path("examples/general-chat/mcp-sandbox/customers.json").resolve())))
-'@ | python -
-```
-
-Expected output includes the sandbox path and `Borneo Analytics`.
-
-Use this chat prompt:
-
-```text
-Use the MCP filesystem tool to read customers.json from the allowed MCP sandbox. Which account has the highest ARR, and what is the ARR value?
-```
-
-Expected answer:
-
-```text
-Borneo Analytics has the highest ARR: 220000.
-```
-
-Optional prompt:
-
-```text
-Use the MCP filesystem tool to list the allowed directory and tell me what files are available.
-```
-
-Expected answer should mention `customers.json`.
-
-If you previously saw `ClosedResourceError`, fully stop the running `uvicorn`
-process and start a new backend process before retesting. Also create a new chat
-session so old failed tool results do not remain in the prompt history.
+After loading tools, ask a prompt that explicitly uses the enabled server tools.
+Disabled servers and disabled tools are not registered with the chat agent.
 
 ## 9. Image Search MCP Server
 
@@ -299,24 +263,11 @@ If the image-search model fails with a gated Hugging Face error, run
 `%USERPROFILE%\.cache\huggingface\token` exists. The launcher mounts that cache
 read-only into the Docker container.
 
-For Docker MCP Gateway or ToolHive, change:
-
-```powershell
-$env:GENERAL_CHAT_MCP_MODE="external"
-$env:GENERAL_CHAT_MCP_CONFIG="mcp/openbench-mcp.yaml"
-```
-
-Then put your external server definitions under the `mcp.servers` section of the
-config file. See:
-
-- `examples/mcp/docker-mcp-gateway.md`
-- `examples/mcp/toolhive.md`
-
 ## Troubleshooting
 
 - `/mcp/tools` says disabled: set `GENERAL_CHAT_MCP_ENABLED=1` and restart.
-- `/mcp/tools` has zero tools: check `GENERAL_CHAT_MCP_APPROVED_TOOLS`; General
-  Chat filters the full MCP tool list down to approved names.
+- `/mcp/tools` has zero tools: load tools in the MCP Servers panel and make
+  sure the target server and tools are enabled.
 - `openbench mcp list-tools` fails: install `openbench[mcp]` and run from the
   repository root.
 - Chat does not call tools: make the prompt explicit: "Use the MCP tools..."

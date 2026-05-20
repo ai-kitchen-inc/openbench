@@ -81,6 +81,38 @@ class ReconnectableTransport(MCPTransport):
         self.closed = True
 
 
+class CloseTaskTrackingTransport(MCPTransport):
+    def __init__(self):
+        self.task_ids: list[int] = []
+        self.closed = False
+
+    def _record_task(self) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        self.task_ids.append(id(task))
+
+    async def initialize(self) -> dict:
+        self._record_task()
+        return {"capabilities": {"tools": {}}}
+
+    async def list_tools(self) -> list[dict]:
+        self._record_task()
+        return [
+            {
+                "name": "echo",
+                "description": "Echo a value",
+                "inputSchema": {"type": "object", "properties": {}, "required": []},
+            }
+        ]
+
+    async def call_tool(self, name: str, arguments: dict) -> dict:
+        return {"isError": False, "structuredContent": arguments}
+
+    async def close(self) -> None:
+        self._record_task()
+        self.closed = True
+
+
 @pytest.fixture()
 def openbench_mcp_server() -> OpenBenchMCPServer:
     return OpenBenchMCPServer(MCPServerConfig(name="openbench", include_sdk_tools=True))
@@ -145,6 +177,17 @@ def test_client_sync_calls_reuse_one_event_loop():
     assert "echo" in discovered.servers["loop"].tools
     assert result == {"value": "ok"}
     assert len(set(transport.loop_ids)) == 1
+
+
+def test_client_discover_and_close_uses_one_task_for_short_lived_stdio_lifecycle():
+    transport = CloseTaskTrackingTransport()
+    client = MCPClient(transports={"loop": transport})
+
+    discovered = client.discover_and_close_sync(refresh=True)
+
+    assert "echo" in discovered.servers["loop"].tools
+    assert transport.closed is True
+    assert len(set(transport.task_ids)) == 1
 
 
 def test_client_reconnects_stdio_once_after_closed_resource(monkeypatch):

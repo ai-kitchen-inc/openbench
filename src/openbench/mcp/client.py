@@ -85,6 +85,34 @@ class MCPClient:
     def discover_sync(self, *, refresh: bool = False) -> MCPDiscoveryCache:
         return self._run_sync(self.discover(refresh=refresh))
 
+    async def discover_and_close(self, *, refresh: bool = False) -> MCPDiscoveryCache:
+        """Discover tools for short-lived clients and close in the same task.
+
+        The MCP Python SDK's stdio transport uses AnyIO cancel scopes that
+        must be closed from the task that opened them. This helper avoids the
+        cross-task close path used by concurrent discovery, which is especially
+        noisy on Windows/Python 3.13 for one-shot registry discovery.
+        """
+        if self.discovery.servers and not refresh:
+            return self.discovery
+        if refresh:
+            self.discovery.clear()
+        try:
+            for name, transport in self._transports.items():
+                self.discovery.servers[name] = await self._discover_server(name, transport)
+            return self.discovery
+        finally:
+            for transport in self._transports.values():
+                await transport.close()
+
+    def discover_and_close_sync(self, *, refresh: bool = False) -> MCPDiscoveryCache:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return _run_sync_in_new_thread(self.discover_and_close(refresh=refresh))
+
+        return _run_sync_in_new_thread(self.discover_and_close(refresh=refresh))
+
     async def _discover_server(self, name: str, transport: MCPTransport) -> DiscoveredMCPServer:
         with correlation_context():
             try:

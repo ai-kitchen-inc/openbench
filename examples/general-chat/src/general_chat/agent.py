@@ -47,6 +47,13 @@ def _mcp_config_path() -> Path:
     return path.resolve()
 
 
+def _mcp_registry_root() -> Path | None:
+    raw = os.getenv("GENERAL_CHAT_MCP_REGISTRY_ROOT")
+    if not raw:
+        return None
+    return Path(raw).expanduser().resolve()
+
+
 def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
     """Load MCP-backed OpenBench tools for opt-in General Chat testing."""
     from openbench.mcp.adapters import MCPToolAdapter, load_mcp_tools
@@ -103,6 +110,51 @@ def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
     }
 
 
+def _load_external_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
+    """Load explicitly enabled MCP registry servers."""
+    from general_chat.mcp_registry import MCPServerRegistryStore
+
+    registry_root = _mcp_registry_root()
+    if registry_root is None:
+        return [], {"enabled": False, "tools": []}
+
+    store = MCPServerRegistryStore(registry_root)
+    return store.load_enabled_tool_adapters()
+
+
+def reload_external_mcp_tools(agent: Any) -> dict[str, Any]:
+    """Refresh an existing General Chat agent with enabled external MCP tools."""
+    previous_names = getattr(agent, "_external_mcp_tool_names", set())
+    for name in previous_names:
+        agent.tools._tools.pop(name, None)
+        agent.tools._schemas.pop(name, None)
+
+    try:
+        tools, summary = _load_external_mcp_tools_for_chat()
+    except Exception as exc:
+        summary = {
+            "enabled": True,
+            "mode": "registry",
+            "tools": [],
+            "error": str(exc),
+            "registry_root": str(_mcp_registry_root() or ""),
+        }
+        agent._external_mcp_tools = []
+        agent._external_mcp_tool_names = set()
+        agent._external_mcp_summary = summary
+        return summary
+
+    registered: set[str] = set()
+    for tool in tools:
+        agent.tools.register(tool.name, tool)
+        registered.add(tool.name)
+
+    agent._external_mcp_tools = tools
+    agent._external_mcp_tool_names = registered
+    agent._external_mcp_summary = summary
+    return summary
+
+
 def create_agent(
     api_key: str | None = None,
     model: str | None = None,
@@ -153,6 +205,21 @@ def create_agent(
                 "config_path": str(_mcp_config_path()),
             }
 
+    external_mcp_summary: dict[str, Any] = {"enabled": False, "tools": []}
+    external_mcp_tools: list[Any] = []
+    if _mcp_registry_root() is not None:
+        try:
+            external_mcp_tools, external_mcp_summary = _load_external_mcp_tools_for_chat()
+            mcp_tools.extend(external_mcp_tools)
+        except Exception as exc:
+            external_mcp_summary = {
+                "enabled": True,
+                "mode": "registry",
+                "tools": [],
+                "error": str(exc),
+                "registry_root": str(_mcp_registry_root() or ""),
+            }
+
     agent = BaseAgent(
         goal=(
             "Help users by answering questions, analysing uploaded documents "
@@ -167,4 +234,7 @@ def create_agent(
     agent._mcp_summary = mcp_summary  # type: ignore[attr-defined]
     agent._mcp_error = mcp_error  # type: ignore[attr-defined]
     agent._mcp_tools = mcp_tools  # type: ignore[attr-defined]
+    agent._external_mcp_summary = external_mcp_summary  # type: ignore[attr-defined]
+    agent._external_mcp_tools = external_mcp_tools  # type: ignore[attr-defined]
+    agent._external_mcp_tool_names = {tool.name for tool in external_mcp_tools}  # type: ignore[attr-defined]
     return agent

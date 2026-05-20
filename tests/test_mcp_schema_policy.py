@@ -92,6 +92,90 @@ def test_mcp_tool_provider_schema_strips_json_schema_dialect_keys():
     assert parameters["properties"]["path"]["type"] == "string"
 
 
+def test_mcp_tool_provider_schema_strips_unsupported_json_schema_keywords():
+    original_schema = {
+        "type": "object",
+        "properties": {
+            "data": {
+                "description": "MIME data map",
+                "type": "object",
+                "propertyNames": {"type": "string"},
+                "patternProperties": {"^text/": {"type": "string"}},
+                "additionalProperties": {"type": "string"},
+            },
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string", "if": {"const": "x"}}},
+                    "required": ["name"],
+                    "unevaluatedProperties": False,
+                },
+            },
+        },
+        "required": ["data"],
+        "dependentRequired": {"data": ["items"]},
+    }
+    tool = {
+        "name": "browser_drop",
+        "description": "Drop files or MIME-typed data",
+        "inputSchema": original_schema,
+    }
+
+    schema = mcp_tool_to_openai_schema(tool, namespaced_name="playwright.browser_drop")
+
+    parameters = schema["function"]["parameters"]
+    data_schema = parameters["properties"]["data"]
+    nested_item_schema = parameters["properties"]["items"]["items"]
+    assert "propertyNames" not in data_schema
+    assert "patternProperties" not in data_schema
+    assert "additionalProperties" not in data_schema
+    assert "dependentRequired" not in parameters
+    assert "unevaluatedProperties" not in nested_item_schema
+    assert "additionalProperties" not in nested_item_schema
+    assert "if" not in nested_item_schema["properties"]["name"]
+    assert original_schema["properties"]["data"]["propertyNames"] == {"type": "string"}
+    assert original_schema["properties"]["data"]["additionalProperties"] == {"type": "string"}
+
+
+def test_mcp_tool_provider_schema_strips_additional_properties_recursively():
+    tool = {
+        "name": "browser_fill_form",
+        "description": "Fill multiple form fields",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "target": {"type": "string"},
+                            "value": {
+                                "type": "object",
+                                "additionalProperties": {"type": "string"},
+                            },
+                        },
+                        "required": ["target"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["fields"],
+            "additionalProperties": False,
+        },
+    }
+
+    schema = mcp_tool_to_openai_schema(tool, namespaced_name="playwright.browser_fill_form")
+
+    parameters = schema["function"]["parameters"]
+    item_schema = parameters["properties"]["fields"]["items"]
+    value_schema = item_schema["properties"]["value"]
+    assert "additionalProperties" not in parameters
+    assert "additionalProperties" not in item_schema
+    assert "additionalProperties" not in value_schema
+
+
 def test_namespaced_tool_helpers():
     assert namespaced_tool_name("GitHub Official", "search/code") == "github-official.search_code"
     assert split_namespaced_tool("github.search") == ("github", "search")

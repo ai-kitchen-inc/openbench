@@ -101,7 +101,10 @@ class TestFilesystemPersonaSource(unittest.TestCase):
         real = self.dir / "real_soul.md"
         real.write_text("content", encoding="utf-8")
         link = self.dir / "SOUL.md"
-        os.symlink(real, link)
+        try:
+            os.symlink(real, link)
+        except OSError as exc:
+            self.skipTest(f"Symlink creation unavailable: {exc}")
         source = FilesystemPersonaSource(self.dir)
         with self.assertRaises(ValueError):
             source.fetch("soul")

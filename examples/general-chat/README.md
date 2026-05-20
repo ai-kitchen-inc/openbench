@@ -218,6 +218,8 @@ Max file size: 25 MB per source (override with `GENERAL_CHAT_MAX_SOURCE_BYTES`).
 | `GET` | `/persona` | Inspect loaded persona |
 | `GET` | `/skills` | Inspect loaded skills |
 | `GET` | `/mcp/tools` | Inspect opt-in MCP tool adapters loaded into the chat agent |
+| `GET` | `/mcp/catalogs` | List registered MCP servers and discovered tools |
+| `POST` | `/mcp/catalogs/import` | Register pasted standard `mcpServers` JSON |
 
 ---
 
@@ -257,10 +259,21 @@ Invoke-RestMethod http://localhost:8005/mcp/tools
 
 For a complete walkthrough, see [MCP_TUTORIAL.md](MCP_TUTORIAL.md).
 
-The tutorial also includes a real external MCP server path using the official
-`@modelcontextprotocol/server-filesystem` package. It reads only from
-`mcp-sandbox/` and includes a `customers.json` prompt that should return
-`Borneo Analytics` as the highest ARR account.
+The MCP Servers panel also accepts standard MCP client JSON:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "mcp/playwright"]
+    }
+  }
+}
+```
+
+After registration, load tools from the server, toggle the server or individual
+tools, and ask chat questions that use the enabled MCP tools.
 
 ### Image Search MCP
 

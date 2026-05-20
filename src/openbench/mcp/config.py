@@ -83,6 +83,7 @@ class MCPServerConnectionConfig(BaseModel):
     command: str | None = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    cwd: str | None = None
     url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: float = 30.0

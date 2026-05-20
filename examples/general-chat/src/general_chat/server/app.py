@@ -15,8 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from general_chat.agent import create_agent, get_persona_dir
+from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
 from general_chat.extractor import DoclingContentExtractor
+from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.server.handler import GeneralChatHandler
 from general_chat.sources import (
     DEFAULT_DISCOVERY_LIMIT,
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
 
     default_storage_root = example_root / ".openbench"
     storage_root = str(Path(os.getenv("GENERAL_CHAT_STORAGE_ROOT", str(default_storage_root))).resolve())
+    os.environ["GENERAL_CHAT_MCP_REGISTRY_ROOT"] = storage_root
 
     default_profile_dir = example_root / "profiles"
     profile_dir = str(Path(os.getenv("OPENBENCH_PROFILE_DIR", str(default_profile_dir))).resolve())
@@ -128,6 +130,7 @@ def create_app() -> FastAPI:
     extractor = DoclingContentExtractor()
     source_parser = SourceParserRegistry(document_extractor=extractor)
     source_store = SourceStore(storage_root)
+    mcp_registry_store = MCPServerRegistryStore(storage_root)
     discovery_adapter = SearchDiscoveryAdapter()
     max_source_bytes = max_source_bytes_from_env()
     agent = create_agent()
@@ -244,22 +247,118 @@ def create_app() -> FastAPI:
     @app.get("/mcp/tools")
     async def mcp_tools_info() -> dict:
         summary = getattr(agent, "_mcp_summary", None)
+        external_summary = getattr(agent, "_external_mcp_summary", None)
         if not isinstance(summary, dict):
-            return {
+            summary = {
                 "enabled": False,
                 "mode": os.getenv("GENERAL_CHAT_MCP_MODE", "local"),
                 "tools": [],
-                "tool_count": 0,
-                "provider_tool_names": [],
-                "namespaced_tool_names": [],
             }
+        if not isinstance(external_summary, dict):
+            external_summary = {"enabled": False, "tools": []}
         tools = summary.get("tools", [])
+        external_tools = external_summary.get("tools", [])
+        all_tools = [*tools, *external_tools]
         return {
             **summary,
-            "tool_count": len(tools),
-            "provider_tool_names": [item.get("adapter_name") for item in tools],
-            "namespaced_tool_names": [item.get("name") for item in tools],
+            "enabled": bool(summary.get("enabled") or external_summary.get("enabled")),
+            "registry": external_summary,
+            "tool_count": len(all_tools),
+            "tools": all_tools,
+            "provider_tool_names": [item.get("adapter_name") for item in all_tools],
+            "namespaced_tool_names": [item.get("name") for item in all_tools],
         }
+
+    @app.get("/mcp/catalogs")
+    async def list_mcp_servers() -> dict:
+        return mcp_registry_store.list_payload()
+
+    @app.post("/mcp/catalogs/import")
+    async def import_mcp_servers(request: Request) -> dict:
+        body = await request.json()
+        try:
+            if isinstance(body.get("config"), str):
+                raw_config = body["config"]
+            elif "mcpServers" in body:
+                import json
+
+                raw_config = json.dumps(body)
+            else:
+                raise MCPRegistryError("Paste a JSON object containing mcpServers.")
+            return mcp_registry_store.import_config_json(raw_config)
+        except MCPRegistryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/mcp/catalogs/{server_id}/refresh")
+    async def refresh_mcp_server(server_id: str) -> dict:
+        try:
+            server = mcp_registry_store.discover_server(server_id)
+            reload_summary = reload_external_mcp_tools(agent)
+            return {"server": server.to_dict(detail=True), "reload": reload_summary}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="MCP server not found") from exc
+        except MCPRegistryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/mcp/catalogs/{server_id}")
+    async def remove_mcp_server(server_id: str) -> dict:
+        mcp_registry_store.remove_server(server_id)
+        reload_summary = reload_external_mcp_tools(agent)
+        return {"ok": True, "serverId": server_id, "reload": reload_summary}
+
+    @app.get("/mcp/catalogs/servers/{server_id}")
+    async def get_mcp_server(server_id: str) -> dict:
+        try:
+            return mcp_registry_store.get_server(server_id).to_dict(detail=True)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="MCP server not found") from exc
+
+    @app.post("/mcp/catalogs/servers/{server_id}/enable")
+    async def enable_mcp_server(server_id: str, request: Request) -> dict:
+        body = await request.json()
+        try:
+            server = mcp_registry_store.set_server_enabled(
+                server_id,
+                bool(body.get("enabled", True)),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="MCP server not found") from exc
+        except MCPRegistryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        reload_summary = reload_external_mcp_tools(agent)
+        return {
+            "server": server.to_dict(detail=True),
+            "reload": reload_summary,
+        }
+
+    @app.post("/mcp/catalogs/servers/{server_id}/discover")
+    async def discover_mcp_server(server_id: str) -> dict:
+        try:
+            server = mcp_registry_store.discover_server(server_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="MCP server not found") from exc
+        reload_summary = reload_external_mcp_tools(agent)
+        return {"server": server.to_dict(detail=True), "reload": reload_summary}
+
+    @app.post("/mcp/catalogs/servers/{server_id}/tools/{tool_name}/enable")
+    async def enable_mcp_tool(server_id: str, tool_name: str, request: Request) -> dict:
+        body = await request.json()
+        try:
+            server = mcp_registry_store.set_tool_enabled(
+                server_id,
+                tool_name,
+                bool(body.get("enabled", True)),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="MCP server or tool not found") from exc
+        reload_summary = reload_external_mcp_tools(agent)
+        return {"server": server.to_dict(detail=True), "reload": reload_summary}
+
+    @app.delete("/mcp/catalogs/servers/{server_id}")
+    async def remove_mcp_server_by_id(server_id: str) -> dict:
+        mcp_registry_store.remove_server(server_id)
+        reload_summary = reload_external_mcp_tools(agent)
+        return {"ok": True, "serverId": server_id, "reload": reload_summary}
 
     @app.post("/chat/upload")
     async def upload_file(

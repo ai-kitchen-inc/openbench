@@ -24,6 +24,7 @@ export default defineConfig({
       "/persona": { target: "http://localhost:8005", changeOrigin: true },
       "/skills": { target: "http://localhost:8005", changeOrigin: true },
       "/mcp/tools": { target: "http://localhost:8005", changeOrigin: true },
+      "/mcp/catalogs": { target: "http://localhost:8005", changeOrigin: true },
     },
   },
 });

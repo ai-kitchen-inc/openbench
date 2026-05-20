@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
 from openbench.core.abstractions import LLMProvider, LLMResponse
 from openbench.intelligence.memory_validator import validate_tool_call_pairs
+from openbench.mcp.schema import normalize_provider_json_schema
 
 logger = logging.getLogger(__name__)
 
@@ -248,13 +249,24 @@ class GeminiLLMProvider(LLMProvider):
         declarations = []
         for tool in tools:
             func = tool.get("function", tool)
-            declarations.append(
-                types.FunctionDeclaration(
-                    name=func["name"],
-                    description=func.get("description", ""),
-                    parameters=func.get("parameters"),
+            name = str(func.get("name") or "")
+            try:
+                declarations.append(
+                    types.FunctionDeclaration(
+                        name=name,
+                        description=func.get("description", ""),
+                        parameters=normalize_provider_json_schema(func.get("parameters")),
+                    )
                 )
-            )
+            except Exception as exc:
+                logger.warning(
+                    "Skipping tool %s because its schema is not accepted by Gemini: %s",
+                    name or "<unnamed>",
+                    exc,
+                )
+
+        if not declarations:
+            return []
 
         return [types.Tool(function_declarations=declarations)]
 

@@ -298,13 +298,17 @@ class LocalStateStore(StateStore):
         processes are NOT safe. Use a database-backed StateStore for
         multi-process scenarios.
         """
-        import fcntl
+        try:
+            import fcntl
+        except ImportError:
+            fcntl = None
 
         path = self._get_path(state.workflow_id)
         lock_path = path.with_suffix(".lock")
         lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            if fcntl is not None:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
             fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
             try:
                 with os.fdopen(fd, "w") as f:
@@ -316,7 +320,8 @@ class LocalStateStore(StateStore):
                 raise
         finally:
             with contextlib.suppress(OSError):
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                if fcntl is not None:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
             os.close(lock_fd)
 
     def load(self, workflow_id: str) -> WorkflowState | None:

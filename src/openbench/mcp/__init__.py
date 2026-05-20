@@ -24,6 +24,7 @@ from openbench.mcp.errors import (
 )
 from openbench.mcp.policy import MCPPolicyEngine, RiskLevel
 from openbench.mcp.server import OpenBenchMCPServer
+from openbench.mcp.standard_config import MCPConfigImportError, parse_standard_mcp_json
 
 __all__ = [
     "MCPClient",
@@ -43,4 +44,6 @@ __all__ = [
     "OpenBenchMCPServer",
     "RiskLevel",
     "load_mcp_tools",
+    "MCPConfigImportError",
+    "parse_standard_mcp_json",
 ]

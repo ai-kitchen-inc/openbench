@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import "@openbench/chat-ui/styles/chat-ui.css";
 import "@openbench/chat-ui/styles/bundle.css";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { McpCatalogPanel } from "./mcp-catalog/McpCatalogPanel";
 import { ToastProvider, useToast } from "./Toast";
 import "./global.css";
 
@@ -790,12 +791,27 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments }: {
 }) {
   const { activeSessionId, sidebarOpen } = useChatContext();
   const [dark, toggleDark] = useDarkMode();
+  const [mcpCatalogOpen, setMcpCatalogOpen] = useState(false);
 
   return (
     <div className="chat-layout">
       {sidebarOpen && (
         <div className="lci-mini-sidebar">
           <SessionSidebar />
+          <button
+            type="button"
+            className="mcp-servers-button"
+            onClick={() => setMcpCatalogOpen(true)}
+            aria-label="Open MCP Servers"
+          >
+            <span className="mcp-servers-button__icon" aria-hidden="true">
+              MCP
+            </span>
+            <span>
+              <strong>MCP servers</strong>
+              <span>Manage tools</span>
+            </span>
+          </button>
           <SourcePanel
             sessionId={activeSessionId}
             onAttachmentsChange={setPersistentAttachments}
@@ -822,6 +838,7 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments }: {
           </button>
         }
       />
+      <McpCatalogPanel open={mcpCatalogOpen} onClose={() => setMcpCatalogOpen(false)} />
     </div>
   );
 }

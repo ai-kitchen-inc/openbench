@@ -48,7 +48,26 @@ Use `0.0.0.0` only behind an authenticated gateway or trusted internal network.
 
 ## Consume MCP Servers
 
-Example client config:
+OpenBench accepts the common MCP client JSON shape for user-provided servers:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "mcp/playwright"],
+      "env": {},
+      "cwd": "examples/general-chat"
+    }
+  }
+}
+```
+
+Validation checks JSON shape, command/transport fields, string arrays for
+`args`, string maps for `env` and `headers`, and duplicate normalized server
+names. Validation does not start command-based servers.
+
+OpenBench YAML config remains available for SDK and CLI use:
 
 ```yaml
 mcp:

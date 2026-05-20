@@ -12,6 +12,29 @@ from openbench.mcp.policy import RiskLevel, classify_tool_risk
 
 _NAME_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 _PROVIDER_NAME_RE = re.compile(r"[^a-zA-Z0-9_]+")
+_PROVIDER_SCHEMA_KEYS = {
+    "anyOf",
+    "default",
+    "description",
+    "enum",
+    "example",
+    "format",
+    "items",
+    "maxItems",
+    "maxLength",
+    "maxProperties",
+    "maximum",
+    "minItems",
+    "minLength",
+    "minProperties",
+    "minimum",
+    "nullable",
+    "pattern",
+    "properties",
+    "required",
+    "title",
+    "type",
+}
 
 
 def normalize_server_name(name: str) -> str:
@@ -78,19 +101,72 @@ def normalize_provider_json_schema(schema: dict[str, Any] | None) -> dict[str, A
     without mutating the original MCP discovery payload.
     """
     normalized = normalize_json_schema(schema)
-    return _strip_json_schema_dialect_keys(normalized)
+    return _sanitize_provider_json_schema(normalized)
 
 
-def _strip_json_schema_dialect_keys(value: Any) -> Any:
+def _sanitize_provider_json_schema(value: Any, *, in_properties: bool = False) -> Any:
+    if isinstance(value, list):
+        return [
+            item
+            for item in (_sanitize_provider_json_schema(item) for item in value)
+            if item is not None
+        ]
+    if not isinstance(value, dict):
+        return value
+
+    if in_properties:
+        return {
+            str(key): _sanitize_provider_json_schema(item)
+            for key, item in value.items()
+            if isinstance(item, dict)
+        }
+
+    sanitized: dict[str, Any] = {}
+    for raw_key, item in value.items():
+        key = str(raw_key)
+        if key.startswith("$") or key not in _PROVIDER_SCHEMA_KEYS:
+            continue
+        if key == "properties":
+            sanitized[key] = _sanitize_provider_json_schema(item, in_properties=True)
+        elif key == "items":
+            if isinstance(item, dict):
+                sanitized[key] = _sanitize_provider_json_schema(item)
+        elif key == "anyOf":
+            if isinstance(item, list):
+                any_of = _sanitize_provider_json_schema(item)
+                if any_of:
+                    sanitized[key] = any_of
+        elif key == "required":
+            if isinstance(item, list):
+                sanitized[key] = [str(entry) for entry in item if isinstance(entry, str)]
+        else:
+            sanitized[key] = _strict_json_schema_value(item)
+
+    schema_type = sanitized.get("type")
+    if isinstance(schema_type, list):
+        sanitized["type"] = next((entry for entry in schema_type if isinstance(entry, str)), "object")
+    elif schema_type is not None and not isinstance(schema_type, str):
+        sanitized.pop("type", None)
+
+    if sanitized.get("type") == "object":
+        sanitized.setdefault("properties", {})
+        sanitized.setdefault("required", [])
+
+    return sanitized
+
+
+def _strict_json_schema_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            key: _strip_json_schema_dialect_keys(item)
+            str(key): _strict_json_schema_value(item)
             for key, item in value.items()
             if not str(key).startswith("$")
         }
     if isinstance(value, list):
-        return [_strip_json_schema_dialect_keys(item) for item in value]
-    return value
+        return [_strict_json_schema_value(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def openbench_schema_to_mcp_tool(
