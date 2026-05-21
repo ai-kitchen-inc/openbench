@@ -221,6 +221,45 @@ Max file size: 25 MB per source (override with `GENERAL_CHAT_MAX_SOURCE_BYTES`).
 | `GET` | `/mcp/catalogs` | List registered MCP servers and discovered tools |
 | `POST` | `/mcp/catalogs/import` | Register pasted standard `mcpServers` JSON |
 
+## Chat-based CIFAR-10 image search through MCP
+
+General Chat can render CIFAR-10 visual similarity results directly in the chat
+surface. Upload a `.png`, `.jpg`, `.jpeg`, or `.webp` source, then ask for the
+top-k similar CIFAR-10 images. The chat agent calls
+`image_search.search_similar_images` with the uploaded image MCP path, the MCP
+server searches its persisted CIFAR-10 vector index, and the backend renders the
+returned preview URLs with rank, label, score, and image id. The browser never
+loads or searches the full CIFAR-10 dataset.
+
+Recommended local startup:
+
+```powershell
+cd examples\image-search-mcp
+docker compose --profile cpu build
+
+cd ..\general-chat
+.\scripts\run_with_image_search_mcp.ps1
+```
+
+The first full indexing run may download CIFAR-10 via `torchvision` and DINOv3
+weights via Hugging Face. Preview PNGs are written under
+`examples/image-search-mcp/data/previews` and served by the General Chat backend
+at `/image-search/previews/...`.
+The image-search MCP service can search any initialized non-empty index. Verify
+`image_search.list_index_stats` reports `healthy=true`; partial indexes report
+`complete=false` and `partial=true`, while the full index reports
+`active_count=60000`, `train_count=50000`, `test_count=10000`, and
+`complete=true`. Full indexing improves coverage and should be run outside the
+live chat turn:
+
+```powershell
+cd examples\image-search-mcp
+$env:VECTOR_BACKEND="hnswlib"
+$env:IMAGE_SEARCH_PROGRESS="1"
+python -c "from app.service import get_service; print(get_service().rebuild_index(batch_size=64))"
+python -c "from app.service import get_service; print(get_service().list_index_stats())"
+```
+
 ---
 
 ## Persona
@@ -307,9 +346,7 @@ Expected namespaced tools include:
 
 ```text
 image_search.list_index_stats
-image_search.index_images
 image_search.search_similar_images
-image_search.rebuild_index
 ```
 
 In the UI, use explicit tool-forcing prompts:
@@ -319,14 +356,14 @@ Use the image_search MCP tool to list the image index stats.
 ```
 
 ```text
-Use the image_search MCP tools to index 16 CIFAR-10 training images with batch size 4, then search similar images for CIFAR-10 test image index 0 and return the top 3 results with image ids, labels, and similarity scores.
+Use image_search.list_index_stats to verify the CIFAR-10 index is healthy, then use image_search.search_similar_images for CIFAR-10 test image index 0 and return the top 3 results with image ids, labels, splits, dataset indexes, and similarity scores. If the index is partial, mention that coverage is partial.
 ```
 
 You can also upload a random `.png`, `.jpg`, `.jpeg`, or `.webp` image in the
 Sources panel and ask:
 
 ```text
-Use the uploaded image source with image_search.search_similar_images. Index 16 CIFAR-10 training images with batch size 4 if needed, then return the top 3 similar images with visible thumbnails, image ids, labels, and similarity scores.
+Use the uploaded image source with image_search.search_similar_images. If the index is empty or uninitialized, tell me to build it outside chat; otherwise return the top 3 similar images with visible thumbnails, image ids, labels, splits, dataset indexes, and similarity scores. If the index is partial, mention that coverage is partial.
 ```
 
 ---

@@ -15,6 +15,7 @@ services:
       MODEL_CACHE_PATH: /models
       BATCH_SIZE: ${BATCH_SIZE:-64}
       TOP_K_DEFAULT: ${TOP_K_DEFAULT:-10}
+      TOP_K_MAX: ${TOP_K_MAX:-50}
       VECTOR_BACKEND: ${VECTOR_BACKEND:-auto}
     volumes:
       - ./data:/data
@@ -37,6 +38,7 @@ services:
       MODEL_CACHE_PATH: /models
       BATCH_SIZE: ${BATCH_SIZE:-128}
       TOP_K_DEFAULT: ${TOP_K_DEFAULT:-10}
+      TOP_K_MAX: ${TOP_K_MAX:-50}
       VECTOR_BACKEND: ${VECTOR_BACKEND:-auto}
     volumes:
       - ./data:/data
@@ -64,6 +66,7 @@ services:
       MODEL_CACHE_PATH: /models
       BATCH_SIZE: ${BATCH_SIZE:-16}
       TOP_K_DEFAULT: ${TOP_K_DEFAULT:-10}
+      TOP_K_MAX: ${TOP_K_MAX:-50}
       VECTOR_BACKEND: ${VECTOR_BACKEND:-auto}
     volumes:
       - .:/app

@@ -11,7 +11,7 @@ if str(_EXAMPLE_ROOT) not in sys.path:
     sys.path.insert(0, str(_EXAMPLE_ROOT))
 
 from app.service import get_service  # noqa: E402
-from app.tool_schemas import (  # noqa: E402
+from app.tool_schemas import (  # noqa: E402,F401
     INDEX_IMAGES_SCHEMA,
     LIST_INDEX_STATS_SCHEMA,
     REBUILD_INDEX_SCHEMA,
@@ -28,7 +28,7 @@ def search_similar_images(
     top_k: int | None = None,
     threshold: float | None = None,
 ) -> dict[str, Any]:
-    """Search visually similar CIFAR-10 train images."""
+    """Search visually similar CIFAR-10 images."""
     return get_service().search_similar_images(
         image_path=image_path,
         image_base64=image_base64,
@@ -44,7 +44,7 @@ def index_images(
     max_items: int | None = None,
     write_previews: bool = True,
 ) -> dict[str, Any]:
-    """Index missing CIFAR-10 train images."""
+    """Index missing CIFAR-10 images."""
     return get_service().index_images(
         batch_size=batch_size,
         max_items=max_items,
@@ -57,7 +57,7 @@ def rebuild_index(
     max_items: int | None = None,
     write_previews: bool = True,
 ) -> dict[str, Any]:
-    """Clear and rebuild the CIFAR-10 train image index."""
+    """Clear and rebuild the CIFAR-10 image index."""
     return get_service().rebuild_index(
         batch_size=batch_size,
         max_items=max_items,

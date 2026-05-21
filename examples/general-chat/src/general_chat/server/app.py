@@ -75,7 +75,6 @@ _EXT_MIME_MAP = {
     ".webp": "image/webp",
 }
 
-
 def _resolve_mime(filename: str, content_type: str) -> str:
     """Return the best MIME type for a file, using extension as a tiebreaker."""
     if content_type and content_type != "application/octet-stream":

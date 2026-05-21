@@ -11,8 +11,8 @@ FAISS or HNSW vector index.
 
 ## Tools
 
-- `search_similar_images` - query similar CIFAR-10 train images from one path, base64 image, URL, or CIFAR-10 test index.
-- `index_images` - index missing CIFAR-10 train images.
+- `search_similar_images` - query similar CIFAR-10 images from one path, base64 image, URL, or CIFAR-10 test index.
+- `index_images` - index missing CIFAR-10 images.
 - `rebuild_index` - clear and rebuild the image index.
 - `list_index_stats` - inspect index health and persistence paths.
 - `remove_image` - remove an indexed image id.

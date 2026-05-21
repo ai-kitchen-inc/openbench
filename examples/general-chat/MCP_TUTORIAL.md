@@ -240,23 +240,25 @@ Expected `namespaced_tool_names` includes:
 
 ```text
 image_search.list_index_stats
-image_search.index_images
 image_search.search_similar_images
-image_search.rebuild_index
 ```
 
 Use this prompt in the UI:
 
 ```text
-Use the image_search MCP tools to index 16 CIFAR-10 training images with batch size 4, then search similar images for CIFAR-10 test image index 0 and return the top 3 results with image ids, labels, and similarity scores.
+Use image_search.list_index_stats to verify the CIFAR-10 index is healthy, then use image_search.search_similar_images for CIFAR-10 test image index 0 and return the top 3 results with image ids, labels, splits, dataset indexes, and similarity scores. If the index is partial, mention that coverage is partial.
 ```
 
 To search from your own image, upload a `.png`, `.jpg`, `.jpeg`, or `.webp`
 file in the Sources panel, then ask:
 
 ```text
-Use the uploaded image source with image_search.search_similar_images. Index 16 CIFAR-10 training images with batch size 4 if needed, then return the top 3 similar images with visible thumbnails, image ids, labels, and similarity scores.
+Use the uploaded image source with image_search.search_similar_images. If the index is empty or uninitialized, tell me to build it outside chat; otherwise return the top 3 similar images with visible thumbnails, image ids, labels, splits, dataset indexes, and similarity scores. If the index is partial, mention that coverage is partial.
 ```
+
+If `list_index_stats` reports `healthy=true`, search can run. A partial index
+returns `complete=false` and `partial=true`; rebuild the full index outside chat
+only when you want full CIFAR-10 coverage.
 
 If the image-search model fails with a gated Hugging Face error, run
 `hf auth login` on the host and make sure

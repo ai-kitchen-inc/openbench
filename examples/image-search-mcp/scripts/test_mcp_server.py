@@ -132,7 +132,7 @@ def run(
     image: str,
     discovery_only: bool,
     real_index: bool,
-    max_items: int,
+    max_items: int | None,
     batch_size: int,
 ) -> int:
     server = _docker_server(image) if mode == "docker" else _local_server()
@@ -166,7 +166,8 @@ def run(
         print(_format(stats))
 
         if real_index:
-            print(f"\nIndexing {max_items} CIFAR-10 train images...")
+            label = f"{max_items} CIFAR-10 images" if max_items is not None else "full CIFAR-10 corpus"
+            print(f"\nIndexing {label}...")
             index_result = client.call_tool_sync(
                 "image_search.index_images",
                 {"max_items": max_items, "batch_size": batch_size},
@@ -175,6 +176,13 @@ def run(
             )
             _assert_ok_tool_result("index_images", index_result)
             print(_format(index_result))
+            if max_items is not None:
+                if index_result.get("complete"):
+                    print("\nExpected partial index to be incomplete, but it was complete.")
+                    return 2
+                if not index_result.get("healthy"):
+                    print("\nPartial index was not marked healthy/searchable.")
+                    return 2
 
             print("\nSearching with CIFAR-10 test image 0...")
             search_result = client.call_tool_sync(
@@ -206,7 +214,12 @@ def main() -> int:
         action="store_true",
         help="Also run index_images and search_similar_images. This may download CIFAR-10/model weights.",
     )
-    parser.add_argument("--max-items", type=int, default=16)
+    parser.add_argument(
+        "--max-items",
+        type=int,
+        default=None,
+        help="Optional partial indexing cap for smoke tests. Omit for full 60,000-image search.",
+    )
     parser.add_argument("--batch-size", type=int, default=4)
     args = parser.parse_args()
 

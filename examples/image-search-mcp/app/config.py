@@ -33,6 +33,7 @@ class AppConfig:
     preview_url_base: str | None
     batch_size: int
     top_k_default: int
+    top_k_max: int
     vector_backend: Literal["auto", "faiss", "hnswlib"]
     image_url_timeout_seconds: float = 20.0
 
@@ -56,6 +57,7 @@ class AppConfig:
             preview_url_base=os.getenv("PREVIEW_URL_BASE") or None,
             batch_size=_env_int("BATCH_SIZE", 64),
             top_k_default=_env_int("TOP_K_DEFAULT", 10),
+            top_k_max=_env_int("TOP_K_MAX", 50),
             vector_backend=backend,  # type: ignore[arg-type]
         )
 

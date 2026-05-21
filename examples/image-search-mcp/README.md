@@ -1,7 +1,7 @@
 # Local DINOv3 CIFAR-10 MCP Image Search
 
 This example is a fully local MCP server for image similarity search. It uses
-DINOv3 to embed images, persists CIFAR-10 train embeddings into FAISS or
+DINOv3 to embed images, persists CIFAR-10 embeddings into FAISS or
 hnswlib, and answers queries by embedding only the query image before ANN
 nearest-neighbor search.
 
@@ -10,7 +10,7 @@ nearest-neighbor search.
 The important performance rule is simple: DINOv3 never runs over the whole
 corpus per query.
 
-1. `index_images` downloads CIFAR-10 if needed, embeds the train split in
+1. `index_images` downloads CIFAR-10 if needed, embeds the train and test splits in
    batches, normalizes vectors, writes previews, and persists the vector index.
 2. `search_similar_images` loads one query image from a path, base64 string,
    URL, or CIFAR-10 test index.
@@ -63,21 +63,52 @@ python -m app.mcp_server --transport streamable-http --host 127.0.0.1 --port 800
 - `search_similar_images(image_path?, image_base64?, image_url?, cifar10_test_index?, top_k?, threshold?)`
 - `remove_image(image_id)`
 
-`search_similar_images` requires exactly one query source.
+`search_similar_images` requires exactly one query source. It caps `top_k` to
+`TOP_K_MAX` and returns only renderable preview URLs plus metadata (`image_id`,
+class label, rank, similarity score, split, and dataset index).
+Search can run against any initialized non-empty index. A partial smoke-test
+index, such as 16 images, is marked `complete=False` and `partial=True`, but it
+is still searchable. Full 60,000-image indexing is recommended for best coverage.
 
 ## Index CIFAR-10
 
-For a quick smoke test:
+For a quick partial indexing smoke test:
 
 ```bash
-python -c "from app.service import get_service; s=get_service(); print(s.index_images(max_items=256, batch_size=32)); print(s.search_similar_images(cifar10_test_index=0, top_k=5))"
+python -c "from app.service import get_service; s=get_service(); print(s.index_images(max_items=256, batch_size=32, write_previews=False)); print(s.list_index_stats())"
 ```
 
-For the full train split:
+For the full CIFAR-10 corpus:
 
 ```bash
 python -c "from app.service import get_service; print(get_service().index_images())"
 ```
+
+`index_images()` and `rebuild_index()` show an inline progress bar when run from
+an interactive terminal. If your shell does not display it, force progress output:
+
+```bash
+IMAGE_SEARCH_PROGRESS=1 python -c "from app.service import get_service; print(get_service().rebuild_index(batch_size=64))"
+```
+
+PowerShell:
+
+```powershell
+$env:IMAGE_SEARCH_PROGRESS="1"
+python -c "from app.service import get_service; print(get_service().rebuild_index(batch_size=64))"
+```
+
+Verify the corpus before searching:
+
+```bash
+python -c "from app.service import get_service; print(get_service().list_index_stats())"
+```
+
+Any non-empty initialized index should report `healthy=True`. A full index should
+also report `active_count=60000`, `train_count=50000`, `test_count=10000`, and
+`complete=True`. Partial indexes report `complete=False` and `partial=True`.
+Dataset metadata is cached under `data/cifar10/openbench_cifar10_manifest.json`;
+vector metadata and the ANN index are cached under `data/index/`.
 
 ## MCP Client Config
 
@@ -175,6 +206,7 @@ custom Docker MCP catalog entry.
 | `MODEL_CACHE_PATH` | `models` | Hugging Face model cache |
 | `BATCH_SIZE` | `64` | Indexing batch size |
 | `TOP_K_DEFAULT` | `10` | Default search result count |
+| `TOP_K_MAX` | `50` | Maximum visual similarity results returned |
 | `VECTOR_BACKEND` | `auto` | `auto`, `faiss`, or `hnswlib` |
 
 ## Testing
@@ -203,8 +235,14 @@ If Docker is the problem, test the local Python stdio server instead:
 python scripts/test_mcp_server.py --mode local
 ```
 
-To run the real indexing/search path through MCP, add `--real-index`. This may
-download CIFAR-10 and DINOv3 weights:
+To run the full real indexing/search path through MCP, add `--real-index`. This
+may download CIFAR-10 and DINOv3 weights:
+
+```bash
+python scripts/test_mcp_server.py --mode docker --real-index --batch-size 64
+```
+
+For a partial indexing smoke test that intentionally skips search:
 
 ```bash
 python scripts/test_mcp_server.py --mode docker --real-index --max-items 16 --batch-size 4
@@ -224,7 +262,8 @@ pytest tests -q
 
 ## Troubleshooting
 
-- Empty search results: run `index_images` or `rebuild_index` first.
+- Empty or uninitialized index error: run `index_images` or `rebuild_index`,
+  then verify `list_index_stats()["healthy"]` is `True`.
 - Hugging Face access error: accept the DINOv3 model terms and run
   `hf auth login`. For Docker, confirm `~/.cache/huggingface/token` exists on
   the host so the tester can mount it into the container.

@@ -23,7 +23,7 @@ if (-not (Test-Path $hfToken)) {
 $env:GENERAL_CHAT_MCP_ENABLED = "1"
 $env:GENERAL_CHAT_MCP_MODE = "external"
 $env:GENERAL_CHAT_MCP_CONFIG = "mcp/image-search-docker.yaml"
-$env:GENERAL_CHAT_MCP_APPROVED_TOOLS = "image_search.list_index_stats,image_search.index_images,image_search.search_similar_images,image_search.rebuild_index"
+$env:GENERAL_CHAT_MCP_APPROVED_TOOLS = "image_search.list_index_stats,image_search.search_similar_images"
 
 $env:IMAGE_SEARCH_MCP_DATA_PATH = (Resolve-Path $imageSearchData).Path.Replace("\", "/")
 $env:IMAGE_SEARCH_MCP_MODELS_PATH = (Resolve-Path $imageSearchModels).Path.Replace("\", "/")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -90,11 +91,22 @@ class VectorIndex:
         with self.metadata_path.open("w", encoding="utf-8") as handle:
             for item in self.metadata:
                 handle.write(json.dumps(item, sort_keys=True) + "\n")
+        active_metadata = [item for item in self.metadata if not item.get("tombstoned", False)]
+        split_counts = Counter(str(item.get("cifar_split") or "") for item in active_metadata)
+        class_counts = Counter(str(item.get("class_name") or "") for item in active_metadata)
         manifest = {
             "backend": self.backend,
             "dimension": self.dimension,
             "count": len(self.metadata),
             "active_count": self.count,
+            "split_counts": {
+                split: int(count) for split, count in sorted(split_counts.items()) if split
+            },
+            "class_counts": {
+                class_name: int(count)
+                for class_name, count in sorted(class_counts.items())
+                if class_name
+            },
         }
         self.manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
         if self._index is not None:

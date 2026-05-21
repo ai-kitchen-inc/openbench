@@ -30,6 +30,8 @@ mcp:
         - "-e"
         - DEVICE=cpu
         - "-e"
+        - TOP_K_MAX=50
+        - "-e"
         - PREVIEW_URL_BASE=/image-search/previews
         - "-e"
         - HF_HOME=/home/image-search/.cache/huggingface

@@ -9,15 +9,22 @@ import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openbench.chat.session import Attachment
 from openbench.chat.transport import AGUIHandler
-from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult, LLMProvider, LLMResponse
+from openbench.core.abstractions import (
+    Agent,
+    ExecutionContext,
+    ExecutionResult,
+    LLMProvider,
+    LLMResponse,
+)
 from openbench.intelligence.base import AgentMemory, BaseAgent, Message, MessageRole
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
 
-from general_chat.sources import SourceRecord
+if TYPE_CHECKING:
+    from general_chat.sources import SourceRecord
 
 
 _SOURCE_CONTEXT_ID = "general-chat-source-context"
@@ -44,11 +51,12 @@ document."
 For uploaded image sources, the attachment content may include an
 `image_search MCP path`. When the user asks to find similar images, compare
 visual similarity, or search from the uploaded image, call
-`image_search.search_similar_images` with that path as `image_path`. If the
-image-search index is empty, call `image_search.index_images` first with a small
-demo batch such as `max_items=16` and `batch_size=4`, then search. If tool results
-include `preview_url`, render each result as a Markdown image with its image id,
-class label, and similarity score.
+`image_search.search_similar_images` with that path as `image_path`. Use the
+requested top_k value when the user provides one; otherwise use `top_k=10`. Do
+not run long indexing or rebuild tools during chat. Partial indexes are usable
+for search. If the search tool reports an empty, uninitialized, or timed-out
+index, tell the user to build the image search index outside chat, then retry.
+Tool results with `preview_url` are rendered into the chat surface automatically.
 """.strip()
 
 _NO_SOURCE_REFUSAL = "Please add a document/source first."
@@ -105,6 +113,8 @@ _DOCUMENT_ACTION_TERMS = {
     "quote",
     "list",
     "find",
+    "image",
+    "images",
     "key",
     "main",
     "claims",
@@ -113,6 +123,9 @@ _DOCUMENT_ACTION_TERMS = {
     "briefing",
     "action",
     "items",
+    "similar",
+    "similarity",
+    "visual",
 }
 
 

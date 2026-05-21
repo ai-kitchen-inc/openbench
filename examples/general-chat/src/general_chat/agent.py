@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from openbench.chat import render_queue as shared_render_queue
+from openbench.core.abstractions import Tool
 from openbench.core.providers import ProviderType, configure_provider
 from openbench.intelligence import BaseAgent, Persona
 
@@ -15,6 +17,7 @@ _DEFAULT_MCP_APPROVED_TOOLS = (
     "openbench.group_and_aggregate",
     "openbench.top_n_records",
 )
+_IMAGE_SEARCH_SIMILAR_TOOL = "image_search.search_similar_images"
 
 
 def _example_root() -> Path:
@@ -54,6 +57,106 @@ def _mcp_registry_root() -> Path | None:
     return Path(raw).expanduser().resolve()
 
 
+def _format_score(value: Any) -> str:
+    try:
+        return f"{float(value):.4f}"
+    except (TypeError, ValueError):
+        return str(value or "")
+
+
+def _image_search_render_items(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict) or payload.get("error"):
+        return []
+    results = payload.get("results")
+    if not isinstance(results, list) or not results:
+        return []
+
+    table_rows: list[list[str]] = []
+    media_items: list[dict[str, Any]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        preview_url = item.get("preview_url") or item.get("image_url")
+        if not isinstance(preview_url, str) or not preview_url:
+            continue
+        rank = str(item.get("rank") or "")
+        image_id = str(item.get("image_id") or "")
+        label = str(item.get("class_name") or item.get("label") or "")
+        score = _format_score(item.get("similarity_score", item.get("score")))
+        table_rows.append([rank, label, score, image_id])
+        media_items.append(
+            {
+                "mediaType": "image",
+                "src": preview_url,
+                "alt": f"CIFAR-10 result {rank}: {label}".strip(),
+                "title": f"#{rank} {label} - score {score}".strip(),
+            }
+        )
+
+    if not media_items:
+        return []
+    return [
+        {
+            "title": "CIFAR-10 similar image results",
+            "caption": "Visual similarity results returned by image_search.search_similar_images.",
+            "headers": ["Rank", "Label", "Score", "Image ID"],
+            "rows": table_rows,
+            "compact": True,
+        },
+        *media_items,
+    ]
+
+
+class _ImageSearchRenderTool(Tool):
+    """Tool wrapper that renders image-search MCP results into the chat surface."""
+
+    def __init__(self, inner: Tool):
+        self.inner = inner
+
+    @property
+    def name(self) -> str:
+        return self.inner.name
+
+    @property
+    def description(self) -> str:
+        return self.inner.description
+
+    @property
+    def namespaced_name(self) -> str:
+        return str(getattr(self.inner, "namespaced_name", self.name))
+
+    @property
+    def tool_schema(self) -> dict[str, Any]:
+        schema = getattr(self.inner, "tool_schema", {})
+        return schema if isinstance(schema, dict) else {}
+
+    @property
+    def approved(self) -> bool:
+        return bool(getattr(self.inner, "approved", False))
+
+    @approved.setter
+    def approved(self, value: bool) -> None:
+        if hasattr(self.inner, "approved"):
+            self.inner.approved = value
+
+    def execute(self, **params: Any) -> Any:
+        payload = self.inner.execute(**params)
+        shared_render_queue.push_many(_image_search_render_items(payload))
+        return payload
+
+    def get_schema(self) -> dict[str, Any]:
+        return self.inner.get_schema()
+
+
+def _wrap_chat_mcp_tool(tool: Any) -> Any:
+    if (
+        getattr(tool, "namespaced_name", None) == _IMAGE_SEARCH_SIMILAR_TOOL
+        and isinstance(tool, Tool)
+    ):
+        return _ImageSearchRenderTool(tool)
+    return tool
+
+
 def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
     """Load MCP-backed OpenBench tools for opt-in General Chat testing."""
     from openbench.mcp.adapters import MCPToolAdapter, load_mcp_tools
@@ -68,7 +171,7 @@ def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
     )
     config_path = _mcp_config_path()
     config = MCPConfig.from_file(config_path) if config_path.exists() else MCPConfig()
-    loaded: list[MCPToolAdapter] = []
+    loaded: list[Any] = []
 
     if mode == "local":
         server_config = config.server if config_path.exists() else MCPServerConfig()
@@ -81,18 +184,20 @@ def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
                 if namespaced not in approved_names:
                     continue
                 loaded.append(
-                    MCPToolAdapter(
-                        client=client,
-                        namespaced_name=namespaced,
-                        tool_schema=tool_schema,
-                        approved=True,
+                    _wrap_chat_mcp_tool(
+                        MCPToolAdapter(
+                            client=client,
+                            namespaced_name=namespaced,
+                            tool_schema=tool_schema,
+                            approved=True,
+                        )
                     )
                 )
     else:
         for adapter in load_mcp_tools(config):
             if adapter.namespaced_name in approved_names:
                 adapter.approved = True
-                loaded.append(adapter)
+                loaded.append(_wrap_chat_mcp_tool(adapter))
 
     return loaded, {
         "enabled": True,
@@ -119,7 +224,8 @@ def _load_external_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
         return [], {"enabled": False, "tools": []}
 
     store = MCPServerRegistryStore(registry_root)
-    return store.load_enabled_tool_adapters()
+    tools, summary = store.load_enabled_tool_adapters()
+    return [_wrap_chat_mcp_tool(tool) for tool in tools], summary
 
 
 def reload_external_mcp_tools(agent: Any) -> dict[str, Any]:

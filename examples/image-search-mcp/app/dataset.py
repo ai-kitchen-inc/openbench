@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import json
+from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterator
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
-from PIL import Image
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
+
+    from PIL import Image
 
 CIFAR10_CLASSES = [
     "airplane",
@@ -20,6 +26,74 @@ CIFAR10_CLASSES = [
     "ship",
     "truck",
 ]
+CIFAR10_TRAIN_COUNT = 50_000
+CIFAR10_TEST_COUNT = 10_000
+CIFAR10_TOTAL_COUNT = CIFAR10_TRAIN_COUNT + CIFAR10_TEST_COUNT
+CIFAR10_CLASS_COUNT = len(CIFAR10_CLASSES)
+CIFAR10_PER_CLASS_TOTAL = 6_000
+CIFAR10_SOURCE = "torchvision.datasets.CIFAR10"
+
+
+@dataclass(frozen=True)
+class Cifar10CorpusSummary:
+    """Expected or observed CIFAR-10 corpus counts."""
+
+    source: str
+    train_count: int
+    test_count: int
+    total_count: int
+    class_names: list[str]
+    class_counts: dict[str, int]
+    generated_at: str | None = None
+    manifest_path: str | None = None
+
+    @property
+    def split_counts(self) -> dict[str, int]:
+        """Return train/test counts keyed like indexed metadata."""
+        return {"train": self.train_count, "test": self.test_count}
+
+    @property
+    def complete(self) -> bool:
+        """Return whether the summary matches the full CIFAR-10 corpus."""
+        return (
+            self.train_count == CIFAR10_TRAIN_COUNT
+            and self.test_count == CIFAR10_TEST_COUNT
+            and self.total_count == CIFAR10_TOTAL_COUNT
+            and len(self.class_names) == CIFAR10_CLASS_COUNT
+            and all(self.class_counts.get(name) == CIFAR10_PER_CLASS_TOTAL for name in CIFAR10_CLASSES)
+        )
+
+    def to_dict(self) -> dict:
+        """Return a JSON-serializable summary."""
+        return {
+            "source": self.source,
+            "train_count": self.train_count,
+            "test_count": self.test_count,
+            "total_count": self.total_count,
+            "class_count": len(self.class_names),
+            "class_names": list(self.class_names),
+            "class_counts": dict(self.class_counts),
+            "split_counts": self.split_counts,
+            "expected_train_count": CIFAR10_TRAIN_COUNT,
+            "expected_test_count": CIFAR10_TEST_COUNT,
+            "expected_total_count": CIFAR10_TOTAL_COUNT,
+            "expected_per_class_total": CIFAR10_PER_CLASS_TOTAL,
+            "complete": self.complete,
+            "generated_at": self.generated_at,
+            "manifest_path": self.manifest_path,
+        }
+
+    @classmethod
+    def expected(cls) -> Cifar10CorpusSummary:
+        """Return the canonical expected CIFAR-10 corpus summary."""
+        return cls(
+            source=CIFAR10_SOURCE,
+            train_count=CIFAR10_TRAIN_COUNT,
+            test_count=CIFAR10_TEST_COUNT,
+            total_count=CIFAR10_TOTAL_COUNT,
+            class_names=list(CIFAR10_CLASSES),
+            class_counts=dict.fromkeys(CIFAR10_CLASSES, CIFAR10_PER_CLASS_TOTAL),
+        )
 
 
 @dataclass(frozen=True)
@@ -58,6 +132,11 @@ class Cifar10Store:
         self._train = None
         self._test = None
 
+    @property
+    def manifest_path(self) -> Path:
+        """Path for the local CIFAR-10 corpus manifest."""
+        return self.data_root / "cifar10" / "openbench_cifar10_manifest.json"
+
     def _load_split(self, split: str):
         try:
             from torchvision.datasets import CIFAR10
@@ -93,6 +172,51 @@ class Cifar10Store:
         limit = len(dataset) if max_items is None else min(max_items, len(dataset))
         for index in range(limit):
             yield self._record("train", index, dataset[index])
+
+    def iter_all(self, *, max_items: int | None = None) -> Iterator[CifarImageRecord]:
+        """Yield CIFAR-10 records across train and test splits."""
+        yielded = 0
+        for split in ("train", "test"):
+            dataset = self._load_split(split)
+            for index in range(len(dataset)):
+                if max_items is not None and yielded >= max_items:
+                    return
+                yielded += 1
+                yield self._record(split, index, dataset[index])
+
+    def expected_summary(self) -> Cifar10CorpusSummary:
+        """Return expected full CIFAR-10 counts without loading data."""
+        return Cifar10CorpusSummary.expected()
+
+    def summarize(self, *, write_manifest: bool = True) -> Cifar10CorpusSummary:
+        """Load CIFAR-10 metadata and summarize train/test/class counts."""
+        split_targets = {
+            "train": list(self._load_split("train").targets),
+            "test": list(self._load_split("test").targets),
+        }
+        class_counts: Counter[str] = Counter()
+        for targets in split_targets.values():
+            class_counts.update(CIFAR10_CLASSES[int(label)] for label in targets)
+
+        generated_at = datetime.now(timezone.utc).isoformat()
+        manifest_path = str(self.manifest_path)
+        summary = Cifar10CorpusSummary(
+            source=CIFAR10_SOURCE,
+            train_count=len(split_targets["train"]),
+            test_count=len(split_targets["test"]),
+            total_count=len(split_targets["train"]) + len(split_targets["test"]),
+            class_names=list(CIFAR10_CLASSES),
+            class_counts={name: int(class_counts.get(name, 0)) for name in CIFAR10_CLASSES},
+            generated_at=generated_at,
+            manifest_path=manifest_path,
+        )
+        if write_manifest:
+            self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            self.manifest_path.write_text(
+                json.dumps(summary.to_dict(), indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        return summary
 
     def get_test(self, index: int) -> CifarImageRecord:
         """Return a CIFAR-10 test record for query demos."""

@@ -50,7 +50,7 @@ def build_mcp():
         top_k: int | None = None,
         threshold: float | None = None,
     ) -> dict[str, Any]:
-        """Search CIFAR-10 train images visually similar to one query image."""
+        """Search indexed CIFAR-10 images visually similar to one query image."""
         try:
             return _run_tool(
                 lambda: get_service().search_similar_images(
@@ -80,7 +80,7 @@ def build_mcp():
         max_items: int | None = None,
         write_previews: bool = True,
     ) -> dict[str, Any]:
-        """Index missing CIFAR-10 train images using precomputed embeddings."""
+        """Index missing CIFAR-10 images using precomputed embeddings."""
         try:
             return _run_tool(
                 lambda: get_service().index_images(
@@ -107,7 +107,7 @@ def build_mcp():
         max_items: int | None = None,
         write_previews: bool = True,
     ) -> dict[str, Any]:
-        """Clear and rebuild the CIFAR-10 train vector index."""
+        """Clear and rebuild the CIFAR-10 vector index."""
         try:
             return _run_tool(
                 lambda: get_service().rebuild_index(

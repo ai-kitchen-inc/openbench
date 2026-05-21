@@ -15,9 +15,17 @@ from unittest.mock import Mock, patch
 import requests
 from fastapi.testclient import TestClient
 
+from openbench.chat import render_queue
 from openbench.chat.engine import ChatEngine
 from openbench.chat.files import StoredFile
-from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult, LLMProvider, LLMResponse
+from openbench.core.abstractions import (
+    Agent,
+    ExecutionContext,
+    ExecutionResult,
+    LLMProvider,
+    LLMResponse,
+    Tool,
+)
 from openbench.intelligence import BaseAgent
 from openbench.intelligence.base import Message, MessageRole
 from openbench.intelligence.memory import SQLiteMemoryStore
@@ -26,9 +34,13 @@ GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-c
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
+from general_chat.agent import _ImageSearchRenderTool  # noqa: E402
 from general_chat.extractor import DoclingContentExtractor  # noqa: E402
 from general_chat.server.app import _resolve_mime, _resolve_request_session_id  # noqa: E402
-from general_chat.server.handler import GeneralChatHandler  # noqa: E402
+from general_chat.server.handler import (  # noqa: E402
+    _SOURCE_SYSTEM_INSTRUCTIONS,
+    GeneralChatHandler,
+)
 from general_chat.sources import (  # noqa: E402
     SearchDiscoveryResponse,
     SearchDiscoveryResult,
@@ -243,6 +255,63 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertIsNotNone(agent.context)
         assert agent.context is not None
         self.assertEqual(agent.context.data["attachments"][0]["path"], "/general-chat/uploads/file-1/photo.jpg")
+
+    def test_similar_image_prompt_is_allowed_for_image_source(self):
+        llm = MockLLMProvider("I will search similar images.")
+        agent = BaseAgent(goal="Strict source QA")
+        agent._llm = llm
+        source = SourceRecord.create(
+            session_id="chat-session",
+            name="photo.jpg",
+            kind="image",
+            mime_type="image/jpeg",
+            size_bytes=20,
+            url="/uploads/file-1/photo.jpg",
+            text="Image source: photo.jpg",
+            metadata={"imageSearchPath": "/general-chat/uploads/file-1/photo.jpg"},
+        )
+        engine = ChatEngine(agent=agent)
+        handler = GeneralChatHandler(
+            engine=engine,
+            db_path=":memory:",
+            source_records=[source],
+        )
+        content, attachments = handler._extract_content(
+            {
+                "messages": [{"id": "m1", "role": "user", "content": "top 10 similar images"}],
+                "forwardedProps": {"sessionId": "chat-session"},
+            }
+        )
+        request_agent = handler._create_request_agent()
+
+        result = engine._execute_agent(content, None, attachments=attachments, agent=request_agent)
+
+        self.assertEqual(result.output, "I will search similar images.")
+        self.assertTrue(llm.prompts)
+
+    def test_image_search_prompt_does_not_run_indexing_from_chat(self):
+        self.assertIn("image_search.search_similar_images", _SOURCE_SYSTEM_INSTRUCTIONS)
+        self.assertIn("not run long indexing or rebuild tools during chat", _SOURCE_SYSTEM_INSTRUCTIONS)
+        self.assertNotIn("call `image_search.index_images`", _SOURCE_SYSTEM_INSTRUCTIONS)
+        self.assertNotIn("call `image_search.rebuild_index`", _SOURCE_SYSTEM_INSTRUCTIONS)
+
+    def test_image_search_startup_script_exposes_query_only_tools(self):
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "general-chat"
+            / "scripts"
+            / "run_with_image_search_mcp.ps1"
+        )
+        content = script.read_text(encoding="utf-8")
+
+        allowlist_line = next(
+            line for line in content.splitlines() if "GENERAL_CHAT_MCP_APPROVED_TOOLS" in line
+        )
+        self.assertIn("image_search.list_index_stats", allowlist_line)
+        self.assertIn("image_search.search_similar_images", allowlist_line)
+        self.assertNotIn("image_search.index_images", allowlist_line)
+        self.assertNotIn("image_search.rebuild_index", allowlist_line)
 
     def test_plain_text_source_success(self):
         parser = SourceParserRegistry()
@@ -958,7 +1027,11 @@ class TestGeneralChatSources(unittest.TestCase):
             if tmpdir.exists():
                 tmpdir.rmdir()
 
-    def _build_test_client(self, discovery_adapter: Mock | None = None) -> TestClient:
+    def _build_test_client(
+        self,
+        discovery_adapter: Mock | None = None,
+        agent: Mock | None = None,
+    ) -> TestClient:
         tmpdir = Path("tests/.tmp") / f"app-{uuid.uuid4().hex}"
         tmpdir.mkdir(parents=True, exist_ok=True)
         stack = ExitStack()
@@ -976,10 +1049,11 @@ class TestGeneralChatSources(unittest.TestCase):
                 clear=False,
             )
         )
-        agent = Mock()
-        agent.model = "mock-model"
-        agent._persona = None
-        agent._skill_registry = None
+        if agent is None:
+            agent = Mock()
+            agent.model = "mock-model"
+            agent._persona = None
+            agent._skill_registry = None
         stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
         if discovery_adapter is not None:
             stack.enter_context(
@@ -1091,6 +1165,53 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(payload["tool_count"], 1)
         self.assertEqual(payload["namespaced_tool_names"], ["openbench.filter_records"])
         self.assertEqual(payload["provider_tool_names"], ["openbench_filter_records"])
+
+    def test_image_search_render_tool_pushes_chat_render_items(self):
+        class FakeImageSearchTool(Tool):
+            namespaced_name = "image_search.search_similar_images"
+            tool_schema = {"description": "Search similar images"}
+            approved = True
+
+            @property
+            def name(self):
+                return "image_search_search_similar_images"
+
+            @property
+            def description(self):
+                return "Search similar images"
+
+            def execute(self, **params):
+                return {
+                    "results": [
+                        {
+                            "rank": 1,
+                            "image_id": "cifar10-train-00001",
+                            "class_name": "automobile",
+                            "similarity_score": 0.98765,
+                            "preview_url": "/image-search/previews/train/cifar10-train-00001.png",
+                            "preview_path": "C:/internal/path/should/not/render.png",
+                        }
+                    ]
+                }
+
+            def get_schema(self):
+                return {"type": "function", "function": {"name": self.name}}
+
+        render_queue.clear()
+        self.addCleanup(render_queue.clear)
+
+        result = _ImageSearchRenderTool(FakeImageSearchTool()).execute(top_k=10)
+
+        items = render_queue.get_items()
+        self.assertEqual(result["results"][0]["image_id"], "cifar10-train-00001")
+        self.assertEqual(items[0]["headers"], ["Rank", "Label", "Score", "Image ID"])
+        self.assertEqual(items[0]["rows"], [["1", "automobile", "0.9877", "cifar10-train-00001"]])
+        self.assertEqual(items[1]["mediaType"], "image")
+        self.assertEqual(
+            items[1]["src"],
+            "/image-search/previews/train/cifar10-train-00001.png",
+        )
+        self.assertNotIn("preview_path", items[1])
 
     def test_external_filesystem_mcp_example_config_and_sample_data(self):
         from openbench.mcp.config import MCPConfig

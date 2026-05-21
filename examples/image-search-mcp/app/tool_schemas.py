@@ -3,7 +3,7 @@
 SEARCH_SIMILAR_IMAGES_SCHEMA = {
     "name": "search_similar_images",
     "description": (
-        "Search the persisted CIFAR-10 train index for images visually similar to one query "
+        "Search the persisted CIFAR-10 image index for images visually similar to one query "
         "image. Provide exactly one of image_path, image_base64, image_url, or "
         "cifar10_test_index. The tool embeds only the query image and uses ANN search."
     ),
@@ -20,8 +20,9 @@ SEARCH_SIMILAR_IMAGES_SCHEMA = {
             },
             "top_k": {
                 "type": "integer",
-                "description": "Maximum number of neighbors to return.",
+                "description": "Maximum number of neighbors to return. Values above the service cap are capped.",
                 "minimum": 1,
+                "maximum": 50,
                 "default": 10,
             },
             "threshold": {
@@ -37,7 +38,7 @@ SEARCH_SIMILAR_IMAGES_SCHEMA = {
 
 INDEX_IMAGES_SCHEMA = {
     "name": "index_images",
-    "description": "Index missing CIFAR-10 train images into the persistent vector index.",
+    "description": "Index missing CIFAR-10 images into the persistent vector index.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -48,7 +49,7 @@ INDEX_IMAGES_SCHEMA = {
             },
             "max_items": {
                 "type": "integer",
-                "description": "Optional cap for demos/tests; omit to index full train split.",
+                "description": "Optional cap for demos/tests; omit to index the full CIFAR-10 corpus.",
                 "minimum": 1,
             },
             "write_previews": {
@@ -63,7 +64,7 @@ INDEX_IMAGES_SCHEMA = {
 
 REBUILD_INDEX_SCHEMA = {
     "name": "rebuild_index",
-    "description": "Clear and rebuild the CIFAR-10 train vector index.",
+    "description": "Clear and rebuild the CIFAR-10 vector index.",
     "parameters": INDEX_IMAGES_SCHEMA["parameters"],
 }
 
