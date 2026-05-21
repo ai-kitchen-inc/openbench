@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -340,10 +341,8 @@ class MCPServerRegistryStore:
                 item["error"] = _safe_error(exc)
                 item["updated_at"] = _now()
                 errors.append({"server": item["name"], "error": item["error"] or "MCP discovery failed."})
-                try:
+                with suppress(Exception):
                     client.close_sync()
-                except Exception:
-                    pass
 
         self._save_state(state)
         return adapters, {

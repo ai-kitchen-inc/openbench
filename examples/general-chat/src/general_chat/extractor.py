@@ -118,7 +118,7 @@ class DoclingContentExtractor:
     def _extract_with_pypdf(self, stored_file: StoredFile) -> str:
         try:
             from pypdf import PdfReader
-        except ImportError as exc:
+        except ImportError:
             logger.warning("pypdf not installed; install it with: pip install pypdf")
             return f"[{stored_file.name}] (extraction failed: pypdf is required for PDF extraction)"
 

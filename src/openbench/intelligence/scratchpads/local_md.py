@@ -144,7 +144,7 @@ class LocalMarkdownScratchpad(ScratchpadStore):
 def _expand_user_path(path: str | Path) -> Path:
     raw = str(path)
     home = os.environ.get("HOME")
-    if home and (raw == "~" or raw.startswith("~/") or raw.startswith("~\\")):
+    if home and (raw == "~" or raw.startswith(("~/", "~\\"))):
         suffix = raw[2:] if len(raw) > 1 else ""
         return Path(home, suffix)
     return Path(path).expanduser()

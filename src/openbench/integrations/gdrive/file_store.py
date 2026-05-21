@@ -23,6 +23,7 @@ import logging
 import os
 import time
 import uuid
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -250,21 +251,15 @@ class GoogleDriveFileStore:
                     continue
                 files = list(child.glob("*"))
                 if not files:
-                    try:
+                    with suppress(OSError):
                         child.rmdir()
-                    except OSError:
-                        pass
                     continue
                 if all(self._is_stale(f) for f in files):
                     for f in files:
-                        try:
+                        with suppress(OSError):
                             f.unlink()
-                        except OSError:
-                            pass
-                    try:
+                    with suppress(OSError):
                         child.rmdir()
-                    except OSError:
-                        pass
         except OSError as exc:  # pragma: no cover — defensive
             logger.debug("GoogleDriveFileStore: cache gc skipped: %s", exc)
 

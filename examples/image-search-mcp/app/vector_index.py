@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 BackendName = Literal["faiss", "hnswlib"]
 
@@ -56,9 +58,9 @@ class VectorIndex:
                 import faiss  # noqa: F401
 
                 return "faiss"
-            except ImportError:
+            except ImportError as exc:
                 if self.requested_backend == "faiss":
-                    raise ImportError("faiss-cpu is required when VECTOR_BACKEND=faiss")
+                    raise ImportError("faiss-cpu is required when VECTOR_BACKEND=faiss") from exc
         try:
             import hnswlib  # noqa: F401
 
@@ -175,7 +177,7 @@ class VectorIndex:
             raise ValueError(
                 f"query dimension mismatch: expected {self.dimension}, got {query.shape[1]}"
             )
-        active_vectors, active_metadata = self._active_rows()
+        _active_vectors, active_metadata = self._active_rows()
         k = min(max(int(top_k), 1), len(active_metadata))
         if self.backend == "faiss":
             scores, labels = self._index.search(query, k)
