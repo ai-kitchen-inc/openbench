@@ -1,4 +1,4 @@
-"""General Chat — document-aware chat assistant demo.
+"""General Chat general-purpose chat assistant demo.
 
 Run:
     Linux/macOS:

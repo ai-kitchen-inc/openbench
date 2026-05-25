@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,9 +12,14 @@ from openbench.core.abstractions import Tool
 from openbench.intelligence.base import ToolExecutor
 from openbench.mcp.adapters import MCPToolAdapter
 from openbench.mcp.client import MCPClient
-from openbench.mcp.config import MCPClientConfig, MCPServerConfig, MCPServerConnectionConfig
+from openbench.mcp.config import (
+    MCPClientConfig,
+    MCPPolicyConfig,
+    MCPServerConfig,
+    MCPServerConnectionConfig,
+)
 from openbench.mcp.server import OpenBenchMCPServer
-from openbench.mcp.transports import InMemoryMCPTransport, MCPTransport
+from openbench.mcp.transports import InMemoryMCPTransport, MCPTransport, StreamableHTTPTransport
 
 
 class LoopBoundTransport(MCPTransport):
@@ -113,9 +120,77 @@ class CloseTaskTrackingTransport(MCPTransport):
         self.closed = True
 
 
+class FakeStreamableSession:
+    instances: list[FakeStreamableSession] = []
+
+    def __init__(self, read, write):
+        self.read = read
+        self.write = write
+        self.closed = False
+        self.calls: list[tuple[str, dict]] = []
+        FakeStreamableSession.instances.append(self)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.closed = True
+
+    async def initialize(self):
+        return {"capabilities": {"tools": {}}}
+
+    async def list_tools(self):
+        return SimpleNamespace(
+            tools=[
+                {
+                    "name": "git_status",
+                    "description": "Read git status",
+                    "inputSchema": {"type": "object", "properties": {}, "required": []},
+                }
+            ]
+        )
+
+    async def list_resources(self):
+        return SimpleNamespace(resources=[])
+
+    async def list_prompts(self):
+        return SimpleNamespace(prompts=[])
+
+    async def call_tool(self, name, arguments):
+        self.calls.append((name, arguments))
+        return {
+            "isError": False,
+            "structuredContent": {"name": name, "arguments": arguments},
+        }
+
+
 @pytest.fixture()
 def openbench_mcp_server() -> OpenBenchMCPServer:
     return OpenBenchMCPServer(MCPServerConfig(name="openbench", include_sdk_tools=True))
+
+
+@pytest.fixture()
+def fake_streamable_sdk(monkeypatch):
+    FakeStreamableSession.instances = []
+    captured: dict[str, object] = {}
+
+    @asynccontextmanager
+    async def fake_streamablehttp_client(
+        url,
+        headers=None,
+        timeout=30,
+        sse_read_timeout=300,
+        **kwargs,
+    ):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["timeout"] = timeout
+        captured["sse_read_timeout"] = sse_read_timeout
+        yield "read", "write", lambda: "session-1"
+
+    monkeypatch.setattr("mcp.client.streamable_http.streamablehttp_client", fake_streamablehttp_client)
+    monkeypatch.setattr("mcp.ClientSession", FakeStreamableSession)
+    return captured
 
 
 def test_server_exposes_sdk_tools_resources_and_prompts(openbench_mcp_server):
@@ -190,6 +265,51 @@ def test_client_discover_and_close_uses_one_task_for_short_lived_stdio_lifecycle
     assert len(set(transport.task_ids)) == 1
 
 
+def test_streamable_http_transport_uses_mcp_sdk_session(fake_streamable_sdk):
+    transport = StreamableHTTPTransport(
+        MCPServerConnectionConfig(
+            transport="streamable-http",
+            url="http://127.0.0.1:39670/mcp",
+            headers={"X-Test": "yes"},
+            timeout_seconds=12,
+        )
+    )
+
+    capabilities = asyncio.run(transport.initialize())
+    tools = asyncio.run(transport.list_tools())
+    result = asyncio.run(transport.call_tool("git_status", {"repo": "."}))
+    asyncio.run(transport.close())
+
+    assert capabilities == {"capabilities": {"tools": {}}}
+    assert tools[0]["name"] == "git_status"
+    assert result["structuredContent"] == {"name": "git_status", "arguments": {"repo": "."}}
+    assert fake_streamable_sdk["url"] == "http://127.0.0.1:39670/mcp"
+    assert fake_streamable_sdk["headers"] == {"X-Test": "yes"}
+    assert fake_streamable_sdk["timeout"] == 12
+    assert fake_streamable_sdk["sse_read_timeout"] == 12
+    assert FakeStreamableSession.instances[-1].closed is True
+
+
+def test_streamable_http_client_discovers_toolhive_git_tools(fake_streamable_sdk):
+    client = MCPClient(
+        MCPClientConfig(
+            servers={
+                "git": MCPServerConnectionConfig(
+                    transport="streamable-http",
+                    url="http://127.0.0.1:39670/mcp",
+                    namespace="git",
+                    allowed=True,
+                )
+            }
+        )
+    )
+
+    discovered = client.discover_and_close_sync(refresh=True)
+
+    assert "git_status" in discovered.servers["git"].tools
+    assert FakeStreamableSession.instances[-1].closed is True
+
+
 def test_client_reconnects_stdio_once_after_closed_resource(monkeypatch):
     ReconnectableTransport.instances = []
 
@@ -217,6 +337,73 @@ def test_client_reconnects_stdio_once_after_closed_resource(monkeypatch):
     assert result == {"value": "ok"}
     assert len(ReconnectableTransport.instances) == 2
     assert ReconnectableTransport.instances[0].closed is True
+
+
+def test_client_reconnects_streamable_http_once_after_closed_resource(monkeypatch):
+    ReconnectableTransport.instances = []
+
+    def build_fake_transport(config):
+        return ReconnectableTransport(fail_call=len(ReconnectableTransport.instances) == 0)
+
+    monkeypatch.setattr("openbench.mcp.client.build_transport", build_fake_transport)
+    client = MCPClient(
+        MCPClientConfig(
+            servers={
+                "time": MCPServerConnectionConfig(
+                    transport="streamable-http",
+                    namespace="time",
+                    url="http://127.0.0.1:59522/mcp",
+                    allowed=True,
+                    retries=0,
+                )
+            },
+            policy=MCPPolicyConfig(allow_remote_servers=True),
+        )
+    )
+
+    client.discover_sync()
+    result = client.call_tool_sync("time.echo", {"value": "ok"})
+    client.close_sync()
+
+    assert result == {"value": "ok"}
+    assert len(ReconnectableTransport.instances) == 2
+    assert ReconnectableTransport.instances[0].closed is True
+
+
+def test_client_does_not_reconnect_streamable_http_for_non_closed_error(monkeypatch):
+    ReconnectableTransport.instances = []
+
+    class BrokenTransport(ReconnectableTransport):
+        async def call_tool(self, name: str, arguments: dict) -> dict:
+            raise ValueError("server exploded")
+
+    def build_fake_transport(config):
+        return BrokenTransport(fail_call=False)
+
+    monkeypatch.setattr("openbench.mcp.client.build_transport", build_fake_transport)
+    client = MCPClient(
+        MCPClientConfig(
+            servers={
+                "time": MCPServerConnectionConfig(
+                    transport="streamable-http",
+                    namespace="time",
+                    url="http://127.0.0.1:59522/mcp",
+                    allowed=True,
+                    retries=0,
+                )
+            },
+            policy=MCPPolicyConfig(allow_remote_servers=True),
+        )
+    )
+
+    client.discover_sync()
+    try:
+        with pytest.raises(ValueError, match="server exploded"):
+            client.call_tool_sync("time.echo", {"value": "ok"})
+    finally:
+        client.close_sync()
+
+    assert len(ReconnectableTransport.instances) == 1
 
 
 def test_client_namespaces_prevent_collisions(openbench_mcp_server):

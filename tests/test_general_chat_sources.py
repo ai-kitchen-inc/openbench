@@ -37,10 +37,7 @@ if str(GENERAL_CHAT_SRC) not in sys.path:
 from general_chat.agent import _ImageSearchRenderTool  # noqa: E402
 from general_chat.extractor import DoclingContentExtractor  # noqa: E402
 from general_chat.server.app import _resolve_mime, _resolve_request_session_id  # noqa: E402
-from general_chat.server.handler import (  # noqa: E402
-    _SOURCE_SYSTEM_INSTRUCTIONS,
-    GeneralChatHandler,
-)
+from general_chat.server.handler import GeneralChatHandler  # noqa: E402
 from general_chat.sources import (  # noqa: E402
     SearchDiscoveryResponse,
     SearchDiscoveryResult,
@@ -258,7 +255,7 @@ class TestGeneralChatSources(unittest.TestCase):
 
     def test_similar_image_prompt_is_allowed_for_image_source(self):
         llm = MockLLMProvider("I will search similar images.")
-        agent = BaseAgent(goal="Strict source QA")
+        agent = BaseAgent(goal="General chat")
         agent._llm = llm
         source = SourceRecord.create(
             session_id="chat-session",
@@ -288,12 +285,6 @@ class TestGeneralChatSources(unittest.TestCase):
 
         self.assertEqual(result.output, "I will search similar images.")
         self.assertTrue(llm.prompts)
-
-    def test_image_search_prompt_does_not_run_indexing_from_chat(self):
-        self.assertIn("image_search.search_similar_images", _SOURCE_SYSTEM_INSTRUCTIONS)
-        self.assertIn("not run long indexing or rebuild tools during chat", _SOURCE_SYSTEM_INSTRUCTIONS)
-        self.assertNotIn("call `image_search.index_images`", _SOURCE_SYSTEM_INSTRUCTIONS)
-        self.assertNotIn("call `image_search.rebuild_index`", _SOURCE_SYSTEM_INSTRUCTIONS)
 
     def test_image_search_startup_script_exposes_query_only_tools(self):
         script = (
@@ -891,22 +882,22 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(second.results[0].title, "Recovered result")
         self.assertEqual(primary.search.call_count, 2)
 
-    def test_no_current_source_refuses_before_llm(self):
-        llm = MockLLMProvider("Should not be used")
-        agent = BaseAgent(goal="Strict source QA")
+    def test_no_current_source_general_question_reaches_llm(self):
+        llm = MockLLMProvider("Paris")
+        agent = BaseAgent(goal="General chat")
         agent._llm = llm
         engine = ChatEngine(agent=agent)
         handler = GeneralChatHandler(engine=engine, db_path=":memory:", source_records=[])
         request_agent = handler._create_request_agent()
 
-        result = request_agent.execute(ExecutionContext(goal="What does the document say?"))
+        result = request_agent.execute(ExecutionContext(goal="What is the capital of France?"))
 
-        self.assertEqual(result.output, "Please add a document/source first.")
-        self.assertEqual(llm.prompts, [])
+        self.assertEqual(result.output, "Paris")
+        self.assertTrue(llm.prompts)
 
-    def test_unrelated_question_refuses_before_llm(self):
-        llm = MockLLMProvider("Should not be used")
-        agent = BaseAgent(goal="Strict source QA")
+    def test_unrelated_question_with_sources_reaches_llm(self):
+        llm = MockLLMProvider("Paris")
+        agent = BaseAgent(goal="General chat")
         agent._llm = llm
         source = SourceRecord.create(
             session_id="chat-session",
@@ -932,15 +923,13 @@ class TestGeneralChatSources(unittest.TestCase):
 
         result = engine._execute_agent(content, None, attachments=attachments, agent=request_agent)
 
-        self.assertEqual(
-            result.output,
-            "I can only answer questions related to the current document/source.",
-        )
-        self.assertEqual(llm.prompts, [])
+        self.assertEqual(result.output, "Paris")
+        self.assertTrue(llm.prompts)
+        self.assertIn("Alpha launch is planned for June.", json.dumps(llm.prompts[-1]))
 
-    def test_missing_answer_instruction_reaches_llm_for_related_question(self):
-        llm = MockLLMProvider("The answer is not in the provided document.")
-        agent = BaseAgent(goal="Strict source QA")
+    def test_no_missing_answer_instruction_is_injected_for_source_context(self):
+        llm = MockLLMProvider("I can answer normally.")
+        agent = BaseAgent(goal="General chat")
         agent._llm = llm
         source = SourceRecord.create(
             session_id="chat-session",
@@ -966,9 +955,9 @@ class TestGeneralChatSources(unittest.TestCase):
 
         result = engine._execute_agent(content, None, attachments=attachments, agent=request_agent)
 
-        self.assertEqual(result.output, "The answer is not in the provided document.")
+        self.assertEqual(result.output, "I can answer normally.")
         self.assertTrue(llm.prompts)
-        self.assertIn(
+        self.assertNotIn(
             "The answer is not in the provided document.",
             json.dumps(llm.prompts[-1]),
         )
@@ -994,7 +983,7 @@ class TestGeneralChatSources(unittest.TestCase):
                     Message(role=MessageRole.ASSISTANT, content="Old answer"),
                 ],
             )
-            agent = BaseAgent(goal="Strict source QA")
+            agent = BaseAgent(goal="General chat")
             agent._llm = MockLLMProvider("Current answer")
             engine = ChatEngine(agent=agent)
             current = SourceRecord.create(
@@ -1019,7 +1008,7 @@ class TestGeneralChatSources(unittest.TestCase):
             self.assertIn("previous General Chat source attachment content redacted", persisted)
             self.assertNotIn(
                 "Removed source secret",
-                "\n".join(message.content for message in request_agent.inner.memory.messages),
+                "\n".join(message.content for message in request_agent.memory.messages),
             )
         finally:
             if db_path.exists():

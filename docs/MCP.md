@@ -112,12 +112,82 @@ profiles automatically.
 
 ## ToolHive
 
-For ToolHive, publish OpenBench either as a container-based stdio server or a
-remote Streamable HTTP endpoint. Keep credentials in ToolHive secrets and keep
-filesystem permissions out of registry metadata.
+OpenBench can also consume MCP servers managed by
+[ToolHive](https://docs.stacklok.com/toolhive/). The recommended desktop flow is
+to manage server install, configuration, secrets, and logs in
+[ToolHive UI](https://docs.stacklok.com/toolhive/guides-ui/), then import the
+running MCP proxy URL into OpenBench. OpenBench stays the MCP host/client: it
+discovers tools from the ToolHive proxy URL, namespaces them, and routes chat
+tool calls back through ToolHive.
+
+Install and verify ToolHive:
+
+```powershell
+winget install stacklok.thv
+thv version
+```
+
+Start the local ToolHive API for UI management:
+
+```powershell
+thv serve
+```
+
+Or use ToolHive UI to start a server from the registry. The ToolHive UI bundles
+the `thv` CLI in `%LOCALAPPDATA%\ToolHive\bin\thv.exe` on Windows and
+`~/.toolhive/bin/thv` on macOS/Linux. OpenBench checks `thv` on `PATH` first,
+then those bundled CLI paths. If a newly installed `thv` is not detected, open a
+new terminal and restart the General Chat backend.
+
+Start a docs MCP server and inspect the proxy URL from CLI:
+
+```powershell
+thv run toolhive-doc-mcp
+thv list
+thv list --format mcpservers
+```
+
+`thv list --format mcpservers` returns standard MCP client JSON:
+
+```json
+{
+  "mcpServers": {
+    "toolhive-doc-mcp": {
+      "url": "http://127.0.0.1:19767/mcp"
+    }
+  }
+}
+```
+
+OpenBench prefers the ToolHive API server at `TOOLHIVE_BASE_URL`, defaulting to
+`http://127.0.0.1:8080`, and falls back to the `thv` CLI for discovering
+running UI-managed servers when the API is unavailable. ToolHive API controls
+are intended for local automation/UI use and should not be exposed remotely
+without authentication and authorization.
+
+Starting a registry server can take longer than status/list calls because
+ToolHive may need to pull an image or prepare the runtime. OpenBench uses
+`TOOLHIVE_START_TIMEOUT`, defaulting to 180 seconds, for start operations:
+
+```bash
+TOOLHIVE_START_TIMEOUT=300
+```
+
+If OpenBench runs in a container, set `TOOLHIVE_HOST` so localhost proxy URLs
+are rewritten explicitly:
+
+```bash
+TOOLHIVE_HOST=host.docker.internal        # Docker Desktop macOS/Windows
+TOOLHIVE_HOST=host.containers.internal    # Podman Desktop
+TOOLHIVE_HOST=172.17.0.1                  # common Docker Engine bridge gateway
+```
+
+Keep credentials in ToolHive secrets. OpenBench stores only server names,
+ToolHive workload names, local proxy URLs, enabled flags, selected tools, and
+timestamps; it redacts likely secrets from displayed config.
 
 The example `examples/mcp/toolhive-server.json` shows both package and remote
-metadata shapes.
+metadata shapes for publishing OpenBench tools through ToolHive.
 
 ## Adding A New MCP Tool
 
@@ -139,5 +209,6 @@ Prefer the existing OpenBench skill convention:
   committed directly.
 - Docker Gateway issues: confirm the selected profile contains enabled servers
   and that Docker MCP Toolkit is installed.
-- ToolHive issues: confirm the endpoint uses Streamable HTTP, the auth token is
-  present, and ToolHive proxy logs show the request.
+- ToolHive issues: confirm `thv version`, `thv serve`, `thv list --format
+  mcpservers`, and that the endpoint uses a Streamable HTTP URL ending in
+  `/mcp`. SSE URLs currently report a clear unsupported-transport message.

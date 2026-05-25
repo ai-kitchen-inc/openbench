@@ -268,7 +268,7 @@ def create_agent(
 ) -> BaseAgent:
     """Create the general-purpose chat agent.
 
-    By default this keeps General Chat document-first and tool-free. Set
+    By default this keeps General Chat tool-free. Set
     ``GENERAL_CHAT_MCP_ENABLED=1`` to load a small allowlisted set of MCP-backed
     query tools for local MCP testing.
     """
@@ -328,8 +328,8 @@ def create_agent(
 
     agent = BaseAgent(
         goal=(
-            "Help users by answering questions, analysing uploaded documents "
-            "(PDF, Word, PowerPoint), and reasoning over data."
+            "Help users by answering questions, reasoning over optional context, "
+            "using enabled tools when useful, and thinking through problems."
         ),
         model=resolved_model,
         temperature=temperature,

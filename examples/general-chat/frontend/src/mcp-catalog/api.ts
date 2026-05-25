@@ -4,6 +4,9 @@ import type {
   RegisteredMCPServer,
   ToggleServerPayload,
   ToggleToolPayload,
+  ToolHiveRegistryServer,
+  ToolHiveStatus,
+  ToolHiveWorkload,
 } from "./types";
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {
@@ -94,5 +97,63 @@ export async function toggleTool(
         body: JSON.stringify(payload),
       },
     ),
+  );
+}
+
+export async function getToolHiveStatus(): Promise<ToolHiveStatus> {
+  return parseJsonResponse<ToolHiveStatus>(await fetch("/toolhive/status"));
+}
+
+export async function listToolHiveWorkloads(): Promise<{ workloads: ToolHiveWorkload[] }> {
+  return parseJsonResponse<{ workloads: ToolHiveWorkload[] }>(await fetch("/toolhive/workloads"));
+}
+
+export async function listToolHiveRegistryServers(): Promise<{ servers: ToolHiveRegistryServer[] }> {
+  return parseJsonResponse<{ servers: ToolHiveRegistryServer[] }>(
+    await fetch("/toolhive/registry/servers"),
+  );
+}
+
+export async function startToolHiveWorkload(payload: {
+  target: string;
+  name?: string;
+  allowRemote?: boolean;
+}): Promise<{ workload: ToolHiveWorkload }> {
+  return parseJsonResponse<{ workload: ToolHiveWorkload }>(
+    await fetch("/toolhive/workloads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  );
+}
+
+export async function stopToolHiveWorkload(name: string): Promise<{ ok: boolean }> {
+  return parseJsonResponse<{ ok: boolean }>(
+    await fetch(`/toolhive/workloads/${encodeURIComponent(name)}/stop`, { method: "POST" }),
+  );
+}
+
+export async function restartToolHiveWorkload(name: string): Promise<{ ok: boolean }> {
+  return parseJsonResponse<{ ok: boolean }>(
+    await fetch(`/toolhive/workloads/${encodeURIComponent(name)}/restart`, { method: "POST" }),
+  );
+}
+
+export async function deleteToolHiveWorkload(name: string): Promise<{ ok: boolean }> {
+  return parseJsonResponse<{ ok: boolean }>(
+    await fetch(`/toolhive/workloads/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  );
+}
+
+export async function importRunningToolHiveWorkloads(
+  names: string[],
+): Promise<MCPRegistryPayload & { reload?: { error?: string | null } }> {
+  return parseJsonResponse<MCPRegistryPayload & { reload?: { error?: string | null } }>(
+    await fetch("/mcp/catalogs/toolhive/import-running", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ names }),
+    }),
   );
 }

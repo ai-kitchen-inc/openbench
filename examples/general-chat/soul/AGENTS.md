@@ -1,20 +1,9 @@
 # Agent Capabilities
 
-## Document Q&A (PDF, Word, PowerPoint)
-When a user message includes document content (the text appears inline in the message,
-introduced by a heading like `## filename.docx`), I read it directly from the
-message or from earlier in the conversation. I do NOT call any tools to find or
-load the file. I answer questions, summarise, extract action items, and reason
-over the provided text.
-
 ## General Q&A
-For questions without a document, I answer from training knowledge and reason
-step-by-step when the problem is complex.
+Answer general questions directly. Use optional user-provided context when it is helpful, but do not require context before answering.
 
 ## Tool Usage Rules
-- For PDF / DOCX / PPTX content: the text is embedded in the user message or conversation history. Read it directly and call NO tools.
-- Never call pdf_metadata, pdf_read_page, extract_file_context, read_csv_file, list_memory_keys, web_search, or any other tool to locate document content. The content is already provided.
-- If document text is visible anywhere in the conversation history, use it directly to answer.
-- MCP tools may be used only when the user explicitly asks to test MCP/tool functionality, provides structured records and asks for filtering/grouping/distinct/top-N analysis, or asks to test the configured external MCP filesystem sandbox.
-- For local OpenBench MCP testing prompts, prefer the approved query tools (`filter_records`, `distinct_values`, `group_and_aggregate`, `top_n_records`) and explain the result in plain language.
-- For external filesystem MCP testing prompts, use only approved read/list tools and stay within the allowed sandbox directory.
+- Use enabled MCP tools when the user asks for tool-backed work or when a tool is clearly useful for the task.
+- Explain tool results in plain language.
+- Do not claim that optional source context is mandatory for unrelated questions.

@@ -13,13 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from openbench.chat.session import Attachment
 from openbench.chat.transport import AGUIHandler
-from openbench.core.abstractions import (
-    Agent,
-    ExecutionContext,
-    ExecutionResult,
-    LLMProvider,
-    LLMResponse,
-)
+from openbench.core.abstractions import LLMProvider, LLMResponse
 from openbench.intelligence.base import AgentMemory, BaseAgent, Message, MessageRole
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
 
@@ -28,105 +22,9 @@ if TYPE_CHECKING:
 
 
 _SOURCE_CONTEXT_ID = "general-chat-source-context"
-_SOURCE_SYSTEM_MARKER = "[General Chat Source Handling]"
-_SOURCE_SYSTEM_INSTRUCTIONS = f"""
-
-{_SOURCE_SYSTEM_MARKER}
-The current request may include uploaded source files in Context data under
-`attachments`. Treat only these current-turn attachments as authoritative
-user-provided sources. Do not use document text from earlier conversation turns,
-cached client attachments, memory, or removed sources. When the user asks to
-summarize, quote, extract, compare, or answer about a named file, use the
-matching current attachment content directly. Do not claim you lack access to
-the file when an attachment with that filename is present. If multiple source
-files are present, use their `name` fields to identify which source supports
-each part of the answer.
-
-Answer document/source questions only from the current attachments. If no
-current source is provided, ask the user to add a document/source first. If the
-question is unrelated to the current source, refuse briefly. If the answer is
-not found in the current source, say: "The answer is not in the provided
-document."
-
-For uploaded image sources, the attachment content may include an
-`image_search MCP path`. When the user asks to find similar images, compare
-visual similarity, or search from the uploaded image, call
-`image_search.search_similar_images` with that path as `image_path`. Use the
-requested top_k value when the user provides one; otherwise use `top_k=10`. Do
-not run long indexing or rebuild tools during chat. Partial indexes are usable
-for search. If the search tool reports an empty, uninitialized, or timed-out
-index, tell the user to build the image search index outside chat, then retry.
-Tool results with `preview_url` are rendered into the chat surface automatically.
-""".strip()
-
-_NO_SOURCE_REFUSAL = "Please add a document/source first."
-_UNRELATED_REFUSAL = "I can only answer questions related to the current document/source."
-_NOT_FOUND_INSTRUCTION = (
-    'If the answer is not found in the current source, say exactly: '
-    '"The answer is not in the provided document."'
-)
 _REDACTED_ATTACHMENT_CONTEXT = (
-    "Context data: [previous General Chat source attachment content redacted; "
-    "use only current-turn attachments]"
+    "Context data: [previous General Chat source attachment content redacted]"
 )
-_STOPWORDS = {
-    "about",
-    "after",
-    "again",
-    "also",
-    "answer",
-    "based",
-    "before",
-    "brief",
-    "current",
-    "document",
-    "documents",
-    "does",
-    "file",
-    "from",
-    "give",
-    "have",
-    "into",
-    "only",
-    "please",
-    "provided",
-    "question",
-    "show",
-    "source",
-    "sources",
-    "summarize",
-    "summary",
-    "tell",
-    "that",
-    "this",
-    "what",
-    "when",
-    "where",
-    "which",
-    "with",
-}
-_DOCUMENT_ACTION_TERMS = {
-    "summarize",
-    "summary",
-    "compare",
-    "extract",
-    "quote",
-    "list",
-    "find",
-    "image",
-    "images",
-    "key",
-    "main",
-    "claims",
-    "dates",
-    "milestones",
-    "briefing",
-    "action",
-    "items",
-    "similar",
-    "similarity",
-    "visual",
-}
 
 
 def _debug_prompt_dir() -> Path | None:
@@ -219,8 +117,7 @@ def _source_context_attachments(doc_context: str) -> list[Attachment]:
                 url="",
                 mime_type="text/markdown",
                 extracted_text=(
-                    "The following text is extracted from the user's uploaded source files. "
-                    "Use it as source material for this turn.\n\n"
+                    "Optional context extracted from the user's uploaded source files.\n\n"
                     f"{doc_context}"
                 ),
             )
@@ -241,8 +138,7 @@ def _source_context_attachments(doc_context: str) -> list[Attachment]:
                 mime_type="text/markdown",
                 extracted_text=(
                     f"Source filename: {name}\n\n"
-                    "The following text is extracted from this uploaded source file. "
-                    "Use it as source material for this turn.\n\n"
+                    "Optional context extracted from this uploaded source file.\n\n"
                     f"## {name}\n\n{text}"
                 ),
             )
@@ -260,11 +156,7 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
         image_search_path = metadata.get("imageSearchPath")
         extra_lines = ""
         if record.kind == "image" and isinstance(image_search_path, str):
-            extra_lines = (
-                f"Image search path: {image_search_path}\n"
-                "Use this exact value as image_path when calling "
-                "image_search.search_similar_images.\n\n"
-            )
+            extra_lines = f"Image search path: {image_search_path}\n\n"
         attachments.append(
             Attachment(
                 id=record.id,
@@ -279,43 +171,12 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
                     f"Source type: {record.kind}\n"
                     f"Source URL: {record.url or '(none)'}\n\n"
                     f"{extra_lines}"
-                    "The following text is extracted from this user-added source. "
-                    "Use it as source material for this turn.\n\n"
+                    "Optional context extracted from this user-added source.\n\n"
                     f"## {record.name}\n\n{record.text}"
                 ),
             )
         )
     return attachments
-
-
-def _tokens(text: str) -> set[str]:
-    return {
-        token
-        for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{3,}", text.lower())
-        if token not in _STOPWORDS
-    }
-
-
-def _attachment_corpus(attachments: list[Attachment]) -> str:
-    return "\n\n".join(
-        f"{attachment.name}\n{attachment.extracted_text or ''}" for attachment in attachments
-    )
-
-
-def _is_related_to_sources(content: str, attachments: list[Attachment]) -> bool:
-    question_tokens = _tokens(content)
-    if not question_tokens:
-        return True
-    if question_tokens & _DOCUMENT_ACTION_TERMS:
-        return True
-    source_tokens = _tokens(_attachment_corpus(attachments))
-    return bool(question_tokens & source_tokens)
-
-
-def _with_grounding_instruction(content: str) -> str:
-    if _NOT_FOUND_INSTRUCTION in content:
-        return content
-    return f"{content}\n\n{_NOT_FOUND_INSTRUCTION}"
 
 
 def _redact_stale_source_context(messages: list[Message]) -> tuple[list[Message], bool]:
@@ -402,79 +263,6 @@ def sanitize_messages(messages: list[Message]) -> list[Message]:
     return out
 
 
-class _SourceGroundedAgent(Agent):
-    """Request wrapper that enforces current-source-only document grounding."""
-
-    def __init__(self, inner: Agent):
-        self.inner = inner
-
-    @property
-    def agent_type(self) -> str:
-        return self.inner.agent_type
-
-    def execute(
-        self,
-        context: ExecutionContext,
-        on_chunk=None,
-        on_progress=None,
-    ) -> ExecutionResult:
-        attachments = [
-            item
-            for item in (context.data or {}).get("attachments", [])
-            if isinstance(item, dict) and str(item.get("content") or "").strip()
-        ]
-        if not attachments:
-            return self._refuse(_NO_SOURCE_REFUSAL, on_chunk=on_chunk)
-
-        source_attachments = [
-            Attachment(
-                id=str(item.get("id") or item.get("name") or "source"),
-                type=str(item.get("type") or "file"),
-                name=str(item.get("name") or "source"),
-                url="",
-                mime_type=str(item.get("mime_type") or "text/plain"),
-                extracted_text=str(item.get("content") or ""),
-            )
-            for item in attachments
-        ]
-        if not _is_related_to_sources(context.goal, source_attachments):
-            return self._refuse(_UNRELATED_REFUSAL, on_chunk=on_chunk)
-
-        grounded_context = ExecutionContext(
-            goal=_with_grounding_instruction(context.goal),
-            data=context.data,
-            tools=context.tools,
-            memory=context.memory,
-            constraints=context.constraints,
-        )
-        try:
-            return self.inner.execute(
-                grounded_context,
-                on_chunk=on_chunk,
-                on_progress=on_progress,
-            )
-        except TypeError:
-            if on_chunk:
-                try:
-                    return self.inner.execute(grounded_context, on_chunk=on_chunk)  # type: ignore[call-arg]
-                except TypeError:
-                    pass
-            return self.inner.execute(grounded_context)
-
-    def estimate_cost(self, context: ExecutionContext) -> float:
-        return self.inner.estimate_cost(context)
-
-    @staticmethod
-    def _refuse(message: str, *, on_chunk=None) -> ExecutionResult:
-        if on_chunk:
-            on_chunk(message)
-        return ExecutionResult(
-            output=message,
-            status="success",
-            metadata={"grounding_refusal": True},
-        )
-
-
 class GeneralChatHandler(AGUIHandler):
     """AG-UI handler with SQLite-backed persistent memory per session."""
 
@@ -550,16 +338,8 @@ class GeneralChatHandler(AGUIHandler):
         else:
             agent_copy.memory = AgentMemory()
 
-        system_prompt = agent._system_prompt
-        if _SOURCE_SYSTEM_MARKER not in system_prompt:
-            system_prompt = f"{system_prompt}\n\n{_SOURCE_SYSTEM_INSTRUCTIONS}"
-
         if not agent_copy.memory.messages or agent_copy.memory.messages[0].role != MessageRole.SYSTEM:
-            agent_copy.memory.add_system(system_prompt)
-        elif _SOURCE_SYSTEM_MARKER not in agent_copy.memory.messages[0].content:
-            agent_copy.memory.messages[0].content = (
-                f"{agent_copy.memory.messages[0].content}\n\n{_SOURCE_SYSTEM_INSTRUCTIONS}"
-            )
+            agent_copy.memory.add_system(agent._system_prompt)
 
         agent_copy._llm = agent._llm
         if _debug_prompt_dir() is not None:
@@ -568,4 +348,4 @@ class GeneralChatHandler(AGUIHandler):
                 session_id=session_id,
             )
         agent_copy.tools = agent.tools
-        return _SourceGroundedAgent(agent_copy)
+        return agent_copy

@@ -206,7 +206,98 @@ Invoke-RestMethod http://localhost:8005/mcp/catalogs/import -Method Post -Conten
 After loading tools, ask a prompt that explicitly uses the enabled server tools.
 Disabled servers and disabled tools are not registered with the chat agent.
 
-## 9. Image Search MCP Server
+## 9. ToolHive MCP Servers
+
+General Chat can connect to MCP servers launched or proxied by ToolHive. The
+recommended flow is to manage server install, configuration, secrets, and logs in
+ToolHive UI, then import the running ToolHive proxy URL into OpenBench. This
+does not use `thv client setup`; OpenBench is a custom MCP host and connects to
+ToolHive-provided proxy URLs directly.
+
+Install and verify ToolHive:
+
+```powershell
+winget install stacklok.thv
+thv version
+```
+
+Start ToolHive's local API server for full General Chat controls:
+
+```powershell
+thv serve
+```
+
+You can also start servers in ToolHive UI. The desktop UI bundles `thv` at
+`%LOCALAPPDATA%\ToolHive\bin\thv.exe` on Windows and `~/.toolhive/bin/thv` on
+macOS/Linux. General Chat checks `thv` on `PATH` first, then those bundled CLI
+paths. If it is not detected after install, open a new terminal and restart the
+backend.
+
+In another terminal, or from ToolHive UI, start the ToolHive docs MCP server:
+
+```powershell
+thv run toolhive-doc-mcp
+thv list
+thv list --format mcpservers
+```
+
+Open the **MCP Servers** panel. The **ToolHive MCP** section should show:
+
+- ToolHive status and version.
+- Running workloads from `thv list --format mcpservers`.
+- An import button for each running server.
+- A copied URL registration field for URLs copied from ToolHive UI.
+
+Some registry servers take longer to start while ToolHive pulls the image or
+prepares the runtime. General Chat waits up to 180 seconds by default. Increase
+that before starting the backend if needed:
+
+```powershell
+$env:TOOLHIVE_START_TIMEOUT="300"
+```
+
+Choose **Import into OpenBench** on `toolhive-doc-mcp`, then **Load tools** for
+the registered server if needed. Ask:
+
+```text
+Use the ToolHive MCP tools to answer: how do I run a remote MCP server with ToolHive?
+```
+
+Expected behavior:
+
+- General Chat exposes enabled ToolHive MCP tools to the model.
+- The model can call the ToolHive docs server through the local `/mcp` proxy.
+- The final answer uses the tool result and mentions relevant ToolHive commands.
+
+You can also:
+
+- Search the ToolHive registry and start a server from the panel.
+- Enter a remote MCP URL for ToolHive to proxy. Remote URLs require explicit
+  approval in the UI.
+- Register an already-running ToolHive URL such as
+  `http://127.0.0.1:19767/mcp`.
+
+The registry start, remote proxy, restart, stop, and delete actions are under
+**Advanced local controls**. The default path is to manage the server lifecycle
+in ToolHive UI and use OpenBench only to import and call tools.
+
+Removing an OpenBench registered server only removes the OpenBench reference.
+Use the ToolHive workload **Delete** action only when you want ToolHive to stop
+and remove the workload itself.
+
+If General Chat runs in Docker or another container, localhost in the container
+may not reach ToolHive on the host. Set one of:
+
+```powershell
+$env:TOOLHIVE_HOST="host.docker.internal"       # Docker Desktop Windows/macOS
+$env:TOOLHIVE_HOST="host.containers.internal"   # Podman Desktop
+$env:TOOLHIVE_HOST="172.17.0.1"                 # common Docker Engine bridge
+```
+
+ToolHive's local API has no built-in auth. Keep `thv serve` bound to a trusted
+local interface unless you add external authentication and authorization.
+
+## 10. Image Search MCP Server
 
 General Chat can also use the Dockerized DINOv3 CIFAR-10 image-search MCP
 server from `examples/image-search-mcp`.
@@ -273,5 +364,5 @@ read-only into the Docker container.
 - `openbench mcp list-tools` fails: install `openbench[mcp]` and run from the
   repository root.
 - Chat does not call tools: make the prompt explicit: "Use the MCP tools..."
-- Document upload Q&A does not call tools: that is intentional. General Chat
-  reads uploaded document text directly from the chat context.
+- Optional source context is handled by the chat flow. MCP tools are used only
+  when they are enabled and the prompt or model behavior calls for them.

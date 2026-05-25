@@ -18,11 +18,11 @@ const SOURCE_ACCEPT =
   ".xlsx,.xls,.pdf,.docx,.doc,.pptx,.ppt,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.webp";
 
 const SUGGESTIONS = [
-  "Summarize the uploaded source files",
-  "Compare the main claims across my sources",
-  "Find key dates and milestones in these materials",
-  "Search the web for recent background sources on this topic",
-  "Turn the notes into a concise briefing",
+  "Help me think through this problem",
+  "Draft a concise plan for my next steps",
+  "Compare a few options and tradeoffs",
+  "Use available tools if they help",
+  "Summarize optional context I add",
 ];
 
 type PersonaSummary = {
@@ -749,7 +749,7 @@ export function SourcePanel({
               <path d="M14 2v6h6" />
             </svg>
           </div>
-          <div>Add files, websites, images, or text to ground the chat.</div>
+          <div>Add files, websites, images, or text as optional context.</div>
         </div>
       ) : (
         <div className="source-panel__list">

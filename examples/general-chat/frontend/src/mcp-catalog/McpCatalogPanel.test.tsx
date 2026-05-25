@@ -67,6 +67,49 @@ const basePayload: MCPRegistryPayload = {
   servers: [playwrightServer],
 };
 
+const toolHiveStatus = {
+  available: true,
+  apiAvailable: true,
+  cliAvailable: false,
+  version: "v0.test",
+  apiBaseUrl: "http://127.0.0.1:8080",
+  source: "api",
+  error: null,
+  setupHint: null,
+  uiCliDetected: false,
+  cliPath: "thv",
+  managementMode: "api",
+};
+
+const toolHiveWorkload = {
+  name: "toolhive-doc-mcp",
+  status: "running",
+  url: "http://127.0.0.1:19767/mcp",
+  package: "ghcr.io/stackloklabs/toolhive-doc-mcp:test",
+  port: 19767,
+  group: "default",
+  created: "2026-05-20T00:00:00+00:00",
+  transport: "streamable-http",
+};
+
+const toolHiveRegistryServer = {
+  name: "toolhive-doc-mcp",
+  title: "ToolHive Docs",
+  description: "Search ToolHive docs",
+  transport: "streamable-http",
+  tier: "Official",
+  type: "container",
+  url: null,
+  tools: ["query_docs"],
+};
+
+function toolHiveResponse(url: string): Response | null {
+  if (url === "/toolhive/status") return jsonResponse(toolHiveStatus);
+  if (url === "/toolhive/workloads") return jsonResponse({ workloads: [toolHiveWorkload] });
+  if (url === "/toolhive/registry/servers") return jsonResponse({ servers: [toolHiveRegistryServer] });
+  return null;
+}
+
 function renderPanel() {
   return render(
     <ToastProvider durationMs={0}>
@@ -81,7 +124,10 @@ describe("McpCatalogPanel", () => {
   });
 
   it("renders registered servers and filters by search text", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(basePayload)));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return toolHiveResponse(url) ?? jsonResponse(basePayload);
+    }));
 
     renderPanel();
 
@@ -96,6 +142,8 @@ describe("McpCatalogPanel", () => {
   it("imports pasted mcpServers JSON and shows validation errors", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      const toolHive = toolHiveResponse(url);
+      if (toolHive) return toolHive;
       if (url === "/mcp/catalogs" && !init) return jsonResponse({ servers: [] });
       if (url === "/mcp/catalogs/import") {
         const body = JSON.parse(String(init?.body));
@@ -110,7 +158,7 @@ describe("McpCatalogPanel", () => {
 
     renderPanel();
 
-    await screen.findByText("Add a standard mcpServers JSON config to register command-based MCP servers.");
+    await screen.findByText("Add a ToolHive workload, ToolHive URL, or standard mcpServers JSON config.");
     await userEvent.click(screen.getByRole("button", { name: "Add servers" }));
     fireEvent.change(screen.getByLabelText("MCP JSON config"), { target: { value: '{"bad":{}}' } });
     await userEvent.click(within(screen.getByRole("dialog", { name: "Add MCP servers" })).getByRole("button", { name: "Register servers" }));
@@ -127,6 +175,8 @@ describe("McpCatalogPanel", () => {
   it("loads discovered tools and renders parameter summaries", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      const toolHive = toolHiveResponse(url);
+      if (toolHive) return toolHive;
       if (url === "/mcp/catalogs") return jsonResponse(basePayload);
       if (url === "/mcp/catalogs/servers/server-playwright" && !init) return jsonResponse(discoveredServer);
       if (url === "/mcp/catalogs/servers/server-playwright/discover") {
@@ -156,6 +206,8 @@ describe("McpCatalogPanel", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      const toolHive = toolHiveResponse(url);
+      if (toolHive) return toolHive;
       if (url === "/mcp/catalogs") return jsonResponse({ servers: [discoveredServer] });
       if (url === "/mcp/catalogs/servers/server-playwright" && !init) return jsonResponse(discoveredServer);
       if (url === "/mcp/catalogs/servers/server-playwright/enable") {
@@ -181,12 +233,147 @@ describe("McpCatalogPanel", () => {
   });
 
   it("does not render obsolete URL or OCI import fields", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ servers: [] })));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return toolHiveResponse(url) ?? jsonResponse({ servers: [] });
+    }));
 
     renderPanel();
     await userEvent.click(await screen.findByRole("button", { name: "Add servers" }));
 
     expect(screen.queryByText("Catalog URL")).not.toBeInTheDocument();
     expect(screen.queryByText("OCI Reference")).not.toBeInTheDocument();
+  });
+
+  it("shows ToolHive setup copy when ToolHive is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/toolhive/status") {
+        return jsonResponse({
+          ...toolHiveStatus,
+          available: false,
+          setupHint: "Install ToolHive with winget install stacklok.thv",
+        });
+      }
+      if (url === "/mcp/catalogs") return jsonResponse({ servers: [] });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderPanel();
+
+    expect(await screen.findByText("Install ToolHive with winget install stacklok.thv")).toBeInTheDocument();
+  });
+
+  it("shows the ToolHive UI companion workflow and keeps advanced controls collapsed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return toolHiveResponse(url) ?? jsonResponse({ servers: [] });
+    }));
+
+    renderPanel();
+
+    expect(await screen.findByText("Manage servers in ToolHive UI")).toBeInTheDocument();
+    expect(screen.getByText("Detected CLI: thv")).toBeInTheDocument();
+    const advanced = screen.getByText("Advanced local controls").closest("details");
+    expect(advanced).not.toBeNull();
+    expect(advanced).not.toHaveAttribute("open");
+  });
+
+  it("imports a running ToolHive workload into registered servers", async () => {
+    const importedPayload: MCPRegistryPayload = {
+      servers: [
+        {
+          ...playwrightServer,
+          id: "server-toolhive-doc-mcp",
+          name: "toolhive-doc-mcp",
+          title: "toolhive-doc-mcp",
+          source: "toolhive",
+          transport: "streamable-http",
+          displayConfig: { transport: "streamable-http", url: "http://127.0.0.1:19767/mcp" },
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const toolHive = toolHiveResponse(url);
+      if (toolHive) return toolHive;
+      if (url === "/mcp/catalogs") return jsonResponse({ servers: [] });
+      if (url === "/mcp/catalogs/toolhive/import-running") {
+        expect(JSON.parse(String(init?.body))).toEqual({ names: ["toolhive-doc-mcp"] });
+        return jsonResponse(importedPayload);
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPanel();
+
+    await screen.findByText("toolhive-doc-mcp");
+    await userEvent.click(screen.getByRole("button", { name: "Import into OpenBench" }));
+    await waitFor(() => expect(screen.getAllByText("toolhive-doc-mcp").length).toBeGreaterThan(1));
+  });
+
+  it("starts a ToolHive registry server from search results", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const toolHive = toolHiveResponse(url);
+      if (toolHive) return toolHive;
+      if (url === "/mcp/catalogs") return jsonResponse({ servers: [] });
+      if (url === "/toolhive/workloads" && init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toEqual({
+          target: "toolhive-doc-mcp",
+        });
+        return jsonResponse({ workload: toolHiveWorkload });
+      }
+      if (url === "/mcp/catalogs/toolhive/import-running") {
+        return jsonResponse({ servers: [] });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByText("Advanced local controls"));
+    expect(await screen.findByText("ToolHive Docs")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/toolhive/workloads", expect.objectContaining({ method: "POST" })));
+  });
+
+  it("registers a ToolHive URL copied from the ToolHive UI", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const toolHive = toolHiveResponse(url);
+      if (toolHive) return toolHive;
+      if (url === "/mcp/catalogs") return jsonResponse({ servers: [] });
+      if (url === "/mcp/catalogs/import") {
+        const body = JSON.parse(String(init?.body));
+        expect(JSON.parse(String(body.config))).toEqual({
+          mcpServers: {
+            awsdocs: {
+              url: "http://127.0.0.1:19767/mcp",
+            },
+          },
+        });
+        return jsonResponse(basePayload);
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPanel();
+
+    await screen.findByText("Manage servers in ToolHive UI");
+    await userEvent.clear(screen.getByLabelText("Server name"));
+    await userEvent.type(screen.getByLabelText("Server name"), "awsdocs");
+    await userEvent.type(screen.getByLabelText("Copied ToolHive MCP URL"), "http://127.0.0.1:19767/mcp");
+    await userEvent.click(screen.getByRole("button", { name: "Register copied URL" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/mcp/catalogs/import",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
   });
 });

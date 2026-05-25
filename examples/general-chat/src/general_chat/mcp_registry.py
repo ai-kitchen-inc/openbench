@@ -17,6 +17,7 @@ from openbench.mcp.config import MCPClientConfig, MCPPolicyConfig, MCPServerConn
 from openbench.mcp.policy import redact_secrets
 from openbench.mcp.schema import mcp_tool_to_openai_schema
 from openbench.mcp.standard_config import MCPConfigImportError, parse_standard_mcp_json
+from openbench.mcp.toolhive import ToolHiveWorkload, toolhive_workload_to_mcp_config
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,9 @@ class RegisteredMCPServer:
     id: str
     name: str
     config: dict[str, Any]
+    source: str = "manual"
+    workload_name: str | None = None
+    proxy_url: str | None = None
     enabled: bool = True
     status: str = "enabled"
     error: str | None = None
@@ -73,6 +77,11 @@ class RegisteredMCPServer:
             "id": self.id,
             "name": self.name,
             "title": self.name,
+            "source": self.source,
+            "workloadName": self.workload_name,
+            "workload_name": self.workload_name,
+            "proxyUrl": self.proxy_url,
+            "proxy_url": self.proxy_url,
             "transport": self.config.get("transport", "stdio"),
             "enabled": self.enabled,
             "status": "disabled" if not self.enabled else self.status,
@@ -159,6 +168,46 @@ class MCPServerRegistryStore:
                 "last_discovered_at": None if config_changed else existing.get("last_discovered_at") if existing else None,
             }
             servers_by_id[server_id] = server_state
+            if config_changed:
+                tools.pop(server_id, None)
+
+        state["servers"] = sorted(servers_by_id.values(), key=lambda item: item["name"])
+        self._save_state(state)
+        return self.list_payload()
+
+    def import_toolhive_workloads(self, workloads: list[ToolHiveWorkload]) -> dict[str, Any]:
+        """Register running ToolHive workloads as user-enabled MCP servers."""
+        state = self._load_state()
+        now = _now()
+        servers_by_id = {item["id"]: item for item in state["servers"]}
+        tools = state.setdefault("tools", {})
+
+        for workload in workloads:
+            connection = toolhive_workload_to_mcp_config(workload)
+            name = connection.namespace or workload.name
+            server_id = _server_id(name)
+            config_dict = _connection_to_dict(connection)
+            existing = servers_by_id.get(server_id)
+            previous_config = existing.get("config") if existing else None
+            config_changed = previous_config != config_dict
+            servers_by_id[server_id] = {
+                "id": server_id,
+                "name": name,
+                "source": "toolhive",
+                "workload_name": workload.name,
+                "proxy_url": workload.url,
+                "config": config_dict,
+                "enabled": existing.get("enabled", True) if existing else True,
+                "status": workload.status if workload.status else "running",
+                "error": None,
+                "registered_at": existing.get("registered_at", now) if existing else now,
+                "updated_at": now,
+                "last_discovered_at": None
+                if config_changed
+                else existing.get("last_discovered_at")
+                if existing
+                else None,
+            }
             if config_changed:
                 tools.pop(server_id, None)
 
@@ -382,6 +431,9 @@ class MCPServerRegistryStore:
             id=item["id"],
             name=item["name"],
             config=dict(item.get("config") or {}),
+            source=str(item.get("source") or "manual"),
+            workload_name=item.get("workload_name") or item.get("workloadName"),
+            proxy_url=item.get("proxy_url") or item.get("proxyUrl"),
             enabled=bool(item.get("enabled", True)),
             status=str(item.get("status") or "enabled"),
             error=item.get("error"),

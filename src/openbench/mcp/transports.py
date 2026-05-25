@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
@@ -62,83 +61,71 @@ class InMemoryMCPTransport(MCPTransport):
 
 
 class StreamableHTTPTransport(MCPTransport):
-    """Small JSON-RPC Streamable HTTP MCP transport."""
+    """MCP Streamable HTTP transport using the official MCP Python SDK."""
 
     def __init__(self, config: MCPServerConnectionConfig):
         self.config = config
-        self._client: Any = None
-        self._request_id = 0
-        self._session_id: str | None = None
+        self._exit_stack: Any = None
+        self._session: Any = None
 
-    async def _ensure_client(self) -> Any:
-        if self._client is None:
+    async def _ensure_session(self) -> Any:
+        if self._session is None:
             try:
-                import httpx
+                from contextlib import AsyncExitStack
+
+                from mcp import ClientSession
+                from mcp.client.streamable_http import streamablehttp_client
             except ImportError as exc:
-                raise ImportError("httpx is required for Streamable HTTP MCP") from exc
-            self._client = httpx.AsyncClient(timeout=self.config.timeout_seconds)
-        return self._client
+                raise ImportError("MCP SDK is required for Streamable HTTP MCP") from exc
+
+            self._exit_stack = AsyncExitStack()
+            read, write, _get_session_id = await self._exit_stack.enter_async_context(
+                streamablehttp_client(
+                    self.config.url,
+                    headers=self.config.headers or None,
+                    timeout=self.config.timeout_seconds,
+                    sse_read_timeout=self.config.timeout_seconds,
+                )
+            )
+            self._session = await self._exit_stack.enter_async_context(
+                ClientSession(read, write)
+            )
+        return self._session
 
     async def initialize(self) -> dict[str, Any]:
-        result = await self._request(
-            "initialize",
-            {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {"name": "openbench", "version": "0.1.0"},
-            },
-        )
-        await self._notify("notifications/initialized", {})
-        return result
+        session = await self._ensure_session()
+        result = await session.initialize()
+        return _model_to_dict(result)
 
     async def list_tools(self) -> list[dict[str, Any]]:
-        result = await self._request("tools/list", {})
-        return list(result.get("tools", []))
+        session = await self._ensure_session()
+        result = await session.list_tools()
+        return [_model_to_dict(tool) for tool in result.tools]
 
     async def list_resources(self) -> list[dict[str, Any]]:
-        result = await self._request("resources/list", {})
-        return list(result.get("resources", []))
+        session = await self._ensure_session()
+        result = await session.list_resources()
+        return [_model_to_dict(resource) for resource in result.resources]
 
     async def list_prompts(self) -> list[dict[str, Any]]:
-        result = await self._request("prompts/list", {})
-        return list(result.get("prompts", []))
+        session = await self._ensure_session()
+        result = await session.list_prompts()
+        return [_model_to_dict(prompt) for prompt in result.prompts]
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        return await self._request("tools/call", {"name": name, "arguments": arguments})
-
-    async def _notify(self, method: str, params: dict[str, Any]) -> None:
-        await self._post({"jsonrpc": "2.0", "method": method, "params": params})
-
-    async def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        self._request_id += 1
-        payload = {"jsonrpc": "2.0", "id": self._request_id, "method": method, "params": params}
-        response = await self._post(payload)
-        if response.status_code == 202 or not response.content:
-            return {}
-        data = response.json()
-        if "error" in data:
-            err = data["error"]
-            raise MCPTransportError(str(err.get("message", err)), data=err)
-        return dict(data.get("result") or {})
-
-    async def _post(self, payload: dict[str, Any]) -> Any:
-        client = await self._ensure_client()
-        headers = {
-            "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json",
-            **self.config.headers,
-        }
-        if self._session_id:
-            headers["Mcp-Session-Id"] = self._session_id
-        response = await client.post(self.config.url, headers=headers, content=json.dumps(payload))
-        if "Mcp-Session-Id" in response.headers:
-            self._session_id = response.headers["Mcp-Session-Id"]
-        response.raise_for_status()
-        return response
+        session = await self._ensure_session()
+        result = await session.call_tool(name, arguments)
+        return _model_to_dict(result)
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
+        if self._exit_stack is not None:
+            try:
+                await self._exit_stack.aclose()
+            except RuntimeError as exc:
+                if "Attempted to exit cancel scope in a different task" not in str(exc):
+                    raise
+            self._exit_stack = None
+            self._session = None
 
 
 class StdioMCPTransport(MCPTransport):
@@ -200,8 +187,13 @@ class StdioMCPTransport(MCPTransport):
 def build_transport(config: MCPServerConnectionConfig) -> MCPTransport:
     if config.transport == "stdio":
         return StdioMCPTransport(config)
-    if config.transport in {"streamable-http", "sse"}:
+    if config.transport == "streamable-http":
         return StreamableHTTPTransport(config)
+    if config.transport == "sse":
+        raise MCPTransportError(
+            "SSE MCP transport is not yet supported by OpenBench. "
+            "Use a ToolHive Streamable HTTP URL ending in /mcp."
+        )
     raise MCPTransportError(f"Unsupported MCP transport: {config.transport}")
 
 

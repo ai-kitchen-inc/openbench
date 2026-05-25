@@ -25,6 +25,16 @@ from openbench.mcp.errors import (
 from openbench.mcp.policy import MCPPolicyEngine, RiskLevel
 from openbench.mcp.server import OpenBenchMCPServer
 from openbench.mcp.standard_config import MCPConfigImportError, parse_standard_mcp_json
+from openbench.mcp.toolhive import (
+    ToolHiveError,
+    ToolHiveRegistryServer,
+    ToolHiveService,
+    ToolHiveStatus,
+    ToolHiveWorkload,
+    detect_toolhive_transport,
+    rewrite_toolhive_url,
+    toolhive_workload_to_mcp_config,
+)
 
 __all__ = [
     "MCPClient",
@@ -46,4 +56,12 @@ __all__ = [
     "load_mcp_tools",
     "MCPConfigImportError",
     "parse_standard_mcp_json",
+    "ToolHiveError",
+    "ToolHiveRegistryServer",
+    "ToolHiveService",
+    "ToolHiveStatus",
+    "ToolHiveWorkload",
+    "detect_toolhive_transport",
+    "rewrite_toolhive_url",
+    "toolhive_workload_to_mcp_config",
 ]

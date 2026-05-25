@@ -1,8 +1,8 @@
-# General Chat — Document-Aware Assistant
+# General Chat
 
-A full-stack chat demo built on OpenBench. Upload PDFs, Word docs, PowerPoint
-slides, spreadsheets, or paste a URL — then ask the Gemini agent questions
-about the content.
+A full-stack general-purpose chat demo built on OpenBench. You can optionally
+add PDFs, Word docs, PowerPoint slides, spreadsheets, URLs, text, or images as
+context while still asking normal chat questions.
 
 **Stack:** FastAPI backend (AG-UI / SSE) + React frontend (`@openbench/chat-ui`)
 
@@ -279,9 +279,9 @@ Edit these files to change the agent's personality without touching code.
 
 ## MCP tool testing
 
-General Chat is tool-free by default so uploaded PDF, Word, and PowerPoint text
-is answered from the injected chat context. To test MCP tools through the chat
-agent, enable the opt-in MCP mode:
+General Chat is tool-free by default. Uploaded files and sources remain optional
+context for the chat agent. To test MCP tools through the chat agent, enable the
+opt-in MCP mode:
 
 ```powershell
 $env:GENERAL_CHAT_MCP_ENABLED="1"

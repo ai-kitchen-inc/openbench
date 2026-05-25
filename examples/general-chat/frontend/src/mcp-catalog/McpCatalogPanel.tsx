@@ -10,15 +10,30 @@ import {
 import { useToast } from "../Toast";
 import {
   discoverServer,
+  deleteToolHiveWorkload,
   getServer,
+  getToolHiveStatus,
   importMCPConfig,
+  importRunningToolHiveWorkloads,
   listServers,
+  listToolHiveRegistryServers,
+  listToolHiveWorkloads,
   removeServer,
+  restartToolHiveWorkload,
+  startToolHiveWorkload,
+  stopToolHiveWorkload,
   toggleServer,
   toggleTool,
 } from "./api";
 import { filterServers, type RegistryFilters, type SortMode, type StatusFilter } from "./filtering";
-import type { MCPDiscoveredTool, MCPRegistryPayload, RegisteredMCPServer } from "./types";
+import type {
+  MCPDiscoveredTool,
+  MCPRegistryPayload,
+  RegisteredMCPServer,
+  ToolHiveRegistryServer,
+  ToolHiveStatus,
+  ToolHiveWorkload,
+} from "./types";
 
 const EXAMPLE_CONFIG = `{
   "mcpServers": {
@@ -40,9 +55,19 @@ const DEFAULT_FILTERS: RegistryFilters = {
   sort: "name",
 };
 
+const TOOLHIVE_DOC_SERVER = "toolhive-doc-mcp";
+
 function readErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function toolHiveModeLabel(status: ToolHiveStatus | null): string {
+  if (!status) return "unchecked";
+  if (status.managementMode === "api") return "API";
+  if (status.managementMode === "ui-cli") return "ToolHive UI CLI";
+  if (status.managementMode === "cli") return "CLI";
+  return "unavailable";
 }
 
 function Dialog({
@@ -180,6 +205,340 @@ function parameterSummary(schema: Record<string, unknown>): string {
 
 function ConfigPreview({ config }: { config: Record<string, unknown> }) {
   return <pre className="mcp-config-preview">{JSON.stringify(config, null, 2)}</pre>;
+}
+
+function buildUrlConfig(name: string, url: string): string {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        [name]: { url },
+      },
+    },
+    null,
+    2,
+  );
+}
+
+function ToolHiveSection({
+  onImported,
+}: {
+  onImported: (payload: MCPRegistryPayload) => void;
+}) {
+  const toast = useToast();
+  const [status, setStatus] = useState<ToolHiveStatus | null>(null);
+  const [workloads, setWorkloads] = useState<ToolHiveWorkload[]>([]);
+  const [registry, setRegistry] = useState<ToolHiveRegistryServer[]>([]);
+  const [query, setQuery] = useState("");
+  const [target, setTarget] = useState(TOOLHIVE_DOC_SERVER);
+  const [workloadName, setWorkloadName] = useState("");
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [directUrl, setDirectUrl] = useState("");
+  const [directName, setDirectName] = useState("toolhive");
+  const [allowRemote, setAllowRemote] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isMutating, setIsMutating] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const nextStatus = await getToolHiveStatus();
+      setStatus(nextStatus);
+      if (!nextStatus.available) {
+        setWorkloads([]);
+        setRegistry([]);
+        return;
+      }
+
+      const [workloadsResult, registryResult] = await Promise.allSettled([
+        listToolHiveWorkloads(),
+        listToolHiveRegistryServers(),
+      ]);
+      if (workloadsResult.status === "fulfilled") {
+        setWorkloads(workloadsResult.value.workloads);
+      } else {
+        setWorkloads([]);
+        setError(readErrorMessage(workloadsResult.reason));
+      }
+      if (registryResult.status === "fulfilled") {
+        setRegistry(registryResult.value.servers);
+      } else {
+        setRegistry([]);
+      }
+    } catch (error) {
+      setStatus(null);
+      setWorkloads([]);
+      setRegistry([]);
+      setError(readErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const handleImportWorkload = async (name: string) => {
+    setIsMutating(true);
+    try {
+      const payload = await importRunningToolHiveWorkloads([name]);
+      onImported(payload);
+      toast.show(payload.reload?.error ? `Imported, but reload reported: ${payload.reload.error}` : "ToolHive server imported", payload.reload?.error ? "error" : "success");
+    } catch (error) {
+      toast.show(`Could not add ToolHive server: ${readErrorMessage(error)}`, "error");
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const handleStart = async (startTarget: string, name?: string, remote = false) => {
+    if (!startTarget.trim()) return;
+    setIsMutating(true);
+    try {
+      const result = await startToolHiveWorkload({
+        target: startTarget.trim(),
+        name: name?.trim() || undefined,
+        allowRemote: remote,
+      });
+      await load();
+      await handleImportWorkload(result.workload.name);
+      toast.show("ToolHive workload started", "success");
+    } catch (error) {
+      toast.show(`Could not start ToolHive workload: ${readErrorMessage(error)}`, "error");
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const handleRegisterUrl = async () => {
+    const name = directName.trim() || "toolhive";
+    const url = directUrl.trim();
+    if (!url) return;
+    setIsMutating(true);
+    try {
+      const payload = await importMCPConfig({ config: buildUrlConfig(name, url) });
+      onImported(payload);
+      setDirectUrl("");
+      toast.show("ToolHive URL registered", "success");
+    } catch (error) {
+      toast.show(`Could not register ToolHive URL: ${readErrorMessage(error)}`, "error");
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const handleWorkloadAction = async (action: "stop" | "restart" | "delete", name: string) => {
+    if (action === "delete" && !window.confirm(`Delete ToolHive workload ${name}? This stops and removes the ToolHive workload, not just the OpenBench reference.`)) {
+      return;
+    }
+    setIsMutating(true);
+    try {
+      if (action === "stop") await stopToolHiveWorkload(name);
+      if (action === "restart") await restartToolHiveWorkload(name);
+      if (action === "delete") await deleteToolHiveWorkload(name);
+      await load();
+      toast.show(`ToolHive workload ${action} request sent`, "success");
+    } catch (error) {
+      toast.show(`ToolHive ${action} failed: ${readErrorMessage(error)}`, "error");
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const visibleRegistry = registry
+    .filter((server) => {
+      const haystack = `${server.name} ${server.title} ${server.description ?? ""} ${server.tools.join(" ")}`.toLowerCase();
+      return haystack.includes(query.toLowerCase());
+    })
+    .slice(0, 8);
+
+  return (
+    <section className="mcp-section">
+      <div className="mcp-section__header">
+        <div>
+          <h3>ToolHive MCP</h3>
+          <p>
+            {status?.available
+              ? `${status.version ?? "ToolHive"} via ${toolHiveModeLabel(status)}`
+              : "Use ToolHive UI servers in OpenBench"}
+          </p>
+        </div>
+        <button type="button" className="mcp-btn" onClick={() => void load()} disabled={isLoading}>
+          Refresh running servers
+        </button>
+      </div>
+
+      {isLoading && <div className="mcp-state">Checking ToolHive...</div>}
+      {!isLoading && error && (
+        <div className="mcp-state mcp-state--error" role="alert">
+          {error}
+        </div>
+      )}
+      {!isLoading && status && !status.available && (
+        <div className="mcp-warning">
+          {status.setupHint || "Install ToolHive, verify with thv version, then start the local API with thv serve."}
+        </div>
+      )}
+      {!isLoading && status?.available && !status.apiAvailable && (
+        <div className="mcp-warning">
+          ToolHive API is not running. OpenBench can still import running servers through the
+          {status.uiCliDetected ? " ToolHive UI bundled CLI" : " ToolHive CLI"}, but registry browsing and local controls need <code>thv serve</code>.
+        </div>
+      )}
+
+      <div className="mcp-warning mcp-toolhive-companion">
+        <strong>Manage servers in ToolHive UI</strong>
+        <p>
+          Start, configure, and inspect MCP servers in the ToolHive desktop app. Then refresh here
+          and import the running server into OpenBench for tool discovery and chat use.
+        </p>
+        <div className="mcp-links">
+          <a href="https://docs.stacklok.com/toolhive/guides-ui/" target="_blank" rel="noreferrer">
+            ToolHive UI guide
+          </a>
+          <a href="https://docs.stacklok.com/toolhive/guides-ui/client-configuration" target="_blank" rel="noreferrer">
+            Copy MCP server URL
+          </a>
+        </div>
+        {status?.cliPath && <code className="mcp-inline-code">Detected CLI: {status.cliPath}</code>}
+      </div>
+
+      <div className="mcp-config-list">
+        <h3>Running ToolHive servers</h3>
+        {workloads.length === 0 ? (
+          <div className="mcp-state">No running ToolHive MCP servers found. Start one in ToolHive UI, then refresh.</div>
+        ) : (
+          <div className="mcp-catalog-list">
+            {workloads.map((workload) => (
+              <div key={workload.name} className="mcp-catalog-row">
+                <div>
+                  <strong>{workload.name}</strong>
+                  <span>{workload.url || "No proxy URL discovered"}</span>
+                  <div className="mcp-source-line">
+                    <span className="mcp-pill">{workload.transport || "unknown"}</span>
+                    <span className="mcp-pill">{workload.status}</span>
+                  </div>
+                </div>
+                <div className="mcp-catalog-row__actions">
+                  <button type="button" className="mcp-btn" onClick={() => void handleImportWorkload(workload.name)} disabled={isMutating || !workload.url}>
+                    Import into OpenBench
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mcp-detail-grid mcp-detail-grid--forms">
+        <label className="mcp-field">
+          <span>Copied ToolHive MCP URL</span>
+          <input value={directUrl} onChange={(event) => setDirectUrl(event.target.value)} placeholder="http://127.0.0.1:19767/mcp" />
+        </label>
+        <label className="mcp-field">
+          <span>Server name</span>
+          <input value={directName} onChange={(event) => setDirectName(event.target.value)} />
+        </label>
+        <button type="button" className="mcp-btn" onClick={() => void handleRegisterUrl()} disabled={isMutating || !directUrl.trim()}>
+          Register copied URL
+        </button>
+      </div>
+
+      <details className="mcp-advanced-controls">
+        <summary>Advanced local controls</summary>
+        <div className="mcp-advanced-controls__body">
+          <div className="mcp-detail-grid mcp-detail-grid--forms">
+            <label className="mcp-field">
+              <span>Registry server</span>
+              <input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="toolhive-doc-mcp" />
+            </label>
+            <label className="mcp-field">
+              <span>Workload name</span>
+              <input value={workloadName} onChange={(event) => setWorkloadName(event.target.value)} placeholder="Optional" />
+            </label>
+            <button type="button" className="mcp-btn mcp-btn--primary" onClick={() => void handleStart(target, workloadName)} disabled={isMutating || !target.trim()}>
+              Start registry server
+            </button>
+          </div>
+
+          <div className="mcp-detail-grid mcp-detail-grid--forms">
+            <label className="mcp-field">
+              <span>Remote MCP URL for ToolHive to proxy</span>
+              <input value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} placeholder="https://example.com/mcp" />
+            </label>
+            <label className="mcp-toggle mcp-toggle--field">
+              <input type="checkbox" checked={allowRemote} onChange={() => setAllowRemote((current) => !current)} />
+              <span>User approved remote URL</span>
+            </label>
+            <button type="button" className="mcp-btn" onClick={() => void handleStart(remoteUrl, workloadName, allowRemote)} disabled={isMutating || !remoteUrl.trim()}>
+              Start remote proxy
+            </button>
+          </div>
+
+          {workloads.length > 0 && (
+            <div className="mcp-config-list">
+              <h3>Workload controls</h3>
+              <div className="mcp-catalog-list">
+                {workloads.map((workload) => (
+                  <div key={workload.name} className="mcp-catalog-row">
+                    <div>
+                      <strong>{workload.name}</strong>
+                      <span>{workload.url || "No proxy URL discovered"}</span>
+                    </div>
+                    <div className="mcp-catalog-row__actions">
+                      <button type="button" className="mcp-btn" onClick={() => void handleWorkloadAction("restart", workload.name)} disabled={isMutating}>
+                        Restart
+                      </button>
+                      <button type="button" className="mcp-btn" onClick={() => void handleWorkloadAction("stop", workload.name)} disabled={isMutating}>
+                        Stop
+                      </button>
+                      <button type="button" className="mcp-btn" onClick={() => void handleWorkloadAction("delete", workload.name)} disabled={isMutating}>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="mcp-config-list">
+            <h3>ToolHive registry</h3>
+            <label className="mcp-search">
+              <span>Search ToolHive registry</span>
+              <input value={query} type="search" placeholder="Search registry servers" onChange={(event) => setQuery(event.target.value)} />
+            </label>
+            {visibleRegistry.length === 0 ? (
+              <div className="mcp-state">No registry servers loaded. Start thv serve to browse the ToolHive registry.</div>
+            ) : (
+              <div className="mcp-catalog-list">
+                {visibleRegistry.map((server) => (
+                  <div key={server.name} className="mcp-catalog-row">
+                    <div>
+                      <strong>{server.title || server.name}</strong>
+                      <span>{server.description || server.name}</span>
+                      <div className="mcp-source-line">
+                        <span className="mcp-pill">{server.transport || "transport"}</span>
+                        {server.tier && <span className="mcp-pill">{server.tier}</span>}
+                        {server.tools.length > 0 && <span>{server.tools.length} tools listed</span>}
+                      </div>
+                    </div>
+                    <div className="mcp-catalog-row__actions">
+                      <button type="button" className="mcp-btn" onClick={() => void handleStart(server.name)} disabled={isMutating}>
+                        Start
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </details>
+    </section>
+  );
 }
 
 function ToolList({
@@ -412,6 +771,7 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
   return (
     <Dialog title="MCP Servers" onClose={onClose}>
       <div className="mcp-catalog">
+        <ToolHiveSection onImported={(payload) => setData(payload)} />
         <section className="mcp-section">
           <div className="mcp-section__header">
             <div>
@@ -466,7 +826,7 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
               </div>
             )}
             {!isLoading && !error && data.servers.length === 0 && (
-              <div className="mcp-state">Add a standard mcpServers JSON config to register command-based MCP servers.</div>
+              <div className="mcp-state">Add a ToolHive workload, ToolHive URL, or standard mcpServers JSON config.</div>
             )}
             {!isLoading && !error && data.servers.length > 0 && visibleServers.length === 0 && (
               <div className="mcp-state">No MCP servers match the current filters.</div>

@@ -1,7 +1,7 @@
 """FastAPI application for General Chat.
 
-A simplified chat server with document upload (PDF, DOCX, PPTX) parsed via
-Docling, and a general-purpose Gemini agent. No authentication required.
+A simplified chat server with optional file, URL, text, and image context,
+plus a general-purpose Gemini agent. No authentication required.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from openbench.chat import render_queue as shared_render_queue
 from openbench.chat.files import LocalFileStore
 from openbench.chat.transport import AGUIActionHandler
 from openbench.chat.transport.sessions import AGUISessionHandler
+from openbench.mcp.toolhive import ToolHiveError, ToolHiveService
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,7 @@ def create_app() -> FastAPI:
     source_parser = SourceParserRegistry(document_extractor=extractor)
     source_store = SourceStore(storage_root)
     mcp_registry_store = MCPServerRegistryStore(storage_root)
+    toolhive_service = ToolHiveService()
     discovery_adapter = SearchDiscoveryAdapter()
     max_source_bytes = max_source_bytes_from_env()
     agent = create_agent()
@@ -165,7 +167,7 @@ def create_app() -> FastAPI:
         session_store.save(session)
         return session
 
-    app = FastAPI(title="General Chat — Document-Aware Assistant")
+    app = FastAPI(title="General Chat")
 
     app.add_middleware(
         CORSMiddleware,
@@ -178,7 +180,7 @@ def create_app() -> FastAPI:
     async def startup() -> None:
         persona = agent._persona
         summary = persona.summary() if persona else {}
-        print("\n  General Chat — Document-Aware Assistant")
+        print("\n  General Chat")
         print(f"  Model          : {agent.model}")
         print(f"  Persona source : {summary.get('source', '(none)')}")
         if persona:
@@ -288,6 +290,79 @@ def create_app() -> FastAPI:
         except MCPRegistryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/mcp/catalogs/toolhive/import-running")
+    async def import_running_toolhive_workloads(request: Request) -> dict:
+        body = await request.json()
+        names = body.get("names")
+        try:
+            workloads = toolhive_service.list_workloads()
+            if isinstance(names, list) and names:
+                requested = {str(name) for name in names}
+                workloads = [workload for workload in workloads if workload.name in requested]
+            payload = mcp_registry_store.import_toolhive_workloads(workloads)
+            reload_summary = reload_external_mcp_tools(agent)
+            return {**payload, "reload": reload_summary}
+        except ToolHiveError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except MCPRegistryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/toolhive/status")
+    async def toolhive_status() -> dict:
+        return toolhive_service.status().to_dict()
+
+    @app.get("/toolhive/workloads")
+    async def toolhive_workloads() -> dict:
+        try:
+            return {"workloads": [workload.to_dict() for workload in toolhive_service.list_workloads()]}
+        except ToolHiveError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/toolhive/workloads")
+    async def start_toolhive_workload(request: Request) -> dict:
+        body = await request.json()
+        try:
+            workload = toolhive_service.start_workload(
+                str(body.get("target") or body.get("server") or body.get("url") or ""),
+                name=str(body.get("name")).strip() if body.get("name") else None,
+                allow_remote=bool(body.get("allowRemote") or body.get("allow_remote")),
+            )
+            return {"workload": workload.to_dict()}
+        except ToolHiveError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/toolhive/workloads/{name}/stop")
+    async def stop_toolhive_workload(name: str) -> dict:
+        try:
+            toolhive_service.stop_workload(name)
+            return {"ok": True, "name": name}
+        except ToolHiveError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/toolhive/workloads/{name}/restart")
+    async def restart_toolhive_workload(name: str) -> dict:
+        try:
+            toolhive_service.restart_workload(name)
+            return {"ok": True, "name": name}
+        except ToolHiveError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/toolhive/workloads/{name}")
+    async def delete_toolhive_workload(name: str) -> dict:
+        try:
+            toolhive_service.delete_workload(name)
+            return {"ok": True, "name": name}
+        except ToolHiveError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/toolhive/registry/servers")
+    async def toolhive_registry_servers() -> dict:
+        try:
+            servers = toolhive_service.list_registry_servers()
+            return {"servers": [server.to_dict() for server in servers]}
+        except ToolHiveError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/mcp/catalogs/{server_id}/refresh")
     async def refresh_mcp_server(server_id: str) -> dict:
         try:
@@ -391,7 +466,7 @@ def create_app() -> FastAPI:
         result = {**attachment.to_dict(), **record.to_dict(include_text=True)}
         # Include the full extracted text — Docling content can be large but
         # Gemini's 1M token window handles it. Truncating here loses information
-        # that the agent needs to answer document questions.
+        # that the agent can use as optional context.
         result["url"] = record.url or attachment.url
         result["type"] = attachment.type
         return result

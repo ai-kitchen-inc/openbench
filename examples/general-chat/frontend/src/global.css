@@ -627,6 +627,27 @@ body {
   background: rgba(0, 0, 0, 0.03);
 }
 
+.mcp-toolhive-companion {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcp-toolhive-companion strong {
+  font-size: 12px;
+}
+
+.mcp-toolhive-companion p {
+  color: var(--ob-text-secondary);
+}
+
+.mcp-inline-code {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--ob-text-secondary);
+  font-size: 11px;
+}
+
 .mcp-detail-grid {
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -636,6 +657,16 @@ body {
 
 .mcp-detail-grid span {
   color: var(--ob-text-secondary);
+}
+
+.mcp-detail-grid--forms {
+  grid-template-columns: minmax(180px, 1fr) minmax(120px, 180px) max-content;
+  align-items: end;
+}
+
+.mcp-toggle--field {
+  min-height: 32px;
+  padding-bottom: 6px;
 }
 
 .mcp-detail-description {
@@ -660,6 +691,26 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.mcp-advanced-controls {
+  border: 1px solid var(--ob-border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.mcp-advanced-controls summary {
+  color: var(--ob-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.mcp-advanced-controls__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
 }
 
 .mcp-config-preview {
@@ -784,6 +835,7 @@ body {
 
   .mcp-toolbar,
   .mcp-grid,
+  .mcp-detail-grid--forms,
   .mcp-config-list__item {
     grid-template-columns: 1fr;
   }

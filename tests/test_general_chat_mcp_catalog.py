@@ -1,5 +1,7 @@
 """Tests for General Chat standard MCP server registry support."""
 
+# ruff: noqa: E402,I001
+
 from __future__ import annotations
 
 import json
@@ -13,11 +15,13 @@ from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
+from openbench.mcp.toolhive import ToolHiveWorkload
+
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
-from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore  # noqa: E402
+from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 
 
 PLAYWRIGHT_CONFIG = json.dumps(
@@ -58,7 +62,7 @@ class FakeDiscovery:
 
 
 class FakeMCPClient:
-    instances: list["FakeMCPClient"] = []
+    instances: list[FakeMCPClient] = []
 
     def __init__(self, config):
         self.config = config
@@ -74,6 +78,85 @@ class FakeMCPClient:
 
     def close_sync(self):
         self.closed = True
+
+
+class FakeGitDiscoveredServer:
+    tools = {
+        "git_status": {
+            "name": "git_status",
+            "description": "Read git status",
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        }
+    }
+
+
+class FakeGitDiscovery:
+    servers = {"git": FakeGitDiscoveredServer()}
+
+
+class FakeGitMCPClient(FakeMCPClient):
+    def discover_sync(self, refresh: bool = False):
+        return FakeGitDiscovery()
+
+    def discover_and_close_sync(self, refresh: bool = False):
+        self.closed = True
+        return FakeGitDiscovery()
+
+
+class FakeToolExecutor:
+    def __init__(self):
+        self._tools = {}
+        self._schemas = {}
+
+    def register(self, name, tool):
+        self._tools[name] = tool
+        self._schemas[name] = tool.get_schema()
+
+
+class FakeToolHiveService:
+    def status(self):
+        class Status:
+            def to_dict(self):
+                return {
+                    "available": True,
+                    "apiAvailable": True,
+                    "cliAvailable": False,
+                    "version": "v0.test",
+                    "apiBaseUrl": "http://127.0.0.1:8080",
+                    "source": "api",
+                    "error": None,
+                    "setupHint": None,
+                    "uiCliDetected": False,
+                    "cliPath": "thv",
+                    "managementMode": "api",
+                }
+
+        return Status()
+
+    def list_workloads(self):
+        return [
+            ToolHiveWorkload(
+                name="toolhive-doc-mcp",
+                status="running",
+                url="http://127.0.0.1:19767/mcp",
+                package="ghcr.io/stackloklabs/toolhive-doc-mcp:test",
+            )
+        ]
+
+    def list_registry_servers(self):
+        return []
+
+
+class FakeGitToolHiveService(FakeToolHiveService):
+    def list_workloads(self):
+        return [
+            ToolHiveWorkload(
+                name="git",
+                status="running",
+                url="http://127.0.0.1:39670/mcp",
+                package="io.github.stacklok/git",
+            )
+        ]
 
 
 class TestMCPServerRegistryStore(unittest.TestCase):
@@ -169,6 +252,25 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             self.assertEqual(summary["tools"], [])
             self.assertEqual(FakeMCPClient.instances, [])
 
+    def test_import_toolhive_workload_persists_metadata_and_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_toolhive_workloads(
+                [
+                    ToolHiveWorkload(
+                        name="toolhive-doc-mcp",
+                        status="running",
+                        url="http://127.0.0.1:19767/mcp",
+                    )
+                ]
+            )
+
+            server = payload["servers"][0]
+            self.assertEqual(server["source"], "toolhive")
+            self.assertEqual(server["workloadName"], "toolhive-doc-mcp")
+            self.assertEqual(server["proxyUrl"], "http://127.0.0.1:19767/mcp")
+            self.assertEqual(server["transport"], "streamable-http")
+
 
 class TestMCPServerRegistryEndpoints(unittest.TestCase):
     def test_import_toggle_discover_and_remove_flow(self):
@@ -193,7 +295,12 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             agent._skill_registry = None
             agent._mcp_summary = {"enabled": False, "tools": []}
             agent._external_mcp_summary = {"enabled": False, "tools": []}
+            agent._external_mcp_tool_names = set()
+            agent.tools = FakeToolExecutor()
             stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
+            stack.enter_context(
+                patch("general_chat.server.app.ToolHiveService", return_value=FakeToolHiveService())
+            )
             stack.enter_context(patch("general_chat.mcp_registry.MCPClient", FakeMCPClient))
             stack.enter_context(
                 patch(
@@ -213,6 +320,28 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             self.assertEqual(imported.status_code, 200)
             server = imported.json()["servers"][0]
             self.assertEqual(server["name"], "playwright")
+
+            status = client.get("/toolhive/status")
+            self.assertEqual(status.status_code, 200)
+            self.assertTrue(status.json()["available"])
+            self.assertEqual(status.json()["managementMode"], "api")
+            self.assertEqual(status.json()["cliPath"], "thv")
+
+            workloads = client.get("/toolhive/workloads")
+            self.assertEqual(workloads.status_code, 200)
+            self.assertEqual(workloads.json()["workloads"][0]["name"], "toolhive-doc-mcp")
+
+            imported_toolhive = client.post(
+                "/mcp/catalogs/toolhive/import-running",
+                json={"names": ["toolhive-doc-mcp"]},
+            )
+            self.assertEqual(imported_toolhive.status_code, 200)
+            toolhive_server = next(
+                item
+                for item in imported_toolhive.json()["servers"]
+                if item["name"] == "toolhive-doc-mcp"
+            )
+            self.assertEqual(toolhive_server["source"], "toolhive")
 
             disabled = client.post(
                 f"/mcp/catalogs/servers/{server['id']}/enable",
@@ -241,7 +370,51 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
 
             removed = client.delete(f"/mcp/catalogs/servers/{server['id']}")
             self.assertEqual(removed.status_code, 200)
-            self.assertEqual(client.get("/mcp/catalogs").json()["servers"], [])
+            remaining = client.get("/mcp/catalogs").json()["servers"]
+            self.assertEqual([item["name"] for item in remaining], ["toolhive-doc-mcp"])
+
+    def test_import_toolhive_git_workload_reload_discovers_streamable_http_tools(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stack = ExitStack()
+            self.addCleanup(stack.close)
+            stack.enter_context(
+                patch.dict(
+                    environ,
+                    {
+                        "GENERAL_CHAT_STORAGE_ROOT": tmpdir,
+                        "GENERAL_CHAT_UPLOAD_DIR": str(Path(tmpdir) / "uploads"),
+                        "GENERAL_CHAT_DOWNLOAD_DIR": str(Path(tmpdir) / "downloads"),
+                        "OPENBENCH_PROFILE_DIR": str(Path(tmpdir) / "profiles"),
+                    },
+                    clear=False,
+                )
+            )
+            agent = Mock()
+            agent.model = "mock-model"
+            agent._persona = None
+            agent._skill_registry = None
+            agent._mcp_summary = {"enabled": False, "tools": []}
+            agent._external_mcp_summary = {"enabled": False, "tools": []}
+            agent._external_mcp_tool_names = set()
+            agent.tools = FakeToolExecutor()
+            stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
+            stack.enter_context(
+                patch("general_chat.server.app.ToolHiveService", return_value=FakeGitToolHiveService())
+            )
+            stack.enter_context(patch("general_chat.mcp_registry.MCPClient", FakeGitMCPClient))
+
+            from general_chat.server.app import create_app
+
+            client = TestClient(create_app())
+            imported = client.post("/mcp/catalogs/toolhive/import-running", json={"names": ["git"]})
+
+            self.assertEqual(imported.status_code, 200)
+            payload = imported.json()
+            server = payload["servers"][0]
+            self.assertEqual(server["name"], "git")
+            self.assertEqual(server["transport"], "streamable-http")
+            self.assertEqual(payload["reload"]["tools"][0]["name"], "git.git_status")
+            self.assertIsNone(payload["reload"].get("error"))
 
 
 if __name__ == "__main__":

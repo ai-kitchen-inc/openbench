@@ -206,7 +206,7 @@ class MCPClient:
                 )
             except MCPTransportError as exc:
                 last_error = exc
-                if self._should_reconnect_stdio(cfg, exc, reconnected):
+                if self._should_reconnect_closed_session(cfg, exc, reconnected):
                     await self._reconnect_server(server)
                     reconnected = True
                     metrics.inc("tool_retries_total")
@@ -223,7 +223,7 @@ class MCPClient:
                 break
             except Exception as exc:
                 last_error = exc
-                if self._should_reconnect_stdio(cfg, exc, reconnected):
+                if self._should_reconnect_closed_session(cfg, exc, reconnected):
                     await self._reconnect_server(server)
                     reconnected = True
                     metrics.inc("tool_retries_total")
@@ -291,14 +291,14 @@ class MCPClient:
         self.discovery.servers[server] = await self._discover_server(server, transport)
 
     @staticmethod
-    def _should_reconnect_stdio(
+    def _should_reconnect_closed_session(
         config: MCPServerConnectionConfig,
         exc: BaseException,
         already_reconnected: bool,
     ) -> bool:
-        if already_reconnected or config.transport != "stdio":
+        if already_reconnected or config.transport not in {"stdio", "streamable-http"}:
             return False
-        return _is_closed_stdio_error(exc)
+        return _is_closed_session_error(exc)
 
     async def close(self) -> None:
         await asyncio.gather(*(transport.close() for transport in self._transports.values()))
@@ -339,7 +339,7 @@ def _result_text(result: dict[str, Any]) -> str:
     return ""
 
 
-def _is_closed_stdio_error(exc: BaseException) -> bool:
+def _is_closed_session_error(exc: BaseException) -> bool:
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
