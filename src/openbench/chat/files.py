@@ -9,6 +9,13 @@ Provides:
 - StoredFile: Metadata for a stored file. Carries an optional
   ``backend_ref`` so Drive-backed stores can round-trip file ids without
   leaking backend specifics into the attachment protocol.
+
+Pillar placement (see ``docs/MENTAL_MODEL.md``): ``FileStore`` is
+**plumbing under the Agentic pillar** — the substrate that holds user
+uploads and agent outputs. The agent never picks where files live; the
+backend is configured at deploy time. Cloud-backed stores
+(``GoogleDriveFileStore``) download-on-demand to a temp path so callers
+keep depending only on ``get_local_path``.
 """
 
 from __future__ import annotations

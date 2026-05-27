@@ -49,6 +49,11 @@ Guidance for Claude Code when working with this repository.
 It orchestrates workflows across frameworks AND provides built-in agent capabilities
 (BaseAgent with reasoning loop, tools, memory, RAG).
 
+> When routing a new capability, check [docs/MENTAL_MODEL.md](docs/MENTAL_MODEL.md)
+> first — it defines the four pillars (MCP / Skill / Agentic / Output) and the
+> decision matrix that says where each capability belongs. Storage, data, and LLM
+> providers are plumbing under Agentic, **not** pillars.
+
 ### What OpenBench IS
 
 | Role | Description |

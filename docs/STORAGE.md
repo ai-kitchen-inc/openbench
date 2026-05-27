@@ -5,6 +5,10 @@ Application code depends on five abstract stores; the runtime picks
 the concrete implementation per deployment. This page is the map of
 what exists, when to use each, and how to compose them.
 
+> The storage layer is **plumbing under the Agentic pillar**, not a
+> pillar of its own — see [MENTAL_MODEL.md](MENTAL_MODEL.md) for why
+> persistence stays Protocol-based ABC rather than MCP.
+
 ---
 
 ## The five stores
