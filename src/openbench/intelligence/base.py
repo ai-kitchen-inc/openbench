@@ -567,6 +567,7 @@ class BaseAgent(Agent):
         scratchpad: Any = None,
         output_store: Any = None,
         output_url_base: str | None = None,
+        mcp_client: Any = None,
     ):
         """
         Initialize agent.
@@ -613,6 +614,10 @@ class BaseAgent(Agent):
                 memory. When provided, it is injected into any loaded skill
                 whose ``tools.py`` declares a ``bind(scratchpad=...)``
                 function — e.g. the bundled ``memory-scratchpad`` skill.
+            mcp_client: Optional :class:`MCPClient` injected into any loaded
+                skill whose ``tools.py`` declares ``bind(mcp_client=...)`` —
+                e.g. the bundled ``drive-explorer`` skill. The caller owns
+                the MCP server lifecycle (subprocess spawn, OAuth, etc.).
         """
         self.goal = goal
         self.model = model or get_default_model()
@@ -746,6 +751,8 @@ class BaseAgent(Agent):
                 bind_kwargs["output_store"] = output_store
             if output_url_base is not None:
                 bind_kwargs["output_url_base"] = output_url_base
+            if mcp_client is not None:
+                bind_kwargs["mcp_client"] = mcp_client
             if bind_kwargs:
                 self._skill_registry.bind(**bind_kwargs)
 

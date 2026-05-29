@@ -29,6 +29,7 @@ class TestSDKSkillsDiscovery(unittest.TestCase):
     REQUIRED_SKILLS = {
         "data-context-extractor",
         "data-visualization",
+        "drive-explorer",
         "export-excel",
         "pdf-tools",
         "query-explorer",
@@ -1056,8 +1057,8 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         tools = reg.collect_tools()
         # data-context-extractor(2) + data-visualization(5) + export-excel(2)
         # + pdf-tools(7) + query-explorer(5) + web-search(7)
-        # + memory-scratchpad(4) = 32 tools
-        self.assertEqual(len(tools), 32)
+        # + memory-scratchpad(4) + drive-explorer(4) = 36 tools
+        self.assertEqual(len(tools), 36)
 
     def test_load_skills_by_name_after_load_sdk_skills(self):
         """load_skills(['data-visualization']) must work after load_sdk_skills()."""
