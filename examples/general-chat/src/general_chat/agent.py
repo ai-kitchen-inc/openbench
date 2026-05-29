@@ -51,6 +51,8 @@ def _mcp_config_path() -> Path:
 
 
 def _mcp_registry_root() -> Path | None:
+    if not _env_flag("GENERAL_CHAT_MCP_REGISTRY_ENABLED", default=True):
+        return None
     raw = os.getenv("GENERAL_CHAT_MCP_REGISTRY_ROOT")
     if not raw:
         return None

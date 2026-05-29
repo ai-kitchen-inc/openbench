@@ -79,6 +79,7 @@ The other variables in `.env` are optional overrides:
 | `GENERAL_CHAT_MCP_MODE` | `local` | `local` uses in-process OpenBench MCP; `external` uses configured MCP servers |
 | `GENERAL_CHAT_MCP_CONFIG` | `mcp/openbench-mcp.yaml` | MCP config file for General Chat |
 | `GENERAL_CHAT_MCP_APPROVED_TOOLS` | query tools | Comma-separated namespaced MCP tools exposed to the chat agent |
+| `GENERAL_CHAT_MCP_REGISTRY_ENABLED` | `1` | Set to `0` for dedicated single-server demo scripts so saved registry servers are ignored |
 
 ---
 
@@ -364,6 +365,59 @@ Sources panel and ask:
 
 ```text
 Use the uploaded image source with image_search.search_similar_images. If the index is empty or uninitialized, tell me to build it outside chat; otherwise return the top 3 similar images with visible thumbnails, image ids, labels, splits, dataset indexes, and similarity scores. If the index is partial, mention that coverage is partial.
+```
+
+### SAM 3 Concept Counting MCP
+
+General Chat can also load the local Dockerized Ultralytics SAM 3 MCP server.
+It counts objects matching a text concept such as `dog`, `person`, `red apple`,
+or `yellow school bus`. It is SAM 3 only and does not support SAM 1, SAM 2,
+FastSAM, or MobileSAM fallbacks.
+
+Ultralytics does not auto-download `sam3.pt`, and the official weights are gated
+on Hugging Face. After receiving access, either place `sam3.pt` at
+`examples/sam-segmentation-mcp/weights/sam3.pt` or set `HF_TOKEN` so Docker
+Compose can download the weights during build. Then build the container from the
+repo root:
+
+```powershell
+$env:HF_TOKEN="hf_..."   # optional if weights/sam3.pt already exists
+docker compose -f examples\sam-segmentation-mcp\docker-compose.yml --profile cpu build
+```
+
+If you already ran `hf auth login`, you can use the helper script instead:
+
+```powershell
+examples\sam-segmentation-mcp\scripts\build_with_sam3.ps1
+```
+
+The compose build defaults `SAM3_PREINSTALL=required`, so it fails early if the
+weights cannot be copied or downloaded. The General Chat MCP config uses the
+weights baked into `openbench/sam-segmentation-mcp:cpu` at `/models/sam3.pt`.
+
+Start General Chat with the SAM 3 MCP config:
+
+```powershell
+cd examples/general-chat
+.\scripts\run_with_sam_segmentation_mcp.ps1
+```
+
+Verify the tool is loaded:
+
+```powershell
+Invoke-RestMethod http://localhost:8005/mcp/tools
+```
+
+Expected namespaced tools include:
+
+```text
+sam_segmentation.count_objects_with_sam3
+```
+
+Upload a `.png`, `.jpg`, `.jpeg`, or `.webp` image in the Sources panel and ask:
+
+```text
+How many dogs are in this image? Use the SAM 3 counting tool.
 ```
 
 ---

@@ -10,7 +10,8 @@ import pytest
 
 from openbench.core.abstractions import Tool
 from openbench.intelligence.base import ToolExecutor
-from openbench.mcp.adapters import MCPToolAdapter
+import openbench.mcp.adapters as adapters_module
+from openbench.mcp.adapters import MCPToolAdapter, load_mcp_tools
 from openbench.mcp.client import MCPClient
 from openbench.mcp.config import (
     MCPClientConfig,
@@ -461,3 +462,70 @@ def test_mcp_tool_adapter_reports_empty_exception_class(openbench_mcp_server):
 
     with pytest.raises(RuntimeError, match="ClosedResourceError"):
         adapter.execute()
+
+
+def test_mcp_tool_adapter_passes_configured_timeout_to_client(openbench_mcp_server):
+    client = MCPClient(transports={"openbench": InMemoryMCPTransport(openbench_mcp_server)})
+    adapter = MCPToolAdapter(
+        client=client,
+        namespaced_name="openbench.distinct_values",
+        tool_schema={
+            "name": "distinct_values",
+            "description": "Distinct values",
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        },
+        approved=True,
+        timeout_seconds=123.0,
+    )
+    seen = {}
+
+    def fake_call_tool_sync(*args, **kwargs):
+        seen["timeout_seconds"] = kwargs.get("timeout_seconds")
+        return {"ok": True}
+
+    adapter.client.call_tool_sync = fake_call_tool_sync
+
+    assert adapter.execute() == {"ok": True}
+    assert seen["timeout_seconds"] == 123.0
+
+
+def test_load_mcp_tools_propagates_server_timeout(monkeypatch):
+    schema = {
+        "name": "count_objects_with_sam3",
+        "description": "Count concept instances",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"concept": {"type": "string"}},
+            "required": ["concept"],
+        },
+    }
+
+    class FakeMCPClient:
+        def __init__(self, config):
+            self.config = config
+
+        def discover_sync(self):
+            return SimpleNamespace(
+                servers={
+                    "sam_segmentation": SimpleNamespace(
+                        tools={"count_objects_with_sam3": schema}
+                    )
+                }
+            )
+
+    monkeypatch.setattr(adapters_module, "MCPClient", FakeMCPClient)
+    config = MCPClientConfig(
+        servers={
+            "sam": MCPServerConnectionConfig(
+                command="noop",
+                namespace="sam_segmentation",
+                timeout_seconds=456.0,
+            )
+        }
+    )
+
+    tools = load_mcp_tools(config)
+
+    assert len(tools) == 1
+    assert tools[0].namespaced_name == "sam_segmentation.count_objects_with_sam3"
+    assert tools[0].timeout_seconds == 456.0

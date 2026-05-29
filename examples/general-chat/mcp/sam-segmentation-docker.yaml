@@ -1,0 +1,38 @@
+mcp:
+  policy:
+    allow_remote_servers: false
+    allowed_servers:
+      - sam_segmentation
+    max_timeout_seconds: 3600
+
+  servers:
+    sam_segmentation:
+      transport: stdio
+      command: docker
+      args:
+        - run
+        - "-i"
+        - "--rm"
+        - "-v"
+        - "${SAM_SEGMENTATION_MCP_UPLOADS_PATH}:/general-chat/uploads:ro"
+        - "-e"
+        - SAM3_MODEL_PATH=/models/sam3.pt
+        - "-e"
+        - SAM3_DEVICE=cpu
+        - "-e"
+        - SAM3_CONF=0.25
+        - "-e"
+        - SAM3_HALF=false
+        - "-e"
+        - SAM3_VERBOSE=false
+        - "-e"
+        - IMAGE_INPUT_ROOTS=/general-chat/uploads
+        - "-e"
+        - MAX_IMAGE_BYTES=10485760
+        - "-e"
+        - MAX_IMAGE_PIXELS=12000000
+        - openbench/sam-segmentation-mcp:cpu
+      namespace: sam_segmentation
+      allowed: true
+      timeout_seconds: 3600
+      retries: 0

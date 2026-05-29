@@ -20,11 +20,13 @@ class MCPToolAdapter(Tool):
         namespaced_name: str,
         tool_schema: dict[str, Any],
         approved: bool = False,
+        timeout_seconds: float | None = None,
     ):
         self.client = client
         self.namespaced_name = namespaced_name
         self.tool_schema = tool_schema
         self.approved = approved
+        self.timeout_seconds = timeout_seconds
         self._provider_name = provider_safe_tool_name(namespaced_name)
 
     @property
@@ -41,6 +43,7 @@ class MCPToolAdapter(Tool):
             return self.client.call_tool_sync(
                 self.namespaced_name,
                 params,
+                timeout_seconds=self.timeout_seconds,
                 approved=self.approved,
             )
         except Exception as exc:
@@ -63,7 +66,12 @@ def load_mcp_tools(config: MCPConfig | MCPClientConfig) -> list[MCPToolAdapter]:
     client = MCPClient(client_config)
     discovered = client.discover_sync()
     tools: list[MCPToolAdapter] = []
+    configs_by_namespace = {
+        server_config.namespace or server_name: server_config
+        for server_name, server_config in client_config.servers.items()
+    }
     for server_name, server in discovered.servers.items():
+        server_config = configs_by_namespace.get(server_name)
         for tool_name, tool_schema in server.tools.items():
             namespaced = f"{server_name}.{tool_name}"
             tools.append(
@@ -71,6 +79,9 @@ def load_mcp_tools(config: MCPConfig | MCPClientConfig) -> list[MCPToolAdapter]:
                     client=client,
                     namespaced_name=namespaced,
                     tool_schema=tool_schema,
+                    timeout_seconds=server_config.timeout_seconds
+                    if server_config is not None
+                    else None,
                 )
             )
     return tools

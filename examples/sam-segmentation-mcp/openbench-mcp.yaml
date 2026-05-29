@@ -1,0 +1,16 @@
+mcp:
+  server:
+    name: openbench-sam-segmentation
+    include_sdk_tools: false
+    skills:
+      - examples/sam-segmentation-mcp/openbench-skill
+    transport: stdio
+    policy:
+      allowed_servers:
+        - openbench-sam-segmentation
+      require_approval_for_risks:
+        - write
+        - artifact_write
+        - external_network
+        - destructive
+

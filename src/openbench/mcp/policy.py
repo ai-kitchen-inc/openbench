@@ -40,6 +40,8 @@ READ_TOOLS = {
     "list_memory_keys",
     "list_index_stats",
     "search_similar_images",
+    "count_objects_with_sam3",
+    "service_info",
 }
 
 WRITE_TOOLS = {

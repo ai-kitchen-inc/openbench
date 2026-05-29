@@ -323,9 +323,10 @@ class MCPServerRegistryStore:
         for item in state["servers"]:
             if not item.get("enabled", True):
                 continue
+            server_config = MCPServerConnectionConfig.model_validate(item["config"])
             client = MCPClient(
                 MCPClientConfig(
-                    servers={item["name"]: MCPServerConnectionConfig.model_validate(item["config"])},
+                    servers={item["name"]: server_config},
                     policy=MCPPolicyConfig(
                         allow_remote_servers=True,
                         require_approval_for_risks=[
@@ -371,6 +372,7 @@ class MCPServerRegistryStore:
                         namespaced_name=namespaced,
                         tool_schema=tool_schema,
                         approved=True,
+                        timeout_seconds=server_config.timeout_seconds,
                     )
                     adapters.append(adapter)
                     summaries.append(
@@ -380,6 +382,7 @@ class MCPServerRegistryStore:
                             "adapter_name": adapter.name,
                             "description": tool_schema.get("description", ""),
                             "enabled": True,
+                            "timeout_seconds": server_config.timeout_seconds,
                             "provider_warning": state["tools"][item["id"]][tool_name].get(
                                 "provider_warning"
                             ),

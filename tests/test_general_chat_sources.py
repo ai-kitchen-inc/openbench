@@ -34,7 +34,7 @@ GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-c
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
-from general_chat.agent import _ImageSearchRenderTool  # noqa: E402
+from general_chat.agent import _ImageSearchRenderTool, _mcp_registry_root  # noqa: E402
 from general_chat.extractor import DoclingContentExtractor  # noqa: E402
 from general_chat.server.app import _resolve_mime, _resolve_request_session_id  # noqa: E402
 from general_chat.server.handler import GeneralChatHandler  # noqa: E402
@@ -303,6 +303,51 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertIn("image_search.search_similar_images", allowlist_line)
         self.assertNotIn("image_search.index_images", allowlist_line)
         self.assertNotIn("image_search.rebuild_index", allowlist_line)
+        self.assertIn('GENERAL_CHAT_MCP_REGISTRY_ENABLED = "0"', content)
+
+    def test_sam_segmentation_startup_script_exposes_count_tool_only(self):
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "general-chat"
+            / "scripts"
+            / "run_with_sam_segmentation_mcp.ps1"
+        )
+        content = script.read_text(encoding="utf-8")
+
+        allowlist_line = next(
+            line for line in content.splitlines() if "GENERAL_CHAT_MCP_APPROVED_TOOLS" in line
+        )
+        self.assertIn("sam_segmentation.count_objects_with_sam3", allowlist_line)
+        self.assertNotIn("sam_segmentation.service_info", allowlist_line)
+        self.assertIn('GENERAL_CHAT_MCP_REGISTRY_ENABLED = "0"', content)
+        self.assertIn("baked into openbench/sam-segmentation-mcp:cpu", content)
+        self.assertNotIn("SAM_SEGMENTATION_MCP_MODELS_PATH", content)
+
+    def test_sam_segmentation_build_script_uses_hf_cli_token(self):
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "sam-segmentation-mcp"
+            / "scripts"
+            / "build_with_sam3.ps1"
+        )
+        content = script.read_text(encoding="utf-8")
+
+        self.assertIn("hf auth token", content)
+        self.assertIn("Docker build secret", content)
+        self.assertIn("docker compose", content)
+
+    def test_mcp_registry_root_can_be_disabled_for_dedicated_mcp_scripts(self):
+        with patch.dict(
+            environ,
+            {
+                "GENERAL_CHAT_MCP_REGISTRY_ROOT": "C:/tmp/openbench-registry",
+                "GENERAL_CHAT_MCP_REGISTRY_ENABLED": "0",
+            },
+            clear=False,
+        ):
+            self.assertIsNone(_mcp_registry_root())
 
     def test_plain_text_source_success(self):
         parser = SourceParserRegistry()
@@ -489,8 +534,17 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(record.kind, "image")
         self.assertIn("Launch checklist", record.text)
         self.assertEqual(record.metadata["width"], 640)
-        self.assertEqual(record.metadata["imageSearchPath"], "/general-chat/uploads/file-2/diagram.png")
+        self.assertEqual(
+            record.metadata["imageSearchPath"],
+            "/general-chat/uploads/file-2/diagram.png",
+        )
+        self.assertEqual(
+            record.metadata["samSegmentationPath"],
+            "/general-chat/uploads/file-2/diagram.png",
+        )
         self.assertEqual(record.metadata["imageSearchPreviewUrl"], "/uploads/file-2/diagram.png")
+        self.assertIn("sam_segmentation.count_objects_with_sam3", record.text)
+        self.assertIn("concept", record.text)
         self.assertIn("OCR-detected text", str(record.metadata["description"]))
         extractor.extract_image.assert_called_once_with(stored)
 
@@ -518,7 +572,14 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(record.kind, "image")
         self.assertIsNone(record.error)
         self.assertIn("OCR pipeline unavailable", record.text)
-        self.assertEqual(record.metadata["imageSearchPath"], "/general-chat/uploads/file-3/scan.png")
+        self.assertEqual(
+            record.metadata["imageSearchPath"],
+            "/general-chat/uploads/file-3/scan.png",
+        )
+        self.assertEqual(
+            record.metadata["samSegmentationPath"],
+            "/general-chat/uploads/file-3/scan.png",
+        )
         self.assertEqual(record.metadata["imageSearchPreviewUrl"], "/uploads/file-3/scan.png")
 
     def test_jpeg_ocr_success_creates_searchable_image_source(self):
@@ -1224,6 +1285,36 @@ class TestGeneralChatSources(unittest.TestCase):
         highest = max(customers, key=lambda item: item["arr"])
         self.assertEqual(highest["account"], "Borneo Analytics")
         self.assertEqual(highest["arr"], 220000)
+
+    def test_sam_segmentation_mcp_example_config(self):
+        from openbench.mcp.config import MCPConfig
+
+        example_root = Path(__file__).resolve().parents[1] / "examples" / "general-chat"
+        config_path = example_root / "mcp" / "sam-segmentation-docker.yaml"
+
+        with patch.dict(
+            environ,
+            {
+                "SAM_SEGMENTATION_MCP_MODELS_PATH": "C:/tmp/models",
+                "SAM_SEGMENTATION_MCP_UPLOADS_PATH": "C:/tmp/uploads",
+            },
+            clear=False,
+        ):
+            config = MCPConfig.from_file(config_path)
+
+        server = config.client_config().servers["sam_segmentation"]
+        self.assertEqual(server.transport, "stdio")
+        self.assertEqual(server.command, "docker")
+        self.assertEqual(server.namespace, "sam_segmentation")
+        self.assertTrue(server.allowed)
+        self.assertEqual(server.timeout_seconds, 3600)
+        self.assertEqual(server.retries, 0)
+        self.assertIn("openbench/sam-segmentation-mcp:cpu", server.args)
+        self.assertNotIn("C:/tmp/models:/models:ro", server.args)
+        self.assertIn("SAM3_MODEL_PATH=/models/sam3.pt", server.args)
+        self.assertIn("SAM3_DEVICE=cpu", server.args)
+        self.assertIn("IMAGE_INPUT_ROOTS=/general-chat/uploads", server.args)
+        self.assertNotIn("SAM_MODEL=sam_b.pt", server.args)
 
     def _cleanup_path_tree(self, root: Path) -> None:
         if not root.exists():

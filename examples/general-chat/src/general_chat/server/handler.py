@@ -154,9 +154,12 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
             continue
         metadata = record.metadata or {}
         image_search_path = metadata.get("imageSearchPath")
+        sam_segmentation_path = metadata.get("samSegmentationPath")
         extra_lines = ""
         if record.kind == "image" and isinstance(image_search_path, str):
             extra_lines = f"Image search path: {image_search_path}\n\n"
+            if isinstance(sam_segmentation_path, str):
+                extra_lines += f"SAM 3 concept counting path: {sam_segmentation_path}\n\n"
         attachments.append(
             Attachment(
                 id=record.id,

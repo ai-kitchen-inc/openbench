@@ -37,6 +37,19 @@ PLAYWRIGHT_CONFIG = json.dumps(
     }
 )
 
+PLAYWRIGHT_TIMEOUT_CONFIG = json.dumps(
+    {
+        "mcpServers": {
+            "playwright": {
+                "command": "docker",
+                "args": ["run", "-i", "--rm", "mcp/playwright"],
+                "cwd": "examples/general-chat",
+                "timeout_seconds": 77,
+            }
+        }
+    }
+)
+
 
 class FakeDiscoveredServer:
     tools = {
@@ -237,6 +250,18 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             self.assertEqual(summary["tools"][0]["name"], "playwright.browser_snapshot")
             loaded_server = FakeMCPClient.instances[-1].config.servers["playwright"]
             self.assertEqual(loaded_server.cwd, "examples/general-chat")
+
+    def test_enabled_registry_adapters_preserve_server_timeout(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            FakeMCPClient.instances = []
+            store = MCPServerRegistryStore(tmpdir)
+            store.import_config_json(PLAYWRIGHT_TIMEOUT_CONFIG)
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeMCPClient):
+                adapters, summary = store.load_enabled_tool_adapters()
+
+            self.assertEqual(adapters[0].timeout_seconds, 77.0)
+            self.assertEqual(summary["tools"][0]["timeout_seconds"], 77.0)
 
     def test_disabled_server_is_not_started_or_offered_to_runtime(self):
         with tempfile.TemporaryDirectory() as tmpdir:

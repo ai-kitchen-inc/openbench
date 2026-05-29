@@ -1013,27 +1013,47 @@ def validate_file_source(filename: str, mime_type: str, size_bytes: int, *, max_
         raise ValueError("Unsupported source MIME type: application/octet-stream")
 
 
-def image_search_metadata(stored_file: StoredFile, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Return metadata that lets image-search MCP read an uploaded image."""
-    root = os.getenv("GENERAL_CHAT_IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT", IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT)
+def image_search_metadata(
+    stored_file: StoredFile,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return metadata that lets image MCP tools read an uploaded image."""
+    root = os.getenv(
+        "GENERAL_CHAT_IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT",
+        IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT,
+    )
     image_path = f"{root.rstrip('/')}/{stored_file.id}/{stored_file.name}"
     result = dict(metadata or {})
     result["imageSearchPath"] = image_path
+    result["samSegmentationPath"] = image_path
     result["imageSearchPreviewUrl"] = f"/uploads/{stored_file.id}/{stored_file.name}"
     return result
 
 
-def image_search_text(stored_file: StoredFile, *, parsed_text: str = "", error: str | None = None) -> str:
-    """Build attachment text with explicit image-search MCP instructions."""
+def image_search_text(
+    stored_file: StoredFile,
+    *,
+    parsed_text: str = "",
+    error: str | None = None,
+) -> str:
+    """Build attachment text with explicit image MCP instructions."""
     metadata = image_search_metadata(stored_file)
     parts = [
         f"Image source: {stored_file.name}",
         f"Browser URL: {metadata['imageSearchPreviewUrl']}",
         f"image_search MCP path: {metadata['imageSearchPath']}",
+        f"sam_segmentation MCP path: {metadata['samSegmentationPath']}",
         "",
         (
             "To find visually similar CIFAR-10 images for this uploaded image, call "
             f"image_search.search_similar_images with image_path=\"{metadata['imageSearchPath']}\"."
+        ),
+        (
+            "To count objects matching a text concept in this uploaded image, call "
+            "sam_segmentation.count_objects_with_sam3 with "
+            f"image_path=\"{metadata['samSegmentationPath']}\" and concept set to "
+            "the noun phrase requested by the user, such as \"dog\", \"person\", "
+            "\"red apple\", or \"yellow school bus\"."
         ),
     ]
     if parsed_text.strip():

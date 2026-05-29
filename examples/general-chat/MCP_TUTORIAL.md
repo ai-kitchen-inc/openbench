@@ -356,11 +356,73 @@ If the image-search model fails with a gated Hugging Face error, run
 `%USERPROFILE%\.cache\huggingface\token` exists. The launcher mounts that cache
 read-only into the Docker container.
 
+## 11. SAM 3 Concept Counting MCP Server
+
+General Chat can also use the Dockerized Ultralytics SAM 3 concept counting MCP
+server from `examples/sam-segmentation-mcp`. It counts objects matching a text
+concept such as `dog`, `person`, `red apple`, or `yellow school bus`.
+
+Ultralytics does not auto-download `sam3.pt`, and the official weights are gated
+on Hugging Face. After receiving access, either place `sam3.pt` at
+`examples/sam-segmentation-mcp/weights/sam3.pt` or set `HF_TOKEN` so Docker
+Compose can download the weights during build. From the repository root, build
+the image:
+
+```powershell
+$env:HF_TOKEN="hf_..."   # optional if weights/sam3.pt already exists
+docker compose -f examples\sam-segmentation-mcp\docker-compose.yml --profile cpu build
+```
+
+If you already ran `hf auth login`, you can use the helper script instead:
+
+```powershell
+examples\sam-segmentation-mcp\scripts\build_with_sam3.ps1
+```
+
+The compose build defaults `SAM3_PREINSTALL=required`, so it fails early if the
+weights cannot be copied or downloaded. General Chat uses the baked-in model at
+`/models/sam3.pt`.
+
+Confirm discovery:
+
+```powershell
+python examples\sam-segmentation-mcp\scripts\test_mcp_server.py --mode docker --discovery-only
+```
+
+Start General Chat with the SAM 3 counting MCP config:
+
+```powershell
+cd examples/general-chat
+.\scripts\run_with_sam_segmentation_mcp.ps1
+```
+
+Check discovery:
+
+```powershell
+Invoke-RestMethod http://localhost:8005/mcp/tools
+```
+
+Expected `namespaced_tool_names` includes:
+
+```text
+sam_segmentation.count_objects_with_sam3
+```
+
+Upload a `.png`, `.jpg`, `.jpeg`, or `.webp` image in the Sources panel, then
+ask:
+
+```text
+How many dogs are in this image? Use the SAM 3 counting tool.
+```
+
 ## Troubleshooting
 
 - `/mcp/tools` says disabled: set `GENERAL_CHAT_MCP_ENABLED=1` and restart.
 - `/mcp/tools` has zero tools: load tools in the MCP Servers panel and make
   sure the target server and tools are enabled.
+- Dedicated Docker scripts fail while discovering stale ToolHive or manual MCP
+  servers: set `GENERAL_CHAT_MCP_REGISTRY_ENABLED=0`, or use the provided
+  scripts which set it for you.
 - `openbench mcp list-tools` fails: install `openbench[mcp]` and run from the
   repository root.
 - Chat does not call tools: make the prompt explicit: "Use the MCP tools..."

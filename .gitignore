@@ -474,6 +474,7 @@ docs/.vitepress/cache/
 # Docker
 # ==========================================
 .dockerignore
+!examples/sam-segmentation-mcp/.dockerignore
 # Root-level Dockerfile is a transient artifact from examples/*/deploy.sh
 # (copied during gcloud run deploy --source . and meant to be removed after).
 # Anchored with leading slash so nested Dockerfiles (examples/*/Dockerfile) stay tracked.

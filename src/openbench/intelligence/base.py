@@ -278,13 +278,14 @@ class ToolExecutor:
         """Get all tool schemas for LLM."""
         return list(self._schemas.values())
 
-    def execute(self, name: str, timeout: int = 30, **params) -> Any:
+    def execute(self, name: str, timeout: int | float | None = None, **params) -> Any:
         """
         Execute a tool by name.
 
         Args:
             name: Tool name
-            timeout: Maximum execution time in seconds (default: 30)
+            timeout: Maximum execution time in seconds. When omitted, tools may
+                provide a ``timeout_seconds`` attribute; otherwise defaults to 30.
             **params: Tool parameters
 
         Returns:
@@ -297,6 +298,13 @@ class ToolExecutor:
         tool = self._tools.get(name)
         if not tool:
             raise ValueError(f"Tool not found: {name}")
+        resolved_timeout = timeout
+        if resolved_timeout is None:
+            resolved_timeout = getattr(tool, "timeout_seconds", 30)
+        try:
+            resolved_timeout = float(resolved_timeout)
+        except (TypeError, ValueError):
+            resolved_timeout = 30.0
 
         import contextvars
         from queue import Empty, SimpleQueue
@@ -320,10 +328,10 @@ class ToolExecutor:
         ctx = contextvars.copy_context()
         thread = threading.Thread(target=ctx.run, args=(_run,), daemon=True)
         thread.start()
-        thread.join(timeout=timeout)
+        thread.join(timeout=resolved_timeout)
 
         if thread.is_alive():
-            raise TimeoutError(f"Tool '{name}' exceeded {timeout}s timeout")
+            raise TimeoutError(f"Tool '{name}' exceeded {resolved_timeout:g}s timeout")
 
         try:
             status, value = q.get_nowait()
@@ -335,7 +343,7 @@ class ToolExecutor:
         return value
 
     def execute_parallel(
-        self, calls: list[dict[str, Any]], timeout: int = 30
+        self, calls: list[dict[str, Any]], timeout: int | float | None = None
     ) -> list[dict[str, Any]]:
         """Execute multiple tool calls concurrently.
 
@@ -348,7 +356,8 @@ class ToolExecutor:
 
         Args:
             calls: List of tool call dicts with ``name``, ``arguments``, ``id``.
-            timeout: Maximum execution time per tool in seconds.
+            timeout: Maximum execution time per tool in seconds. When omitted,
+                each tool may provide its own ``timeout_seconds``.
 
         Returns:
             List of result dicts with ``call``, ``result``, ``error`` keys.
