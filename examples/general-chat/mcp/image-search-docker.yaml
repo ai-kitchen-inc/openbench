@@ -42,4 +42,5 @@ mcp:
         - openbench/image-search-mcp:cpu
       namespace: image_search
       allowed: true
+      discovery_timeout_seconds: 15
       timeout_seconds: 3600

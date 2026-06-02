@@ -16,6 +16,7 @@ ENV SAM3_VERBOSE=false
 ENV MAX_IMAGE_BYTES=10485760
 ENV MAX_IMAGE_PIXELS=12000000
 ENV IMAGE_INPUT_ROOTS=/general-chat/uploads,/data,/input
+ENV DEBUG_OUTPUT_DIR=/tmp/sam-segmentation-debug
 ENV YOLO_CONFIG_DIR=/tmp/ultralytics-config
 ENV MPLCONFIGDIR=/tmp/matplotlib
 
@@ -40,9 +41,9 @@ COPY README.md ./
 COPY weights ./weights
 
 RUN --mount=type=secret,id=hf_token,required=false \
-    mkdir -p /data /input /models /tmp/ultralytics-config /tmp/matplotlib \
+    mkdir -p /data /input /models /tmp/sam-segmentation-debug /tmp/ultralytics-config /tmp/matplotlib \
     && SAM3_PREINSTALL="${SAM3_PREINSTALL}" SAM3_HF_REPO="${SAM3_HF_REPO}" SAM3_HF_FILENAME="${SAM3_HF_FILENAME}" python scripts/download_sam3_weights.py \
-    && chown -R sam-segmentation:sam-segmentation /app /data /input /models /tmp/ultralytics-config /tmp/matplotlib
+    && chown -R sam-segmentation:sam-segmentation /app /data /input /models /tmp/sam-segmentation-debug /tmp/ultralytics-config /tmp/matplotlib
 
 USER sam-segmentation
 
@@ -64,6 +65,7 @@ ENV SAM3_VERBOSE=false
 ENV MAX_IMAGE_BYTES=10485760
 ENV MAX_IMAGE_PIXELS=12000000
 ENV IMAGE_INPUT_ROOTS=/general-chat/uploads,/data,/input
+ENV DEBUG_OUTPUT_DIR=/tmp/sam-segmentation-debug
 ENV YOLO_CONFIG_DIR=/tmp/ultralytics-config
 ENV MPLCONFIGDIR=/tmp/matplotlib
 
@@ -87,9 +89,9 @@ COPY README.md ./
 COPY weights ./weights
 
 RUN --mount=type=secret,id=hf_token,required=false \
-    mkdir -p /data /input /models /tmp/ultralytics-config /tmp/matplotlib \
+    mkdir -p /data /input /models /tmp/sam-segmentation-debug /tmp/ultralytics-config /tmp/matplotlib \
     && SAM3_PREINSTALL="${SAM3_PREINSTALL}" SAM3_HF_REPO="${SAM3_HF_REPO}" SAM3_HF_FILENAME="${SAM3_HF_FILENAME}" python scripts/download_sam3_weights.py \
-    && chown -R sam-segmentation:sam-segmentation /app /data /input /models /tmp/ultralytics-config /tmp/matplotlib
+    && chown -R sam-segmentation:sam-segmentation /app /data /input /models /tmp/sam-segmentation-debug /tmp/ultralytics-config /tmp/matplotlib
 
 USER sam-segmentation
 

@@ -1,6 +1,8 @@
 import react from "@vitejs/plugin-react-swc";
 import { defineConfig } from "vite";
 
+const backendUrl = process.env.VITE_BACKEND_URL ?? "http://localhost:8005";
+
 export default defineConfig({
   envDir: "..",
   plugins: [react()],
@@ -14,19 +16,19 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/awp": { target: "http://localhost:8005", changeOrigin: true },
-      "/chat/action": { target: "http://localhost:8005", changeOrigin: true },
-      "/chat/upload": { target: "http://localhost:8005", changeOrigin: true },
-      "/chat/sources": { target: "http://localhost:8005", changeOrigin: true },
-      "/sessions": { target: "http://localhost:8005", changeOrigin: true },
-      "/uploads": { target: "http://localhost:8005", changeOrigin: true },
-      "/downloads": { target: "http://localhost:8005", changeOrigin: true },
-      "/image-search": { target: "http://localhost:8005", changeOrigin: true },
-      "/persona": { target: "http://localhost:8005", changeOrigin: true },
-      "/skills": { target: "http://localhost:8005", changeOrigin: true },
-      "/mcp/tools": { target: "http://localhost:8005", changeOrigin: true },
-      "/mcp/catalogs": { target: "http://localhost:8005", changeOrigin: true },
-      "/toolhive": { target: "http://localhost:8005", changeOrigin: true },
+      "/awp": { target: backendUrl, changeOrigin: true },
+      "/chat/action": { target: backendUrl, changeOrigin: true },
+      "/chat/upload": { target: backendUrl, changeOrigin: true },
+      "/chat/sources": { target: backendUrl, changeOrigin: true },
+      "/sessions": { target: backendUrl, changeOrigin: true },
+      "/uploads": { target: backendUrl, changeOrigin: true },
+      "/downloads": { target: backendUrl, changeOrigin: true },
+      "/image-search": { target: backendUrl, changeOrigin: true },
+      "/persona": { target: backendUrl, changeOrigin: true },
+      "/skills": { target: backendUrl, changeOrigin: true },
+      "/mcp/tools": { target: backendUrl, changeOrigin: true },
+      "/mcp/catalogs": { target: backendUrl, changeOrigin: true },
+      "/toolhive": { target: backendUrl, changeOrigin: true },
     },
   },
 });

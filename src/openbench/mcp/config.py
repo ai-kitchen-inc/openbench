@@ -87,6 +87,7 @@ class MCPServerConnectionConfig(BaseModel):
     url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: float = 30.0
+    discovery_timeout_seconds: float | None = None
     retries: int = 2
     retry_backoff_seconds: float = 0.25
     enabled: bool = True

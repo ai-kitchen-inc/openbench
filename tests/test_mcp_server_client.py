@@ -121,6 +121,25 @@ class CloseTaskTrackingTransport(MCPTransport):
         self.closed = True
 
 
+class SlowDiscoveryTransport(MCPTransport):
+    def __init__(self, *, delay_seconds: float):
+        self.delay_seconds = delay_seconds
+        self.closed = False
+
+    async def initialize(self) -> dict:
+        await asyncio.sleep(self.delay_seconds)
+        return {"capabilities": {"tools": {}}}
+
+    async def list_tools(self) -> list[dict]:
+        return []
+
+    async def call_tool(self, name: str, arguments: dict) -> dict:
+        return {"isError": False, "structuredContent": arguments}
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 class FakeStreamableSession:
     instances: list[FakeStreamableSession] = []
 
@@ -264,6 +283,31 @@ def test_client_discover_and_close_uses_one_task_for_short_lived_stdio_lifecycle
     assert "echo" in discovered.servers["loop"].tools
     assert transport.closed is True
     assert len(set(transport.task_ids)) == 1
+
+
+def test_client_discovery_timeout_is_separate_from_tool_timeout(monkeypatch):
+    slow_transport = SlowDiscoveryTransport(delay_seconds=0.1)
+
+    monkeypatch.setattr("openbench.mcp.client.build_transport", lambda _config: slow_transport)
+    client = MCPClient(
+        MCPClientConfig(
+            servers={
+                "sam": MCPServerConnectionConfig(
+                    command="fake-mcp",
+                    namespace="sam",
+                    allowed=True,
+                    discovery_timeout_seconds=0.01,
+                    timeout_seconds=3600,
+                )
+            }
+        )
+    )
+
+    with pytest.raises(Exception, match="Timed out discovering MCP server 'sam' after 0.01s"):
+        client.discover_sync()
+
+    assert slow_transport.closed is True
+    assert client._server_configs["sam"].timeout_seconds == 3600
 
 
 def test_streamable_http_transport_uses_mcp_sdk_session(fake_streamable_sdk):

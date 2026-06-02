@@ -87,6 +87,8 @@ The process speaks MCP over stdio and waits for client requests.
 | `MAX_IMAGE_PIXELS` | `12000000` | Max decoded image pixels |
 | `IMAGE_INPUT_ROOTS` | `data,uploads,/data,/input,/general-chat/uploads` | Allowed local image roots |
 | `RETURN_OVERLAY_DEFAULT` | `false` | Include overlay unless explicitly requested |
+| `DEBUG_OUTPUT_DIR` | `/tmp/sam-segmentation-debug` | Writable directory for segmentation debug images |
+| `DEBUG_OUTPUT_URL_BASE` | unset | Optional browser-accessible URL prefix for debug images |
 
 ## Example MCP Request
 
@@ -118,9 +120,19 @@ The process speaks MCP over stdio and waits for client requests.
       "confidence": 0.94
     }
   ],
+  "debug": {
+    "image_path": "/tmp/sam-segmentation-debug/dog-ab12cd34ef.png",
+    "bbox_format": "xyxy",
+    "segment_count": 1
+  },
   "warnings": []
 }
 ```
+
+Segment bounding boxes use `xyxy` format: `[x1, y1, x2, y2]`. Every response
+also writes a debug image with detected boxes, labels, confidence scores, and
+mask overlays when masks are available. If `DEBUG_OUTPUT_URL_BASE` is set, the
+debug object also includes `image_url`.
 
 If no matching masks are found, the tool returns `count: 0`, `mask_count: 0`,
 and a warning instead of crashing.
@@ -132,9 +144,14 @@ Build the image with `weights/sam3.pt` or `HF_TOKEN`, then start General Chat:
 ```powershell
 examples\sam-segmentation-mcp\scripts\build_with_sam3.ps1
 
-cd examples\general-chat
-.\scripts\run_with_sam_segmentation_mcp.ps1
+openbench demo run general-chat-sam-segmentation
 ```
+
+The older PowerShell helper remains available at
+`examples/general-chat/scripts/run_with_sam_segmentation_mcp.ps1` if you need
+to set the environment manually. The CLI command mounts
+`examples/general-chat/uploads/_sam_debug` into the SAM container and returns
+browser-accessible debug URLs under `/uploads/_sam_debug/...`.
 
 Upload an image and ask:
 

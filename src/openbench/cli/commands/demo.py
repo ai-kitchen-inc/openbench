@@ -8,6 +8,8 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import click
@@ -147,6 +149,20 @@ def _wait_for_port(port: int, timeout: int = 15) -> bool:
     return False
 
 
+def _wait_for_backend_health(port: int, timeout: int = 30) -> bool:
+    """Wait until the backend app has completed startup and answers /health."""
+    url = f"http://127.0.0.1:{port}/health"
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            with urllib.request.urlopen(url, timeout=1) as response:
+                if 200 <= response.status < 300:
+                    return True
+        except (OSError, urllib.error.URLError):
+            time.sleep(0.5)
+    return False
+
+
 def _as_posix_path(path: Path) -> str:
     """Return a resolved path suitable for Docker volume specs."""
     return path.resolve().as_posix()
@@ -196,11 +212,13 @@ def _general_chat_mcp_env(variant: str, demo_dir: Path) -> dict[str, str]:
         }
 
     if variant == "sam-segmentation":
+        debug_dir = _ensure_dir(uploads_dir / "_sam_debug")
         return {
             **common,
             "GENERAL_CHAT_MCP_CONFIG": "mcp/sam-segmentation-docker.yaml",
             "GENERAL_CHAT_MCP_APPROVED_TOOLS": "sam_segmentation.count_objects_with_sam3",
             "SAM_SEGMENTATION_MCP_UPLOADS_PATH": _as_posix_path(uploads_dir),
+            "SAM_SEGMENTATION_MCP_DEBUG_PATH": _as_posix_path(debug_dir),
         }
 
     raise click.ClickException(f"Unknown General Chat MCP demo variant: {variant}")
@@ -542,10 +560,11 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
 
         # Wait for backend to be ready before starting frontend
         if has_frontend:
-            console.print(f"[dim]Waiting for backend on :{backend_port}...[/dim]")
-            if not _wait_for_port(backend_port):
+            console.print(f"[dim]Waiting for backend health on :{backend_port}...[/dim]")
+            if not _wait_for_backend_health(backend_port):
                 console.print(
-                    "[yellow]Warning:[/yellow] Backend not ready after 15s, starting frontend anyway."
+                    "[yellow]Warning:[/yellow] Backend health not ready after 30s, "
+                    "starting frontend anyway."
                 )
 
         # Start frontend
@@ -590,10 +609,15 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
         if has_frontend:
             frontend_dir = demo_dir / "frontend"
             console.print("[green]Starting frontend:[/green] pnpm dev")
+            frontend_env = {
+                **os.environ,
+                "VITE_BACKEND_URL": f"http://localhost:{backend_port}",
+            }
             try:
                 frontend = subprocess.Popen(
                     [*(pnpm_cmd or ["pnpm"]), "dev"],
                     cwd=str(frontend_dir),
+                    env=frontend_env,
                     stdout=sys.stdout,
                     stderr=sys.stderr,
                 )

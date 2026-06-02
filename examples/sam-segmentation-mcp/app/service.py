@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 import tempfile
 import threading
+import uuid
 from contextlib import contextmanager
 from functools import lru_cache
 from io import BytesIO
@@ -217,6 +219,16 @@ class SAM3ConceptCountingService:
         if not segments:
             warnings.append("No matching SAM 3 masks were found for the requested concept.")
 
+        debug = _create_debug_segmentation_image(
+            image=loaded.image,
+            segments=segments,
+            masks=overlay_masks,
+            output_dir=self.config.debug_output_dir,
+            output_url_base=self.config.debug_output_url_base,
+            concept=normalized_concept,
+            warnings=warnings,
+        )
+
         payload: dict[str, Any] = {
             "concept": normalized_concept,
             "count": len(segments),
@@ -228,6 +240,7 @@ class SAM3ConceptCountingService:
             "segments": segments if return_segments else [],
             "warnings": warnings,
             "source": loaded.metadata,
+            "debug": debug,
         }
         if return_overlay if return_overlay is not None else self.config.return_overlay_default:
             payload["overlay_image_base64"] = _overlay_base64(loaded.image, overlay_masks)
@@ -245,6 +258,8 @@ class SAM3ConceptCountingService:
             "max_image_bytes": self.config.max_image_bytes,
             "max_image_pixels": self.config.max_image_pixels,
             "allowed_image_roots": [str(path) for path in self.config.allowed_image_roots],
+            "debug_output_dir": str(self.config.debug_output_dir),
+            "debug_output_url_base": self.config.debug_output_url_base,
             "predictor_loaded": self._predictor is not None,
         }
 
@@ -316,6 +331,128 @@ def _set_predictor_conf(predictor: Any, conf: float) -> None:
     overrides = getattr(predictor, "overrides", None)
     if isinstance(overrides, dict):
         overrides["conf"] = conf
+
+
+def _safe_debug_stem(concept: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", concept.strip().lower()).strip("-")
+    return cleaned or "segment"
+
+
+def _clamp_bbox_xyxy(
+    bbox: Any,
+    *,
+    width: int,
+    height: int,
+) -> tuple[list[int] | None, str | None]:
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return None, "Invalid segment bbox: expected four xyxy values."
+    try:
+        x1, y1, x2, y2 = [int(round(float(value))) for value in bbox]
+    except (TypeError, ValueError):
+        return None, f"Invalid segment bbox values: {bbox!r}"
+
+    clamped = [
+        max(0, min(width, x1)),
+        max(0, min(height, y1)),
+        max(0, min(width, x2)),
+        max(0, min(height, y2)),
+    ]
+    if clamped[2] <= clamped[0] or clamped[3] <= clamped[1]:
+        return None, f"Invalid segment bbox after clamping: {bbox!r}"
+    warning = None
+    if clamped != [x1, y1, x2, y2]:
+        warning = f"Clamped out-of-bounds segment bbox from {bbox!r} to {clamped}."
+    return clamped, warning
+
+
+def _debug_image_url(path: Path, output_dir: Path, output_url_base: str | None) -> str | None:
+    if not output_url_base:
+        return None
+    try:
+        relative = path.resolve().relative_to(output_dir.resolve()).as_posix()
+    except ValueError:
+        relative = path.name
+    return f"{output_url_base.rstrip('/')}/{relative}"
+
+
+def _create_debug_segmentation_image(
+    *,
+    image: Image.Image,
+    segments: list[dict[str, Any]],
+    masks: list[np.ndarray],
+    output_dir: Path,
+    output_url_base: str | None,
+    concept: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    """Write a visual debug image with xyxy boxes and translucent masks."""
+    output_path = output_dir / f"{_safe_debug_stem(concept)}-{uuid.uuid4().hex[:10]}.png"
+    debug: dict[str, Any] = {
+        "image_path": str(output_path),
+        "bbox_format": "xyxy",
+        "segment_count": len(segments),
+    }
+    image_url = _debug_image_url(output_path, output_dir, output_url_base)
+    if image_url:
+        debug["image_url"] = image_url
+
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        colors = [
+            (0, 114, 178, 90),
+            (213, 94, 0, 90),
+            (0, 158, 115, 90),
+            (204, 121, 167, 90),
+            (230, 159, 0, 90),
+            (86, 180, 233, 90),
+        ]
+        base = image.convert("RGBA")
+        width, height = base.size
+
+        for index, mask in enumerate(masks):
+            mask_bool = _resize_mask(mask, width, height)
+            color = colors[index % len(colors)]
+            mask_image = Image.fromarray(mask_bool.astype("uint8") * color[3], mode="L")
+            layer = Image.new("RGBA", base.size, color[:3] + (0,))
+            layer.putalpha(mask_image)
+            base.alpha_composite(layer)
+
+        draw = ImageDraw.Draw(base)
+        for index, segment in enumerate(segments):
+            bbox, warning = _clamp_bbox_xyxy(segment.get("bbox"), width=width, height=height)
+            if warning:
+                warnings.append(warning)
+                logger.warning(warning)
+            if bbox is None and index < len(masks):
+                bbox = _bbox_from_mask(_resize_mask(masks[index], width, height))
+            if bbox is None:
+                warning = f"Skipping debug draw for segment {segment.get('id', index + 1)}: invalid bbox."
+                warnings.append(warning)
+                logger.warning(warning)
+                continue
+
+            segment_id = segment.get("id", index + 1)
+            confidence = segment.get("confidence")
+            if isinstance(confidence, (int, float)):
+                label = f"{concept} {float(confidence):.2f}"
+            else:
+                label = str(concept)
+            label = f"{segment_id}: {label}"
+
+            draw.rectangle(bbox, outline=(255, 255, 255, 255), width=3)
+            text_x = bbox[0]
+            text_y = max(0, bbox[1] - 14)
+            text_bbox = draw.textbbox((text_x, text_y), label)
+            draw.rectangle(text_bbox, fill=(0, 0, 0, 180))
+            draw.text((text_x, text_y), label, fill=(255, 255, 255, 255))
+
+        base.convert("RGB").save(output_path, format="PNG")
+    except Exception as exc:
+        warning = f"Debug segmentation image could not be saved: {exc}"
+        warnings.append(warning)
+        logger.warning(warning, exc_info=True)
+
+    return debug
 
 
 def _overlay_base64(image: Image.Image, masks: list[np.ndarray]) -> str:

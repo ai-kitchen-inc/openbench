@@ -57,6 +57,8 @@ class AppConfig:
     max_image_bytes: int
     max_image_pixels: int
     return_overlay_default: bool
+    debug_output_dir: Path
+    debug_output_url_base: str | None
 
     @classmethod
     def from_env(cls) -> AppConfig:
@@ -73,8 +75,15 @@ class AppConfig:
             max_image_bytes=_env_int("MAX_IMAGE_BYTES", 10 * 1024 * 1024),
             max_image_pixels=_env_int("MAX_IMAGE_PIXELS", 12_000_000),
             return_overlay_default=_env_bool("RETURN_OVERLAY_DEFAULT", False),
+            debug_output_dir=Path(
+                os.getenv("DEBUG_OUTPUT_DIR", "/tmp/sam-segmentation-debug")
+            ).expanduser(),
+            debug_output_url_base=(
+                os.getenv("DEBUG_OUTPUT_URL_BASE", "").strip() or None
+            ),
         )
 
     def ensure_directories(self) -> None:
         """Create runtime directories that may hold temporary artifacts."""
         self.sam3_model_path.parent.mkdir(parents=True, exist_ok=True)
+        self.debug_output_dir.mkdir(parents=True, exist_ok=True)

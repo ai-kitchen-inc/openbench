@@ -404,6 +404,10 @@ Start General Chat with the SAM 3 MCP config:
 openbench demo run general-chat-sam-segmentation
 ```
 
+SAM debug images are written under `examples/general-chat/uploads/_sam_debug`
+and are returned by the tool as `/uploads/_sam_debug/...` URLs when detections
+are available.
+
 The older PowerShell helper remains available at
 `examples/general-chat/scripts/run_with_sam_segmentation_mcp.ps1` if you need to
 set the environment manually.

@@ -16,7 +16,11 @@ if str(EXAMPLE_ROOT) not in sys.path:
     sys.path.insert(0, str(EXAMPLE_ROOT))
 
 from app.config import AppConfig
-from app.service import SAM3ConceptCountingService, SAM3ModelNotAvailableError
+from app.service import (
+    SAM3ConceptCountingService,
+    SAM3ModelNotAvailableError,
+    _clamp_bbox_xyxy,
+)
 from app.tool_schemas import COUNT_OBJECTS_WITH_SAM3_SCHEMA
 from scripts.download_sam3_weights import main as download_sam3_weights
 
@@ -32,6 +36,8 @@ def _config(tmp_path, *, allowed_roots=None) -> AppConfig:
         max_image_bytes=1024 * 1024,
         max_image_pixels=1_000_000,
         return_overlay_default=False,
+        debug_output_dir=tmp_path / "debug",
+        debug_output_url_base=None,
     )
 
 
@@ -198,8 +204,42 @@ def test_successful_sam3_counting_counts_filtered_masks_and_metadata(tmp_path):
     assert result["segments"][0]["bbox"] == [1, 1, 4, 4]
     assert result["segments"][0]["confidence"] == 0.91
     assert "Filtered 1 SAM 3 masks" in result["warnings"][0]
+    assert result["debug"]["bbox_format"] == "xyxy"
+    assert result["debug"]["segment_count"] == 2
+    assert Path(result["debug"]["image_path"]).exists()
     assert fake_predictor.text_calls == [["dog"]]
     assert fake_predictor.args.conf == 0.5
+
+
+def test_bbox_clamping_uses_xyxy_format():
+    bbox, warning = _clamp_bbox_xyxy([46, 32, 122, 122], width=159, height=148)
+
+    assert bbox == [46, 32, 122, 122]
+    assert warning is None
+
+    bbox, warning = _clamp_bbox_xyxy([46, 32, 168, 180], width=159, height=148)
+
+    assert bbox == [46, 32, 159, 148]
+    assert warning is not None
+    assert "Clamped out-of-bounds" in warning
+
+
+def test_debug_image_save_failure_is_warning_not_crash(tmp_path):
+    data = np.zeros((1, 6, 8), dtype=float)
+    data[0, 1:4, 1:4] = 1
+    fake_predictor = FakePredictor(FakeResult(FakeMasks(data)))
+    config = _config(tmp_path)
+    _touch_weights(config)
+    service = SAM3ConceptCountingService(config, predictor_factory=lambda _: fake_predictor)
+    config.debug_output_dir.rmdir()
+    config.debug_output_dir.write_text("not a directory", encoding="utf-8")
+    image64 = base64.b64encode(_png_bytes()).decode("ascii")
+
+    result = service.count_objects_with_sam3(concept="dog", image_base64=image64)
+
+    assert result["count"] == 1
+    assert "debug" in result
+    assert any("Debug segmentation image could not be saved" in item for item in result["warnings"])
 
 
 def test_predictor_is_reused_across_requests(tmp_path):
@@ -271,6 +311,20 @@ def test_public_schema_is_sam3_only():
     assert "sam2" not in dumped
     assert "FastSAM" not in dumped
     assert "mobile_sam" not in dumped
+
+
+def test_config_reads_debug_output_settings(tmp_path, monkeypatch):
+    debug_dir = tmp_path / "debug-output"
+    monkeypatch.setenv("SAM3_MODEL_PATH", str(tmp_path / "models" / "sam3.pt"))
+    monkeypatch.setenv("DEBUG_OUTPUT_DIR", str(debug_dir))
+    monkeypatch.setenv("DEBUG_OUTPUT_URL_BASE", "/uploads/_sam_debug")
+
+    config = AppConfig.from_env()
+    service = SAM3ConceptCountingService(config, predictor_factory=lambda _: None)
+
+    assert service.config.debug_output_dir == debug_dir
+    assert service.config.debug_output_url_base == "/uploads/_sam_debug"
+    assert debug_dir.is_dir()
 
 
 def test_download_script_copies_local_weights(tmp_path, monkeypatch):

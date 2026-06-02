@@ -1394,6 +1394,7 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(server.command, "docker")
         self.assertEqual(server.namespace, "sam_segmentation")
         self.assertTrue(server.allowed)
+        self.assertEqual(server.discovery_timeout_seconds, 15)
         self.assertEqual(server.timeout_seconds, 3600)
         self.assertEqual(server.retries, 0)
         self.assertIn("openbench/sam-segmentation-mcp:cpu", server.args)

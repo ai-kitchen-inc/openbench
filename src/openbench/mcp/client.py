@@ -76,7 +76,10 @@ class MCPClient:
         if refresh:
             self.discovery.clear()
 
-        coros = [self._discover_server(name, transport) for name, transport in self._transports.items()]
+        coros = [
+            self._discover_server_with_timeout(name, transport)
+            for name, transport in self._transports.items()
+        ]
         results = await gather_with_concurrency(self.config.policy.max_concurrency, *coros)
         for server in results:
             self.discovery.servers[server.name] = server
@@ -154,6 +157,26 @@ class MCPClient:
                     correlation_id=get_correlation_id(),
                     cause=exc,
                 ) from exc
+
+    async def _discover_server_with_timeout(
+        self,
+        name: str,
+        transport: MCPTransport,
+    ) -> DiscoveredMCPServer:
+        timeout = self._server_configs[name].discovery_timeout_seconds
+        if timeout is None:
+            return await self._discover_server(name, transport)
+        try:
+            return await asyncio.wait_for(self._discover_server(name, transport), timeout=timeout)
+        except TimeoutError as exc:
+            with suppress(Exception):
+                await transport.close()
+            raise MCPTransportError(
+                f"Timed out discovering MCP server {name!r} after {timeout:g}s",
+                server=name,
+                correlation_id=get_correlation_id(),
+                cause=exc,
+            ) from exc
 
     def list_tools(self) -> dict[str, dict[str, Any]]:
         """Return all discovered tools keyed by namespaced name."""
