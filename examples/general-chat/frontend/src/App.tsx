@@ -14,7 +14,7 @@ import { ToastProvider, useToast } from "./Toast";
 import "./global.css";
 
 const STREAM_URL = "/awp";
-const SOURCE_ACCEPT =
+export const SOURCE_ACCEPT =
   ".xlsx,.xls,.pdf,.docx,.doc,.pptx,.ppt,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.webp";
 
 const SUGGESTIONS = [
@@ -790,6 +790,7 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments }: {
   setPersistentAttachments: (attachments: Attachment[]) => void;
 }) {
   const { activeSessionId, sidebarOpen } = useChatContext();
+  const toast = useToast();
   const [dark, toggleDark] = useDarkMode();
   const [mcpCatalogOpen, setMcpCatalogOpen] = useState(false);
 
@@ -826,6 +827,8 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments }: {
         placeholder="Ask anything, add sources, or discover useful links..."
         greeting="Welcome to General Chat"
         persistentAttachments={persistentAttachments}
+        acceptedFileTypes={SOURCE_ACCEPT}
+        onAttachmentError={(message) => toast.show(message, "error")}
         headerRight={
           <button
             type="button"

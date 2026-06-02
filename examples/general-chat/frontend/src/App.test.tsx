@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { SourcePanel } from "./App";
+import { SOURCE_ACCEPT, SourcePanel } from "./App";
 import { ToastProvider } from "./Toast";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -238,5 +238,14 @@ describe("SourcePanel discovery flow", () => {
 
     await screen.findByText("Discover sources");
     expect(screen.queryByPlaceholderText("Search inside added sources")).not.toBeInTheDocument();
+  });
+
+  it("uses the shared source accept policy for the source upload input", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse([])));
+    renderSourcePanel();
+
+    await screen.findByText("Added sources");
+    const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput?.getAttribute("accept")).toBe(SOURCE_ACCEPT);
   });
 });

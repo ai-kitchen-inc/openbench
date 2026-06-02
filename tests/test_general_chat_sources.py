@@ -173,7 +173,93 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(attachments[0].name, "notes.txt")
         self.assertIn("Alpha roadmap", attachments[0].extracted_text or "")
 
-    def test_forwarded_client_attachments_are_ignored_when_source_records_exist(self):
+    def test_forwarded_draft_attachments_are_preserved_without_sources(self):
+        agent = MockAgent()
+        engine = ChatEngine(agent=agent)
+        handler = GeneralChatHandler(engine=engine, db_path=":memory:", source_records=[])
+
+        content, attachments = handler._extract_content(
+            {
+                "messages": [{"id": "m1", "role": "user", "content": "summarize this"}],
+                "forwardedProps": {
+                    "sessionId": "chat-session",
+                    "attachments": [
+                        {
+                            "id": "draft-1",
+                            "type": "file",
+                            "name": "draft.txt",
+                            "url": "/uploads/draft-1/draft.txt",
+                            "mimeType": "text/plain",
+                            "extractedText": "Draft attachment context.",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(content, "summarize this")
+        self.assertIsNotNone(attachments)
+        assert attachments is not None
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0].name, "draft.txt")
+        self.assertIn("Draft attachment context", attachments[0].extracted_text or "")
+
+        engine._execute_agent(content, None, attachments=attachments)
+
+        self.assertIsNotNone(agent.context)
+        assert agent.context is not None
+        self.assertEqual(agent.context.data["attachments"][0]["name"], "draft.txt")
+
+    def test_forwarded_draft_image_attachment_includes_mcp_path(self):
+        agent = MockAgent()
+        engine = ChatEngine(agent=agent)
+        handler = GeneralChatHandler(engine=engine, db_path=":memory:", source_records=[])
+
+        content, attachments = handler._extract_content(
+            {
+                "messages": [{"id": "m1", "role": "user", "content": "count dogs"}],
+                "forwardedProps": {
+                    "sessionId": "chat-session",
+                    "attachments": [
+                        {
+                            "id": "file-7",
+                            "type": "image",
+                            "name": "dogs.png",
+                            "url": "/uploads/file-7/dogs.png",
+                            "mimeType": "image/png",
+                            "sizeBytes": 1234,
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(content, "count dogs")
+        self.assertIsNotNone(attachments)
+        assert attachments is not None
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0].type, "image")
+        self.assertEqual(attachments[0].path, "/general-chat/uploads/file-7/dogs.png")
+        self.assertIn(
+            'image_path="/general-chat/uploads/file-7/dogs.png"',
+            attachments[0].extracted_text or "",
+        )
+        self.assertIn(
+            "sam_segmentation.count_objects_with_sam3",
+            attachments[0].extracted_text or "",
+        )
+        self.assertNotIn("image_base64", attachments[0].extracted_text or "")
+
+        engine._execute_agent(content, None, attachments=attachments)
+
+        self.assertIsNotNone(agent.context)
+        assert agent.context is not None
+        self.assertEqual(
+            agent.context.data["attachments"][0]["path"],
+            "/general-chat/uploads/file-7/dogs.png",
+        )
+
+    def test_forwarded_draft_attachments_are_combined_with_source_records(self):
         agent = MockAgent()
         engine = ChatEngine(agent=agent)
         source = SourceRecord.create(
@@ -197,11 +283,12 @@ class TestGeneralChatSources(unittest.TestCase):
                     "sessionId": "chat-session",
                     "attachments": [
                         {
-                            "id": "old",
+                            "id": "draft",
                             "type": "file",
-                            "name": "removed.txt",
+                            "name": "draft.txt",
+                            "url": "/uploads/draft/draft.txt",
                             "mimeType": "text/plain",
-                            "extractedText": "Removed source must not leak.",
+                            "extractedText": "Draft source should be available.",
                         }
                     ],
                 },
@@ -212,7 +299,7 @@ class TestGeneralChatSources(unittest.TestCase):
         assert attachments is not None
         joined = "\n".join(attachment.extracted_text or "" for attachment in attachments)
         self.assertIn("Current source only", joined)
-        self.assertNotIn("Removed source must not leak", joined)
+        self.assertIn("Draft source should be available", joined)
 
     def test_image_source_attachment_includes_mcp_path(self):
         agent = MockAgent()

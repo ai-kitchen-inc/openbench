@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentPreview } from "../src/components/AttachmentPreview";
@@ -41,6 +41,27 @@ const mockChatContext = {
 vi.mock("../src/components/ChatProvider", () => ({
   useChatContext: () => mockChatContext,
 }));
+
+beforeEach(() => {
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn((file: File) => `blob:${file.name}`),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
+
+function fileDrag(files: File[]) {
+  return {
+    dataTransfer: {
+      types: ["Files"],
+      files,
+      dropEffect: "none",
+    },
+  };
+}
 
 // ── WelcomeScreen ──
 
@@ -186,6 +207,128 @@ describe("ChatInput", () => {
     render(<ChatInput onSend={vi.fn()} disabled />);
     const textarea = screen.getByPlaceholderText("Type a message...");
     expect(textarea.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("sets accepted file types on the picker", () => {
+    const { container } = render(<ChatInput onSend={vi.fn()} acceptedFileTypes=".pdf,image/*" />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(input?.getAttribute("accept")).toBe(".pdf,image/*");
+  });
+
+  it("shows and clears a drag-over state for file drags", () => {
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    const { container } = render(<ChatInput onSend={vi.fn()} />);
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.dragEnter(input, fileDrag([file]));
+    expect(screen.getByText("Drop files to attach")).toBeDefined();
+    expect(input.classList.contains("chat-input--dragging")).toBe(true);
+
+    fireEvent.dragLeave(input, fileDrag([file]));
+    expect(screen.queryByText("Drop files to attach")).toBeNull();
+    expect(input.classList.contains("chat-input--dragging")).toBe(false);
+  });
+
+  it("ignores plain text drags", () => {
+    const { container } = render(<ChatInput onSend={vi.fn()} />);
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.dragEnter(input, {
+      dataTransfer: {
+        types: ["text/plain"],
+        files: [],
+        dropEffect: "none",
+      },
+    });
+
+    expect(screen.queryByText("Drop files to attach")).toBeNull();
+    expect(input.classList.contains("chat-input--dragging")).toBe(false);
+  });
+
+  it("adds supported document, spreadsheet, and text files from a drop", () => {
+    const files = [
+      new File(["pdf"], "report.pdf", { type: "application/pdf" }),
+      new File(["sheet"], "data.xlsx", {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      new File(["notes"], "notes.txt", { type: "text/plain" }),
+    ];
+    const { container } = render(
+      <ChatInput onSend={vi.fn()} acceptedFileTypes=".pdf,.xlsx,.txt" />,
+    );
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.drop(input, fileDrag(files));
+
+    expect(screen.getByText("report.pdf")).toBeDefined();
+    expect(screen.getByText("data.xlsx")).toBeDefined();
+    expect(screen.getByText("notes.txt")).toBeDefined();
+  });
+
+  it("adds supported image files from a drop", () => {
+    const file = new File(["png"], "diagram.png", { type: "image/png" });
+    const { container } = render(<ChatInput onSend={vi.fn()} acceptedFileTypes="image/*" />);
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.drop(input, fileDrag([file]));
+
+    expect(screen.getByText("diagram.png")).toBeDefined();
+  });
+
+  it("supports multiple dropped files when multiple is enabled", () => {
+    const files = [
+      new File(["a"], "a.md", { type: "text/markdown" }),
+      new File(["b"], "b.csv", { type: "text/csv" }),
+    ];
+    const { container } = render(<ChatInput onSend={vi.fn()} acceptedFileTypes=".md,.csv" />);
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.drop(input, fileDrag(files));
+
+    expect(screen.getByText("a.md")).toBeDefined();
+    expect(screen.getByText("b.csv")).toBeDefined();
+  });
+
+  it("rejects unsupported dropped files with an attachment error", () => {
+    const onAttachmentError = vi.fn();
+    const file = new File(["zip"], "archive.zip", { type: "application/zip" });
+    const { container } = render(
+      <ChatInput
+        onSend={vi.fn()}
+        acceptedFileTypes=".pdf,.txt"
+        onAttachmentError={onAttachmentError}
+      />,
+    );
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.drop(input, fileDrag([file]));
+
+    expect(screen.queryByText("archive.zip")).toBeNull();
+    expect(onAttachmentError).toHaveBeenCalledWith(
+      "Unsupported file type: archive.zip",
+      [file],
+    );
+  });
+
+  it("sends dropped files as message attachments", async () => {
+    const onSend = vi.fn();
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    const { container } = render(<ChatInput onSend={onSend} acceptedFileTypes=".txt" />);
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.drop(input, fileDrag([file]));
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    const [, attachments] = onSend.mock.calls[0] as [string, Attachment[]];
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]).toMatchObject({
+      type: "file",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: file.size,
+      file,
+    });
   });
 });
 
@@ -512,5 +655,11 @@ describe("ChatPanel — session loading state", () => {
     render(<ChatPanel />);
     expect(screen.getByText("hello")).toBeDefined();
     expect(document.querySelector(".chat-loading")).toBeNull();
+  });
+
+  it("forwards accepted file types to the composer", () => {
+    const { container } = render(<ChatPanel acceptedFileTypes=".pdf,.png" />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(input?.getAttribute("accept")).toBe(".pdf,.png");
   });
 });

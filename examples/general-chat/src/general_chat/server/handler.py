@@ -146,6 +146,75 @@ def _source_context_attachments(doc_context: str) -> list[Attachment]:
     return attachments
 
 
+def _image_attachment_mcp_path(attachment: Attachment) -> str | None:
+    """Return the container path image MCP tools can read for a chat upload."""
+    if attachment.type != "image" and not attachment.mime_type.startswith("image/"):
+        return None
+    if not attachment.url.startswith("/uploads/"):
+        return None
+    from general_chat.sources import image_search_metadata
+    from openbench.chat.files import StoredFile
+
+    stored = StoredFile(
+        id=attachment.id,
+        name=attachment.name,
+        path=attachment.path or "",
+        mime_type=attachment.mime_type,
+        size_bytes=attachment.size_bytes or 0,
+        stored_at="",
+    )
+    return image_search_metadata(stored)["samSegmentationPath"]
+
+
+def _enrich_draft_attachments(attachments: list[Attachment] | None) -> list[Attachment]:
+    """Preserve draft attachments and add MCP-readable context for images."""
+    if not attachments:
+        return []
+
+    from general_chat.sources import image_search_metadata, image_search_text
+    from openbench.chat.files import StoredFile
+
+    enriched: list[Attachment] = []
+    for attachment in attachments:
+        image_path = _image_attachment_mcp_path(attachment)
+        if image_path is None:
+            enriched.append(attachment)
+            continue
+
+        stored = StoredFile(
+            id=attachment.id,
+            name=attachment.name,
+            path=attachment.path or "",
+            mime_type=attachment.mime_type,
+            size_bytes=attachment.size_bytes or 0,
+            stored_at="",
+        )
+        metadata = image_search_metadata(stored)
+        existing_text = (attachment.extracted_text or "").strip()
+        if (
+            existing_text
+            and metadata["samSegmentationPath"] in existing_text
+            and "sam_segmentation.count_objects_with_sam3" in existing_text
+        ):
+            extracted_text = existing_text
+        else:
+            extracted_text = image_search_text(stored, parsed_text=existing_text)
+
+        enriched.append(
+            Attachment(
+                id=attachment.id,
+                type="image",
+                name=attachment.name,
+                url=attachment.url,
+                mime_type=attachment.mime_type,
+                size_bytes=attachment.size_bytes,
+                extracted_text=extracted_text,
+                path=metadata["samSegmentationPath"],
+            )
+        )
+    return enriched
+
+
 def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attachment]:
     """Represent persisted ready sources as filename-preserving attachments."""
     attachments: list[Attachment] = []
@@ -156,10 +225,12 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
         image_search_path = metadata.get("imageSearchPath")
         sam_segmentation_path = metadata.get("samSegmentationPath")
         extra_lines = ""
-        if record.kind == "image" and isinstance(image_search_path, str):
-            extra_lines = f"Image search path: {image_search_path}\n\n"
-            if isinstance(sam_segmentation_path, str):
-                extra_lines += f"SAM 3 concept counting path: {sam_segmentation_path}\n\n"
+        image_tool_path = image_search_path if isinstance(image_search_path, str) else None
+        sam_tool_path = sam_segmentation_path if isinstance(sam_segmentation_path, str) else None
+        if record.kind == "image" and image_tool_path:
+            extra_lines = f"Image search path: {image_tool_path}\n\n"
+        if record.kind == "image" and sam_tool_path:
+            extra_lines += f"SAM 3 concept counting path: {sam_tool_path}\n\n"
         attachments.append(
             Attachment(
                 id=record.id,
@@ -168,7 +239,7 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
                 url=record.url or "",
                 mime_type=record.mime_type or "text/plain",
                 size_bytes=record.size_bytes,
-                path=image_search_path if isinstance(image_search_path, str) else None,
+                path=sam_tool_path or image_tool_path,
                 extracted_text=(
                     f"Source name: {record.name}\n"
                     f"Source type: {record.kind}\n"
@@ -283,17 +354,8 @@ class GeneralChatHandler(AGUIHandler):
         self._source_records = source_records or []
 
     def _extract_content(self, body):
-        messages = body.get("messages")
-        if messages and isinstance(messages, list):
-            for msg in reversed(messages):
-                if isinstance(msg, dict) and msg.get("role") == "user":
-                    content = msg.get("content", "")
-                    break
-            else:
-                content = ""
-        else:
-            content = body.get("content", "")
-        attachments: list[Attachment] = []
+        content, draft_attachments = super()._extract_content(body)
+        attachments = _enrich_draft_attachments(draft_attachments)
         if self._source_records:
             source_attachments = _source_record_attachments(self._source_records)
             attachments = [*attachments, *source_attachments]

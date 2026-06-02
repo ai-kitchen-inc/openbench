@@ -23,6 +23,10 @@ export interface ChatPanelProps {
   headerRight?: React.ReactNode;
   /** Attachments that should be included with every sent message. */
   persistentAttachments?: Attachment[];
+  /** Comma-separated accept policy forwarded to the composer file input/drop zone. */
+  acceptedFileTypes?: string;
+  /** Called when the composer rejects selected or dropped files. */
+  onAttachmentError?: (message: string, files: File[]) => void;
 }
 
 export function ChatPanel({
@@ -33,6 +37,8 @@ export function ChatPanel({
   title,
   headerRight,
   persistentAttachments,
+  acceptedFileTypes,
+  onAttachmentError,
 }: ChatPanelProps) {
   const {
     messages,
@@ -132,7 +138,12 @@ export function ChatPanel({
 
       {/* Input */}
       <div className="chat-panel__footer">
-        <ChatInput onSend={sendWithPersistentAttachments} placeholder={placeholder} />
+        <ChatInput
+          onSend={sendWithPersistentAttachments}
+          placeholder={placeholder}
+          acceptedFileTypes={acceptedFileTypes}
+          onAttachmentError={onAttachmentError}
+        />
       </div>
     </div>
   );

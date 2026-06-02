@@ -11,12 +11,21 @@ export interface ChatInputProps {
   onSend: (content: string, attachments?: Attachment[]) => void;
   disabled?: boolean;
   placeholder?: string;
+  /** Comma-separated accept policy, matching the native file input accept attribute. */
+  acceptedFileTypes?: string;
+  /** Called when one or more selected/dropped files do not match acceptedFileTypes. */
+  onAttachmentError?: (message: string, files: File[]) => void;
+  /** Whether users can attach more than one file. Defaults to true. */
+  multiple?: boolean;
 }
 
 export function ChatInput({
   onSend,
   disabled = false,
   placeholder = "Type a message...",
+  acceptedFileTypes,
+  onAttachmentError,
+  multiple = true,
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -65,7 +74,17 @@ export function ChatInput({
   const addFiles = useCallback((files: FileList | File[]) => {
     const asArray = Array.from(files as FileList);
     if (asArray.length === 0) return;
-    const newAttachments: Attachment[] = asArray.map((file) => ({
+    const selectedFiles = multiple ? asArray : asArray.slice(0, 1);
+    const acceptedFiles = selectedFiles.filter((file) => isAcceptedFile(file, acceptedFileTypes));
+    const rejectedFiles = selectedFiles.filter((file) => !isAcceptedFile(file, acceptedFileTypes));
+
+    if (rejectedFiles.length > 0) {
+      onAttachmentError?.(formatRejectedFilesMessage(rejectedFiles), rejectedFiles);
+    }
+
+    if (acceptedFiles.length === 0) return;
+
+    const newAttachments: Attachment[] = acceptedFiles.map((file) => ({
       id: generateId("att"),
       type: getFileType(file.type),
       name: file.name,
@@ -75,7 +94,7 @@ export function ChatInput({
       file: file,
     }));
     setAttachments((prev) => [...prev, ...newAttachments]);
-  }, []);
+  }, [acceptedFileTypes, multiple, onAttachmentError]);
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -98,6 +117,7 @@ export function ChatInput({
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
     e.preventDefault();
     e.stopPropagation();
     dragDepth.current = Math.max(0, dragDepth.current - 1);
@@ -115,6 +135,7 @@ export function ChatInput({
 
   const handleDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
+      if (!e.dataTransfer?.types?.includes("Files")) return;
       e.preventDefault();
       e.stopPropagation();
       dragDepth.current = 0;
@@ -212,7 +233,8 @@ export function ChatInput({
       <input
         ref={fileInputRef}
         type="file"
-        multiple
+        multiple={multiple}
+        accept={acceptedFileTypes}
         onChange={handleFileSelect}
         style={{ display: "none" }}
       />
@@ -225,4 +247,29 @@ function getFileType(mimeType: string): Attachment["type"] {
   if (mimeType.startsWith("audio/")) return "audio";
   if (mimeType.startsWith("video/")) return "video";
   return "file";
+}
+
+function isAcceptedFile(file: File, acceptedFileTypes?: string): boolean {
+  const tokens = acceptedFileTypes
+    ?.split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (!tokens || tokens.length === 0) return true;
+
+  const fileName = file.name.toLowerCase();
+  const mimeType = file.type.toLowerCase();
+
+  return tokens.some((token) => {
+    if (token.startsWith(".")) return fileName.endsWith(token);
+    if (token.endsWith("/*")) return mimeType.startsWith(token.slice(0, -1));
+    return mimeType === token;
+  });
+}
+
+function formatRejectedFilesMessage(files: File[]): string {
+  if (files.length === 1) {
+    return `Unsupported file type: ${files[0]?.name ?? "file"}`;
+  }
+  return `Unsupported file types: ${files.map((file) => file.name).join(", ")}`;
 }

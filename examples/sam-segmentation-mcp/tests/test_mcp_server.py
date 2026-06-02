@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import sys
 from io import BytesIO
@@ -87,6 +88,41 @@ def test_fastmcp_server_builds_when_sdk_is_installed():
     server = build_mcp()
 
     assert server.name == "sam_segmentation_mcp"
+
+
+def test_fastmcp_tool_validation_errors_raise_mcp_error(monkeypatch):
+    pytest.importorskip("mcp.server.fastmcp")
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    import app.mcp_server as mcp_server
+
+    class FakeService:
+        def count_objects_with_sam3(self, **kwargs):
+            provided = [
+                kwargs.get("image_path") is not None,
+                kwargs.get("image_base64") is not None,
+            ]
+            if sum(provided) != 1:
+                raise ValueError("Provide exactly one image input: image_path or image_base64.")
+            return {"ok": True}
+
+    monkeypatch.setattr(mcp_server, "get_service", lambda: FakeService())
+    server = mcp_server.build_mcp()
+
+    with pytest.raises(ToolError, match="exactly one image input"):
+        asyncio.run(server.call_tool("count_objects_with_sam3", {"concept": "dog"}))
+
+    with pytest.raises(ToolError, match="exactly one image input"):
+        asyncio.run(
+            server.call_tool(
+                "count_objects_with_sam3",
+                {
+                    "concept": "dog",
+                    "image_path": "/input/dog.png",
+                    "image_base64": "abc123",
+                },
+            )
+        )
 
 
 def test_input_validation_rejects_missing_or_empty_concept(tmp_path):

@@ -13,10 +13,6 @@ from app.service import get_service
 LOGGER = logging.getLogger(__name__)
 
 
-def _tool_error(exc: Exception) -> dict[str, Any]:
-    return {"error": str(exc), "type": type(exc).__name__}
-
-
 def _run_tool(fn):
     """Run tool logic while keeping third-party prints off MCP stdout."""
     with contextlib.redirect_stdout(sys.stderr):
@@ -73,7 +69,7 @@ def build_mcp():
             )
         except Exception as exc:
             LOGGER.exception("count_objects_with_sam3 failed")
-            return _tool_error(exc)
+            raise exc
 
     @mcp.tool(
         name="service_info",
@@ -91,7 +87,7 @@ def build_mcp():
             return _run_tool(lambda: get_service().service_info())
         except Exception as exc:
             LOGGER.exception("service_info failed")
-            return _tool_error(exc)
+            raise exc
 
     return mcp
 
