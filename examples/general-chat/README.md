@@ -333,9 +333,12 @@ hf auth login
 Then start General Chat with the image-search MCP config:
 
 ```powershell
-cd examples/general-chat
-.\scripts\run_with_image_search_mcp.ps1
+openbench demo run general-chat-image-search
 ```
+
+The older PowerShell helper remains available at
+`examples/general-chat/scripts/run_with_image_search_mcp.ps1` if you need to
+set the environment manually.
 
 Verify the image-search tools are loaded:
 
@@ -398,9 +401,12 @@ weights baked into `openbench/sam-segmentation-mcp:cpu` at `/models/sam3.pt`.
 Start General Chat with the SAM 3 MCP config:
 
 ```powershell
-cd examples/general-chat
-.\scripts\run_with_sam_segmentation_mcp.ps1
+openbench demo run general-chat-sam-segmentation
 ```
+
+The older PowerShell helper remains available at
+`examples/general-chat/scripts/run_with_sam_segmentation_mcp.ps1` if you need to
+set the environment manually.
 
 Verify the tool is loaded:
 

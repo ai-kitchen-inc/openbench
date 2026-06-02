@@ -19,6 +19,26 @@ console = Console()
 
 # Script suffixes to discover as runnable demos
 _SCRIPT_SUFFIXES = ("_demo.py", "_workflow.py")
+_IGNORED_SCRIPT_PARTS = {
+    ".venv",
+    "venv",
+    "env",
+    "node_modules",
+    "__pycache__",
+    "site-packages",
+}
+
+
+_GENERAL_CHAT_MCP_VARIANTS = {
+    "image-search": {
+        "name": "general-chat-image-search",
+        "description": "General Chat with DINOv3 image_search MCP tools",
+    },
+    "sam-segmentation": {
+        "name": "general-chat-sam-segmentation",
+        "description": "General Chat with SAM 3 concept counting MCP tool",
+    },
+}
 
 
 def _resolve_pnpm_command() -> list[str] | None:
@@ -127,6 +147,65 @@ def _wait_for_port(port: int, timeout: int = 15) -> bool:
     return False
 
 
+def _as_posix_path(path: Path) -> str:
+    """Return a resolved path suitable for Docker volume specs."""
+    return path.resolve().as_posix()
+
+
+def _ensure_dir(path: Path) -> Path:
+    """Create a demo runtime directory and return it."""
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _general_chat_mcp_env(variant: str, demo_dir: Path) -> dict[str, str]:
+    """Build environment overrides for dedicated General Chat MCP demo variants."""
+    root = _find_project_root()
+    uploads_dir = _ensure_dir(demo_dir / "uploads")
+
+    common = {
+        "GENERAL_CHAT_MCP_ENABLED": "1",
+        "GENERAL_CHAT_MCP_MODE": "external",
+        "GENERAL_CHAT_MCP_REGISTRY_ENABLED": "0",
+    }
+
+    if variant == "image-search":
+        image_search_root = root / "examples" / "image-search-mcp"
+        data_dir = _ensure_dir(image_search_root / "data")
+        models_dir = _ensure_dir(image_search_root / "models")
+        previews_dir = _ensure_dir(data_dir / "previews")
+        hf_cache_dir = _ensure_dir(Path.home() / ".cache" / "huggingface")
+        token_path = hf_cache_dir / "token"
+        if not token_path.exists():
+            console.print(
+                "[yellow]Warning:[/yellow] Hugging Face token not found at "
+                f"{token_path}. Run 'hf auth login' and accept DINOv3 access if live "
+                "indexing fails."
+            )
+        return {
+            **common,
+            "GENERAL_CHAT_MCP_CONFIG": "mcp/image-search-docker.yaml",
+            "GENERAL_CHAT_MCP_APPROVED_TOOLS": (
+                "image_search.list_index_stats,image_search.search_similar_images"
+            ),
+            "IMAGE_SEARCH_MCP_DATA_PATH": _as_posix_path(data_dir),
+            "IMAGE_SEARCH_MCP_MODELS_PATH": _as_posix_path(models_dir),
+            "IMAGE_SEARCH_MCP_UPLOADS_PATH": _as_posix_path(uploads_dir),
+            "IMAGE_SEARCH_MCP_HF_CACHE_PATH": _as_posix_path(hf_cache_dir),
+            "GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR": str(previews_dir.resolve()),
+        }
+
+    if variant == "sam-segmentation":
+        return {
+            **common,
+            "GENERAL_CHAT_MCP_CONFIG": "mcp/sam-segmentation-docker.yaml",
+            "GENERAL_CHAT_MCP_APPROVED_TOOLS": "sam_segmentation.count_objects_with_sam3",
+            "SAM_SEGMENTATION_MCP_UPLOADS_PATH": _as_posix_path(uploads_dir),
+        }
+
+    raise click.ClickException(f"Unknown General Chat MCP demo variant: {variant}")
+
+
 def _discover_demos() -> list[dict]:
     """Discover all runnable demos: servers and scripts."""
     root = _find_project_root()
@@ -155,13 +234,28 @@ def _discover_demos() -> list[dict]:
             }
         )
 
+        if name == "general-chat":
+            for variant, variant_info in _GENERAL_CHAT_MCP_VARIANTS.items():
+                demos.append(
+                    {
+                        "name": variant_info["name"],
+                        "type": "server",
+                        "dir": demo_dir,
+                        "script": None,
+                        "port": _detect_port(server_py),
+                        "description": variant_info["description"],
+                        "has_frontend": has_frontend,
+                        "mcp_variant": variant,
+                    }
+                )
+
     # 2. Script demos: examples/**/*_demo.py, *_workflow.py
     server_dirs = {d["dir"] for d in demos}
     for script in sorted(examples_dir.rglob("*.py")):
         # Skip non-demo scripts, __init__, node_modules
         if not any(script.name.endswith(s) for s in _SCRIPT_SUFFIXES):
             continue
-        if "node_modules" in str(script) or "__pycache__" in str(script):
+        if any(part in _IGNORED_SCRIPT_PARTS for part in script.parts):
             continue
         # Skip scripts inside server demo dirs (they're part of the server demo)
         if script.parent in server_dirs:
@@ -416,7 +510,10 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
                 proc.kill()
 
     # Ensure Python subprocesses flush output immediately
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    demo_env = {}
+    if info.get("mcp_variant"):
+        demo_env = _general_chat_mcp_env(str(info["mcp_variant"]), demo_dir)
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", **demo_env}
 
     # Use the same Python that runs this CLI -- guaranteed to have deps installed
     backend_cmd = [
