@@ -95,6 +95,13 @@ What this does:
 - Starts frontend dev server if `frontend/package.json` exists
 - Auto-installs Python deps for the demo when needed
 - Auto-installs/builds `studio/chat-ui` when needed
+- Starts as the base MCP-free chat demo, ignoring optional MCP settings saved
+  in `.env` or `.openbench`
+
+MCP-enabled demos remain available through dedicated commands such as
+`openbench demo run general-chat-image-search` and
+`openbench demo run general-chat-sam-segmentation`, or by starting the backend
+manually with explicit `GENERAL_CHAT_MCP_*` environment variables.
 
 Useful options:
 

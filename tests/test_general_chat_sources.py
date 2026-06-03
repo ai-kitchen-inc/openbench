@@ -1205,12 +1205,35 @@ class TestGeneralChatSources(unittest.TestCase):
 
         with patch.dict(environ, {"GOOGLE_API_KEY": "test-key"}, clear=False):
             environ.pop("GENERAL_CHAT_MCP_ENABLED", None)
-            with patch.object(agent_module, "configure_provider"):
+            with patch.object(agent_module, "_configure_general_chat_provider"):
                 agent = agent_module.create_agent()
 
         self.assertFalse(agent._mcp_enabled)
         self.assertEqual(agent._mcp_tools, [])
         self.assertEqual(len(agent.tools), 0)
+
+    def test_configure_general_chat_provider_does_not_persist_provider_state(self):
+        import general_chat.agent as agent_module
+
+        captured = {}
+
+        class FakeProviderService:
+            def configure(self, config, save=True):
+                captured["config"] = config
+                captured["save"] = save
+
+        with patch.object(agent_module, "get_provider_service", return_value=FakeProviderService()):
+            agent_module._configure_general_chat_provider("test-key", "test-model")
+
+        config = captured["config"]
+        self.assertFalse(captured["save"])
+        self.assertEqual(config.name, "gemini-general-chat")
+        self.assertEqual(config.provider_type.value, "llm")
+        self.assertEqual(config.provider, "gemini")
+        self.assertEqual(config.plugin_type, "chat")
+        self.assertEqual(config.credentials, {"api_key": "test-key"})
+        self.assertEqual(config.settings, {"model": "test-model"})
+        self.assertTrue(config.is_default)
 
     def test_create_agent_mcp_enabled_loads_allowlisted_adapters(self):
         import general_chat.agent as agent_module
@@ -1229,7 +1252,7 @@ class TestGeneralChatSources(unittest.TestCase):
                 ),
             },
             clear=False,
-        ), patch.object(agent_module, "configure_provider"):
+        ), patch.object(agent_module, "_configure_general_chat_provider"):
             agent = agent_module.create_agent()
 
         names = {tool.namespaced_name for tool in agent._mcp_tools}

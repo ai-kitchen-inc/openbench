@@ -224,6 +224,14 @@ def _general_chat_mcp_env(variant: str, demo_dir: Path) -> dict[str, str]:
     raise click.ClickException(f"Unknown General Chat MCP demo variant: {variant}")
 
 
+def _general_chat_plain_env() -> dict[str, str]:
+    """Build environment overrides for the MCP-free General Chat demo."""
+    return {
+        "GENERAL_CHAT_MCP_ENABLED": "0",
+        "GENERAL_CHAT_MCP_REGISTRY_ENABLED": "0",
+    }
+
+
 def _discover_demos() -> list[dict]:
     """Discover all runnable demos: servers and scripts."""
     root = _find_project_root()
@@ -529,7 +537,9 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
 
     # Ensure Python subprocesses flush output immediately
     demo_env = {}
-    if info.get("mcp_variant"):
+    if info["name"] == "general-chat":
+        demo_env = _general_chat_plain_env()
+    elif info.get("mcp_variant"):
         demo_env = _general_chat_mcp_env(str(info["mcp_variant"]), demo_dir)
     env = {**os.environ, "PYTHONUNBUFFERED": "1", **demo_env}
 

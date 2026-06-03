@@ -98,6 +98,69 @@ def test_general_chat_sam_env_creates_expected_upload_path(tmp_path, monkeypatch
     assert (demo_dir / "uploads" / "_sam_debug").is_dir()
 
 
+def test_general_chat_plain_env_disables_optional_mcp():
+    env = demo_module._general_chat_plain_env()
+
+    assert env == {
+        "GENERAL_CHAT_MCP_ENABLED": "0",
+        "GENERAL_CHAT_MCP_REGISTRY_ENABLED": "0",
+    }
+
+
+def test_run_server_passes_plain_general_chat_mcp_disabled_env(tmp_path, monkeypatch):
+    demo_dir = tmp_path / "general-chat"
+    demo_dir.mkdir()
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        def __init__(self):
+            self.returncode = None
+            self._polls = 0
+
+        def poll(self):
+            self._polls += 1
+            return None if self._polls == 1 else 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            self.returncode = 0
+            return 0
+
+        def kill(self):
+            self.returncode = -9
+
+    def fake_popen(cmd, cwd, env, stdout, stderr):
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        captured["env"] = env
+        return FakeProcess()
+
+    monkeypatch.setattr(demo_module, "_resolve_pnpm_command", lambda: None)
+    monkeypatch.setattr(demo_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(demo_module.time, "sleep", lambda _seconds: None)
+
+    demo_module._run_server(
+        {
+            "name": "general-chat",
+            "type": "server",
+            "dir": demo_dir,
+            "port": 8005,
+            "has_frontend": True,
+        },
+        port=None,
+        no_frontend=True,
+        no_install=True,
+    )
+
+    assert captured["cwd"] == str(demo_dir)
+    assert captured["env"]["PYTHONUNBUFFERED"] == "1"
+    assert captured["env"]["GENERAL_CHAT_MCP_ENABLED"] == "0"
+    assert captured["env"]["GENERAL_CHAT_MCP_REGISTRY_ENABLED"] == "0"
+    assert captured["cmd"][-3:] == ["--port", "8005", "--reload"]
+
+
 def test_run_server_passes_variant_env_to_backend(tmp_path, monkeypatch):
     demo_dir = tmp_path / "general-chat"
     demo_dir.mkdir()

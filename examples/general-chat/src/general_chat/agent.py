@@ -8,7 +8,7 @@ from typing import Any
 
 from openbench.chat import render_queue as shared_render_queue
 from openbench.core.abstractions import Tool
-from openbench.core.providers import ProviderType, configure_provider
+from openbench.core.providers import ProviderConfig, ProviderType, get_provider_service
 from openbench.intelligence import BaseAgent, Persona
 
 _DEFAULT_MCP_APPROVED_TOOLS = (
@@ -18,6 +18,7 @@ _DEFAULT_MCP_APPROVED_TOOLS = (
     "openbench.top_n_records",
 )
 _IMAGE_SEARCH_SIMILAR_TOOL = "image_search.search_similar_images"
+_PROVIDER_NAME = "gemini-general-chat"
 
 
 def _example_root() -> Path:
@@ -263,6 +264,22 @@ def reload_external_mcp_tools(agent: Any) -> dict[str, Any]:
     return summary
 
 
+def _configure_general_chat_provider(api_key: str, model: str) -> None:
+    """Configure the demo LLM provider without writing user-level provider state."""
+    get_provider_service().configure(
+        ProviderConfig(
+            name=_PROVIDER_NAME,
+            provider_type=ProviderType.LLM,
+            provider="gemini",
+            plugin_type="chat",
+            credentials={"api_key": api_key},
+            settings={"model": model},
+            is_default=True,
+        ),
+        save=False,
+    )
+
+
 def create_agent(
     api_key: str | None = None,
     model: str | None = None,
@@ -279,15 +296,7 @@ def create_agent(
     if not key:
         raise RuntimeError("GOOGLE_API_KEY is required. Set it in .env or the environment.")
 
-    configure_provider(
-        name="gemini-general-chat",
-        provider_type=ProviderType.LLM,
-        provider="gemini",
-        plugin_type="chat",
-        credentials={"api_key": key},
-        settings={"model": resolved_model},
-        is_default=True,
-    )
+    _configure_general_chat_provider(key, resolved_model)
 
     persona_dir = get_persona_dir()
     persona = Persona.from_dir(persona_dir) if persona_dir.is_dir() else None
