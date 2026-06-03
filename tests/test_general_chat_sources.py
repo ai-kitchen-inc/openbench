@@ -48,9 +48,11 @@ from general_chat.sources import (  # noqa: E402
     SourceStore,
     TavilySearchDiscoveryProvider,
     clean_html_text,
+    mark_source_upload_deleted,
     source_record_from_file,
     source_record_from_text,
     source_record_from_url,
+    upload_file_ids_for_source,
     validate_file_source,
     validate_url,
 )
@@ -1199,6 +1201,124 @@ class TestGeneralChatSources(unittest.TestCase):
         from general_chat.server.app import create_app
 
         return TestClient(create_app())
+
+    def _upload_text_source(
+        self,
+        client: TestClient,
+        *,
+        session_id: str,
+        filename: str = "notes.txt",
+        content: bytes = b"Useful source text",
+    ) -> tuple[dict, Path]:
+        response = client.post(
+            "/chat/upload",
+            files={"file": (filename, content, "text/plain")},
+            data={"sessionId": session_id},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        file_id = payload["url"].split("/")[2]
+        return payload, Path(environ["GENERAL_CHAT_UPLOAD_DIR"]) / file_id
+
+    def test_source_upload_cleanup_scrubs_mcp_paths_and_preserves_text(self):
+        record = SourceRecord.create(
+            session_id="s1",
+            name="photo.png",
+            kind="image",
+            mime_type="image/png",
+            size_bytes=10,
+            url="/uploads/file-abc123/photo.png",
+            text=(
+                "Image source: photo.png\n"
+                "Browser URL: /uploads/file-abc123/photo.png\n"
+                "image_search MCP path: /general-chat/uploads/file-abc123/photo.png\n"
+                "Extracted image context:\nA dog on grass."
+            ),
+            metadata={
+                "imageSearchPath": "/general-chat/uploads/file-abc123/photo.png",
+                "samSegmentationPath": "/general-chat/uploads/file-abc123/photo.png",
+                "imageSearchPreviewUrl": "/uploads/file-abc123/photo.png",
+                "description": "A dog on grass.",
+            },
+        )
+
+        self.assertEqual(upload_file_ids_for_source(record), {"file-abc123"})
+
+        mark_source_upload_deleted(record, deleted_at="2026-06-03T00:00:00+00:00")
+
+        self.assertIsNone(record.url)
+        self.assertNotIn("imageSearchPath", record.metadata or {})
+        self.assertNotIn("samSegmentationPath", record.metadata or {})
+        self.assertNotIn("imageSearchPreviewUrl", record.metadata or {})
+        self.assertTrue((record.metadata or {})["uploadDeleted"])
+        self.assertEqual(
+            (record.metadata or {})["uploadDeletedAt"],
+            "2026-06-03T00:00:00+00:00",
+        )
+        self.assertIn("A dog on grass.", record.text)
+        self.assertNotIn("/uploads/file-abc123", record.text)
+        self.assertNotIn("/general-chat/uploads/file-abc123", record.text)
+
+    def test_awp_stream_deletes_used_upload_and_scrubs_source_record(self):
+        client = self._build_test_client(agent=MockAgent())
+        payload, file_dir = self._upload_text_source(client, session_id="s-clean")
+        self.assertTrue(file_dir.exists())
+
+        response = client.post(
+            "/awp",
+            json={
+                "threadId": "s-clean",
+                "messages": [{"role": "user", "content": "Use my source"}],
+                "forwardedProps": {"sessionId": "s-clean"},
+            },
+            headers={"accept": "text/event-stream"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(file_dir.exists())
+        sources = client.get("/chat/sources/s-clean").json()
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["id"], payload["id"])
+        self.assertIsNone(sources[0]["url"])
+        self.assertTrue(sources[0]["metadata"]["uploadDeleted"])
+        search = client.get("/chat/sources/s-clean/search?q=Useful").json()
+        self.assertEqual(search["results"][0]["sourceId"], payload["id"])
+
+    def test_delete_source_removes_referenced_upload_file(self):
+        client = self._build_test_client()
+        payload, file_dir = self._upload_text_source(client, session_id="s-delete")
+        self.assertTrue(file_dir.exists())
+
+        response = client.delete(f"/chat/sources/s-delete/{payload['id']}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(file_dir.exists())
+        self.assertEqual(client.get("/chat/sources/s-delete").json(), [])
+
+    def test_clear_sources_removes_referenced_upload_files(self):
+        client = self._build_test_client()
+        _, first_dir = self._upload_text_source(client, session_id="s-clear", filename="a.txt")
+        _, second_dir = self._upload_text_source(client, session_id="s-clear", filename="b.txt")
+        self.assertTrue(first_dir.exists())
+        self.assertTrue(second_dir.exists())
+
+        response = client.delete("/chat/sources/s-clear")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(first_dir.exists())
+        self.assertFalse(second_dir.exists())
+        self.assertEqual(client.get("/chat/sources/s-clear").json(), [])
+
+    def test_delete_session_removes_session_sources_and_upload_files(self):
+        client = self._build_test_client()
+        _, file_dir = self._upload_text_source(client, session_id="s-session")
+        self.assertTrue(file_dir.exists())
+
+        response = client.delete("/sessions/s-session")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(file_dir.exists())
+        self.assertEqual(client.get("/chat/sources/s-session").json(), [])
 
     def test_create_agent_mcp_disabled_by_default(self):
         import general_chat.agent as agent_module

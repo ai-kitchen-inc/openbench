@@ -50,6 +50,12 @@ TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json"}
 IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT = "/general-chat/uploads"
+UPLOAD_METADATA_KEYS = {
+    "imageSearchPath",
+    "samSegmentationPath",
+    "imageSearchPreviewUrl",
+}
+_UPLOAD_FILE_ID_PATTERN = re.compile(r"(?:^|/)(file-[A-Za-z0-9_-]+)(?:/|$)")
 
 ALLOWED_EXTENSIONS = (
     DOCUMENT_EXTENSIONS | EXCEL_EXTENSIONS | TEXT_EXTENSIONS | IMAGE_EXTENSIONS
@@ -1028,6 +1034,80 @@ def image_search_metadata(
     result["samSegmentationPath"] = image_path
     result["imageSearchPreviewUrl"] = f"/uploads/{stored_file.id}/{stored_file.name}"
     return result
+
+
+def upload_file_ids_for_source(record: SourceRecord) -> set[str]:
+    """Return local upload file ids referenced by a source record."""
+    values: list[str] = []
+    if record.url:
+        values.append(record.url)
+    metadata = record.metadata or {}
+    for key in UPLOAD_METADATA_KEYS:
+        value = metadata.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    ids: set[str] = set()
+    for value in values:
+        ids.update(_upload_file_ids_from_value(value))
+    return ids
+
+
+def mark_source_upload_deleted(
+    record: SourceRecord,
+    *,
+    deleted_at: str | None = None,
+) -> SourceRecord:
+    """Scrub stale upload references after the physical upload is deleted."""
+    if deleted_at is None:
+        deleted_at = datetime.now(timezone.utc).isoformat()
+
+    metadata = dict(record.metadata or {})
+    for key in UPLOAD_METADATA_KEYS:
+        metadata.pop(key, None)
+    metadata["uploadDeleted"] = True
+    metadata["uploadDeletedAt"] = deleted_at
+    record.metadata = metadata
+
+    if record.url and _upload_file_ids_from_value(record.url):
+        record.url = None
+    record.text = _scrub_deleted_upload_text(record.text)
+    return record
+
+
+def _upload_file_ids_from_value(value: str) -> set[str]:
+    return {match.group(1) for match in _UPLOAD_FILE_ID_PATTERN.finditer(value)}
+
+
+def _scrub_deleted_upload_text(text: str) -> str:
+    if not text:
+        return text
+    kept: list[str] = []
+    removed = False
+    for line in text.splitlines():
+        if _line_advertises_deleted_upload(line):
+            removed = True
+            continue
+        kept.append(line)
+    cleaned = "\n".join(kept).strip()
+    if removed:
+        note = "[Upload file deleted after use; re-upload it to run image MCP tools again.]"
+        cleaned = f"{cleaned}\n\n{note}".strip() if cleaned else note
+    return cleaned
+
+
+def _line_advertises_deleted_upload(line: str) -> bool:
+    lowered = line.lower()
+    return any(
+        needle in lowered
+        for needle in (
+            "/uploads/",
+            "/general-chat/uploads/",
+            "mcp path:",
+            "image_search.search_similar_images",
+            "sam_segmentation.count_objects_with_sam3",
+            "image_path=",
+        )
+    )
 
 
 def image_search_text(

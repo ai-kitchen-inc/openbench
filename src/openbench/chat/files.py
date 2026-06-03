@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -117,6 +118,10 @@ class FileStore(Protocol):
         """
         ...
 
+    def delete(self, file_id: str) -> bool:
+        """Delete a previously-stored file and return True if removed."""
+        ...
+
 
 class LocalFileStore:
     """Disk-based file storage for chat uploads.
@@ -192,6 +197,23 @@ class LocalFileStore:
         """Return the on-disk path; identical to ``get().path`` for local."""
         stored = self.get(file_id)
         return stored.path if stored is not None else None
+
+    def delete(self, file_id: str) -> bool:
+        """Delete the upload directory for a stored file id."""
+        if not file_id:
+            return False
+
+        root = self.upload_dir.resolve()
+        target = (self.upload_dir / file_id).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return False
+        if target == root or not target.exists() or not target.is_dir():
+            return False
+
+        shutil.rmtree(target)
+        return True
 
 
 # Backward-compat alias — the old ``FileStore`` concrete class is now the

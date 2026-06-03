@@ -7,7 +7,7 @@ import concurrent.futures
 import threading
 import time
 from contextlib import suppress
-from typing import Any
+from typing import Any, Callable
 
 from openbench.mcp.config import MCPClientConfig, MCPServerConnectionConfig
 from openbench.mcp.discovery import DiscoveredMCPServer, MCPDiscoveryCache
@@ -35,7 +35,11 @@ class MCPClient:
     ):
         self.config = config or MCPClientConfig()
         self._transports: dict[str, MCPTransport] = {}
+        self._transport_factories: dict[str, Callable[[], MCPTransport]] = {}
         self._server_configs: dict[str, MCPServerConnectionConfig] = {}
+        self._close_after_call_locks: dict[
+            str, tuple[asyncio.AbstractEventLoop, asyncio.Lock]
+        ] = {}
         for name, server_config in self.config.servers.items():
             if not server_config.enabled:
                 continue
@@ -43,11 +47,20 @@ class MCPClient:
             self._server_configs[namespace] = server_config
             if transports and namespace in transports:
                 self._transports[namespace] = transports[namespace]
+                self._transport_factories[namespace] = lambda transport=transports[
+                    namespace
+                ]: transport
             else:
                 self._transports[namespace] = build_transport(server_config)
+                self._transport_factories[namespace] = (
+                    lambda config=server_config: build_transport(config)
+                )
         if transports:
             for name, transport in transports.items():
                 self._transports.setdefault(name, transport)
+                self._transport_factories.setdefault(
+                    name, lambda transport=transport: transport
+                )
                 self._server_configs.setdefault(name, MCPServerConnectionConfig(command="noop"))
 
         allowed_servers = set(self.config.policy.allowed_servers)
@@ -191,13 +204,51 @@ class MCPClient:
         *,
         timeout_seconds: float | None = None,
         approved: bool = False,
+        close_after_call: bool = False,
     ) -> Any:
         """Call a namespaced MCP tool."""
         server, tool = split_namespaced_tool(namespaced_name)
+        if close_after_call:
+            lock = self._get_close_after_call_lock(server)
+            async with lock:
+                try:
+                    return await self._call_tool_impl(
+                        server,
+                        tool,
+                        namespaced_name,
+                        arguments,
+                        timeout_seconds=timeout_seconds,
+                        approved=approved,
+                    )
+                finally:
+                    await self._close_and_replace_server(server)
+
+        return await self._call_tool_impl(
+            server,
+            tool,
+            namespaced_name,
+            arguments,
+            timeout_seconds=timeout_seconds,
+            approved=approved,
+        )
+
+    async def _call_tool_impl(
+        self,
+        server: str,
+        tool: str,
+        namespaced_name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+        approved: bool = False,
+    ) -> Any:
         if server not in self._transports:
             raise MCPToolNotFoundError(f"MCP server not configured: {server}", server=server)
-        if not self.discovery.servers:
-            await self.discover()
+        if server not in self.discovery.servers:
+            self.discovery.servers[server] = await self._discover_server_with_timeout(
+                server,
+                self._transports[server],
+            )
         discovered = self.discovery.servers.get(server)
         if discovered is None or tool not in discovered.tools:
             raise MCPToolNotFoundError(
@@ -271,6 +322,7 @@ class MCPClient:
         *,
         timeout_seconds: float | None = None,
         approved: bool = False,
+        close_after_call: bool = False,
     ) -> Any:
         return self._run_sync(
             self.call_tool(
@@ -278,6 +330,7 @@ class MCPClient:
                 arguments,
                 timeout_seconds=timeout_seconds,
                 approved=approved,
+                close_after_call=close_after_call,
             )
         )
 
@@ -309,9 +362,30 @@ class MCPClient:
         stale_transport = self._transports[server]
         with suppress(Exception):
             await stale_transport.close()
-        transport = build_transport(self._server_configs[server])
+        transport = self._transport_factories[server]()
         self._transports[server] = transport
         self.discovery.servers[server] = await self._discover_server(server, transport)
+
+    async def _close_and_replace_server(self, server: str) -> None:
+        stale_transport = self._transports.get(server)
+        if stale_transport is not None:
+            with suppress(Exception):
+                await stale_transport.close()
+        factory = self._transport_factories.get(server)
+        if factory is not None:
+            self._transports[server] = factory()
+        self.discovery.servers.pop(server, None)
+
+    def _get_close_after_call_lock(self, server: str) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        existing = self._close_after_call_locks.get(server)
+        if existing is not None:
+            existing_loop, lock = existing
+            if existing_loop is loop:
+                return lock
+        lock = asyncio.Lock()
+        self._close_after_call_locks[server] = (loop, lock)
+        return lock
 
     @staticmethod
     def _should_reconnect_closed_session(

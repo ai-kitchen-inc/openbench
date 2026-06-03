@@ -21,12 +21,14 @@ class MCPToolAdapter(Tool):
         tool_schema: dict[str, Any],
         approved: bool = False,
         timeout_seconds: float | None = None,
+        close_after_execute: bool = True,
     ):
         self.client = client
         self.namespaced_name = namespaced_name
         self.tool_schema = tool_schema
         self.approved = approved
         self.timeout_seconds = timeout_seconds
+        self.close_after_execute = close_after_execute
         self._provider_name = provider_safe_tool_name(namespaced_name)
 
     @property
@@ -45,6 +47,7 @@ class MCPToolAdapter(Tool):
                 params,
                 timeout_seconds=self.timeout_seconds,
                 approved=self.approved,
+                close_after_call=self.close_after_execute,
             )
         except Exception as exc:
             message = str(exc) or exc.__class__.__name__

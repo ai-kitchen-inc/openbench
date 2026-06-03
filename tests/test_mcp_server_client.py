@@ -415,6 +415,70 @@ def test_client_reconnects_streamable_http_once_after_closed_resource(monkeypatc
     assert ReconnectableTransport.instances[0].closed is True
 
 
+def test_client_close_after_call_closes_and_replaces_transport_after_success(monkeypatch):
+    ReconnectableTransport.instances = []
+
+    def build_fake_transport(config):
+        return ReconnectableTransport(fail_call=False)
+
+    monkeypatch.setattr("openbench.mcp.client.build_transport", build_fake_transport)
+    client = MCPClient(
+        MCPClientConfig(
+            servers={
+                "time": MCPServerConnectionConfig(
+                    command="fake-mcp",
+                    namespace="time",
+                    allowed=True,
+                )
+            }
+        )
+    )
+
+    first = client.call_tool_sync("time.echo", {"value": "one"}, close_after_call=True)
+    second = client.call_tool_sync("time.echo", {"value": "two"}, close_after_call=True)
+    client.close_sync()
+
+    assert first == {"value": "one"}
+    assert second == {"value": "two"}
+    assert len(ReconnectableTransport.instances) == 3
+    assert ReconnectableTransport.instances[0].closed is True
+    assert ReconnectableTransport.instances[1].closed is True
+
+
+def test_client_close_after_call_closes_and_replaces_transport_after_failure(monkeypatch):
+    ReconnectableTransport.instances = []
+
+    class BrokenTransport(ReconnectableTransport):
+        async def call_tool(self, name: str, arguments: dict) -> dict:
+            raise ValueError("server exploded")
+
+    def build_fake_transport(config):
+        return BrokenTransport(fail_call=False)
+
+    monkeypatch.setattr("openbench.mcp.client.build_transport", build_fake_transport)
+    client = MCPClient(
+        MCPClientConfig(
+            servers={
+                "time": MCPServerConnectionConfig(
+                    command="fake-mcp",
+                    namespace="time",
+                    allowed=True,
+                    retries=0,
+                )
+            }
+        )
+    )
+
+    try:
+        with pytest.raises(ValueError, match="server exploded"):
+            client.call_tool_sync("time.echo", {"value": "ok"}, close_after_call=True)
+    finally:
+        client.close_sync()
+
+    assert len(ReconnectableTransport.instances) == 2
+    assert ReconnectableTransport.instances[0].closed is True
+
+
 def test_client_does_not_reconnect_streamable_http_for_non_closed_error(monkeypatch):
     ReconnectableTransport.instances = []
 
@@ -525,12 +589,39 @@ def test_mcp_tool_adapter_passes_configured_timeout_to_client(openbench_mcp_serv
 
     def fake_call_tool_sync(*args, **kwargs):
         seen["timeout_seconds"] = kwargs.get("timeout_seconds")
+        seen["close_after_call"] = kwargs.get("close_after_call")
         return {"ok": True}
 
     adapter.client.call_tool_sync = fake_call_tool_sync
 
     assert adapter.execute() == {"ok": True}
     assert seen["timeout_seconds"] == 123.0
+    assert seen["close_after_call"] is True
+
+
+def test_mcp_tool_adapter_can_opt_out_of_close_after_execute(openbench_mcp_server):
+    client = MCPClient(transports={"openbench": InMemoryMCPTransport(openbench_mcp_server)})
+    adapter = MCPToolAdapter(
+        client=client,
+        namespaced_name="openbench.distinct_values",
+        tool_schema={
+            "name": "distinct_values",
+            "description": "Distinct values",
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        },
+        approved=True,
+        close_after_execute=False,
+    )
+    seen = {}
+
+    def fake_call_tool_sync(*args, **kwargs):
+        seen["close_after_call"] = kwargs.get("close_after_call")
+        return {"ok": True}
+
+    adapter.client.call_tool_sync = fake_call_tool_sync
+
+    assert adapter.execute() == {"ok": True}
+    assert seen["close_after_call"] is False
 
 
 def test_load_mcp_tools_propagates_server_timeout(monkeypatch):

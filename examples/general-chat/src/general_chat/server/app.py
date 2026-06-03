@@ -24,10 +24,12 @@ from general_chat.sources import (
     SearchDiscoveryAdapter,
     SourceParserRegistry,
     SourceStore,
+    mark_source_upload_deleted,
     max_source_bytes_from_env,
     source_record_from_file,
     source_record_from_text,
     source_record_from_url,
+    upload_file_ids_for_source,
 )
 from openbench import LocalStorageBackend
 from openbench.chat import ChatEngine
@@ -135,6 +137,39 @@ def create_app() -> FastAPI:
     discovery_adapter = SearchDiscoveryAdapter()
     max_source_bytes = max_source_bytes_from_env()
     agent = create_agent()
+
+    def _delete_upload_files_for_records(records: list) -> None:
+        for record in records:
+            for file_id in upload_file_ids_for_source(record):
+                try:
+                    file_store.delete(file_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to delete upload file %s for source %s",
+                        file_id,
+                        getattr(record, "id", ""),
+                        exc_info=True,
+                    )
+
+    def _cleanup_source_uploads_after_use(records: list) -> None:
+        records_with_uploads = [
+            record for record in records if upload_file_ids_for_source(record)
+        ]
+        if not records_with_uploads:
+            return
+
+        _delete_upload_files_for_records(records_with_uploads)
+        source_ids = {record.id for record in records_with_uploads}
+        session_ids = {record.session_id for record in records_with_uploads}
+        for session_id in session_ids:
+            current = source_store.list(session_id)
+            changed = False
+            for record in current:
+                if record.id in source_ids and upload_file_ids_for_source(record):
+                    mark_source_upload_deleted(record)
+                    changed = True
+            if changed:
+                source_store.save(session_id, current)
 
     def render_items_fn() -> list[dict]:
         items = shared_render_queue.get_items()
@@ -546,6 +581,11 @@ def create_app() -> FastAPI:
 
     @app.delete("/chat/sources/{thread_id}/{source_id}")
     async def delete_source(thread_id: str, source_id: str) -> dict:
+        records = source_store.list(thread_id)
+        target = next((record for record in records if record.id == source_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+        _delete_upload_files_for_records([target])
         deleted = source_store.delete(thread_id, source_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Source not found")
@@ -554,6 +594,7 @@ def create_app() -> FastAPI:
     @app.delete("/chat/sources/{thread_id}")
     async def clear_sources(thread_id: str) -> dict:
         """Remove all stored sources for a session."""
+        _delete_upload_files_for_records(source_store.list(thread_id))
         source_store.clear(thread_id)
         return {"ok": True}
 
@@ -569,6 +610,7 @@ def create_app() -> FastAPI:
             engine=engine,
             db_path=db_path,
             source_records=source_records,
+            on_stream_complete=_cleanup_source_uploads_after_use,
         )
         return await handler.handle(request)
 
@@ -602,6 +644,8 @@ def create_app() -> FastAPI:
     @app.delete("/sessions/{session_id}")
     async def delete_session(session_id: str) -> dict:
         handler = AGUISessionHandler(session_store=storage.session_store())
+        _delete_upload_files_for_records(source_store.list(session_id))
+        source_store.clear(session_id)
         handler.delete(session_id)
         return {"ok": True, "sessionId": session_id}
 

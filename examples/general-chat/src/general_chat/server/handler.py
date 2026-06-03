@@ -9,7 +9,7 @@ import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from openbench.chat.session import Attachment
 from openbench.chat.transport import AGUIHandler
@@ -346,12 +346,22 @@ class GeneralChatHandler(AGUIHandler):
         db_path: str = "general_chat_memory.db",
         doc_context: str | None = None,
         source_records: list[SourceRecord] | None = None,
+        on_stream_complete: Callable[[list[SourceRecord]], None] | None = None,
     ):
         super().__init__(engine)
         self._memory_store = SQLiteMemoryStore(db_path=db_path)
         self._local = threading.local()
         self._doc_context = doc_context
         self._source_records = source_records or []
+        self._on_stream_complete = on_stream_complete
+
+    async def _event_stream(self, body: dict[str, Any], accept: str) -> Any:
+        try:
+            async for item in super()._event_stream(body, accept):
+                yield item
+        finally:
+            if self._on_stream_complete and self._source_records:
+                self._on_stream_complete(self._source_records)
 
     def _extract_content(self, body):
         content, draft_attachments = super()._extract_content(body)
