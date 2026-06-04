@@ -1,4 +1,13 @@
-export type MCPServerStatus = "enabled" | "disabled" | "running" | "stopped" | "failed" | "unavailable";
+export type MCPServerStatus =
+  | "enabled"
+  | "disabled"
+  | "running"
+  | "stopped"
+  | "failed"
+  | "unavailable"
+  | "empty"
+  | "invalid"
+  | "registered";
 
 export type MCPDiscoveredTool = {
   name: string;
@@ -10,6 +19,11 @@ export type MCPDiscoveredTool = {
   enabled: boolean;
   discoveredAt: string | null;
   discovered_at?: string | null;
+  status?: string;
+  diagnostics?: Record<string, unknown>;
+  loaded?: boolean;
+  registeredToolName?: string | null;
+  registered_tool_name?: string | null;
 };
 
 export type RegisteredMCPServer = {
@@ -17,12 +31,21 @@ export type RegisteredMCPServer = {
   name: string;
   title: string;
   source?: string;
+  providerKind?: "docker" | "toolhive" | "internal" | "manual" | string;
+  provider_kind?: "docker" | "toolhive" | "internal" | "manual" | string;
+  sourceType?: string;
+  source_type?: string;
+  serverNamespace?: string;
+  server_namespace?: string;
+  isManaged?: boolean;
+  is_managed?: boolean;
   workloadName?: string | null;
   proxyUrl?: string | null;
   transport: "stdio" | "streamable-http" | "sse" | string;
   enabled: boolean;
   status: MCPServerStatus | string;
   error: string | null;
+  diagnostics?: Record<string, unknown>;
   registeredAt: string;
   updatedAt: string;
   lastDiscoveredAt: string | null;

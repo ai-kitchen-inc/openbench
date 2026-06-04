@@ -138,6 +138,67 @@ def create_app() -> FastAPI:
     max_source_bytes = max_source_bytes_from_env()
     agent = create_agent()
 
+    def _enabled_tool_count(server) -> int:
+        return sum(1 for tool in getattr(server, "tools", []) if getattr(tool, "enabled", True))
+
+    def _reload_external_mcp_tools_or_raise(
+        *,
+        require_chat_tools: bool = False,
+        discovered_tool_count: int = 0,
+        enabled_tool_count: int = 0,
+    ) -> dict:
+        reload_summary = reload_external_mcp_tools(agent)
+        diagnostics = reload_summary.get("diagnostics")
+        diagnostic_text = ""
+        if isinstance(diagnostics, list) and diagnostics:
+            parts = []
+            for item in diagnostics:
+                if not isinstance(item, dict):
+                    continue
+                provider = item.get("provider") or "mcp"
+                server = item.get("server") or "server"
+                error = item.get("connection_error") or item.get("error")
+                discovered = item.get("tools_discovered", 0)
+                registered = item.get("tools_registered", 0)
+                parts.append(
+                    f"{provider}/{server}: discovered={discovered}, registered={registered}"
+                    + (f", error={error}" if error else "")
+                )
+            if parts:
+                diagnostic_text = " Provider diagnostics: " + " | ".join(parts)
+        logger.info(
+            "mcp.api.reload discovered=%d enabled=%d available=%s error=%s",
+            discovered_tool_count,
+            enabled_tool_count,
+            reload_summary.get("available_to_chat"),
+            reload_summary.get("error"),
+        )
+        if reload_summary.get("error"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "MCP tools were discovered, but could not be loaded into chat: "
+                    f"{reload_summary['error']}{diagnostic_text}"
+                ),
+            )
+        if require_chat_tools and not reload_summary.get("available_to_chat"):
+            if discovered_tool_count > 0 and enabled_tool_count == 0:
+                detail = (
+                    "MCP tools were discovered, but no enabled tools are available to chat. "
+                    "Enable at least one discovered tool and load tools again."
+                )
+            else:
+                detail = (
+                    "Enabled MCP tools were found, but none were registered with chat. "
+                    "Load tools again, and check the MCP server logs if this repeats."
+                    f"{diagnostic_text}"
+                )
+            raise HTTPException(
+                status_code=400,
+                detail=detail,
+            )
+        return reload_summary
+
     def _delete_upload_files_for_records(records: list) -> None:
         for record in records:
             for file_id in upload_file_ids_for_source(record):
@@ -335,8 +396,7 @@ def create_app() -> FastAPI:
                 requested = {str(name) for name in names}
                 workloads = [workload for workload in workloads if workload.name in requested]
             payload = mcp_registry_store.import_toolhive_workloads(workloads)
-            reload_summary = reload_external_mcp_tools(agent)
-            return {**payload, "reload": reload_summary}
+            return payload
         except ToolHiveError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except MCPRegistryError as exc:
@@ -402,7 +462,11 @@ def create_app() -> FastAPI:
     async def refresh_mcp_server(server_id: str) -> dict:
         try:
             server = mcp_registry_store.discover_server(server_id)
-            reload_summary = reload_external_mcp_tools(agent)
+            reload_summary = _reload_external_mcp_tools_or_raise(
+                require_chat_tools=bool(server.tools),
+                discovered_tool_count=len(server.tools),
+                enabled_tool_count=_enabled_tool_count(server),
+            )
             return {"server": server.to_dict(detail=True), "reload": reload_summary}
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="MCP server not found") from exc
@@ -411,7 +475,10 @@ def create_app() -> FastAPI:
 
     @app.delete("/mcp/catalogs/{server_id}")
     async def remove_mcp_server(server_id: str) -> dict:
-        mcp_registry_store.remove_server(server_id)
+        try:
+            mcp_registry_store.remove_server(server_id)
+        except MCPRegistryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         reload_summary = reload_external_mcp_tools(agent)
         return {"ok": True, "serverId": server_id, "reload": reload_summary}
 
@@ -425,16 +492,21 @@ def create_app() -> FastAPI:
     @app.post("/mcp/catalogs/servers/{server_id}/enable")
     async def enable_mcp_server(server_id: str, request: Request) -> dict:
         body = await request.json()
+        enabled_requested = bool(body.get("enabled", True))
         try:
             server = mcp_registry_store.set_server_enabled(
                 server_id,
-                bool(body.get("enabled", True)),
+                enabled_requested,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="MCP server not found") from exc
         except MCPRegistryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        reload_summary = reload_external_mcp_tools(agent)
+        reload_summary = _reload_external_mcp_tools_or_raise(
+            require_chat_tools=enabled_requested and _enabled_tool_count(server) > 0,
+            discovered_tool_count=len(server.tools),
+            enabled_tool_count=_enabled_tool_count(server),
+        )
         return {
             "server": server.to_dict(detail=True),
             "reload": reload_summary,
@@ -446,7 +518,11 @@ def create_app() -> FastAPI:
             server = mcp_registry_store.discover_server(server_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="MCP server not found") from exc
-        reload_summary = reload_external_mcp_tools(agent)
+        reload_summary = _reload_external_mcp_tools_or_raise(
+            require_chat_tools=bool(server.tools),
+            discovered_tool_count=len(server.tools),
+            enabled_tool_count=_enabled_tool_count(server),
+        )
         return {"server": server.to_dict(detail=True), "reload": reload_summary}
 
     @app.post("/mcp/catalogs/servers/{server_id}/tools/{tool_name}/enable")
@@ -460,12 +536,19 @@ def create_app() -> FastAPI:
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="MCP server or tool not found") from exc
-        reload_summary = reload_external_mcp_tools(agent)
+        reload_summary = _reload_external_mcp_tools_or_raise(
+            require_chat_tools=_enabled_tool_count(server) > 0,
+            discovered_tool_count=len(server.tools),
+            enabled_tool_count=_enabled_tool_count(server),
+        )
         return {"server": server.to_dict(detail=True), "reload": reload_summary}
 
     @app.delete("/mcp/catalogs/servers/{server_id}")
     async def remove_mcp_server_by_id(server_id: str) -> dict:
-        mcp_registry_store.remove_server(server_id)
+        try:
+            mcp_registry_store.remove_server(server_id)
+        except MCPRegistryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         reload_summary = reload_external_mcp_tools(agent)
         return {"ok": True, "serverId": server_id, "reload": reload_summary}
 

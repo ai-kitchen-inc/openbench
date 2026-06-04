@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ _DEFAULT_MCP_APPROVED_TOOLS = (
 )
 _IMAGE_SEARCH_SIMILAR_TOOL = "image_search.search_similar_images"
 _PROVIDER_NAME = "gemini-general-chat"
+logger = logging.getLogger(__name__)
 
 
 def _example_root() -> Path:
@@ -231,36 +233,172 @@ def _load_external_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
     return [_wrap_chat_mcp_tool(tool) for tool in tools], summary
 
 
+def _unregister_tool(agent: Any, name: str) -> None:
+    tools = getattr(agent, "tools", None)
+    if tools is None:
+        return
+    tool_map = getattr(tools, "_tools", None)
+    schema_map = getattr(tools, "_schemas", None)
+    if isinstance(tool_map, dict):
+        tool_map.pop(name, None)
+    if isinstance(schema_map, dict):
+        schema_map.pop(name, None)
+
+
+def _tool_available_to_chat(agent: Any, name: str) -> bool:
+    tools = getattr(agent, "tools", None)
+    if tools is None:
+        return False
+    tool_map = getattr(tools, "_tools", None)
+    schema_map = getattr(tools, "_schemas", None)
+    if not isinstance(tool_map, dict) or name not in tool_map:
+        return False
+    if isinstance(schema_map, dict) and name not in schema_map:
+        return False
+    try:
+        schemas = tools.get_schemas()
+    except Exception:
+        return False
+    return any(
+        isinstance(schema, dict)
+        and isinstance(schema.get("function"), dict)
+        and schema["function"].get("name") == name
+        for schema in schemas
+    )
+
+
+def _with_runtime_verification(
+    summary: dict[str, Any],
+    *,
+    registered: set[str],
+    registration_errors: list[str] | None = None,
+) -> dict[str, Any]:
+    verified_summary = dict(summary)
+    tools = list(verified_summary.get("tools") or [])
+    expected = [
+        str(item.get("adapter_name") or "")
+        for item in tools
+        if isinstance(item, dict) and item.get("enabled", True)
+    ]
+    missing = sorted(name for name in expected if name and name not in registered)
+    errors = [item for item in registration_errors or [] if item]
+    if missing:
+        errors.append(
+            "Runtime registration did not expose these tools to chat: "
+            + ", ".join(missing)
+        )
+    existing_error = verified_summary.get("error")
+    if existing_error:
+        errors.insert(0, str(existing_error))
+    verified_summary["registered_tools"] = sorted(registered)
+    verified_summary["provider_tool_names"] = sorted(registered)
+    verified_summary["available_to_chat"] = bool(expected) and not errors
+    verified_summary["runtime_tool_count"] = len(registered)
+    verified_summary["registered_tool_count"] = len(registered)
+    verified_summary["error"] = "; ".join(errors) or None
+    return verified_summary
+
+
 def reload_external_mcp_tools(agent: Any) -> dict[str, Any]:
     """Refresh an existing General Chat agent with enabled external MCP tools."""
-    previous_names = getattr(agent, "_external_mcp_tool_names", set())
-    for name in previous_names:
-        agent.tools._tools.pop(name, None)
-        agent.tools._schemas.pop(name, None)
+    previous_names = set(getattr(agent, "_external_mcp_tool_names", set()))
 
     try:
         tools, summary = _load_external_mcp_tools_for_chat()
     except Exception as exc:
+        logger.warning("mcp.chat.load_failed error=%s", exc)
+        for name in previous_names:
+            _unregister_tool(agent, name)
         summary = {
             "enabled": True,
             "mode": "registry",
             "tools": [],
             "error": str(exc),
             "registry_root": str(_mcp_registry_root() or ""),
+            "available_to_chat": False,
+            "registered_tools": [],
         }
         agent._external_mcp_tools = []
         agent._external_mcp_tool_names = set()
         agent._external_mcp_summary = summary
         return summary
 
+    duplicate_names: dict[str, int] = {}
+    for tool in tools:
+        duplicate_names[tool.name] = duplicate_names.get(tool.name, 0) + 1
+    registration_errors = [
+        f"Multiple MCP tools map to provider tool name {name!r}; rename or disable one."
+        for name, count in duplicate_names.items()
+        if count > 1
+    ]
+    if registration_errors:
+        logger.warning("mcp.chat.registration_duplicate errors=%s", registration_errors)
+        for name in previous_names:
+            _unregister_tool(agent, name)
+        summary = _with_runtime_verification(
+            summary,
+            registered=set(),
+            registration_errors=registration_errors,
+        )
+        agent._external_mcp_tools = []
+        agent._external_mcp_tool_names = set()
+        agent._external_mcp_summary = summary
+        return summary
+
+    for name in previous_names:
+        _unregister_tool(agent, name)
+
     registered: set[str] = set()
     for tool in tools:
-        agent.tools.register(tool.name, tool)
-        registered.add(tool.name)
+        try:
+            agent.tools.register(tool.name, tool)
+        except Exception as exc:
+            registration_errors.append(f"{tool.name}: {exc}")
+            logger.warning("mcp.chat.register_tool_failed tool=%s error=%s", tool.name, exc)
+            continue
+        if _tool_available_to_chat(agent, tool.name):
+            registered.add(tool.name)
+            logger.info(
+                "mcp.chat.register_tool tool=%s namespaced=%s",
+                tool.name,
+                getattr(tool, "namespaced_name", tool.name),
+            )
+        else:
+            registration_errors.append(f"{tool.name}: registered but not visible to chat")
+            logger.warning("mcp.chat.register_tool_invisible tool=%s", tool.name)
+            _unregister_tool(agent, tool.name)
 
-    agent._external_mcp_tools = tools
+    if registration_errors:
+        for name in registered:
+            _unregister_tool(agent, name)
+        registered = set()
+
+    summary = _with_runtime_verification(
+        summary,
+        registered=registered,
+        registration_errors=registration_errors,
+    )
+    registry_root = _mcp_registry_root()
+    if registry_root is not None:
+        try:
+            from general_chat.mcp_registry import MCPServerRegistryStore
+
+            MCPServerRegistryStore(registry_root).mark_runtime_registration(
+                registered,
+                summary.get("diagnostics") if isinstance(summary.get("diagnostics"), list) else [],
+            )
+        except Exception as exc:
+            logger.warning("mcp.chat.mark_runtime_failed error=%s", exc)
+    agent._external_mcp_tools = [tool for tool in tools if tool.name in registered]
     agent._external_mcp_tool_names = registered
     agent._external_mcp_summary = summary
+    logger.info(
+        "mcp.chat.reload complete loaded=%d registered=%d available=%s error=%s",
+        len(tools),
+        len(registered),
+        summary.get("available_to_chat"),
+        summary.get("error"),
+    )
     return summary
 
 
@@ -324,18 +462,6 @@ def create_agent(
 
     external_mcp_summary: dict[str, Any] = {"enabled": False, "tools": []}
     external_mcp_tools: list[Any] = []
-    if _mcp_registry_root() is not None:
-        try:
-            external_mcp_tools, external_mcp_summary = _load_external_mcp_tools_for_chat()
-            mcp_tools.extend(external_mcp_tools)
-        except Exception as exc:
-            external_mcp_summary = {
-                "enabled": True,
-                "mode": "registry",
-                "tools": [],
-                "error": str(exc),
-                "registry_root": str(_mcp_registry_root() or ""),
-            }
 
     agent = BaseAgent(
         goal=(
@@ -354,4 +480,6 @@ def create_agent(
     agent._external_mcp_summary = external_mcp_summary  # type: ignore[attr-defined]
     agent._external_mcp_tools = external_mcp_tools  # type: ignore[attr-defined]
     agent._external_mcp_tool_names = {tool.name for tool in external_mcp_tools}  # type: ignore[attr-defined]
+    if _mcp_registry_root() is not None:
+        reload_external_mcp_tools(agent)
     return agent

@@ -11,10 +11,14 @@ import unittest
 from contextlib import ExitStack
 from os import environ
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
+from openbench.chat import ChatEngine
+from openbench.core.abstractions import LLMProvider, LLMResponse
+from openbench.intelligence import BaseAgent
 from openbench.mcp.toolhive import ToolHiveWorkload
 
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
@@ -22,6 +26,24 @@ if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
+from general_chat.agent import reload_external_mcp_tools
+from general_chat.server.handler import GeneralChatHandler
+
+
+def _external_servers(payload: dict) -> list[dict]:
+    return [
+        server
+        for server in payload["servers"]
+        if server.get("providerKind") != "internal" and server.get("provider_kind") != "internal"
+    ]
+
+
+def _internal_server(payload: dict) -> dict:
+    return next(
+        server
+        for server in payload["servers"]
+        if server.get("providerKind") == "internal" or server.get("provider_kind") == "internal"
+    )
 
 
 PLAYWRIGHT_CONFIG = json.dumps(
@@ -76,6 +98,7 @@ class FakeDiscovery:
 
 class FakeMCPClient:
     instances: list[FakeMCPClient] = []
+    calls: list[tuple[str, dict]] = []
 
     def __init__(self, config):
         self.config = config
@@ -91,6 +114,11 @@ class FakeMCPClient:
 
     def close_sync(self):
         self.closed = True
+
+    def call_tool_sync(self, namespaced_name, arguments=None, **kwargs):
+        payload = dict(arguments or {})
+        FakeMCPClient.calls.append((namespaced_name, payload))
+        return {"called": namespaced_name, "arguments": payload}
 
 
 class FakeGitDiscoveredServer:
@@ -116,6 +144,47 @@ class FakeGitMCPClient(FakeMCPClient):
         return FakeGitDiscovery()
 
 
+class FakeStatusDiscoveredServer:
+    tools = {
+        "status": {
+            "name": "status",
+            "description": "Read status",
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        }
+    }
+
+
+class FakeMultiServerMCPClient(FakeMCPClient):
+    def _namespace(self):
+        server_config = next(iter(self.config.servers.values()))
+        return server_config.namespace or next(iter(self.config.servers))
+
+    def discover_sync(self, refresh: bool = False):
+        return SimpleNamespace(servers={self._namespace(): FakeStatusDiscoveredServer()})
+
+    def discover_and_close_sync(self, refresh: bool = False):
+        self.closed = True
+        return SimpleNamespace(servers={self._namespace(): FakeStatusDiscoveredServer()})
+
+
+class FakeEmptyDiscoveredServer:
+    tools = {}
+
+
+class FakeEmptyMCPClient(FakeMultiServerMCPClient):
+    def discover_sync(self, refresh: bool = False):
+        return SimpleNamespace(servers={self._namespace(): FakeEmptyDiscoveredServer()})
+
+    def discover_and_close_sync(self, refresh: bool = False):
+        self.closed = True
+        return SimpleNamespace(servers={self._namespace(): FakeEmptyDiscoveredServer()})
+
+
+class FakeDiscoveryOnlyMCPClient(FakeGitMCPClient):
+    def discover_sync(self, refresh: bool = False):
+        raise AssertionError("load should use persisted discovery state")
+
+
 class FakeToolExecutor:
     def __init__(self):
         self._tools = {}
@@ -124,6 +193,37 @@ class FakeToolExecutor:
     def register(self, name, tool):
         self._tools[name] = tool
         self._schemas[name] = tool.get_schema()
+
+    def get_schemas(self):
+        return list(self._schemas.values())
+
+
+class BrokenToolExecutor(FakeToolExecutor):
+    def register(self, name, tool):
+        return None
+
+
+class ToolCallingLLM(LLMProvider):
+    def __init__(self):
+        self.prompts = []
+
+    @property
+    def provider_name(self):
+        return "fake"
+
+    def generate(self, prompt, model: str = "", **params) -> LLMResponse:
+        self.prompts.append({"prompt": prompt, "tools": params.get("tools")})
+        if len(self.prompts) == 1:
+            response = LLMResponse(text="", model=model, tokens_used=0, cost=0.0)
+            response.tool_calls = [
+                {
+                    "id": "call_0",
+                    "name": "git_git_status",
+                    "arguments": {"repo": "."},
+                }
+            ]
+            return response
+        return LLMResponse(text="Git status is available.", model=model, tokens_used=0, cost=0.0)
 
 
 class FakeToolHiveService:
@@ -178,9 +278,14 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             store = MCPServerRegistryStore(tmpdir)
             payload = store.import_config_json(PLAYWRIGHT_CONFIG)
 
-            self.assertEqual(len(payload["servers"]), 1)
-            server = payload["servers"][0]
+            self.assertEqual(len(payload["servers"]), 2)
+            server = _external_servers(payload)[0]
+            internal = _internal_server(payload)
             self.assertEqual(server["name"], "playwright")
+            self.assertEqual(server["providerKind"], "docker")
+            self.assertEqual(internal["name"], "openbench")
+            self.assertEqual(internal["providerKind"], "internal")
+            self.assertTrue(internal["isManaged"])
             self.assertEqual(server["transport"], "stdio")
             self.assertTrue(server["enabled"])
             self.assertEqual(server["displayConfig"]["command"], "docker")
@@ -227,7 +332,9 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             enabled = store.set_server_enabled(server["id"], True)
             self.assertTrue(enabled.enabled)
             store.remove_server(server["id"])
-            self.assertEqual(store.list_payload()["servers"], [])
+            remaining = store.list_payload()["servers"]
+            self.assertEqual([item["name"] for item in remaining], ["openbench"])
+            self.assertTrue(remaining[0]["isManaged"])
 
     def test_discovery_stores_tools_and_tool_toggle_filters_runtime(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -246,8 +353,11 @@ class TestMCPServerRegistryStore(unittest.TestCase):
 
                 adapters, summary = store.load_enabled_tool_adapters()
 
-            self.assertEqual([adapter.namespaced_name for adapter in adapters], ["playwright.browser_snapshot"])
-            self.assertEqual(summary["tools"][0]["name"], "playwright.browser_snapshot")
+            names = {adapter.namespaced_name for adapter in adapters}
+            self.assertIn("playwright.browser_snapshot", names)
+            self.assertNotIn("playwright.browser_click", names)
+            playwright_summary = next(item for item in summary["tools"] if item["server"] == "playwright")
+            self.assertEqual(playwright_summary["name"], "playwright.browser_snapshot")
             loaded_server = FakeMCPClient.instances[-1].config.servers["playwright"]
             self.assertEqual(loaded_server.cwd, "examples/general-chat")
 
@@ -273,9 +383,104 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             with patch("general_chat.mcp_registry.MCPClient", FakeMCPClient):
                 adapters, summary = store.load_enabled_tool_adapters()
 
-            self.assertEqual(adapters, [])
-            self.assertEqual(summary["tools"], [])
+            self.assertNotIn("playwright.browser_snapshot", {adapter.namespaced_name for adapter in adapters})
+            self.assertTrue(all(item["server"] != "playwright" for item in summary["tools"]))
             self.assertEqual(FakeMCPClient.instances, [])
+
+    def test_load_uses_persisted_enabled_tool_state_after_discovery(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            FakeMCPClient.instances = []
+            store = MCPServerRegistryStore(tmpdir)
+            server = store.import_toolhive_workloads(
+                [
+                    ToolHiveWorkload(
+                        name="git",
+                        status="running",
+                        url="http://127.0.0.1:39670/mcp",
+                    )
+                ]
+            )["servers"][0]
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeDiscoveryOnlyMCPClient):
+                discovered = store.discover_server(server["id"])
+                self.assertEqual(sum(1 for tool in discovered.tools if tool.enabled), 1)
+                adapters, summary = store.load_enabled_tool_adapters()
+
+            self.assertNotIn("git.git_status", [adapter.namespaced_name for adapter in adapters])
+            self.assertIn("toolhive/git", summary["error"])
+            self.assertTrue(any(item.get("category") == "server_unreachable" for item in summary["errors"]))
+
+    def test_multiple_servers_with_overlapping_tool_names_remain_namespaced(self):
+        config = json.dumps(
+            {
+                "mcpServers": {
+                    "alpha": {"command": "docker", "args": ["run", "alpha"]},
+                    "beta": {"command": "docker", "args": ["run", "beta"]},
+                }
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            FakeMCPClient.instances = []
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_config_json(config)
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeMultiServerMCPClient):
+                for server in payload["servers"]:
+                    store.discover_server(server["id"])
+                adapters, summary = store.load_enabled_tool_adapters()
+
+            external_names = sorted(
+                adapter.namespaced_name
+                for adapter in adapters
+                if not adapter.namespaced_name.startswith("openbench.")
+            )
+            self.assertEqual(external_names, ["alpha.status", "beta.status"])
+            self.assertEqual(
+                sorted(item["adapter_name"] for item in summary["tools"] if item["server"] in {"alpha", "beta"}),
+                ["alpha_status", "beta_status"],
+            )
+
+    def test_enabled_reachable_server_with_no_tools_reports_empty_diagnostic(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            server = store.import_config_json(PLAYWRIGHT_CONFIG)["servers"][0]
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeEmptyMCPClient):
+                discovered = store.discover_server(server["id"])
+                adapters, summary = store.load_enabled_tool_adapters()
+
+            self.assertEqual(discovered.status, "empty")
+            self.assertEqual(discovered.error, "MCP server is reachable but exposes no tools.")
+            self.assertTrue(
+                any(
+                    item.get("server") == "playwright" and item.get("tools_discovered") == 0
+                    for item in summary["diagnostics"]
+                )
+            )
+            self.assertNotIn("playwright.status", [adapter.namespaced_name for adapter in adapters])
+
+    def test_enabled_tools_with_invalid_schema_report_invalid_diagnostic(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            store.import_config_json(PLAYWRIGHT_CONFIG)
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeMCPClient):
+                with patch(
+                    "openbench.mcp.adapters.MCPToolAdapter.get_schema",
+                    side_effect=ValueError("schema validation failed"),
+                ):
+                    adapters, summary = store.load_enabled_tool_adapters()
+
+            external_names = [
+                adapter.namespaced_name
+                for adapter in adapters
+                if not adapter.namespaced_name.startswith("openbench.")
+            ]
+            self.assertEqual(external_names, [])
+            self.assertTrue(
+                any(item.get("category") == "invalid_tool_schema" for item in summary["errors"])
+            )
+            self.assertIn("schema validation failed", summary["error"])
 
     def test_import_toolhive_workload_persists_metadata_and_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -330,7 +535,13 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             stack.enter_context(
                 patch(
                     "general_chat.server.app.reload_external_mcp_tools",
-                    return_value={"enabled": True, "tools": [{"name": "playwright.browser_snapshot"}]},
+                    return_value={
+                        "enabled": True,
+                        "available_to_chat": True,
+                        "tools": [{"name": "playwright.browser_snapshot"}],
+                        "registered_tools": ["playwright_browser_snapshot"],
+                        "error": None,
+                    },
                 )
             )
 
@@ -367,6 +578,7 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
                 if item["name"] == "toolhive-doc-mcp"
             )
             self.assertEqual(toolhive_server["source"], "toolhive")
+            self.assertNotIn("reload", imported_toolhive.json())
 
             disabled = client.post(
                 f"/mcp/catalogs/servers/{server['id']}/enable",
@@ -396,7 +608,7 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             removed = client.delete(f"/mcp/catalogs/servers/{server['id']}")
             self.assertEqual(removed.status_code, 200)
             remaining = client.get("/mcp/catalogs").json()["servers"]
-            self.assertEqual([item["name"] for item in remaining], ["toolhive-doc-mcp"])
+            self.assertEqual([item["name"] for item in remaining], ["toolhive-doc-mcp", "openbench"])
 
     def test_import_toolhive_git_workload_reload_discovers_streamable_http_tools(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -434,12 +646,147 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             imported = client.post("/mcp/catalogs/toolhive/import-running", json={"names": ["git"]})
 
             self.assertEqual(imported.status_code, 200)
-            payload = imported.json()
-            server = payload["servers"][0]
+            server = imported.json()["servers"][0]
             self.assertEqual(server["name"], "git")
             self.assertEqual(server["transport"], "streamable-http")
+            self.assertNotIn("reload", imported.json())
+
+            loaded = client.post(f"/mcp/catalogs/servers/{server['id']}/discover")
+
+            self.assertEqual(loaded.status_code, 200)
+            payload = loaded.json()
             self.assertEqual(payload["reload"]["tools"][0]["name"], "git.git_status")
+            self.assertIn("git_git_status", payload["reload"]["registered_tools"])
+            self.assertIn("openbench_filter_records", payload["reload"]["registered_tools"])
+            self.assertTrue(payload["reload"]["available_to_chat"])
             self.assertIsNone(payload["reload"].get("error"))
+            self.assertIn("git_git_status", agent.tools._tools)
+
+    def test_load_discovered_server_with_no_enabled_tools_reports_no_enabled_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stack = ExitStack()
+            self.addCleanup(stack.close)
+            stack.enter_context(
+                patch.dict(
+                    environ,
+                    {
+                        "GENERAL_CHAT_STORAGE_ROOT": tmpdir,
+                        "GENERAL_CHAT_UPLOAD_DIR": str(Path(tmpdir) / "uploads"),
+                        "GENERAL_CHAT_DOWNLOAD_DIR": str(Path(tmpdir) / "downloads"),
+                        "OPENBENCH_PROFILE_DIR": str(Path(tmpdir) / "profiles"),
+                    },
+                    clear=False,
+                )
+            )
+            agent = Mock()
+            agent.model = "mock-model"
+            agent._persona = None
+            agent._skill_registry = None
+            agent._mcp_summary = {"enabled": False, "tools": []}
+            agent._external_mcp_summary = {"enabled": False, "tools": []}
+            agent._external_mcp_tool_names = set()
+            agent.tools = FakeToolExecutor()
+            stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
+            stack.enter_context(
+                patch("general_chat.server.app.ToolHiveService", return_value=FakeGitToolHiveService())
+            )
+            stack.enter_context(patch("general_chat.mcp_registry.MCPClient", FakeGitMCPClient))
+
+            from general_chat.server.app import create_app
+
+            client = TestClient(create_app())
+            imported = client.post("/mcp/catalogs/toolhive/import-running", json={"names": ["git"]})
+            server = imported.json()["servers"][0]
+            internal = _internal_server(imported.json())
+            client.post(
+                f"/mcp/catalogs/servers/{internal['id']}/enable",
+                json={"enabled": False},
+            )
+            discovered = client.post(f"/mcp/catalogs/servers/{server['id']}/discover")
+            self.assertEqual(discovered.status_code, 200)
+
+            disabled = client.post(
+                f"/mcp/catalogs/servers/{server['id']}/tools/git_status/enable",
+                json={"enabled": False},
+            )
+            self.assertEqual(disabled.status_code, 200)
+            self.assertEqual(disabled.json()["server"]["enabledToolsCount"], 0)
+
+            loaded = client.post(f"/mcp/catalogs/servers/{server['id']}/discover")
+            self.assertEqual(loaded.status_code, 400)
+            self.assertIn("no enabled tools", loaded.json()["detail"])
+
+    def test_loaded_toolhive_tool_is_available_to_current_chat_turn(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            FakeMCPClient.instances = []
+            FakeMCPClient.calls = []
+            store = MCPServerRegistryStore(tmpdir)
+            store.import_toolhive_workloads(
+                [
+                    ToolHiveWorkload(
+                        name="git",
+                        status="running",
+                        url="http://127.0.0.1:39670/mcp",
+                    )
+                ]
+            )
+
+            with patch.dict(environ, {"GENERAL_CHAT_MCP_REGISTRY_ROOT": tmpdir}, clear=False):
+                with patch("general_chat.mcp_registry.MCPClient", FakeGitMCPClient):
+                    llm = ToolCallingLLM()
+                    agent = BaseAgent(goal="General chat", max_iterations=3)
+                    agent._llm = llm
+
+                    summary = reload_external_mcp_tools(agent)
+
+                    self.assertTrue(summary["available_to_chat"])
+                    self.assertIn("git_git_status", summary["registered_tools"])
+                    self.assertIn("openbench_filter_records", summary["registered_tools"])
+                    self.assertIn("git_git_status", agent.tools._tools)
+
+                    engine = ChatEngine(agent=agent)
+                    handler = GeneralChatHandler(engine=engine, db_path=":memory:")
+                    request_agent = handler._create_request_agent()
+                    result = engine._execute_agent(
+                        "Use the git status tool.",
+                        None,
+                        agent=request_agent,
+                    )
+
+            self.assertEqual(result.output, "Git status is available.")
+            self.assertEqual(result.metadata["tools_used"], ["git_git_status"])
+            self.assertEqual(FakeMCPClient.calls, [("git.git_status", {"repo": "."})])
+            first_tool_names = {
+                item["function"]["name"]
+                for item in llm.prompts[0]["tools"]
+            }
+            self.assertIn("git_git_status", first_tool_names)
+
+    def test_runtime_registration_failure_reports_actionable_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            store.import_toolhive_workloads(
+                [
+                    ToolHiveWorkload(
+                        name="git",
+                        status="running",
+                        url="http://127.0.0.1:39670/mcp",
+                    )
+                ]
+            )
+
+            agent = Mock()
+            agent.tools = BrokenToolExecutor()
+            agent._external_mcp_tool_names = set()
+
+            with patch.dict(environ, {"GENERAL_CHAT_MCP_REGISTRY_ROOT": tmpdir}, clear=False):
+                with patch("general_chat.mcp_registry.MCPClient", FakeGitMCPClient):
+                    summary = reload_external_mcp_tools(agent)
+
+            self.assertFalse(summary["available_to_chat"])
+            self.assertIn("registered but not visible to chat", summary["error"])
+            self.assertEqual(summary["registered_tools"], [])
+            self.assertEqual(agent._external_mcp_tool_names, set())
 
 
 if __name__ == "__main__":

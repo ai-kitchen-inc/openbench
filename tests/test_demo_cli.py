@@ -98,16 +98,16 @@ def test_general_chat_sam_env_creates_expected_upload_path(tmp_path, monkeypatch
     assert (demo_dir / "uploads" / "_sam_debug").is_dir()
 
 
-def test_general_chat_plain_env_disables_optional_mcp():
+def test_general_chat_plain_env_enables_unified_mcp_registry():
     env = demo_module._general_chat_plain_env()
 
     assert env == {
         "GENERAL_CHAT_MCP_ENABLED": "0",
-        "GENERAL_CHAT_MCP_REGISTRY_ENABLED": "0",
+        "GENERAL_CHAT_MCP_REGISTRY_ENABLED": "1",
     }
 
 
-def test_run_server_passes_plain_general_chat_mcp_disabled_env(tmp_path, monkeypatch):
+def test_run_server_passes_plain_general_chat_unified_mcp_env(tmp_path, monkeypatch):
     demo_dir = tmp_path / "general-chat"
     demo_dir.mkdir()
     captured: dict[str, object] = {}
@@ -157,7 +157,7 @@ def test_run_server_passes_plain_general_chat_mcp_disabled_env(tmp_path, monkeyp
     assert captured["cwd"] == str(demo_dir)
     assert captured["env"]["PYTHONUNBUFFERED"] == "1"
     assert captured["env"]["GENERAL_CHAT_MCP_ENABLED"] == "0"
-    assert captured["env"]["GENERAL_CHAT_MCP_REGISTRY_ENABLED"] == "0"
+    assert captured["env"]["GENERAL_CHAT_MCP_REGISTRY_ENABLED"] == "1"
     assert captured["cmd"][-3:] == ["--port", "8005", "--reload"]
 
 

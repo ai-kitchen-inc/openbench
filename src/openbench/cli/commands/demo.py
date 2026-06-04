@@ -225,10 +225,10 @@ def _general_chat_mcp_env(variant: str, demo_dir: Path) -> dict[str, str]:
 
 
 def _general_chat_plain_env() -> dict[str, str]:
-    """Build environment overrides for the MCP-free General Chat demo."""
+    """Build environment overrides for the unified-MCP General Chat demo."""
     return {
         "GENERAL_CHAT_MCP_ENABLED": "0",
-        "GENERAL_CHAT_MCP_REGISTRY_ENABLED": "0",
+        "GENERAL_CHAT_MCP_REGISTRY_ENABLED": "1",
     }
 
 

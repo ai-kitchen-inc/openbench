@@ -186,8 +186,12 @@ function ImportDialog({
 function statusClass(server: RegisteredMCPServer): string {
   if (!server.enabled) return "";
   if (server.status === "failed" || server.status === "unavailable") return " mcp-pill--error";
-  if (server.status === "running" || server.status === "enabled") return " mcp-pill--success";
+  if (server.status === "running" || server.status === "enabled" || server.status === "registered") return " mcp-pill--success";
   return "";
+}
+
+function providerLabel(server: RegisteredMCPServer): string {
+  return server.providerKind ?? server.provider_kind ?? server.sourceType ?? server.source_type ?? server.source ?? "manual";
 }
 
 function parameterSummary(schema: Record<string, unknown>): string {
@@ -285,7 +289,7 @@ function ToolHiveSection({
     try {
       const payload = await importRunningToolHiveWorkloads([name]);
       onImported(payload);
-      toast.show(payload.reload?.error ? `Imported, but reload reported: ${payload.reload.error}` : "ToolHive server imported", payload.reload?.error ? "error" : "success");
+      toast.show("ToolHive server imported", "success");
     } catch (error) {
       toast.show(`Could not add ToolHive server: ${readErrorMessage(error)}`, "error");
     } finally {
@@ -568,6 +572,9 @@ function ToolList({
           <div>
             <strong>{tool.name}</strong>
             <p>{tool.description || "No description provided."}</p>
+            {tool.loaded && (
+              <code>{tool.registeredToolName ?? tool.registered_tool_name ?? tool.namespacedName}</code>
+            )}
             <code>{parameterSummary(tool.inputSchema ?? tool.input_schema ?? {})}</code>
           </div>
         </div>
@@ -593,6 +600,7 @@ function ServerCard({
     <article className="mcp-card">
       <button type="button" className="mcp-card__main" onClick={() => onOpen(server)}>
         <div className="mcp-card__meta">
+          <span className="mcp-pill">{providerLabel(server)}</span>
           <span className="mcp-pill">{server.transport}</span>
           <span className={`mcp-pill${statusClass(server)}`}>{server.enabled ? server.status : "disabled"}</span>
         </div>
@@ -619,9 +627,11 @@ function ServerCard({
         <button type="button" className="mcp-btn" onClick={() => onOpen(server)}>
           Details
         </button>
-        <button type="button" className="mcp-btn" onClick={() => onRemove(server)}>
-          Remove
-        </button>
+        {!(server.isManaged ?? server.is_managed) && (
+          <button type="button" className="mcp-btn" onClick={() => onRemove(server)}>
+            Remove
+          </button>
+        )}
       </div>
     </article>
   );
@@ -646,6 +656,10 @@ function DetailsDialog({
         <div className="mcp-detail-grid">
           <span>Transport</span>
           <strong>{server.transport}</strong>
+          <span>Provider</span>
+          <strong>{providerLabel(server)}</strong>
+          <span>Namespace</span>
+          <strong>{server.serverNamespace ?? server.server_namespace ?? server.name}</strong>
           <span>Status</span>
           <strong>{server.enabled ? server.status : "disabled"}</strong>
           <span>Tools</span>
@@ -728,7 +742,7 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
     try {
       const result = await discoverServer(server.id);
       replaceServer(result.server);
-      toast.show(result.reload?.error ? `Tools loaded, but chat reload reported: ${result.reload.error}` : "MCP tools loaded", result.reload?.error ? "error" : "success");
+      toast.show(result.reload?.error ? `Chat runtime registration failed: ${result.reload.error}` : "MCP tools loaded", result.reload?.error ? "error" : "success");
     } catch (error) {
       toast.show(`Tool discovery failed: ${readErrorMessage(error)}`, "error");
       await load();
@@ -749,7 +763,7 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
     try {
       const result = await toggleTool(server.id, tool.name, { enabled: !tool.enabled });
       replaceServer(result.server);
-      toast.show(result.reload?.error ? `Tool saved, but chat reload reported: ${result.reload.error}` : "MCP tool updated", result.reload?.error ? "error" : "success");
+      toast.show(result.reload?.error ? `Chat runtime registration failed: ${result.reload.error}` : "MCP tool updated", result.reload?.error ? "error" : "success");
     } catch (error) {
       toast.show(`Could not update tool: ${readErrorMessage(error)}`, "error");
     }

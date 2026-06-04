@@ -67,6 +67,42 @@ const basePayload: MCPRegistryPayload = {
   servers: [playwrightServer],
 };
 
+const internalServer: RegisteredMCPServer = {
+  id: "internal-openbench",
+  name: "openbench",
+  title: "openbench",
+  source: "internal",
+  providerKind: "internal",
+  sourceType: "internal",
+  serverNamespace: "openbench",
+  isManaged: true,
+  transport: "in-memory",
+  enabled: true,
+  status: "registered",
+  error: null,
+  registeredAt: "2026-05-20T00:00:00+00:00",
+  updatedAt: "2026-05-20T00:00:00+00:00",
+  lastDiscoveredAt: "2026-05-20T00:01:00+00:00",
+  tools: [
+    {
+      name: "filter_records",
+      namespacedName: "openbench.filter_records",
+      description: "Filter rows",
+      inputSchema: { type: "object", properties: {}, required: [] },
+      enabled: true,
+      discoveredAt: "2026-05-20T00:01:00+00:00",
+      loaded: true,
+      registeredToolName: "openbench_filter_records",
+    },
+  ],
+  toolsCount: 1,
+  enabledToolsCount: 1,
+  displayConfig: {
+    transport: "in-memory",
+    namespace: "openbench",
+  },
+};
+
 const toolHiveStatus = {
   available: true,
   apiAvailable: true,
@@ -137,6 +173,23 @@ describe("McpCatalogPanel", () => {
     await userEvent.clear(screen.getByLabelText("Search MCP servers"));
     await userEvent.type(screen.getByLabelText("Search MCP servers"), "filesystem");
     expect(screen.getByText("No MCP servers match the current filters.")).toBeInTheDocument();
+  });
+
+  it("renders internal managed MCP tools in the catalog", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/mcp/catalogs/servers/internal-openbench") return jsonResponse(internalServer);
+      return toolHiveResponse(url) ?? jsonResponse({ servers: [internalServer] });
+    }));
+
+    renderPanel();
+
+    expect(await screen.findByText("openbench")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Search MCP servers"), "internal");
+    expect(screen.getByText("openbench")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /openbench/ }));
+    expect(screen.getByText("openbench_filter_records")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog", { name: "openbench" })).queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
   });
 
   it("imports pasted mcpServers JSON and shows validation errors", async () => {
@@ -273,7 +326,7 @@ describe("McpCatalogPanel", () => {
     renderPanel();
 
     expect(await screen.findByText("Manage servers in ToolHive UI")).toBeInTheDocument();
-    expect(screen.getByText("Detected CLI: thv")).toBeInTheDocument();
+    expect(await screen.findByText((_content, element) => element?.textContent === "Detected CLI: thv")).toBeInTheDocument();
     const advanced = screen.getByText("Advanced local controls").closest("details");
     expect(advanced).not.toBeNull();
     expect(advanced).not.toHaveAttribute("open");
@@ -308,7 +361,7 @@ describe("McpCatalogPanel", () => {
 
     renderPanel();
 
-    await screen.findByText("toolhive-doc-mcp");
+    await screen.findAllByText("toolhive-doc-mcp");
     await userEvent.click(screen.getByRole("button", { name: "Import into OpenBench" }));
     await waitFor(() => expect(screen.getAllByText("toolhive-doc-mcp").length).toBeGreaterThan(1));
   });
