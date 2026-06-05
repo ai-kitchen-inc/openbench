@@ -206,7 +206,71 @@ Invoke-RestMethod http://localhost:8005/mcp/catalogs/import -Method Post -Conten
 After loading tools, ask a prompt that explicitly uses the enabled server tools.
 Disabled servers and disabled tools are not registered with the chat agent.
 
-## 9. ToolHive MCP Servers
+## 9. Run All Bundled MCP Integrations Together
+
+Use the all-MCP launcher when you want one General Chat session that can use
+SAM segmentation and ToolHive tools at the same time:
+
+```powershell
+openbench demo run general-chat --all-mcp
+# or
+openbench demo run general-chat-all --all-mcp
+```
+
+This path keeps General Chat in registry mode. It seeds the registry with:
+
+- internal OpenBench tools
+- filesystem MCP
+- image-search MCP
+- SAM 3 segmentation MCP
+- Docker MCP Gateway
+- currently running ToolHive workloads
+
+It does not start ToolHive workloads automatically. Start ToolHive servers in
+ToolHive UI or with `thv run ...` first, then launch General Chat with
+`--all-mcp`.
+
+All-MCP runs use a separate `.openbench/all-mcp` registry root. The regular
+General Chat registry remains unchanged, and stale saved servers from normal
+registry sessions are not loaded into `general-chat-all`.
+
+Check the merged tool surface:
+
+```powershell
+Invoke-RestMethod http://localhost:8005/mcp/tools
+```
+
+Expected `namespaced_tool_names` include:
+
+```text
+openbench.filter_records
+filesystem.read_file
+image_search.list_index_stats
+image_search.search_similar_images
+sam_segmentation.count_objects_with_sam3
+```
+
+Docker MCP Gateway tools and ToolHive tools appear when those local services are
+available and expose tools. Missing Docker, missing `npx`, missing SAM weights,
+an unbuilt image-search index, or unavailable ToolHive are reported in startup
+warnings and registry diagnostics instead of being silently skipped.
+Optional MCP failures do not block other servers from loading; successful tools
+remain available in the same session.
+
+Prepare optional dependencies before a full local smoke test:
+
+```powershell
+hf auth login
+docker compose -f examples\image-search-mcp\docker-compose.yml --profile cpu build
+docker compose -f examples\sam-segmentation-mcp\docker-compose.yml --profile cpu build
+docker mcp profile create --name openbench
+thv serve
+thv run toolhive-doc-mcp
+```
+
+Use the focused launchers below when you want to debug only one MCP server.
+
+## 10. ToolHive MCP Servers
 
 General Chat can connect to MCP servers launched or proxied by ToolHive. The
 recommended flow is to manage server install, configuration, secrets, and logs in
@@ -297,7 +361,7 @@ $env:TOOLHIVE_HOST="172.17.0.1"                 # common Docker Engine bridge
 ToolHive's local API has no built-in auth. Keep `thv serve` bound to a trusted
 local interface unless you add external authentication and authorization.
 
-## 10. Image Search MCP Server
+## 11. Image Search MCP Server
 
 General Chat can also use the Dockerized DINOv3 CIFAR-10 image-search MCP
 server from `examples/image-search-mcp`.
@@ -311,6 +375,15 @@ docker compose -f examples\image-search-mcp\docker-compose.yml --profile cpu bui
 Confirm the standalone MCP server works:
 
 ```powershell
+python examples\image-search-mcp\scripts\test_mcp_server.py --mode docker
+```
+
+If General Chat reports `Failed to discover MCP server 'image_search':
+Connection closed`, the container exited before MCP handshake. First inspect the
+image, then run the smoke command above to surface Docker-side stderr:
+
+```powershell
+docker image inspect openbench/image-search-mcp:cpu
 python examples\image-search-mcp\scripts\test_mcp_server.py --mode docker
 ```
 
@@ -356,7 +429,7 @@ If the image-search model fails with a gated Hugging Face error, run
 `%USERPROFILE%\.cache\huggingface\token` exists. The launcher mounts that cache
 read-only into the Docker container.
 
-## 11. SAM 3 Concept Counting MCP Server
+## 12. SAM 3 Concept Counting MCP Server
 
 General Chat can also use the Dockerized Ultralytics SAM 3 concept counting MCP
 server from `examples/sam-segmentation-mcp`. It counts objects matching a text
@@ -408,6 +481,14 @@ Expected `namespaced_tool_names` includes:
 sam_segmentation.count_objects_with_sam3
 ```
 
+Uploaded image paths under `/general-chat/uploads/...` are mounted into the
+image MCP containers. Do not use filesystem MCP tools on those paths unless you
+also mount uploads into the filesystem sandbox.
+
+After a successful `sam_segmentation.count_objects_with_sam3` call, answer from
+the returned `count`. `service_info` is a diagnostic tool for failures, not a
+follow-up to a successful count.
+
 Upload a `.png`, `.jpg`, `.jpeg`, or `.webp` image in the Sources panel, then
 ask:
 
@@ -418,6 +499,9 @@ How many dogs are in this image? Use the SAM 3 counting tool.
 ## Troubleshooting
 
 - `/mcp/tools` says disabled: set `GENERAL_CHAT_MCP_ENABLED=1` and restart.
+- For the all-MCP launcher, `/mcp/tools` should report registry mode; check
+  `/mcp/catalogs` for per-server diagnostics when a Docker, filesystem,
+  ToolHive, image-search, or SAM server is unavailable.
 - `/mcp/tools` has zero tools: load tools in the MCP Servers panel and make
   sure the target server and tools are enabled.
 - Dedicated Docker scripts fail while discovering stale ToolHive or manual MCP

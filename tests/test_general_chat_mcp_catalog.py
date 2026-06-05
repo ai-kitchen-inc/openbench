@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import tempfile
@@ -19,6 +20,7 @@ from fastapi.testclient import TestClient
 from openbench.chat import ChatEngine
 from openbench.core.abstractions import LLMProvider, LLMResponse
 from openbench.intelligence import BaseAgent
+from openbench.mcp.config import MCPClientConfig, MCPPolicyConfig, MCPServerConnectionConfig
 from openbench.mcp.toolhive import ToolHiveWorkload
 
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
@@ -167,6 +169,65 @@ class FakeMultiServerMCPClient(FakeMCPClient):
         return SimpleNamespace(servers={self._namespace(): FakeStatusDiscoveredServer()})
 
 
+class FakeAllMCPClient(FakeMultiServerMCPClient):
+    TOOLS_BY_NAMESPACE = {
+        "docker": {
+            "docker_status": {
+                "name": "docker_status",
+                "description": "Read Docker MCP Gateway status",
+                "inputSchema": {"type": "object", "properties": {}, "required": []},
+            }
+        },
+        "filesystem": {
+            "read_file": {
+                "name": "read_file",
+                "description": "Read a file",
+                "inputSchema": {"type": "object", "properties": {}, "required": []},
+            }
+        },
+        "git": {
+            "git_status": {
+                "name": "git_status",
+                "description": "Read git status",
+                "inputSchema": {"type": "object", "properties": {}, "required": []},
+            }
+        },
+        "image_search": {
+            "list_index_stats": {
+                "name": "list_index_stats",
+                "description": "List image index stats",
+                "inputSchema": {"type": "object", "properties": {}, "required": []},
+            },
+            "search_similar_images": {
+                "name": "search_similar_images",
+                "description": "Search similar images",
+                "inputSchema": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        "sam_segmentation": {
+            "count_objects_with_sam3": {
+                "name": "count_objects_with_sam3",
+                "description": "Count objects with SAM 3",
+                "inputSchema": {"type": "object", "properties": {}, "required": []},
+            }
+        },
+    }
+
+    def discover_sync(self, refresh: bool = False):
+        namespace = self._namespace()
+        return SimpleNamespace(
+            servers={
+                namespace: SimpleNamespace(
+                    tools=self.TOOLS_BY_NAMESPACE.get(namespace, FakeStatusDiscoveredServer.tools)
+                )
+            }
+        )
+
+    def discover_and_close_sync(self, refresh: bool = False):
+        self.closed = True
+        return self.discover_sync(refresh=refresh)
+
+
 class FakeEmptyDiscoveredServer:
     tools = {}
 
@@ -178,6 +239,24 @@ class FakeEmptyMCPClient(FakeMultiServerMCPClient):
     def discover_and_close_sync(self, refresh: bool = False):
         self.closed = True
         return SimpleNamespace(servers={self._namespace(): FakeEmptyDiscoveredServer()})
+
+
+class FakeCancelledMCPClient(FakeMCPClient):
+    def discover_sync(self, refresh: bool = False):
+        raise asyncio.CancelledError("Cancelled via cancel scope")
+
+    def discover_and_close_sync(self, refresh: bool = False):
+        self.closed = True
+        raise asyncio.CancelledError("Cancelled via cancel scope")
+
+
+class FakeConnectionClosedMCPClient(FakeMCPClient):
+    def discover_sync(self, refresh: bool = False):
+        raise RuntimeError("Failed to discover MCP server 'image_search': Connection closed")
+
+    def discover_and_close_sync(self, refresh: bool = False):
+        self.closed = True
+        raise RuntimeError("Failed to discover MCP server 'image_search': Connection closed")
 
 
 class FakeDiscoveryOnlyMCPClient(FakeGitMCPClient):
@@ -373,6 +452,55 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             self.assertEqual(adapters[0].timeout_seconds, 77.0)
             self.assertEqual(summary["tools"][0]["timeout_seconds"], 77.0)
 
+    def test_registry_client_policy_allows_long_server_timeout(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            FakeMCPClient.instances = []
+            store = MCPServerRegistryStore(tmpdir)
+            store.import_client_config(
+                MCPClientConfig(
+                    servers={
+                        "sam_segmentation": MCPServerConnectionConfig(
+                            command="docker",
+                            args=["run", "-i", "--rm", "openbench/sam-segmentation-mcp:cpu"],
+                            namespace="sam_segmentation",
+                            timeout_seconds=3600,
+                            allowed=True,
+                        )
+                    },
+                    policy=MCPPolicyConfig(
+                        allow_remote_servers=False,
+                        allowed_servers=["sam_segmentation"],
+                        max_timeout_seconds=3600,
+                    ),
+                )
+            )
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeMultiServerMCPClient):
+                adapters, summary = store.load_enabled_tool_adapters()
+
+            client_config = FakeMCPClient.instances[-1].config
+            self.assertEqual(client_config.policy.max_timeout_seconds, 3600.0)
+            self.assertEqual(adapters[0].timeout_seconds, 3600.0)
+            self.assertEqual(summary["tools"][0]["timeout_seconds"], 3600.0)
+
+    def test_registry_policy_derives_long_timeout_for_legacy_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            FakeMCPClient.instances = []
+            store = MCPServerRegistryStore(tmpdir)
+            store.import_config_json(PLAYWRIGHT_TIMEOUT_CONFIG)
+
+            state = json.loads(store.path.read_text(encoding="utf-8"))
+            next(item for item in state["servers"] if item["name"] == "playwright").pop(
+                "policy",
+                None,
+            )
+            store.path.write_text(json.dumps(state), encoding="utf-8")
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeMCPClient):
+                store.load_enabled_tool_adapters()
+
+            self.assertEqual(FakeMCPClient.instances[-1].config.policy.max_timeout_seconds, 77.0)
+
     def test_disabled_server_is_not_started_or_offered_to_runtime(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             FakeMCPClient.instances = []
@@ -440,6 +568,69 @@ class TestMCPServerRegistryStore(unittest.TestCase):
                 ["alpha_status", "beta_status"],
             )
 
+    def test_registry_loads_all_mcp_server_types_together(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            store.import_client_config(
+                MCPClientConfig(
+                    servers={
+                        "docker": MCPServerConnectionConfig(
+                            command="docker",
+                            args=["mcp", "gateway", "run", "--profile", "openbench"],
+                            namespace="docker",
+                            timeout_seconds=3600,
+                            allowed=True,
+                        ),
+                        "filesystem": MCPServerConnectionConfig(
+                            command="npx",
+                            args=["-y", "@modelcontextprotocol/server-filesystem", "."],
+                            namespace="filesystem",
+                            allowed=True,
+                        ),
+                        "image_search": MCPServerConnectionConfig(
+                            command="docker",
+                            args=["run", "-i", "--rm", "openbench/image-search-mcp:cpu"],
+                            namespace="image_search",
+                            timeout_seconds=3600,
+                            allowed=True,
+                        ),
+                        "sam_segmentation": MCPServerConnectionConfig(
+                            command="docker",
+                            args=["run", "-i", "--rm", "openbench/sam-segmentation-mcp:cpu"],
+                            namespace="sam_segmentation",
+                            timeout_seconds=3600,
+                            allowed=True,
+                        ),
+                    }
+                )
+            )
+            store.import_toolhive_workloads(
+                [
+                    ToolHiveWorkload(
+                        name="git",
+                        status="running",
+                        url="http://127.0.0.1:39670/mcp",
+                    )
+                ]
+            )
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeAllMCPClient):
+                adapters, summary = store.load_enabled_tool_adapters()
+
+            namespaced = {adapter.namespaced_name for adapter in adapters}
+            provider_names = {adapter.name for adapter in adapters}
+            self.assertIn("docker.docker_status", namespaced)
+            self.assertIn("filesystem.read_file", namespaced)
+            self.assertIn("git.git_status", namespaced)
+            self.assertIn("image_search.list_index_stats", namespaced)
+            self.assertIn("image_search.search_similar_images", namespaced)
+            self.assertIn("openbench.filter_records", namespaced)
+            self.assertIn("sam_segmentation.count_objects_with_sam3", namespaced)
+            self.assertIn("docker_docker_status", provider_names)
+            self.assertIn("git_git_status", provider_names)
+            self.assertIn("sam_segmentation_count_objects_with_sam3", provider_names)
+            self.assertIsNone(summary["error"])
+
     def test_enabled_reachable_server_with_no_tools_reports_empty_diagnostic(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = MCPServerRegistryStore(tmpdir)
@@ -459,17 +650,66 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             )
             self.assertNotIn("playwright.status", [adapter.namespaced_name for adapter in adapters])
 
+    def test_cancelled_mcp_discovery_reports_server_error_without_crashing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            server = store.import_config_json(PLAYWRIGHT_CONFIG)["servers"][0]
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeCancelledMCPClient):
+                discovered = store.discover_server(server["id"])
+                adapters, summary = store.load_enabled_tool_adapters()
+
+            self.assertEqual(discovered.status, "failed")
+            self.assertEqual(discovered.error, "Cancelled via cancel scope")
+            self.assertTrue(
+                any(
+                    item.get("server") == "playwright"
+                    and item.get("category") == "server_unreachable"
+                    and item.get("error") == "Cancelled via cancel scope"
+                    for item in summary["errors"]
+                )
+            )
+            self.assertNotIn("playwright.browser_snapshot", [adapter.namespaced_name for adapter in adapters])
+
+    def test_docker_connection_closed_includes_actionable_hint(self):
+        config = json.dumps(
+            {
+                "mcpServers": {
+                    "image_search": {
+                        "command": "docker",
+                        "args": ["run", "-i", "--rm", "openbench/image-search-mcp:cpu"],
+                        "namespace": "image_search",
+                    }
+                }
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            server = store.import_config_json(config)["servers"][0]
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeConnectionClosedMCPClient):
+                discovered = store.discover_server(server["id"])
+                _adapters, summary = store.load_enabled_tool_adapters()
+
+            self.assertEqual(discovered.status, "failed")
+            self.assertIn("Connection closed", discovered.error or "")
+            self.assertIn("test_mcp_server.py --mode docker", discovered.diagnostics["hint"])
+            image_error = next(item for item in summary["errors"] if item["server"] == "image_search")
+            self.assertIn("openbench/image-search-mcp:cpu", image_error["hint"])
+
     def test_enabled_tools_with_invalid_schema_report_invalid_diagnostic(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = MCPServerRegistryStore(tmpdir)
             store.import_config_json(PLAYWRIGHT_CONFIG)
 
-            with patch("general_chat.mcp_registry.MCPClient", FakeMCPClient):
-                with patch(
+            with (
+                patch("general_chat.mcp_registry.MCPClient", FakeMCPClient),
+                patch(
                     "openbench.mcp.adapters.MCPToolAdapter.get_schema",
                     side_effect=ValueError("schema validation failed"),
-                ):
-                    adapters, summary = store.load_enabled_tool_adapters()
+                ),
+            ):
+                adapters, summary = store.load_enabled_tool_adapters()
 
             external_names = [
                 adapter.namespaced_name
@@ -731,27 +971,29 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
                 ]
             )
 
-            with patch.dict(environ, {"GENERAL_CHAT_MCP_REGISTRY_ROOT": tmpdir}, clear=False):
-                with patch("general_chat.mcp_registry.MCPClient", FakeGitMCPClient):
-                    llm = ToolCallingLLM()
-                    agent = BaseAgent(goal="General chat", max_iterations=3)
-                    agent._llm = llm
+            with (
+                patch.dict(environ, {"GENERAL_CHAT_MCP_REGISTRY_ROOT": tmpdir}, clear=False),
+                patch("general_chat.mcp_registry.MCPClient", FakeGitMCPClient),
+            ):
+                llm = ToolCallingLLM()
+                agent = BaseAgent(goal="General chat", max_iterations=3)
+                agent._llm = llm
 
-                    summary = reload_external_mcp_tools(agent)
+                summary = reload_external_mcp_tools(agent)
 
-                    self.assertTrue(summary["available_to_chat"])
-                    self.assertIn("git_git_status", summary["registered_tools"])
-                    self.assertIn("openbench_filter_records", summary["registered_tools"])
-                    self.assertIn("git_git_status", agent.tools._tools)
+                self.assertTrue(summary["available_to_chat"])
+                self.assertIn("git_git_status", summary["registered_tools"])
+                self.assertIn("openbench_filter_records", summary["registered_tools"])
+                self.assertIn("git_git_status", agent.tools._tools)
 
-                    engine = ChatEngine(agent=agent)
-                    handler = GeneralChatHandler(engine=engine, db_path=":memory:")
-                    request_agent = handler._create_request_agent()
-                    result = engine._execute_agent(
-                        "Use the git status tool.",
-                        None,
-                        agent=request_agent,
-                    )
+                engine = ChatEngine(agent=agent)
+                handler = GeneralChatHandler(engine=engine, db_path=":memory:")
+                request_agent = handler._create_request_agent()
+                result = engine._execute_agent(
+                    "Use the git status tool.",
+                    None,
+                    agent=request_agent,
+                )
 
             self.assertEqual(result.output, "Git status is available.")
             self.assertEqual(result.metadata["tools_used"], ["git_git_status"])
@@ -779,9 +1021,11 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             agent.tools = BrokenToolExecutor()
             agent._external_mcp_tool_names = set()
 
-            with patch.dict(environ, {"GENERAL_CHAT_MCP_REGISTRY_ROOT": tmpdir}, clear=False):
-                with patch("general_chat.mcp_registry.MCPClient", FakeGitMCPClient):
-                    summary = reload_external_mcp_tools(agent)
+            with (
+                patch.dict(environ, {"GENERAL_CHAT_MCP_REGISTRY_ROOT": tmpdir}, clear=False),
+                patch("general_chat.mcp_registry.MCPClient", FakeGitMCPClient),
+            ):
+                summary = reload_external_mcp_tools(agent)
 
             self.assertFalse(summary["available_to_chat"])
             self.assertIn("registered but not visible to chat", summary["error"])

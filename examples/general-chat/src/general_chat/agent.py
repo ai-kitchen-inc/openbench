@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-import os
+import copy
+import json
 import logging
+import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +22,8 @@ _DEFAULT_MCP_APPROVED_TOOLS = (
     "openbench.top_n_records",
 )
 _IMAGE_SEARCH_SIMILAR_TOOL = "image_search.search_similar_images"
+_SAM_COUNT_TOOL = "sam_segmentation.count_objects_with_sam3"
+_SAM_SERVICE_INFO_TOOL = "sam_segmentation.service_info"
 _PROVIDER_NAME = "gemini-general-chat"
 logger = logging.getLogger(__name__)
 
@@ -144,6 +149,10 @@ class _ImageSearchRenderTool(Tool):
         if hasattr(self.inner, "approved"):
             self.inner.approved = value
 
+    @property
+    def timeout_seconds(self) -> Any:
+        return getattr(self.inner, "timeout_seconds", None)
+
     def execute(self, **params: Any) -> Any:
         payload = self.inner.execute(**params)
         shared_render_queue.push_many(_image_search_render_items(payload))
@@ -153,12 +162,197 @@ class _ImageSearchRenderTool(Tool):
         return self.inner.get_schema()
 
 
+class _SamSegmentationCountTool(Tool):
+    """Tool wrapper that avoids repeated identical SAM count calls in one chat turn."""
+
+    def __init__(self, inner: Tool):
+        self.inner = inner
+        self._cache: dict[str, Any] = {}
+        self._inflight: dict[str, tuple[threading.Event, dict[str, Any]]] = {}
+        self._lock = threading.Lock()
+
+    @property
+    def name(self) -> str:
+        return self.inner.name
+
+    @property
+    def description(self) -> str:
+        return self.inner.description
+
+    @property
+    def namespaced_name(self) -> str:
+        return str(getattr(self.inner, "namespaced_name", self.name))
+
+    @property
+    def tool_schema(self) -> dict[str, Any]:
+        schema = getattr(self.inner, "tool_schema", {})
+        return schema if isinstance(schema, dict) else {}
+
+    @property
+    def approved(self) -> bool:
+        return bool(getattr(self.inner, "approved", False))
+
+    @approved.setter
+    def approved(self, value: bool) -> None:
+        if hasattr(self.inner, "approved"):
+            self.inner.approved = value
+
+    @property
+    def timeout_seconds(self) -> Any:
+        return getattr(self.inner, "timeout_seconds", None)
+
+    def execute(self, **params: Any) -> Any:
+        normalized = dict(params)
+        normalized.setdefault("return_segments", False)
+        normalized.setdefault("return_overlay", False)
+        cache_key = json.dumps(normalized, sort_keys=True, default=str)
+        with self._lock:
+            if cache_key in self._cache:
+                return self._cached_payload(cache_key)
+            inflight = self._inflight.get(cache_key)
+            if inflight is None:
+                event = threading.Event()
+                state: dict[str, Any] = {}
+                self._inflight[cache_key] = (event, state)
+                is_owner = True
+            else:
+                event, state = inflight
+                is_owner = False
+
+        if not is_owner:
+            event.wait()
+            if "exception" in state:
+                raise state["exception"]
+            payload = copy.deepcopy(state.get("payload"))
+            if isinstance(payload, dict):
+                payload["cached"] = True
+                payload.setdefault(
+                    "final_answer_hint",
+                    "This is a shared in-flight SAM count result. Answer from count; "
+                    "do not rerun SAM or inspect the filesystem unless the result has an error.",
+                )
+            return payload
+
+        try:
+            payload = self.inner.execute(**normalized)
+            if isinstance(payload, dict) and not payload.get("error") and "count" in payload:
+                payload.setdefault(
+                    "final_answer_hint",
+                    "Use the returned count as the answer for this image/concept. Do not call "
+                    "SAM again, service_info, or filesystem unless the result contains an error "
+                    "or the user asks for diagnostics.",
+                )
+                with self._lock:
+                    self._cache[cache_key] = copy.deepcopy(payload)
+            state["payload"] = copy.deepcopy(payload)
+            return payload
+        except BaseException as exc:
+            state["exception"] = exc
+            raise
+        finally:
+            with self._lock:
+                self._inflight.pop(cache_key, None)
+                event.set()
+
+    def _cached_payload(self, cache_key: str) -> Any:
+        payload = copy.deepcopy(self._cache[cache_key])
+        if isinstance(payload, dict):
+            payload["cached"] = True
+            payload.setdefault(
+                "final_answer_hint",
+                "This is a cached duplicate SAM count result. Answer from count; "
+                "do not rerun SAM or inspect the filesystem unless the result has an error.",
+            )
+        return payload
+
+    def get_schema(self) -> dict[str, Any]:
+        schema = copy.deepcopy(self.inner.get_schema())
+        function = schema.get("function")
+        if isinstance(function, dict):
+            description = str(function.get("description") or "")
+            guidance = (
+                " For image counting, call this once per image/concept and answer from "
+                "the returned count. Do not call service_info or filesystem after a "
+                "successful result."
+            )
+            if guidance.strip() not in description:
+                function["description"] = f"{description}\n\n{guidance.strip()}".strip()
+            parameters = function.get("parameters")
+            if isinstance(parameters, dict):
+                properties = parameters.get("properties")
+                if isinstance(properties, dict):
+                    for name in ("return_segments", "return_overlay"):
+                        if isinstance(properties.get(name), dict):
+                            properties[name]["default"] = False
+        return schema
+
+
+class _DiagnosticMCPToolDescription(Tool):
+    """Tool wrapper that marks MCP service-info tools as diagnostics."""
+
+    def __init__(self, inner: Tool):
+        self.inner = inner
+
+    @property
+    def name(self) -> str:
+        return self.inner.name
+
+    @property
+    def description(self) -> str:
+        return self.inner.description
+
+    @property
+    def namespaced_name(self) -> str:
+        return str(getattr(self.inner, "namespaced_name", self.name))
+
+    @property
+    def tool_schema(self) -> dict[str, Any]:
+        schema = getattr(self.inner, "tool_schema", {})
+        return schema if isinstance(schema, dict) else {}
+
+    @property
+    def approved(self) -> bool:
+        return bool(getattr(self.inner, "approved", False))
+
+    @approved.setter
+    def approved(self, value: bool) -> None:
+        if hasattr(self.inner, "approved"):
+            self.inner.approved = value
+
+    @property
+    def timeout_seconds(self) -> Any:
+        return getattr(self.inner, "timeout_seconds", None)
+
+    def execute(self, **params: Any) -> Any:
+        return self.inner.execute(**params)
+
+    def get_schema(self) -> dict[str, Any]:
+        schema = copy.deepcopy(self.inner.get_schema())
+        function = schema.get("function")
+        if isinstance(function, dict):
+            description = str(function.get("description") or "")
+            guidance = (
+                "Diagnostic-only tool. Use it only after an operational SAM tool returns "
+                "an error, not after a successful count."
+            )
+            if guidance not in description:
+                function["description"] = f"{description}\n\n{guidance}".strip()
+        return schema
+
+
 def _wrap_chat_mcp_tool(tool: Any) -> Any:
     if (
         getattr(tool, "namespaced_name", None) == _IMAGE_SEARCH_SIMILAR_TOOL
         and isinstance(tool, Tool)
     ):
         return _ImageSearchRenderTool(tool)
+    if getattr(tool, "namespaced_name", None) == _SAM_COUNT_TOOL and isinstance(tool, Tool):
+        return _SamSegmentationCountTool(tool)
+    if (
+        getattr(tool, "namespaced_name", None) == _SAM_SERVICE_INFO_TOOL
+        and isinstance(tool, Tool)
+    ):
+        return _DiagnosticMCPToolDescription(tool)
     return tool
 
 
@@ -466,7 +660,10 @@ def create_agent(
     agent = BaseAgent(
         goal=(
             "Help users by answering questions, reasoning over optional context, "
-            "using enabled tools when useful, and thinking through problems."
+            "using enabled tools when useful, and thinking through problems. For "
+            "uploaded image counting, call the SAM count tool once per image/concept "
+            "and answer from the returned count; /general-chat/uploads paths are for "
+            "image MCP tools, not filesystem MCP inspection."
         ),
         model=resolved_model,
         temperature=temperature,

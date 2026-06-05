@@ -41,6 +41,13 @@ _GENERAL_CHAT_MCP_VARIANTS = {
         "description": "General Chat with SAM 3 concept counting MCP tool",
     },
 }
+_GENERAL_CHAT_ALL_MCP_NAME = "general-chat-all"
+_GENERAL_CHAT_ALL_MCP_CONFIGS = (
+    "filesystem-mcp.yaml",
+    "image-search-docker.yaml",
+    "sam-segmentation-docker.yaml",
+    "docker-mcp-gateway.yaml",
+)
 
 
 def _resolve_pnpm_command() -> list[str] | None:
@@ -232,6 +239,183 @@ def _general_chat_plain_env() -> dict[str, str]:
     }
 
 
+def _command_available(*names: str) -> bool:
+    """Return True when any command name resolves on PATH."""
+    return any(shutil.which(name) for name in names)
+
+
+def _docker_image_inspect_error(image: str) -> str | None:
+    """Return a short Docker inspect error when an expected local image is unavailable."""
+    docker = shutil.which("docker") or shutil.which("docker.exe")
+    if not docker:
+        return "docker command was not found on PATH"
+    try:
+        result = subprocess.run(
+            [docker, "image", "inspect", image],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return "docker image inspect timed out"
+    except OSError as exc:
+        return str(exc)
+    if result.returncode == 0:
+        return None
+    details = (result.stderr or result.stdout or "").strip()
+    return details or f"docker image inspect exited with status {result.returncode}"
+
+
+def _general_chat_all_mcp_env(
+    demo_dir: Path,
+    *,
+    seed_registry: bool = True,
+) -> dict[str, str]:
+    """Build environment overrides and seed registry state for all-MCP General Chat."""
+    root = _find_project_root()
+    uploads_dir = _ensure_dir(demo_dir / "uploads")
+    downloads_dir = _ensure_dir(demo_dir / "downloads")
+    storage_root = _ensure_dir(demo_dir / ".openbench" / "all-mcp")
+    sandbox_dir = _ensure_dir(demo_dir / "mcp-sandbox")
+    sam_debug_dir = _ensure_dir(uploads_dir / "_sam_debug")
+
+    image_search_root = root / "examples" / "image-search-mcp"
+    image_data_dir = _ensure_dir(image_search_root / "data")
+    image_models_dir = _ensure_dir(image_search_root / "models")
+    image_previews_dir = _ensure_dir(image_data_dir / "previews")
+    hf_cache_dir = _ensure_dir(Path.home() / ".cache" / "huggingface")
+
+    env = {
+        "GENERAL_CHAT_MCP_ENABLED": "0",
+        "GENERAL_CHAT_MCP_REGISTRY_ENABLED": "1",
+        "GENERAL_CHAT_STORAGE_ROOT": str(storage_root.resolve()),
+        "GENERAL_CHAT_UPLOAD_DIR": str(uploads_dir.resolve()),
+        "GENERAL_CHAT_DOWNLOAD_DIR": str(downloads_dir.resolve()),
+        "GENERAL_CHAT_MCP_SANDBOX": str(sandbox_dir.resolve()),
+        "GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR": str(image_previews_dir.resolve()),
+        "IMAGE_SEARCH_MCP_DATA_PATH": _as_posix_path(image_data_dir),
+        "IMAGE_SEARCH_MCP_MODELS_PATH": _as_posix_path(image_models_dir),
+        "IMAGE_SEARCH_MCP_UPLOADS_PATH": _as_posix_path(uploads_dir),
+        "IMAGE_SEARCH_MCP_HF_CACHE_PATH": _as_posix_path(hf_cache_dir),
+        "SAM_SEGMENTATION_MCP_UPLOADS_PATH": _as_posix_path(uploads_dir),
+        "SAM_SEGMENTATION_MCP_DEBUG_PATH": _as_posix_path(sam_debug_dir),
+    }
+
+    token_path = hf_cache_dir / "token"
+    if not token_path.exists():
+        console.print(
+            "[yellow]Warning:[/yellow] Hugging Face token not found at "
+            f"{token_path}. DINOv3 image search may fail until you run 'hf auth login' "
+            "and accept gated model access."
+        )
+    if not _command_available("docker", "docker.exe"):
+        console.print(
+            "[yellow]Warning:[/yellow] Docker was not found on PATH. Docker-backed MCP "
+            "servers such as image_search, sam_segmentation, and Docker MCP Gateway "
+            "will report connection errors until Docker is available."
+        )
+    else:
+        image_search_error = _docker_image_inspect_error("openbench/image-search-mcp:cpu")
+        if image_search_error:
+            console.print(
+                "[yellow]Warning:[/yellow] Docker image openbench/image-search-mcp:cpu "
+                "is not available or Docker API access failed. image_search may fail "
+                "with 'Connection closed'. Build it with: docker compose -f "
+                "examples\\image-search-mcp\\docker-compose.yml --profile cpu build. "
+                f"Details: {image_search_error}"
+            )
+    if not _command_available("npx", "npx.cmd"):
+        console.print(
+            "[yellow]Warning:[/yellow] npx was not found on PATH. The filesystem MCP "
+            "server will report a connection error until Node.js/npm tooling is available."
+        )
+
+    if seed_registry:
+        _seed_general_chat_all_mcp_registry(demo_dir, env)
+
+    return env
+
+
+def _seed_general_chat_all_mcp_registry(demo_dir: Path, env: dict[str, str]) -> None:
+    """Seed General Chat's MCP registry with bundled configs and ToolHive workloads."""
+    general_chat_src = demo_dir / "src"
+    if str(general_chat_src) not in sys.path:
+        sys.path.insert(0, str(general_chat_src))
+
+    try:
+        from general_chat.mcp_registry import MCPServerRegistryStore
+
+        from openbench.mcp.config import MCPConfig
+    except Exception as exc:
+        console.print(
+            "[yellow]Warning:[/yellow] Could not import General Chat MCP registry "
+            f"helpers: {exc}"
+        )
+        return
+
+    store = MCPServerRegistryStore(env["GENERAL_CHAT_STORAGE_ROOT"])
+    config_dir = demo_dir / "mcp"
+    previous_env = {key: os.environ.get(key) for key in env}
+    seeded_names: list[str] = []
+
+    os.environ.update(env)
+    try:
+        for filename in _GENERAL_CHAT_ALL_MCP_CONFIGS:
+            config_path = config_dir / filename
+            if not config_path.exists():
+                console.print(
+                    "[yellow]Warning:[/yellow] General Chat MCP config not found: "
+                    f"{config_path}"
+                )
+                continue
+            try:
+                config = MCPConfig.from_file(config_path)
+                client_config = config.client_config()
+                store.import_client_config(client_config)
+                seeded_names.extend(sorted(client_config.servers))
+            except Exception as exc:
+                console.print(
+                    "[yellow]Warning:[/yellow] Could not seed MCP config "
+                    f"{config_path.name}: {exc}"
+                )
+    finally:
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    try:
+        workloads = _list_running_toolhive_workloads()
+        if workloads:
+            store.import_toolhive_workloads(workloads)
+            seeded_names.extend(sorted(workload.name for workload in workloads))
+        else:
+            console.print(
+                "[yellow]Warning:[/yellow] No running ToolHive workloads were found. "
+                "Start workloads in ToolHive first if you want ToolHive tools in this run."
+            )
+    except Exception as exc:
+        console.print(
+            "[yellow]Warning:[/yellow] Could not import running ToolHive workloads: "
+            f"{exc}"
+        )
+
+    store.list_payload()
+    if seeded_names:
+        console.print(
+            "[green]Seeded MCP registry:[/green] " + ", ".join(sorted(set(seeded_names)))
+        )
+
+
+def _list_running_toolhive_workloads():
+    """Return ToolHive workloads through the shared OpenBench ToolHive helper."""
+    from openbench.mcp.toolhive import ToolHiveService
+
+    return ToolHiveService().list_workloads()
+
+
 def _discover_demos() -> list[dict]:
     """Discover all runnable demos: servers and scripts."""
     root = _find_project_root()
@@ -274,6 +458,18 @@ def _discover_demos() -> list[dict]:
                         "mcp_variant": variant,
                     }
                 )
+            demos.append(
+                {
+                    "name": _GENERAL_CHAT_ALL_MCP_NAME,
+                    "type": "server",
+                    "dir": demo_dir,
+                    "script": None,
+                    "port": _detect_port(server_py),
+                    "description": "General Chat with all bundled MCP integrations",
+                    "has_frontend": has_frontend,
+                    "mcp_profile": "all",
+                }
+            )
 
     # 2. Script demos: examples/**/*_demo.py, *_workflow.py
     server_dirs = {d["dir"] for d in demos}
@@ -369,7 +565,12 @@ def list_demos():
 @click.option("--port", type=int, default=None, help="Override backend port")
 @click.option("--no-frontend", is_flag=True, help="Backend only (skip frontend)")
 @click.option("--no-install", is_flag=True, help="Skip pnpm install and auto-setup")
-def run_demo(name, port, no_frontend, no_install):
+@click.option(
+    "--all-mcp",
+    is_flag=True,
+    help="Run General Chat with all bundled MCP configs and running ToolHive workloads.",
+)
+def run_demo(name, port, no_frontend, no_install, all_mcp):
     """Run a demo by name.
 
     Examples:
@@ -386,6 +587,12 @@ def run_demo(name, port, no_frontend, no_install):
         )
 
     info = demo_map[name]
+    all_mcp_requested = all_mcp or info.get("mcp_profile") == "all"
+    if all_mcp and info["name"] not in {"general-chat", _GENERAL_CHAT_ALL_MCP_NAME}:
+        raise click.ClickException(
+            "--all-mcp is only supported for 'general-chat'. "
+            "Use: openbench demo run general-chat --all-mcp"
+        )
 
     # Script demos -- just run the script
     if info["type"] == "script":
@@ -393,7 +600,7 @@ def run_demo(name, port, no_frontend, no_install):
         return
 
     # Server demos -- uvicorn + pnpm
-    _run_server(info, port, no_frontend, no_install)
+    _run_server(info, port, no_frontend, no_install, all_mcp=all_mcp_requested)
 
 
 def _run_script(info: dict):
@@ -494,7 +701,14 @@ def _ensure_python_deps(demo_dir: Path):
         console.print(f"[green]  {demo_dir.name} deps installed.[/green]\n")
 
 
-def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: bool):
+def _run_server(
+    info: dict,
+    port: int | None,
+    no_frontend: bool,
+    no_install: bool,
+    *,
+    all_mcp: bool = False,
+):
     """Run a server demo (uvicorn + optional frontend)."""
     demo_dir = info["dir"]
     backend_port = port or info["port"]
@@ -537,7 +751,9 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
 
     # Ensure Python subprocesses flush output immediately
     demo_env = {}
-    if info["name"] == "general-chat":
+    if all_mcp:
+        demo_env = _general_chat_all_mcp_env(demo_dir)
+    elif info["name"] == "general-chat":
         demo_env = _general_chat_plain_env()
     elif info.get("mcp_variant"):
         demo_env = _general_chat_mcp_env(str(info["mcp_variant"]), demo_dir)

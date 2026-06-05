@@ -13,12 +13,13 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
-from openbench.chat.files import StoredFile
-
 from general_chat.extractor import DoclingContentExtractor
+
+if TYPE_CHECKING:
+    from openbench.chat.files import StoredFile
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +160,7 @@ class SourceRecord:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SourceRecord":
+    def from_dict(cls, data: dict[str, Any]) -> SourceRecord:
         normalized = dict(data)
         normalized["mime_type"] = normalized.pop(
             "mimeType", normalized.get("mime_type", "")
@@ -190,7 +191,7 @@ class SourceRecord:
         status: str = "ready",
         error: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> "SourceRecord":
+    ) -> SourceRecord:
         return cls(
             id=f"source-{uuid.uuid4().hex[:10]}",
             session_id=session_id,
@@ -1133,7 +1134,13 @@ def image_search_text(
             "sam_segmentation.count_objects_with_sam3 with "
             f"image_path=\"{metadata['samSegmentationPath']}\" and concept set to "
             "the noun phrase requested by the user, such as \"dog\", \"person\", "
-            "\"red apple\", or \"yellow school bus\"."
+            "\"red apple\", or \"yellow school bus\". Call it once and answer from "
+            "the returned count when successful."
+        ),
+        (
+            "Do not use filesystem MCP tools for this /general-chat/uploads path; "
+            "it is mounted for image MCP containers and is outside the filesystem "
+            "MCP sandbox."
         ),
     ]
     if parsed_text.strip():
@@ -1386,7 +1393,7 @@ def _unwrap_duckduckgo_href(href: str) -> str:
         return ""
     parsed = urlparse(href)
     query = parse_qs(parsed.query)
-    if "uddg" in query and query["uddg"]:
+    if query.get("uddg"):
         return query["uddg"][0]
     return href
 

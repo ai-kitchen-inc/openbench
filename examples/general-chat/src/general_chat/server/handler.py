@@ -9,7 +9,7 @@ import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from openbench.chat.session import Attachment
 from openbench.chat.transport import AGUIHandler
@@ -18,6 +18,8 @@ from openbench.intelligence.base import AgentMemory, BaseAgent, Message, Message
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from general_chat.sources import SourceRecord
 
 
@@ -25,6 +27,7 @@ _SOURCE_CONTEXT_ID = "general-chat-source-context"
 _REDACTED_ATTACHMENT_CONTEXT = (
     "Context data: [previous General Chat source attachment content redacted]"
 )
+_IMAGE_MCP_FILE_PATH_RE = re.compile(r"/general-chat/uploads/file-[^/\"'\s]+/[^\"'\s]+")
 
 
 def _debug_prompt_dir() -> Path | None:
@@ -150,6 +153,11 @@ def _image_attachment_mcp_path(attachment: Attachment) -> str | None:
     """Return the container path image MCP tools can read for a chat upload."""
     if attachment.type != "image" and not attachment.mime_type.startswith("image/"):
         return None
+    if attachment.path and _IMAGE_MCP_FILE_PATH_RE.fullmatch(attachment.path):
+        return attachment.path
+    existing_match = _IMAGE_MCP_FILE_PATH_RE.search(attachment.extracted_text or "")
+    if existing_match:
+        return existing_match.group(0)
     if not attachment.url.startswith("/uploads/"):
         return None
     from general_chat.sources import image_search_metadata
@@ -171,7 +179,7 @@ def _enrich_draft_attachments(attachments: list[Attachment] | None) -> list[Atta
     if not attachments:
         return []
 
-    from general_chat.sources import image_search_metadata, image_search_text
+    from general_chat.sources import image_search_text
     from openbench.chat.files import StoredFile
 
     enriched: list[Attachment] = []
@@ -189,11 +197,10 @@ def _enrich_draft_attachments(attachments: list[Attachment] | None) -> list[Atta
             size_bytes=attachment.size_bytes or 0,
             stored_at="",
         )
-        metadata = image_search_metadata(stored)
         existing_text = (attachment.extracted_text or "").strip()
         if (
             existing_text
-            and metadata["samSegmentationPath"] in existing_text
+            and image_path in existing_text
             and "sam_segmentation.count_objects_with_sam3" in existing_text
         ):
             extracted_text = existing_text
@@ -209,7 +216,7 @@ def _enrich_draft_attachments(attachments: list[Attachment] | None) -> list[Atta
                 mime_type=attachment.mime_type,
                 size_bytes=attachment.size_bytes,
                 extracted_text=extracted_text,
-                path=metadata["samSegmentationPath"],
+                path=image_path,
             )
         )
     return enriched

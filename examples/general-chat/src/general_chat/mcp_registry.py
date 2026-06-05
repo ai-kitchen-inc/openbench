@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import logging
 import os
-from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -184,8 +184,75 @@ def _connection_to_dict(config: MCPServerConnectionConfig) -> dict[str, Any]:
     return config.model_dump(exclude_none=True)
 
 
+def _policy_to_dict(policy: MCPPolicyConfig) -> dict[str, Any]:
+    return policy.model_dump(exclude_none=True)
+
+
 def _server_namespace(item: dict[str, Any], config: MCPServerConnectionConfig) -> str:
     return config.namespace or str(item["name"])
+
+
+def _policy_for_items(
+    items: list[dict[str, Any]],
+    *,
+    allow_remote_servers: bool = True,
+    require_approval_for_risks: list[str] | None = None,
+) -> MCPPolicyConfig:
+    max_timeout = 30.0
+    max_response_chars = 200_000
+    max_concurrency = 8
+    allowed_servers: set[str] = set()
+    denied_servers: set[str] = set()
+    allowed_tools: set[str] = set()
+    denied_tools: set[str] = set()
+    risk_requirements: set[str] = set(require_approval_for_risks or [])
+
+    for item in items:
+        raw_policy = item.get("policy")
+        if isinstance(raw_policy, dict):
+            try:
+                policy = MCPPolicyConfig.model_validate(raw_policy)
+            except Exception:
+                policy = MCPPolicyConfig()
+            max_timeout = max(max_timeout, float(policy.max_timeout_seconds))
+            max_response_chars = max(max_response_chars, int(policy.max_response_chars))
+            max_concurrency = max(max_concurrency, int(policy.max_concurrency))
+            allowed_servers.update(policy.allowed_servers)
+            denied_servers.update(policy.denied_servers)
+            allowed_tools.update(policy.allowed_tools)
+            denied_tools.update(policy.denied_tools)
+            risk_requirements.update(policy.require_approval_for_risks)
+
+        try:
+            server_config = MCPServerConnectionConfig.model_validate(item.get("config") or {})
+        except Exception:
+            continue
+        max_timeout = max(max_timeout, float(server_config.timeout_seconds))
+
+    return MCPPolicyConfig(
+        allowed_servers=sorted(allowed_servers),
+        denied_servers=sorted(denied_servers),
+        allowed_tools=sorted(allowed_tools),
+        denied_tools=sorted(denied_tools),
+        require_approval_for_risks=sorted(risk_requirements),
+        allow_remote_servers=allow_remote_servers,
+        max_timeout_seconds=max_timeout,
+        max_response_chars=max_response_chars,
+        max_concurrency=max_concurrency,
+    )
+
+
+def _policy_for_item(
+    item: dict[str, Any],
+    *,
+    allow_remote_servers: bool = True,
+    require_approval_for_risks: list[str] | None = None,
+) -> MCPPolicyConfig:
+    return _policy_for_items(
+        [item],
+        allow_remote_servers=allow_remote_servers,
+        require_approval_for_risks=require_approval_for_risks,
+    )
 
 
 def _internal_enabled_tool_names() -> set[str]:
@@ -254,10 +321,20 @@ class MCPServerRegistryStore:
         except MCPConfigImportError as exc:
             raise MCPRegistryError(str(exc)) from exc
 
+        return self.import_client_config(config)
+
+    def import_client_config(
+        self,
+        config: MCPClientConfig,
+        *,
+        source: str = "manual",
+    ) -> dict[str, Any]:
+        """Register MCP servers from an already-validated client config."""
         state = self._load_state()
         now = _now()
         servers_by_id = {item["id"]: item for item in state["servers"]}
         tools = state.setdefault("tools", {})
+        policy_dict = _policy_to_dict(config.policy)
 
         for name, connection in config.servers.items():
             server_id = _server_id(name)
@@ -265,7 +342,7 @@ class MCPServerRegistryStore:
             existing = servers_by_id.get(server_id)
             source_type = _source_type_for_config(
                 config_dict,
-                existing.get("source", "manual") if existing else "manual",
+                existing.get("source", source) if existing else source,
             )
             previous_config = existing.get("config") if existing else None
             config_changed = previous_config != config_dict
@@ -284,6 +361,7 @@ class MCPServerRegistryStore:
                 "source_type": source_type,
                 "server_namespace": connection.namespace or name,
                 "is_managed": False,
+                "policy": policy_dict,
                 "enabled": existing.get("enabled", True) if existing else True,
                 "status": existing.get("status", "enabled") if existing else "enabled",
                 "error": None,
@@ -461,9 +539,12 @@ class MCPServerRegistryStore:
                 len(discovered_tools),
                 sum(1 for tool in discovered_tools.values() if tool.get("enabled", True)),
             )
-        except Exception as exc:
+        except BaseException as exc:
+            if _is_process_exit(exc):
+                raise
             item["status"] = "failed"
             item["error"] = _safe_error(exc)
+            hint = _connection_failure_hint(item, item["error"])
             item["diagnostics"] = {
                 "provider": item.get("provider_kind") or item.get("source") or "manual",
                 "server": item.get("name"),
@@ -471,6 +552,7 @@ class MCPServerRegistryStore:
                 "tools_discovered": 0,
                 "tools_registered": 0,
                 "connection_error": item["error"],
+                **({"hint": hint} if hint else {}),
             }
             item["updated_at"] = _now()
             logger.warning(
@@ -494,7 +576,8 @@ class MCPServerRegistryStore:
             servers[item["name"]] = MCPServerConnectionConfig.model_validate(item["config"])
         return MCPClientConfig(
             servers=servers,
-            policy=MCPPolicyConfig(
+            policy=_policy_for_items(
+                [item for item in state["servers"] if item.get("enabled", True)],
                 allow_remote_servers=True,
                 require_approval_for_risks=[
                     "write",
@@ -673,16 +756,20 @@ class MCPServerRegistryStore:
                     len([entry for entry in summaries if entry.get("server") == item["name"]]),
                     invalid_count,
                 )
-            except Exception as exc:
+            except BaseException as exc:
+                if _is_process_exit(exc):
+                    raise
                 item["status"] = "failed"
                 item["error"] = _safe_error(exc)
                 item["updated_at"] = _now()
+                hint = _connection_failure_hint(item, item["error"])
                 error_payload = {
                     "provider": provider,
                     "server": item["name"],
                     "source_type": source_type,
                     "error": item["error"] or "MCP discovery failed.",
                     "category": "server_unreachable",
+                    **({"hint": hint} if hint else {}),
                 }
                 errors.append(error_payload)
                 item["diagnostics"] = {
@@ -701,8 +788,11 @@ class MCPServerRegistryStore:
                     item["error"],
                 )
                 if client is not None:
-                    with suppress(Exception):
+                    try:
                         client.close_sync()
+                    except BaseException as close_exc:
+                        if _is_process_exit(close_exc):
+                            raise
 
         self._save_state(state)
         return adapters, {
@@ -731,7 +821,7 @@ class MCPServerRegistryStore:
         client = MCPClient(
             MCPClientConfig(
                 servers={item["name"]: server_config},
-                policy=MCPPolicyConfig(allow_remote_servers=True),
+                policy=_policy_for_item(item, allow_remote_servers=True),
             )
         )
         discovered = client.discover_and_close_sync(refresh=True)
@@ -760,7 +850,8 @@ class MCPServerRegistryStore:
         client = MCPClient(
             MCPClientConfig(
                 servers={item["name"]: server_config},
-                policy=MCPPolicyConfig(
+                policy=_policy_for_item(
+                    item,
                     allow_remote_servers=True,
                     require_approval_for_risks=[
                         "write",
@@ -997,6 +1088,38 @@ class MCPServerRegistryStore:
 
 def _safe_error(exc: BaseException) -> str:
     return str(redact_secrets(str(exc) or exc.__class__.__name__))
+
+
+def _connection_failure_hint(item: dict[str, Any], error: str) -> str | None:
+    config = item.get("config") if isinstance(item.get("config"), dict) else {}
+    command = str(config.get("command") or "").lower()
+    args = [str(arg) for arg in config.get("args") or []]
+    server_name = str(item.get("name") or "")
+    if (
+        "connection closed" in error.lower()
+        and ("docker" in command or any(arg.startswith("openbench/") for arg in args))
+    ):
+        if server_name == "image_search" or any("image-search-mcp" in arg for arg in args):
+            return (
+                "The Docker image-search MCP process exited before handshake. Verify "
+                "Docker can inspect openbench/image-search-mcp:cpu, then run "
+                "`python examples/image-search-mcp/scripts/test_mcp_server.py --mode docker` "
+                "for container stderr and startup details."
+            )
+        return (
+            "The Docker-backed MCP process exited before handshake. Verify the image "
+            "exists, Docker is accessible, and the container starts in stdio MCP mode."
+        )
+    return None
+
+
+def _is_process_exit(exc: BaseException) -> bool:
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        return True
+    exception_group = getattr(builtins, "BaseExceptionGroup", None)
+    if exception_group is not None and isinstance(exc, exception_group):
+        return any(_is_process_exit(item) for item in exc.exceptions)
+    return False
 
 
 def _provider_schema_warning(namespaced_name: str, tool_schema: dict[str, Any]) -> str | None:

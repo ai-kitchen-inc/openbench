@@ -103,6 +103,26 @@ MCP-enabled demos remain available through dedicated commands such as
 `openbench demo run general-chat-sam-segmentation`, or by starting the backend
 manually with explicit `GENERAL_CHAT_MCP_*` environment variables.
 
+To launch one session with every bundled General Chat MCP integration registered
+together, use:
+
+```bash
+openbench demo run general-chat --all-mcp
+# or
+openbench demo run general-chat-all --all-mcp
+```
+
+This all-MCP launcher keeps General Chat in registry mode, seeds the MCP Servers
+registry with filesystem, image-search, SAM segmentation, Docker MCP Gateway,
+and internal OpenBench tools, then imports any currently running ToolHive
+workloads. It does not start ToolHive workloads for you; start them in ToolHive
+first if you want ToolHive tools available in the same chat session.
+
+The all-MCP launcher uses an isolated registry under `.openbench/all-mcp`.
+Existing servers saved through the regular General Chat MCP UI stay available to
+`openbench demo run general-chat`, but stopped or stale entries from that default
+registry are not loaded by `general-chat-all`.
+
 Useful options:
 
 ```bash
@@ -306,6 +326,27 @@ Invoke-RestMethod http://localhost:8005/mcp/tools
 
 For a complete walkthrough, see [MCP_TUTORIAL.md](MCP_TUTORIAL.md).
 
+To test all bundled MCP integrations in one run:
+
+```powershell
+openbench demo run general-chat --all-mcp
+```
+
+Then inspect:
+
+```powershell
+Invoke-RestMethod http://localhost:8005/mcp/tools
+```
+
+Expected `namespaced_tool_names` include the internal OpenBench query tools and,
+when dependencies are available, tools from `filesystem`, `image_search`,
+`sam_segmentation`, Docker MCP Gateway, and any running ToolHive workloads.
+Optional services that are missing or not built remain visible through
+`/mcp/catalogs` and `/mcp/tools` diagnostics rather than being silently hidden.
+`general-chat-all` uses the isolated `examples/general-chat/.openbench/all-mcp`
+registry root, so stale default-registry servers from normal General Chat runs
+are not loaded.
+
 The MCP Servers panel also accepts standard MCP client JSON:
 
 ```json
@@ -343,6 +384,10 @@ Then start General Chat with the image-search MCP config:
 openbench demo run general-chat-image-search
 ```
 
+For combined testing with SAM, Docker MCP Gateway, filesystem MCP, internal
+OpenBench tools, and running ToolHive workloads, use
+`openbench demo run general-chat --all-mcp` instead.
+
 The older PowerShell helper remains available at
 `examples/general-chat/scripts/run_with_image_search_mcp.ps1` if you need to
 set the environment manually.
@@ -358,6 +403,15 @@ Expected namespaced tools include:
 ```text
 image_search.list_index_stats
 image_search.search_similar_images
+```
+
+If `image_search` reports `Connection closed`, the Docker stdio process exited
+before MCP handshake. Rebuild or inspect the image and run the standalone smoke
+test to see container startup errors:
+
+```powershell
+docker image inspect openbench/image-search-mcp:cpu
+python examples\image-search-mcp\scripts\test_mcp_server.py --mode docker
 ```
 
 In the UI, use explicit tool-forcing prompts:
@@ -411,6 +465,10 @@ Start General Chat with the SAM 3 MCP config:
 openbench demo run general-chat-sam-segmentation
 ```
 
+For combined testing with image search, Docker MCP Gateway, filesystem MCP,
+internal OpenBench tools, and running ToolHive workloads, use
+`openbench demo run general-chat --all-mcp` instead.
+
 SAM debug images are written under `examples/general-chat/uploads/_sam_debug`
 and are returned by the tool as `/uploads/_sam_debug/...` URLs when detections
 are available.
@@ -430,6 +488,12 @@ Expected namespaced tools include:
 ```text
 sam_segmentation.count_objects_with_sam3
 ```
+
+Successful SAM count results include a `count`; General Chat should answer from
+that value after one call for the same image/concept. `service_info` and
+filesystem MCP tools are diagnostics only. Uploaded image paths under
+`/general-chat/uploads/...` are mounted for the image MCP containers and are not
+inside the filesystem MCP sandbox unless you explicitly change that sandbox.
 
 Upload a `.png`, `.jpg`, `.jpeg`, or `.webp` image in the Sources panel and ask:
 

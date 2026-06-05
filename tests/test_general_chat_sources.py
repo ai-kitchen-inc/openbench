@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 import types
 import unittest
 import uuid
@@ -27,14 +29,19 @@ from openbench.core.abstractions import (
     Tool,
 )
 from openbench.intelligence import BaseAgent
-from openbench.intelligence.base import Message, MessageRole
+from openbench.intelligence.base import Message, MessageRole, ToolExecutor
 from openbench.intelligence.memory import SQLiteMemoryStore
 
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
-from general_chat.agent import _ImageSearchRenderTool, _mcp_registry_root  # noqa: E402
+from general_chat.agent import (  # noqa: E402
+    _DiagnosticMCPToolDescription,
+    _ImageSearchRenderTool,
+    _mcp_registry_root,
+    _SamSegmentationCountTool,
+)
 from general_chat.extractor import DoclingContentExtractor  # noqa: E402
 from general_chat.server.app import _resolve_mime, _resolve_request_session_id  # noqa: E402
 from general_chat.server.handler import GeneralChatHandler  # noqa: E402
@@ -260,6 +267,46 @@ class TestGeneralChatSources(unittest.TestCase):
             agent.context.data["attachments"][0]["path"],
             "/general-chat/uploads/file-7/dogs.png",
         )
+
+    def test_enriched_image_attachment_preserves_existing_file_mcp_path(self):
+        agent = MockAgent()
+        engine = ChatEngine(agent=agent)
+        existing_text = (
+            "Image source: images.jpeg\n"
+            "Browser URL: /uploads/file-7a3e15e3/images.jpeg\n"
+            "image_search MCP path: /general-chat/uploads/file-7a3e15e3/images.jpeg\n"
+            "sam_segmentation MCP path: /general-chat/uploads/file-7a3e15e3/images.jpeg\n\n"
+            "To count objects matching a text concept in this uploaded image, call "
+            "sam_segmentation.count_objects_with_sam3 with "
+            'image_path="/general-chat/uploads/file-7a3e15e3/images.jpeg".'
+        )
+        handler = GeneralChatHandler(engine=engine, db_path=":memory:", source_records=[])
+
+        _content, attachments = handler._extract_content(
+            {
+                "messages": [{"id": "m1", "role": "user", "content": "count cars"}],
+                "forwardedProps": {
+                    "sessionId": "chat-session",
+                    "attachments": [
+                        {
+                            "id": "source-9a9b15ad8b",
+                            "type": "image",
+                            "name": "images.jpeg",
+                            "url": "/uploads/source-9a9b15ad8b/images.jpeg",
+                            "mimeType": "image/jpeg",
+                            "sizeBytes": 6781,
+                            "extractedText": existing_text,
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertIsNotNone(attachments)
+        assert attachments is not None
+        self.assertEqual(attachments[0].path, "/general-chat/uploads/file-7a3e15e3/images.jpeg")
+        self.assertEqual(attachments[0].extracted_text, existing_text)
+        self.assertNotIn("/general-chat/uploads/source-9a9b15ad8b", attachments[0].extracted_text or "")
 
     def test_forwarded_draft_attachments_are_combined_with_source_records(self):
         agent = MockAgent()
@@ -1451,6 +1498,7 @@ class TestGeneralChatSources(unittest.TestCase):
             namespaced_name = "image_search.search_similar_images"
             tool_schema = {"description": "Search similar images"}
             approved = True
+            timeout_seconds = 3600
 
             @property
             def name(self):
@@ -1480,9 +1528,11 @@ class TestGeneralChatSources(unittest.TestCase):
         render_queue.clear()
         self.addCleanup(render_queue.clear)
 
-        result = _ImageSearchRenderTool(FakeImageSearchTool()).execute(top_k=10)
+        wrapped = _ImageSearchRenderTool(FakeImageSearchTool())
+        result = wrapped.execute(top_k=10)
 
         items = render_queue.get_items()
+        self.assertEqual(wrapped.timeout_seconds, 3600)
         self.assertEqual(result["results"][0]["image_id"], "cifar10-train-00001")
         self.assertEqual(items[0]["headers"], ["Rank", "Label", "Score", "Image ID"])
         self.assertEqual(items[0]["rows"], [["1", "automobile", "0.9877", "cifar10-train-00001"]])
@@ -1492,6 +1542,190 @@ class TestGeneralChatSources(unittest.TestCase):
             "/image-search/previews/train/cifar10-train-00001.png",
         )
         self.assertNotIn("preview_path", items[1])
+
+    def test_sam_segmentation_count_tool_defaults_and_caches_success(self):
+        class FakeSamCountTool(Tool):
+            namespaced_name = "sam_segmentation.count_objects_with_sam3"
+            tool_schema = {"description": "Count objects with SAM 3"}
+            approved = True
+            timeout_seconds = 3600
+
+            def __init__(self):
+                self.calls = 0
+
+            @property
+            def name(self):
+                return "sam_segmentation_count_objects_with_sam3"
+
+            @property
+            def description(self):
+                return "Count objects with SAM 3"
+
+            def execute(self, **params):
+                self.calls += 1
+                return {"count": 3, "received": params}
+
+            def get_schema(self):
+                return {
+                    "type": "function",
+                    "function": {
+                        "name": self.name,
+                        "description": self.description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "image_path": {"type": "string"},
+                                "concept": {"type": "string"},
+                                "return_segments": {"type": "boolean", "default": True},
+                                "return_overlay": {"type": "boolean", "default": True},
+                            },
+                        },
+                    },
+                }
+
+        inner = FakeSamCountTool()
+        wrapped = _SamSegmentationCountTool(inner)
+
+        first = wrapped.execute(
+            image_path="/general-chat/uploads/file-1/cats.jpg",
+            concept="cat",
+        )
+        second = wrapped.execute(
+            image_path="/general-chat/uploads/file-1/cats.jpg",
+            concept="cat",
+        )
+        schema = wrapped.get_schema()
+        properties = schema["function"]["parameters"]["properties"]
+
+        self.assertEqual(wrapped.timeout_seconds, 3600)
+        self.assertEqual(first["count"], 3)
+        self.assertEqual(first["received"]["return_segments"], False)
+        self.assertEqual(first["received"]["return_overlay"], False)
+        self.assertIn("Use the returned count", first["final_answer_hint"])
+        self.assertEqual(second["count"], 3)
+        self.assertTrue(second["cached"])
+        self.assertEqual(inner.calls, 1)
+        self.assertIn("call this once", schema["function"]["description"])
+        self.assertFalse(properties["return_segments"]["default"])
+        self.assertFalse(properties["return_overlay"]["default"])
+
+    def test_sam_segmentation_count_tool_coalesces_inflight_duplicates(self):
+        class SlowSamCountTool(Tool):
+            namespaced_name = "sam_segmentation.count_objects_with_sam3"
+            tool_schema = {"description": "Count objects with SAM 3"}
+            approved = True
+            timeout_seconds = 3600
+
+            def __init__(self):
+                self.calls = 0
+                self.started = threading.Event()
+                self.lock = threading.Lock()
+
+            @property
+            def name(self):
+                return "sam_segmentation_count_objects_with_sam3"
+
+            @property
+            def description(self):
+                return "Count objects with SAM 3"
+
+            def execute(self, **params):
+                with self.lock:
+                    self.calls += 1
+                self.started.set()
+                time.sleep(0.05)
+                return {"count": 2, "received": params}
+
+            def get_schema(self):
+                return {"type": "function", "function": {"name": self.name}}
+
+        inner = SlowSamCountTool()
+        wrapped = _SamSegmentationCountTool(inner)
+        results: list[dict[str, object]] = []
+        errors: list[BaseException] = []
+
+        def call_tool():
+            try:
+                results.append(
+                    wrapped.execute(
+                        image_path="/general-chat/uploads/file-1/cars.jpg",
+                        concept="car",
+                    )
+                )
+            except BaseException as exc:
+                errors.append(exc)
+
+        first = threading.Thread(target=call_tool)
+        first.start()
+        self.assertTrue(inner.started.wait(timeout=1))
+        second = threading.Thread(target=call_tool)
+        second.start()
+        first.join(timeout=1)
+        second.join(timeout=1)
+
+        self.assertFalse(errors)
+        self.assertEqual(inner.calls, 1)
+        self.assertEqual([item["count"] for item in results], [2, 2])
+        self.assertTrue(any(item.get("cached") for item in results))
+
+    def test_wrapped_sam_tool_timeout_is_visible_to_tool_executor(self):
+        class SlowSamCountTool(Tool):
+            namespaced_name = "sam_segmentation.count_objects_with_sam3"
+            tool_schema = {"description": "Count objects with SAM 3"}
+            approved = True
+            timeout_seconds = 0.01
+
+            @property
+            def name(self):
+                return "sam_segmentation_count_objects_with_sam3"
+
+            @property
+            def description(self):
+                return "Count objects with SAM 3"
+
+            def execute(self, **params):
+                time.sleep(0.05)
+                return {"count": 1}
+
+            def get_schema(self):
+                return {"type": "function", "function": {"name": self.name}}
+
+        executor = ToolExecutor()
+        wrapped = _SamSegmentationCountTool(SlowSamCountTool())
+        executor.register(wrapped.name, wrapped)
+
+        with self.assertRaisesRegex(TimeoutError, "0.01s timeout"):
+            executor.execute(
+                wrapped.name,
+                image_path="/general-chat/uploads/file-1/cars.jpg",
+                concept="car",
+            )
+
+    def test_diagnostic_mcp_tool_description_preserves_timeout(self):
+        class FakeServiceInfoTool(Tool):
+            namespaced_name = "sam_segmentation.service_info"
+            tool_schema = {"description": "Service info"}
+            approved = True
+            timeout_seconds = 3600
+
+            @property
+            def name(self):
+                return "sam_segmentation_service_info"
+
+            @property
+            def description(self):
+                return "Service info"
+
+            def execute(self, **params):
+                return {"ok": True}
+
+            def get_schema(self):
+                return {"type": "function", "function": {"name": self.name}}
+
+        self.assertEqual(
+            _DiagnosticMCPToolDescription(FakeServiceInfoTool()).timeout_seconds,
+            3600,
+        )
 
     def test_external_filesystem_mcp_example_config_and_sample_data(self):
         from openbench.mcp.config import MCPConfig
@@ -1546,6 +1780,26 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertIn("SAM3_DEVICE=cpu", server.args)
         self.assertIn("IMAGE_INPUT_ROOTS=/general-chat/uploads", server.args)
         self.assertNotIn("SAM_MODEL=sam_b.pt", server.args)
+
+    def test_docker_mcp_gateway_example_config(self):
+        from openbench.mcp.config import MCPConfig
+
+        example_root = Path(__file__).resolve().parents[1] / "examples" / "general-chat"
+        config_path = example_root / "mcp" / "docker-mcp-gateway.yaml"
+
+        config = MCPConfig.from_file(config_path)
+
+        server = config.client_config().servers["docker"]
+        self.assertEqual(server.transport, "stdio")
+        self.assertEqual(server.command, "docker")
+        self.assertEqual(server.namespace, "docker")
+        self.assertTrue(server.allowed)
+        self.assertEqual(server.discovery_timeout_seconds, 15)
+        self.assertEqual(server.timeout_seconds, 3600)
+        self.assertEqual(
+            server.args,
+            ["mcp", "gateway", "run", "--profile", "openbench"],
+        )
 
     def _cleanup_path_tree(self, root: Path) -> None:
         if not root.exists():
