@@ -588,9 +588,13 @@ class MCPServerRegistryStore:
             ),
         )
 
-    def load_enabled_tool_adapters(self) -> tuple[list[MCPToolAdapter], dict[str, Any]]:
+    def load_enabled_tool_adapters(
+        self,
+        server_ids: set[str] | None = None,
+    ) -> tuple[list[MCPToolAdapter], dict[str, Any]]:
         state = self._load_state()
         self._ensure_internal_server_state(state)
+        selected_server_ids = set(server_ids) if server_ids is not None else None
         adapters: list[MCPToolAdapter] = []
         summaries: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
@@ -598,6 +602,8 @@ class MCPServerRegistryStore:
         enabled_tool_candidates = 0
 
         for item in state["servers"]:
+            if selected_server_ids is not None and item.get("id") not in selected_server_ids:
+                continue
             provider = str(item.get("provider_kind") or item.get("source") or "manual")
             source_type = str(item.get("source_type") or item.get("source") or provider)
             if not item.get("enabled", True):
@@ -714,6 +720,7 @@ class MCPServerRegistryStore:
                     adapters.append(adapter)
                     summaries.append(
                         {
+                            "server_id": item["id"],
                             "server": item["name"],
                             "provider": provider,
                             "source_type": source_type,
@@ -969,9 +976,11 @@ class MCPServerRegistryStore:
         self,
         registered_tool_names: set[str],
         diagnostics: list[dict[str, Any]] | None = None,
+        server_ids: set[str] | None = None,
     ) -> None:
         state = self._load_state()
         self._ensure_internal_server_state(state)
+        selected_server_ids = set(server_ids) if server_ids is not None else None
         registered_lookup = set(registered_tool_names)
         diagnostics_by_server = {
             str(item.get("server")): item
@@ -979,6 +988,8 @@ class MCPServerRegistryStore:
             if isinstance(item, dict) and item.get("server")
         }
         for item in state.get("servers", []):
+            if selected_server_ids is not None and item.get("id") not in selected_server_ids:
+                continue
             server_tools = state.setdefault("tools", {}).get(item["id"], {})
             registered_count = 0
             for tool_state in server_tools.values():

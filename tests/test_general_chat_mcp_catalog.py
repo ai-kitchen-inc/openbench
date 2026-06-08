@@ -582,6 +582,63 @@ class TestMCPServerRegistryStore(unittest.TestCase):
                 ["alpha_status", "beta_status"],
             )
 
+    def test_scoped_load_only_starts_selected_server(self):
+        config = json.dumps(
+            {
+                "mcpServers": {
+                    "alpha": {"command": "docker", "args": ["run", "alpha"]},
+                    "beta": {"command": "docker", "args": ["run", "beta"]},
+                }
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            FakeMCPClient.instances = []
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_config_json(config)
+            alpha = next(item for item in payload["servers"] if item["name"] == "alpha")
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeMultiServerMCPClient):
+                adapters, summary = store.load_enabled_tool_adapters(server_ids={alpha["id"]})
+
+            self.assertEqual(len(FakeMCPClient.instances), 1)
+            self.assertEqual(list(FakeMCPClient.instances[0].config.servers), ["alpha"])
+            namespaced = {adapter.namespaced_name for adapter in adapters}
+            self.assertEqual(namespaced, {"alpha.status"})
+            self.assertEqual([item["server"] for item in summary["tools"]], ["alpha"])
+
+    def test_scoped_runtime_marking_preserves_unselected_registered_servers(self):
+        config = json.dumps(
+            {
+                "mcpServers": {
+                    "alpha": {"command": "docker", "args": ["run", "alpha"]},
+                    "beta": {"command": "docker", "args": ["run", "beta"]},
+                }
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_config_json(config)
+            alpha = next(item for item in payload["servers"] if item["name"] == "alpha")
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeMultiServerMCPClient):
+                adapters, summary = store.load_enabled_tool_adapters()
+
+            store.mark_runtime_registration(
+                {adapter.name for adapter in adapters},
+                summary["diagnostics"],
+            )
+            store.mark_runtime_registration(set(), server_ids={alpha["id"]})
+
+            servers = store.list_payload()["servers"]
+            alpha_server = next(item for item in servers if item["name"] == "alpha")
+            beta_server = next(item for item in servers if item["name"] == "beta")
+            alpha_tool = alpha_server["tools"][0]
+            beta_tool = beta_server["tools"][0]
+            self.assertFalse(alpha_tool["loaded"])
+            self.assertEqual(alpha_tool["status"], "enabled")
+            self.assertTrue(beta_tool["loaded"])
+            self.assertEqual(beta_tool["status"], "registered")
+
     def test_registry_loads_all_mcp_server_types_together(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = MCPServerRegistryStore(tmpdir)
@@ -919,7 +976,6 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             payload = loaded.json()
             self.assertEqual(payload["reload"]["tools"][0]["name"], "git.git_status")
             self.assertIn("git_git_status", payload["reload"]["registered_tools"])
-            self.assertIn("openbench_filter_records", payload["reload"]["registered_tools"])
             self.assertTrue(payload["reload"]["available_to_chat"])
             self.assertIsNone(payload["reload"].get("error"))
             self.assertIn("git_git_status", agent.tools._tools)
@@ -1053,6 +1109,79 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             self.assertIn("registered but not visible to chat", summary["error"])
             self.assertEqual(summary["registered_tools"], [])
             self.assertEqual(agent._external_mcp_tool_names, set())
+
+    def test_scoped_reload_preserves_previously_loaded_other_server_tools(self):
+        config = json.dumps(
+            {
+                "mcpServers": {
+                    "alpha": {"command": "docker", "args": ["run", "alpha"]},
+                    "beta": {"command": "docker", "args": ["run", "beta"]},
+                }
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_config_json(config)
+            alpha = next(item for item in payload["servers"] if item["name"] == "alpha")
+
+            agent = Mock()
+            agent.tools = FakeToolExecutor()
+            agent._external_mcp_tool_names = set()
+            agent._external_mcp_tools = []
+            agent._external_mcp_tool_servers = {}
+
+            with (
+                patch.dict(environ, {"GENERAL_CHAT_MCP_REGISTRY_ROOT": tmpdir}, clear=False),
+                patch("general_chat.mcp_registry.MCPClient", FakeMultiServerMCPClient),
+            ):
+                full_summary = reload_external_mcp_tools(agent)
+                self.assertIn("alpha_status", full_summary["registered_tools"])
+                self.assertIn("beta_status", full_summary["registered_tools"])
+
+                FakeMCPClient.instances = []
+                scoped_summary = reload_external_mcp_tools(agent, server_ids={alpha["id"]})
+
+            self.assertEqual(len(FakeMCPClient.instances), 1)
+            self.assertEqual(list(FakeMCPClient.instances[0].config.servers), ["alpha"])
+            self.assertEqual(scoped_summary["registered_tools"], ["alpha_status"])
+            self.assertIn("alpha_status", agent.tools._tools)
+            self.assertIn("beta_status", agent.tools._tools)
+            self.assertIn("alpha_status", agent._external_mcp_tool_names)
+            self.assertIn("beta_status", agent._external_mcp_tool_names)
+
+    def test_scoped_reload_after_disable_unregisters_only_selected_server_tools(self):
+        config = json.dumps(
+            {
+                "mcpServers": {
+                    "alpha": {"command": "docker", "args": ["run", "alpha"]},
+                    "beta": {"command": "docker", "args": ["run", "beta"]},
+                }
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_config_json(config)
+            alpha = next(item for item in payload["servers"] if item["name"] == "alpha")
+
+            agent = Mock()
+            agent.tools = FakeToolExecutor()
+            agent._external_mcp_tool_names = set()
+            agent._external_mcp_tools = []
+            agent._external_mcp_tool_servers = {}
+
+            with (
+                patch.dict(environ, {"GENERAL_CHAT_MCP_REGISTRY_ROOT": tmpdir}, clear=False),
+                patch("general_chat.mcp_registry.MCPClient", FakeMultiServerMCPClient),
+            ):
+                reload_external_mcp_tools(agent)
+                store.set_server_enabled(alpha["id"], False)
+                scoped_summary = reload_external_mcp_tools(agent, server_ids={alpha["id"]})
+
+            self.assertEqual(scoped_summary["registered_tools"], [])
+            self.assertNotIn("alpha_status", agent.tools._tools)
+            self.assertIn("beta_status", agent.tools._tools)
+            self.assertNotIn("alpha_status", agent._external_mcp_tool_names)
+            self.assertIn("beta_status", agent._external_mcp_tool_names)
 
 
 if __name__ == "__main__":

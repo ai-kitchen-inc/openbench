@@ -414,7 +414,9 @@ def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
     }
 
 
-def _load_external_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
+def _load_external_mcp_tools_for_chat(
+    server_ids: set[str] | None = None,
+) -> tuple[list[Any], dict[str, Any]]:
     """Load explicitly enabled MCP registry servers."""
     from general_chat.mcp_registry import MCPServerRegistryStore
 
@@ -423,7 +425,7 @@ def _load_external_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
         return [], {"enabled": False, "tools": []}
 
     store = MCPServerRegistryStore(registry_root)
-    tools, summary = store.load_enabled_tool_adapters()
+    tools, summary = store.load_enabled_tool_adapters(server_ids=server_ids)
     return [_wrap_chat_mcp_tool(tool) for tool in tools], summary
 
 
@@ -493,15 +495,68 @@ def _with_runtime_verification(
     return verified_summary
 
 
-def reload_external_mcp_tools(agent: Any) -> dict[str, Any]:
+def _summary_tool_server_map(summary: dict[str, Any]) -> dict[str, str]:
+    tools = summary.get("tools")
+    if not isinstance(tools, list):
+        return {}
+    mapping: dict[str, str] = {}
+    for item in tools:
+        if not isinstance(item, dict):
+            continue
+        adapter_name = item.get("adapter_name")
+        server_id = item.get("server_id")
+        if adapter_name and server_id:
+            mapping[str(adapter_name)] = str(server_id)
+    return mapping
+
+
+def reload_external_mcp_tools(
+    agent: Any,
+    server_ids: set[str] | None = None,
+) -> dict[str, Any]:
     """Refresh an existing General Chat agent with enabled external MCP tools."""
+    selected_server_ids = set(server_ids) if server_ids is not None else None
     previous_names = set(getattr(agent, "_external_mcp_tool_names", set()))
+    raw_previous_tools = getattr(agent, "_external_mcp_tools", [])
+    previous_tools = (
+        list(raw_previous_tools)
+        if isinstance(raw_previous_tools, (list, tuple, set))
+        else []
+    )
+    raw_previous_tool_servers = getattr(agent, "_external_mcp_tool_servers", {})
+    previous_tool_servers = (
+        dict(raw_previous_tool_servers)
+        if isinstance(raw_previous_tool_servers, dict)
+        else {}
+    )
+    if selected_server_ids is None:
+        names_to_unregister = previous_names
+        preserved_names: set[str] = set()
+        preserved_tools: list[Any] = []
+        preserved_tool_servers: dict[str, str] = {}
+    else:
+        names_to_unregister = {
+            name
+            for name in previous_names
+            if previous_tool_servers.get(name) in selected_server_ids
+        }
+        preserved_names = previous_names - names_to_unregister
+        preserved_tools = [
+            tool
+            for tool in previous_tools
+            if getattr(tool, "name", None) in preserved_names
+        ]
+        preserved_tool_servers = {
+            name: server_id
+            for name, server_id in previous_tool_servers.items()
+            if name in preserved_names
+        }
 
     try:
-        tools, summary = _load_external_mcp_tools_for_chat()
+        tools, summary = _load_external_mcp_tools_for_chat(server_ids=selected_server_ids)
     except Exception as exc:
         logger.warning("mcp.chat.load_failed error=%s", exc)
-        for name in previous_names:
+        for name in names_to_unregister:
             _unregister_tool(agent, name)
         summary = {
             "enabled": True,
@@ -512,12 +567,15 @@ def reload_external_mcp_tools(agent: Any) -> dict[str, Any]:
             "available_to_chat": False,
             "registered_tools": [],
         }
-        agent._external_mcp_tools = []
-        agent._external_mcp_tool_names = set()
+        agent._external_mcp_tools = preserved_tools
+        agent._external_mcp_tool_names = preserved_names
+        agent._external_mcp_tool_servers = preserved_tool_servers
         agent._external_mcp_summary = summary
         return summary
 
     duplicate_names: dict[str, int] = {}
+    for name in preserved_names:
+        duplicate_names[name] = duplicate_names.get(name, 0) + 1
     for tool in tools:
         duplicate_names[tool.name] = duplicate_names.get(tool.name, 0) + 1
     registration_errors = [
@@ -527,19 +585,20 @@ def reload_external_mcp_tools(agent: Any) -> dict[str, Any]:
     ]
     if registration_errors:
         logger.warning("mcp.chat.registration_duplicate errors=%s", registration_errors)
-        for name in previous_names:
+        for name in names_to_unregister:
             _unregister_tool(agent, name)
         summary = _with_runtime_verification(
             summary,
             registered=set(),
             registration_errors=registration_errors,
         )
-        agent._external_mcp_tools = []
-        agent._external_mcp_tool_names = set()
+        agent._external_mcp_tools = preserved_tools
+        agent._external_mcp_tool_names = preserved_names
+        agent._external_mcp_tool_servers = preserved_tool_servers
         agent._external_mcp_summary = summary
         return summary
 
-    for name in previous_names:
+    for name in names_to_unregister:
         _unregister_tool(agent, name)
 
     registered: set[str] = set()
@@ -580,11 +639,17 @@ def reload_external_mcp_tools(agent: Any) -> dict[str, Any]:
             MCPServerRegistryStore(registry_root).mark_runtime_registration(
                 registered,
                 summary.get("diagnostics") if isinstance(summary.get("diagnostics"), list) else [],
+                server_ids=selected_server_ids,
             )
         except Exception as exc:
             logger.warning("mcp.chat.mark_runtime_failed error=%s", exc)
-    agent._external_mcp_tools = [tool for tool in tools if tool.name in registered]
-    agent._external_mcp_tool_names = registered
+    new_tool_servers = _summary_tool_server_map(summary)
+    agent._external_mcp_tools = preserved_tools + [tool for tool in tools if tool.name in registered]
+    agent._external_mcp_tool_names = preserved_names | registered
+    agent._external_mcp_tool_servers = {
+        **preserved_tool_servers,
+        **{name: new_tool_servers[name] for name in registered if name in new_tool_servers},
+    }
     agent._external_mcp_summary = summary
     logger.info(
         "mcp.chat.reload complete loaded=%d registered=%d available=%s error=%s",
@@ -677,6 +742,7 @@ def create_agent(
     agent._external_mcp_summary = external_mcp_summary  # type: ignore[attr-defined]
     agent._external_mcp_tools = external_mcp_tools  # type: ignore[attr-defined]
     agent._external_mcp_tool_names = {tool.name for tool in external_mcp_tools}  # type: ignore[attr-defined]
+    agent._external_mcp_tool_servers = {}  # type: ignore[attr-defined]
     if _mcp_registry_root() is not None:
         reload_external_mcp_tools(agent)
     return agent
