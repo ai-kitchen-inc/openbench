@@ -221,6 +221,7 @@ This path keeps General Chat in registry mode. It seeds the registry with:
 
 - internal OpenBench tools
 - filesystem MCP
+- generic API MCP
 - image-search MCP
 - SAM 3 segmentation MCP
 - Docker MCP Gateway
@@ -245,6 +246,7 @@ Expected `namespaced_tool_names` include:
 ```text
 openbench.filter_records
 filesystem.read_file
+generic_api.fetch_generic_api_data
 image_search.list_index_stats
 image_search.search_similar_images
 sam_segmentation.count_objects_with_sam3
@@ -261,6 +263,7 @@ Prepare optional dependencies before a full local smoke test:
 
 ```powershell
 hf auth login
+docker compose -f examples\generic-api-mcp\docker-compose.yml --profile cpu build
 docker compose -f examples\image-search-mcp\docker-compose.yml --profile cpu build
 docker compose -f examples\sam-segmentation-mcp\docker-compose.yml --profile cpu build
 docker mcp profile create --name openbench
@@ -501,7 +504,7 @@ How many dogs are in this image? Use the SAM 3 counting tool.
 - `/mcp/tools` says disabled: set `GENERAL_CHAT_MCP_ENABLED=1` and restart.
 - For the all-MCP launcher, `/mcp/tools` should report registry mode; check
   `/mcp/catalogs` for per-server diagnostics when a Docker, filesystem,
-  ToolHive, image-search, or SAM server is unavailable.
+  ToolHive, generic API, image-search, or SAM server is unavailable.
 - `/mcp/tools` has zero tools: load tools in the MCP Servers panel and make
   sure the target server and tools are enabled.
 - Dedicated Docker scripts fail while discovering stale ToolHive or manual MCP

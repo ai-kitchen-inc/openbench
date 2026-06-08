@@ -1,0 +1,14 @@
+{
+  "name": "dev.openbench/generic-api-mcp",
+  "description": "Generic authenticated API fetch MCP server for OpenBench demos.",
+  "image": {
+    "type": "docker",
+    "tags": {
+      "latest": {
+        "identifier": "openbench/generic-api-mcp:cpu",
+        "transport": "stdio"
+      }
+    }
+  }
+}
+

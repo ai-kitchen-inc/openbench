@@ -142,6 +142,7 @@ def test_general_chat_all_mcp_env_creates_paths_and_seeds_registry(tmp_path, mon
             "npx",
             ['"-y"', '"@modelcontextprotocol/server-filesystem"', '"${GENERAL_CHAT_MCP_SANDBOX}"'],
         ),
+        "generic-api-docker.yaml": ("generic_api", "docker", ['"run"', '"generic-api"']),
         "image-search-docker.yaml": ("image_search", "docker", ['"run"', '"image-search"']),
         "sam-segmentation-docker.yaml": ("sam_segmentation", "docker", ['"run"', '"sam"']),
         "docker-mcp-gateway.yaml": ("docker", "docker", ['"mcp"', '"gateway"', '"run"']),
@@ -215,6 +216,9 @@ def test_general_chat_all_mcp_env_creates_paths_and_seeds_registry(tmp_path, mon
     assert env["SAM_SEGMENTATION_MCP_DEBUG_PATH"].endswith(
         "/examples/general-chat/uploads/_sam_debug"
     )
+    assert env["GENERIC_API_USERNAME"] == ""
+    assert env["GENERIC_API_PASSWORD"] == ""
+    assert env["GENERIC_API_TIMEOUT_SECONDS"] == "30"
     assert Path(env["GENERAL_CHAT_UPLOAD_DIR"]).is_dir()
     assert Path(env["GENERAL_CHAT_DOWNLOAD_DIR"]).is_dir()
     assert Path(env["GENERAL_CHAT_MCP_SANDBOX"]).is_dir()
@@ -227,6 +231,7 @@ def test_general_chat_all_mcp_env_creates_paths_and_seeds_registry(tmp_path, mon
     assert {
         "docker",
         "filesystem",
+        "generic_api",
         "git",
         "image_search",
         "openbench",
@@ -247,17 +252,21 @@ def test_general_chat_all_mcp_warns_when_image_search_docker_image_missing(
     (root / "pyproject.toml").write_text("[project]\nname = 'demo-test'\n", encoding="utf-8")
 
     class FakeInspectResult:
-        returncode = 1
-        stdout = ""
-        stderr = "No such image: openbench/image-search-mcp:cpu"
+        def __init__(self, returncode, stderr):
+            self.returncode = returncode
+            self.stdout = ""
+            self.stderr = stderr
 
     def fake_run(cmd, capture_output, text, timeout, check):
-        assert cmd[1:4] == ["image", "inspect", "openbench/image-search-mcp:cpu"]
+        assert cmd[1:3] == ["image", "inspect"]
         assert capture_output is True
         assert text is True
         assert timeout == 10
         assert check is False
-        return FakeInspectResult()
+        if cmd[3] == "openbench/generic-api-mcp:cpu":
+            return FakeInspectResult(0, "")
+        assert cmd[3] == "openbench/image-search-mcp:cpu"
+        return FakeInspectResult(1, "No such image: openbench/image-search-mcp:cpu")
 
     monkeypatch.setattr(demo_module, "_find_project_root", lambda: root)
     monkeypatch.setattr(demo_module.Path, "home", staticmethod(lambda: home_dir))

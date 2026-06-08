@@ -1,0 +1,15 @@
+{
+  "servers": {
+    "generic_api": {
+      "command": "python",
+      "args": ["-m", "app.mcp_server", "--transport", "stdio"],
+      "cwd": "examples/generic-api-mcp",
+      "env": {
+        "GENERIC_API_USERNAME": "username",
+        "GENERIC_API_PASSWORD": "password",
+        "GENERIC_API_TIMEOUT_SECONDS": "30"
+      },
+      "type": "stdio"
+    }
+  }
+}

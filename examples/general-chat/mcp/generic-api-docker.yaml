@@ -1,0 +1,27 @@
+mcp:
+  policy:
+    allow_remote_servers: false
+    allowed_servers:
+      - generic_api
+    max_timeout_seconds: 30
+
+  servers:
+    generic_api:
+      transport: stdio
+      command: docker
+      args:
+        - run
+        - "-i"
+        - "--rm"
+        - "-e"
+        - GENERIC_API_USERNAME
+        - "-e"
+        - GENERIC_API_PASSWORD
+        - "-e"
+        - GENERIC_API_TIMEOUT_SECONDS
+        - openbench/generic-api-mcp:cpu
+      namespace: generic_api
+      allowed: true
+      discovery_timeout_seconds: 15
+      timeout_seconds: 30
+      retries: 0

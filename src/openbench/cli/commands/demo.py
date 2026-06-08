@@ -44,6 +44,7 @@ _GENERAL_CHAT_MCP_VARIANTS = {
 _GENERAL_CHAT_ALL_MCP_NAME = "general-chat-all"
 _GENERAL_CHAT_ALL_MCP_CONFIGS = (
     "filesystem-mcp.yaml",
+    "generic-api-docker.yaml",
     "image-search-docker.yaml",
     "sam-segmentation-docker.yaml",
     "docker-mcp-gateway.yaml",
@@ -300,6 +301,9 @@ def _general_chat_all_mcp_env(
         "IMAGE_SEARCH_MCP_HF_CACHE_PATH": _as_posix_path(hf_cache_dir),
         "SAM_SEGMENTATION_MCP_UPLOADS_PATH": _as_posix_path(uploads_dir),
         "SAM_SEGMENTATION_MCP_DEBUG_PATH": _as_posix_path(sam_debug_dir),
+        "GENERIC_API_USERNAME": os.getenv("GENERIC_API_USERNAME", ""),
+        "GENERIC_API_PASSWORD": os.getenv("GENERIC_API_PASSWORD", ""),
+        "GENERIC_API_TIMEOUT_SECONDS": os.getenv("GENERIC_API_TIMEOUT_SECONDS", "30"),
     }
 
     token_path = hf_cache_dir / "token"
@@ -312,10 +316,19 @@ def _general_chat_all_mcp_env(
     if not _command_available("docker", "docker.exe"):
         console.print(
             "[yellow]Warning:[/yellow] Docker was not found on PATH. Docker-backed MCP "
-            "servers such as image_search, sam_segmentation, and Docker MCP Gateway "
-            "will report connection errors until Docker is available."
+            "servers such as generic_api, image_search, sam_segmentation, and Docker "
+            "MCP Gateway will report connection errors until Docker is available."
         )
     else:
+        generic_api_error = _docker_image_inspect_error("openbench/generic-api-mcp:cpu")
+        if generic_api_error:
+            console.print(
+                "[yellow]Warning:[/yellow] Docker image openbench/generic-api-mcp:cpu "
+                "is not available or Docker API access failed. generic_api may fail "
+                "with 'Connection closed'. Build it with: docker compose -f "
+                "examples\\generic-api-mcp\\docker-compose.yml --profile cpu build. "
+                f"Details: {generic_api_error}"
+            )
         image_search_error = _docker_image_inspect_error("openbench/image-search-mcp:cpu")
         if image_search_error:
             console.print(

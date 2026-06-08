@@ -113,10 +113,10 @@ openbench demo run general-chat-all --all-mcp
 ```
 
 This all-MCP launcher keeps General Chat in registry mode, seeds the MCP Servers
-registry with filesystem, image-search, SAM segmentation, Docker MCP Gateway,
-and internal OpenBench tools, then imports any currently running ToolHive
-workloads. It does not start ToolHive workloads for you; start them in ToolHive
-first if you want ToolHive tools available in the same chat session.
+registry with filesystem, generic API, image-search, SAM segmentation, Docker
+MCP Gateway, and internal OpenBench tools, then imports any currently running
+ToolHive workloads. It does not start ToolHive workloads for you; start them in
+ToolHive first if you want ToolHive tools available in the same chat session.
 
 The all-MCP launcher uses an isolated registry under `.openbench/all-mcp`.
 Existing servers saved through the regular General Chat MCP UI stay available to
@@ -339,8 +339,9 @@ Invoke-RestMethod http://localhost:8005/mcp/tools
 ```
 
 Expected `namespaced_tool_names` include the internal OpenBench query tools and,
-when dependencies are available, tools from `filesystem`, `image_search`,
-`sam_segmentation`, Docker MCP Gateway, and any running ToolHive workloads.
+when dependencies are available, tools from `filesystem`, `generic_api`,
+`image_search`, `sam_segmentation`, Docker MCP Gateway, and any running
+ToolHive workloads.
 Optional services that are missing or not built remain visible through
 `/mcp/catalogs` and `/mcp/tools` diagnostics rather than being silently hidden.
 `general-chat-all` uses the isolated `examples/general-chat/.openbench/all-mcp`
@@ -384,8 +385,8 @@ Then start General Chat with the image-search MCP config:
 openbench demo run general-chat-image-search
 ```
 
-For combined testing with SAM, Docker MCP Gateway, filesystem MCP, internal
-OpenBench tools, and running ToolHive workloads, use
+For combined testing with SAM, generic API, Docker MCP Gateway, filesystem MCP,
+internal OpenBench tools, and running ToolHive workloads, use
 `openbench demo run general-chat --all-mcp` instead.
 
 The older PowerShell helper remains available at
@@ -465,8 +466,8 @@ Start General Chat with the SAM 3 MCP config:
 openbench demo run general-chat-sam-segmentation
 ```
 
-For combined testing with image search, Docker MCP Gateway, filesystem MCP,
-internal OpenBench tools, and running ToolHive workloads, use
+For combined testing with image search, generic API, Docker MCP Gateway,
+filesystem MCP, internal OpenBench tools, and running ToolHive workloads, use
 `openbench demo run general-chat --all-mcp` instead.
 
 SAM debug images are written under `examples/general-chat/uploads/_sam_debug`

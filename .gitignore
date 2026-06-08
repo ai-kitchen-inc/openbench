@@ -534,3 +534,6 @@ examples/lci-mini/frontend/dist/
 prompt-debug/
 # Added by code-review-graph
 .code-review-graph/
+
+# MCP settings
+tools.yml

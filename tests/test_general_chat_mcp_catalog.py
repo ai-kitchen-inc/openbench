@@ -192,6 +192,20 @@ class FakeAllMCPClient(FakeMultiServerMCPClient):
                 "inputSchema": {"type": "object", "properties": {}, "required": []},
             }
         },
+        "generic_api": {
+            "fetch_generic_api_data": {
+                "name": "fetch_generic_api_data",
+                "description": "Fetch generic API data",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "endpoint_url": {"type": "string"},
+                        "query_params": {"type": "object"},
+                    },
+                    "required": ["endpoint_url"],
+                },
+            }
+        },
         "image_search": {
             "list_index_stats": {
                 "name": "list_index_stats",
@@ -587,6 +601,12 @@ class TestMCPServerRegistryStore(unittest.TestCase):
                             namespace="filesystem",
                             allowed=True,
                         ),
+                        "generic_api": MCPServerConnectionConfig(
+                            command="docker",
+                            args=["run", "-i", "--rm", "openbench/generic-api-mcp:cpu"],
+                            namespace="generic_api",
+                            allowed=True,
+                        ),
                         "image_search": MCPServerConnectionConfig(
                             command="docker",
                             args=["run", "-i", "--rm", "openbench/image-search-mcp:cpu"],
@@ -621,12 +641,14 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             provider_names = {adapter.name for adapter in adapters}
             self.assertIn("docker.docker_status", namespaced)
             self.assertIn("filesystem.read_file", namespaced)
+            self.assertIn("generic_api.fetch_generic_api_data", namespaced)
             self.assertIn("git.git_status", namespaced)
             self.assertIn("image_search.list_index_stats", namespaced)
             self.assertIn("image_search.search_similar_images", namespaced)
             self.assertIn("openbench.filter_records", namespaced)
             self.assertIn("sam_segmentation.count_objects_with_sam3", namespaced)
             self.assertIn("docker_docker_status", provider_names)
+            self.assertIn("generic_api_fetch_generic_api_data", provider_names)
             self.assertIn("git_git_status", provider_names)
             self.assertIn("sam_segmentation_count_objects_with_sam3", provider_names)
             self.assertIsNone(summary["error"])
