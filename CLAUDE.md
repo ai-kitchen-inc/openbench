@@ -149,11 +149,36 @@ openbench/
 │   │   ├── skill.py             # Skill dataclass — reusable capability packages
 │   │   ├── skill_registry.py    # SkillRegistry (two-tier: SDK + project)
 │   │   └── layer.py             # AgentFactory for creating agents
+│   ├── mcp/                     # MCP pillar — full client/server integration
+│   │   ├── client.py            # Multi-server MCP client
+│   │   ├── server.py            # OpenBench MCP server wrapper
+│   │   ├── adapters.py          # Expose MCP tools via OpenBench Tool abstraction
+│   │   ├── schema.py            # Function-tool <-> MCP tool schema adapters
+│   │   ├── tool_registry.py     # Load/wrap OpenBench tools for MCP exposure
+│   │   ├── discovery.py         # Discovery data structures for MCP clients
+│   │   ├── transports.py        # MCP client transports (stdio, streamable HTTP)
+│   │   ├── toolhive.py          # ToolHive discovery + control helpers
+│   │   ├── policy.py            # Security policy for MCP tool access
+│   │   ├── prompts.py           # Reusable MCP prompts
+│   │   ├── resources.py         # MCP resource helpers for skills
+│   │   ├── observability.py     # Observability helpers for MCP calls
+│   │   ├── config.py            # MCP configuration models
+│   │   ├── standard_config.py   # Standard MCP client config parsing
+│   │   └── errors.py            # Structured MCP errors
+│   ├── integrations/            # Optional third-party integrations (extras)
+│   │   ├── mcp/                 # MCPClient Protocol — surface for MCP-backed skills
+│   │   ├── gdrive/              # Google Drive storage (backend, file/memory/session store, scratchpad, persona source)
+│   │   └── firebase_auth/       # Firebase Auth (verifier, token store, Drive OAuth)
 │   ├── skills/                  # Bundled SDK skills (loaded by SkillRegistry.load_sdk_skills())
 │   │   ├── data-context-extractor/  # Read CSV/TSV/XLSX/JSON → normalized payload
 │   │   ├── data-visualization/      # Build ObChart-compatible chart dicts
 │   │   ├── export-excel/            # Single + multi-sheet .xlsx writer
-│   │   └── query-explorer/          # filter/sort/group/distinct/top-N over records
+│   │   ├── query-explorer/          # filter/sort/group/distinct/top-N over records
+│   │   ├── drive-explorer/          # Search/read Google Drive via MCP server
+│   │   ├── memory-scratchpad/       # Persistent user-editable markdown memory
+│   │   ├── pdf-tools/               # Read/analyze/manipulate/generate PDFs
+│   │   └── web-search/              # Web search via Gemini Google Search grounding
+│   ├── testing/                 # Public storage-backend contract test harness
 │   ├── chat/                    # Chat layer (A2UI-powered)
 │   │   ├── engine.py            # ChatEngine (Chainable) -- main orchestrator
 │   │   ├── session.py           # ChatSession, ChatMessage, Attachment
@@ -185,7 +210,7 @@ openbench/
 │   │   └── workflow.py          # Named workflows with state management
 │   ├── cli/                     # Command-line interface
 │   │   ├── main.py              # CLI entry point
-│   │   └── commands/            # CLI command groups (init, data, agent, workflow, provider, models)
+│   │   └── commands/            # CLI command groups (init, project, data, agent, workflow, generate, provider, models, config, tools, mcp, demo)
 │   └── utils/                   # Utilities
 ├── studio/
 │   └── chat-ui/                 # @openbench/chat-ui (React SDK)
@@ -282,7 +307,9 @@ Two tiers:
 
 1. **SDK skills** — bundled in `src/openbench/skills/`. Every project gets
    them for free. Currently: `data-context-extractor`, `data-visualization`,
-   `export-excel`, `query-explorer`.
+   `export-excel`, `query-explorer`, `drive-explorer` (MCP-backed Google
+   Drive), `memory-scratchpad` (persistent markdown memory), `pdf-tools`
+   (read/generate PDFs), `web-search` (Gemini Google Search grounding).
 2. **Project skills** — domain-specific, loaded from project paths.
    Project names override SDK names of the same skill (project wins).
 
@@ -391,6 +418,11 @@ examples/
 │   ├── basic_chat_demo.py          # ChatEngine standalone
 │   ├── chat_with_rag_demo.py       # DataLayer | ChatLayer pipeline
 │   └── server.py                   # FastAPI AG-UI server
+├── general-chat/    # Full-stack general chat app (files, URLs, images, MCP servers)
+│   └── src/general_chat/          # Python package
+├── mcp/             # MCP gateway/server configs (ToolHive, Docker MCP gateway)
+├── image-search-mcp/   # Local DINOv3 + FAISS image similarity MCP server (CIFAR-10)
+├── sam-segmentation-mcp/  # Dockerized SAM 3 concept-counting MCP server
 ├── lci-ignite-x/    # Full-stack LCA analysis app (Backend + React frontend)
 │   ├── server.py                  # Demo entry point (:8003)
 │   ├── frontend/                 # React app (@openbench/chat-ui)
@@ -545,6 +577,21 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/skills/data-visualization/` | SDK skill: ObChart-compatible chart dict builders |
 | `src/openbench/skills/export-excel/` | SDK skill: single + multi-sheet .xlsx writer |
 | `src/openbench/skills/query-explorer/` | SDK skill: filter / sort / group / distinct / top-N over records |
+| `src/openbench/skills/drive-explorer/` | SDK skill: search/read Google Drive via an MCP server |
+| `src/openbench/skills/memory-scratchpad/` | SDK skill: persistent user-editable markdown memory |
+| `src/openbench/skills/pdf-tools/` | SDK skill: read / analyze / manipulate / generate PDFs |
+| `src/openbench/skills/web-search/` | SDK skill: web search via Gemini Google Search grounding |
+| `src/openbench/mcp/client.py` | Multi-server MCP client (transports, ToolHive discovery) |
+| `src/openbench/mcp/server.py` | OpenBench MCP server wrapper (exposes tools over MCP) |
+| `src/openbench/mcp/adapters.py` | Expose MCP tools through OpenBench's Tool abstraction |
+| `src/openbench/mcp/tool_registry.py` | Load + wrap OpenBench function tools for MCP exposure |
+| `src/openbench/mcp/policy.py` | Security policy for MCP tool access |
+| `src/openbench/integrations/mcp/client.py` | MCPClient Protocol — surface for MCP-backed skills |
+| `src/openbench/integrations/gdrive/` | Google Drive storage (backend, file/memory/session store, scratchpad, persona) |
+| `src/openbench/integrations/firebase_auth/` | Firebase Auth (verifier, token store, Drive OAuth) |
+| `src/openbench/core/storage.py` | StorageBackend ABC + storage provider plumbing |
+| `src/openbench/testing/` | Public storage-backend contract test harness for implementers |
+| `src/openbench/cli/commands/mcp.py` | CLI: MCP server/client commands |
 | `src/openbench/data/sources/pdf.py` | PDF data source with chunking support |
 | `src/openbench/data/sources/grounded_search.py` | Grounded search (Tavily, Google, DuckDuckGo) |
 | `src/openbench/data/sources/langextract.py` | Structured entity extraction (Google LangExtract) |
@@ -631,6 +678,11 @@ pnpm vitest               # Run tests
 - [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) - Installation and first workflow
 - [docs/API.md](docs/API.md) - Complete API reference
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Architecture overview
+- [docs/MENTAL_MODEL.md](docs/MENTAL_MODEL.md) - Four pillars (MCP / Skill / Agentic / Output) + decision matrix
+- [docs/MCP.md](docs/MCP.md) - MCP client/server usage guide
+- [docs/MCP_ARCHITECTURE.md](docs/MCP_ARCHITECTURE.md) - MCP pillar architecture
+- [docs/STORAGE.md](docs/STORAGE.md) - Storage backends (Drive, SQLite) + StorageBackend ABC
+- [docs/CUSTOM-BACKEND.md](docs/CUSTOM-BACKEND.md) - Implementing a custom storage backend
 - [docs/CHAT_UI_ARCHITECTURE.md](docs/CHAT_UI_ARCHITECTURE.md) - Chat UI SDK architecture
 - [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) - Design tokens and visual language
 - [examples/README.md](examples/README.md) - Example usage patterns

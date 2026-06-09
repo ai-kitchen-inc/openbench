@@ -92,8 +92,9 @@ result = workflow.run()
 | Phase | Status |
 |-------|--------|
 | **Phase 1: Core Abstractions** | ✅ Complete - Interfaces, plugin registry, DAG workflows, state management |
-| **Phase 2: Infrastructure** | ✅ Complete - Provider Service, Config, Agent interface, L2 layers, 759 tests |
+| **Phase 2: Infrastructure** | ✅ Complete - Provider Service, Config, Agent interface, L2 layers, 2,000+ tests |
 | **Phase 3: Providers** | 🚧 In Progress - LLM (Gemini ✅, OpenAI 🚧, Anthropic 📋), Vector (Pinecone ✅, ChromaDB 📋), Output (PDF ✅, PPTX ✅, Markdown ✅) |
+| **Phase 4: Pillars** | ✅ Complete - MCP client/server, Agent Skills (SDK + project), pluggable storage backends (Drive, SQLite) |
 
 ```bash
 pip install -e ".[all]" && python examples/workflows/reports/sustainability_report.py
@@ -207,16 +208,19 @@ Research data + Brand guidelines → Multi-agent workflow → Blog + Video + Soc
 
 ## Tech Stack
 
-Python, Click, Pydantic, Google GenAI, LangChain, CrewAI, AG2, Pinecone, ReportLab, python-pptx.
+Python, Click, Pydantic, Google GenAI, LangChain, CrewAI, AG2, Pinecone, ReportLab, python-pptx, MCP (Model Context Protocol).
 
 ## Features
 
 - **Privacy-First**: Self-hosted, zero lock-in, credential encryption
 - **LLM Providers**: Google Gemini ✅ | OpenAI 🚧 | Anthropic 📋 | Local models 📋
+- **MCP Native**: Connect external MCP servers and expose OpenBench tools over MCP (ToolHive, stdio, streamable HTTP)
+- **Agent Skills**: Bundled SDK skills + project skills (data, visualization, excel, query, Drive, memory, PDF, web search)
+- **Pluggable Storage**: Swappable storage backends (Google Drive, SQLite) behind a `StorageBackend` ABC
 - **Enterprise Ready**: Centralized config, encryption, audit ready
 - **Extensible**: Plugin registry with decorators and auto-discovery
 - **Composable**: DAG workflows with `|` and `&` operators
-- **Well-Tested**: 759 tests
+- **Well-Tested**: 2,000+ Python tests + 296 TypeScript tests
 
 ## 🗺️ Roadmap
 
