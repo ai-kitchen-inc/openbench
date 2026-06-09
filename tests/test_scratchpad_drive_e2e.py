@@ -147,7 +147,7 @@ class FakeDrive:
             return MagicMock(execute=MagicMock(return_value={"id": file_id}))
 
         def _get_media(fileId: str):
-            for (_pid, _name), (fid, content) in self._files.items():
+            for fid, content in self._files.values():
                 if fid == fileId:
                     return MagicMock(execute=MagicMock(return_value=content.encode("utf-8")))
             return MagicMock(execute=MagicMock(return_value=b""))

@@ -505,7 +505,7 @@ def _sanitize_for_json(value: Any) -> Any:
         return value
     if isinstance(value, dict):
         return {k: _sanitize_for_json(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_sanitize_for_json(v) for v in value]
     return value
 
@@ -701,7 +701,7 @@ class BaseAgent(Agent):
                     UserWarning,
                     stacklevel=2,
                 )
-            if isinstance(persona, (str, Path)):
+            if isinstance(persona, str | Path):
                 self._persona = Persona.from_dir(persona)
             elif isinstance(persona, Persona):
                 self._persona = persona

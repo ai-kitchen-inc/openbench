@@ -85,7 +85,7 @@ def _row_matches(row: dict[str, Any], conditions: list[dict[str, Any]]) -> bool:
 
 
 def _as_number(value: Any) -> float | None:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+    if isinstance(value, int | float) and not isinstance(value, bool):
         return float(value)
     if isinstance(value, str):
         try:

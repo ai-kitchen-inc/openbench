@@ -36,10 +36,7 @@ class FakeDrive:
             content = b""
             if media is not None:
                 fd = getattr(media, "_fd", None)
-                if fd is not None:
-                    content = fd.getvalue()
-                else:
-                    content = getattr(media, "_body", b"") or b""
+                content = fd.getvalue() if fd is not None else getattr(media, "_body", b"") or b""
             view_link = f"https://drive.google.com/file/d/{fid}/view"
             self._files[fid] = {
                 "id": fid,

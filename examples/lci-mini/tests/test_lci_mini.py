@@ -947,9 +947,9 @@ def test_xql_schema_is_gemini_valid(schema_name):
     schemas = _collect_xql_schemas()
     schema = schemas[schema_name]
     violations = _schema_violations(schema, schema_name)
-    assert violations == [], (
-        f"{schema_name} has schema bugs that Gemini would reject:\n  - " + "\n  - ".join(violations)
-    )
+    assert (
+        violations == []
+    ), f"{schema_name} has schema bugs that Gemini would reject:\n  - " + "\n  - ".join(violations)
 
 
 def test_all_xql_schemas_have_required_fields():

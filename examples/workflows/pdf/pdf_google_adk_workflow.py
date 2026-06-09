@@ -287,13 +287,15 @@ Environment:
     print("\n" + "=" * 80)
     print("SUMMARY")
     print("=" * 80)
-    print("""
+    print(
+        """
 ✓ PDFSource extracts text from PDFs
 ✓ GoogleADKAdapter processes with Google Gemini
 ✓ PDFGenerator/MarkdownGenerator creates output
 ✓ Layers compose with | operator
 ✓ Same pattern works for any data source → any AI → any output
-""")
+"""
+    )
     print("=" * 80)
 
 

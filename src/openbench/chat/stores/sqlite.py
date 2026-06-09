@@ -54,7 +54,8 @@ class SQLiteSessionStore(SessionStore):
         """Create the sessions table and index if not present."""
         conn = sqlite3.connect(self.db_path)
         try:
-            conn.execute("""
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
@@ -64,7 +65,8 @@ class SQLiteSessionStore(SessionStore):
                     preview TEXT NOT NULL DEFAULT '',
                     data TEXT NOT NULL
                 )
-                """)
+                """
+            )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)"
             )

@@ -357,7 +357,7 @@ def _read_json_file(p: Path) -> dict[str, Any]:
                 break
         if not records:
             # Scalar dict — treat as a single record
-            records = [{k: v for k, v in data.items() if not isinstance(v, (list, dict))}]
+            records = [{k: v for k, v in data.items() if not isinstance(v, list | dict)}]
 
     columns: list[dict[str, str]] = []
     if records:
