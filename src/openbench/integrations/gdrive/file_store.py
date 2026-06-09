@@ -19,11 +19,11 @@ pay the download cost once per replica.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
 import time
 import uuid
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -251,14 +251,14 @@ class GoogleDriveFileStore:
                     continue
                 files = list(child.glob("*"))
                 if not files:
-                    with contextlib.suppress(OSError):
+                    with suppress(OSError):
                         child.rmdir()
                     continue
                 if all(self._is_stale(f) for f in files):
                     for f in files:
-                        with contextlib.suppress(OSError):
+                        with suppress(OSError):
                             f.unlink()
-                    with contextlib.suppress(OSError):
+                    with suppress(OSError):
                         child.rmdir()
         except OSError as exc:  # pragma: no cover — defensive
             logger.debug("GoogleDriveFileStore: cache gc skipped: %s", exc)

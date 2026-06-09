@@ -167,6 +167,33 @@ pnpm dev
 
 See [chat/README.md](chat/README.md) for full details.
 
+### 5b. General Chat (`general-chat/`)
+
+General-purpose chat application using the `lci-mini` persona-file pattern with
+a two-pane frontend:
+
+- **Source pane** -- upload files once and keep them attached as active sources
+- **Main chat pane** -- ask normal chat questions with active source context
+- **Persona files** -- `soul/SOUL.md`, `soul/STYLE.md`, and `soul/AGENTS.md`
+- **Persistent sessions** -- SQLite-backed chat and agent memory
+
+**Requires:** `GOOGLE_API_KEY`
+
+```bash
+openbench demo run general-chat
+```
+
+To debug the exact prompt sent to the model, enable prompt dumps before starting
+the server:
+
+```bash
+GENERAL_CHAT_DEBUG_PROMPT=1 openbench demo run general-chat
+```
+
+Set `GENERAL_CHAT_DEBUG_PROMPT_DIR=path/to/dir` to choose the dump directory.
+Each request writes a JSON file containing the model, parameters, and full
+message list passed to the LLM provider.
+
 ---
 
 ## Embedding Examples (`embeddings/`)
@@ -560,6 +587,7 @@ See [lci-ignite-x/README.md](lci-ignite-x/README.md) for full details.
 | 3 | `core/agent_registry_demo.py` | None | AgentFactory, dynamic registration |
 | 4 | `adapters/framework_adapters_demo.py` | None | Multi-framework orchestration |
 | 5 | `chat/` | Google | AG-UI streaming, A2UI rich UI, file upload, planning, parallel tools, persistent memory |
+| 5b | `general-chat/` | Google | General chat with persona files and a two-pane source upload UI |
 | 6a | `embeddings/embedding_providers_demo.py` | Google | Vector embeddings |
 | 6b | `embeddings/dynamic_registration_demo.py` | None | Dynamic model/provider registration |
 | 7 | `intelligence/gemini_agent_demo.py` | Google | BaseAgent reasoning loop + tools |

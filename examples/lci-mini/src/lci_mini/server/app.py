@@ -31,7 +31,7 @@ from lci_mini.server.request_scope import (
 )
 from openbench import LocalStorageBackend, StorageBackend
 from openbench.chat import render_queue as shared_render_queue
-from openbench.chat.files import FileContentExtractor, LocalFileStore
+from openbench.chat.files import FileContentExtractor
 from openbench.chat.transport import AGUIActionHandler
 from openbench.chat.transport.sessions import AGUISessionHandler
 
@@ -160,7 +160,6 @@ def create_app() -> FastAPI:
     upload_dir = os.getenv("LCI_MINI_UPLOAD_DIR", str(default_upload_dir))
     upload_dir = str(Path(upload_dir).expanduser().resolve())
     os.makedirs(upload_dir, exist_ok=True)
-    file_store = LocalFileStore(upload_dir=upload_dir)
     extractor = FileContentExtractor()
 
     # download_dir is where the export-excel skill (and any other file-

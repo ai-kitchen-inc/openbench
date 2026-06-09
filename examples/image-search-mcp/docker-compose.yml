@@ -1,0 +1,88 @@
+services:
+  image-search-mcp-cpu:
+    profiles: ["cpu"]
+    build:
+      context: .
+      target: base
+    image: openbench/image-search-mcp:cpu
+    stdin_open: true
+    tty: false
+    environment:
+      DINO_MODEL_ID: ${DINO_MODEL_ID:-facebook/dinov3-vits16-pretrain-lvd1689m}
+      DEVICE: ${DEVICE:-cpu}
+      DATA_PATH: /data
+      INDEX_PATH: /data/index
+      MODEL_CACHE_PATH: /models
+      BATCH_SIZE: ${BATCH_SIZE:-64}
+      TOP_K_DEFAULT: ${TOP_K_DEFAULT:-10}
+      TOP_K_MAX: ${TOP_K_MAX:-50}
+      VECTOR_BACKEND: ${VECTOR_BACKEND:-auto}
+    volumes:
+      - ./data:/data
+      - ./models:/models
+    command: ["python", "-m", "app.mcp_server", "--transport", "stdio"]
+
+  image-search-mcp-gpu:
+    profiles: ["gpu"]
+    build:
+      context: .
+      target: gpu
+    image: openbench/image-search-mcp:gpu
+    stdin_open: true
+    tty: false
+    environment:
+      DINO_MODEL_ID: ${DINO_MODEL_ID:-facebook/dinov3-vits16-pretrain-lvd1689m}
+      DEVICE: cuda
+      DATA_PATH: /data
+      INDEX_PATH: /data/index
+      MODEL_CACHE_PATH: /models
+      BATCH_SIZE: ${BATCH_SIZE:-128}
+      TOP_K_DEFAULT: ${TOP_K_DEFAULT:-10}
+      TOP_K_MAX: ${TOP_K_MAX:-50}
+      VECTOR_BACKEND: ${VECTOR_BACKEND:-auto}
+    volumes:
+      - ./data:/data
+      - ./models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]
+    command: ["python", "-m", "app.mcp_server", "--transport", "stdio"]
+
+  image-search-mcp-dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      target: base
+    image: openbench/image-search-mcp:dev
+    environment:
+      DINO_MODEL_ID: ${DINO_MODEL_ID:-facebook/dinov3-vits16-pretrain-lvd1689m}
+      DEVICE: ${DEVICE:-auto}
+      DATA_PATH: /data
+      INDEX_PATH: /data/index
+      MODEL_CACHE_PATH: /models
+      BATCH_SIZE: ${BATCH_SIZE:-16}
+      TOP_K_DEFAULT: ${TOP_K_DEFAULT:-10}
+      TOP_K_MAX: ${TOP_K_MAX:-50}
+      VECTOR_BACKEND: ${VECTOR_BACKEND:-auto}
+    volumes:
+      - .:/app
+      - ./data:/data
+      - ./models:/models
+    ports:
+      - "8000:8000"
+    command:
+      [
+        "python",
+        "-m",
+        "app.mcp_server",
+        "--transport",
+        "streamable-http",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]

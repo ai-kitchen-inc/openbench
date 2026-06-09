@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV OPENBENCH_EXPORT_DIR=/app/exports
+ENV OPENBENCH_PROFILE_DIR=/app/profiles
+
+WORKDIR /app
+
+RUN useradd --create-home --shell /usr/sbin/nologin openbench
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN pip install --no-cache-dir -e ".[mcp]"
+RUN mkdir -p /app/exports /app/profiles && chown -R openbench:openbench /app
+
+USER openbench
+
+CMD ["openbench", "mcp", "serve", "--transport", "stdio"]

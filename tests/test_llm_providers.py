@@ -243,6 +243,104 @@ class TestGeminiLLMProviderConvertTools(unittest.TestCase):
         result = self.provider._convert_tools(tools)
         self.assertEqual(len(result), 1)
 
+    def test_playwright_schema_keywords_are_sanitized(self):
+        """Playwright MCP schemas should not trip Gemini FunctionDeclaration validation."""
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "playwright_browser_drop",
+                    "description": "Drop files or MIME-typed data",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target": {"type": "string"},
+                            "data": {
+                                "type": "object",
+                                "propertyNames": {"type": "string"},
+                                "additionalProperties": {"type": "string"},
+                            },
+                        },
+                        "required": ["target"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        ]
+
+        result = self.provider._convert_tools(tools)
+
+        self.assertEqual(len(result), 1)
+        declaration = result[0].function_declarations[0]
+        params = declaration.parameters.model_dump(by_alias=True, exclude_none=True)
+        self.assertNotIn("propertyNames", params["properties"]["data"])
+        self.assertNotIn("additionalProperties", params)
+        self.assertNotIn("additionalProperties", params["properties"]["data"])
+        self.assertNotIn("additional_properties", str(declaration.model_dump(exclude_none=True)))
+
+    def test_playwright_additional_properties_are_not_serialized(self):
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "playwright_browser_fill_form",
+                    "description": "Fill multiple form fields",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "fields": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "target": {"type": "string"},
+                                        "value": {
+                                            "type": "object",
+                                            "additionalProperties": {"type": "string"},
+                                        },
+                                    },
+                                    "required": ["target"],
+                                    "additionalProperties": False,
+                                },
+                            }
+                        },
+                        "required": ["fields"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        ]
+
+        result = self.provider._convert_tools(tools)
+
+        declaration = result[0].function_declarations[0]
+        serialized = declaration.model_dump(exclude_none=True)
+        params = declaration.parameters.model_dump(by_alias=True, exclude_none=True)
+        item_schema = params["properties"]["fields"]["items"]
+        self.assertNotIn("additionalProperties", params)
+        self.assertNotIn("additionalProperties", item_schema)
+        self.assertNotIn("additionalProperties", item_schema["properties"]["value"])
+        self.assertNotIn("additional_properties", str(serialized))
+
+    def test_invalid_tool_schema_is_skipped_with_warning(self):
+        tools = [
+            {"type": "function", "function": {"name": "bad_tool", "parameters": {}}},
+            {"type": "function", "function": {"name": "good_tool", "parameters": {}}},
+        ]
+
+        with (
+            patch("google.genai.types.FunctionDeclaration") as declaration,
+            patch("google.genai.types.Tool") as tool_cls,
+            self.assertLogs("openbench.intelligence.llm_providers", level="WARNING") as logs,
+        ):
+            declaration.side_effect = [ValueError("bad schema"), "valid-declaration"]
+            tool_cls.return_value = "tool"
+            result = self.provider._convert_tools(tools)
+
+        self.assertEqual(result, ["tool"])
+        tool_cls.assert_called_once_with(function_declarations=["valid-declaration"])
+        self.assertIn("bad_tool", "\n".join(logs.output))
+
 
 class TestGeminiLLMProviderExtractToolCalls(unittest.TestCase):
     """Tests for extracting tool calls from Gemini response."""

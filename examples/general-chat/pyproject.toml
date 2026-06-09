@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "general-chat"
+version = "0.1.0"
+description = "Document-aware general chat assistant (OpenBench example)"
+requires-python = ">=3.10"
+dependencies = [
+    "openbench",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-dotenv>=1.0",
+    "docling>=2.0",
+    "pypdf>=4.0.0",
+    "python-docx>=1.0",
+    "requests>=2.31.0",
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "tavily-python>=0.3.0",
+    "python-multipart>=0.0.9",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/general_chat"]

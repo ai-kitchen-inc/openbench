@@ -8,6 +8,8 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import click
@@ -19,6 +21,43 @@ console = Console()
 
 # Script suffixes to discover as runnable demos
 _SCRIPT_SUFFIXES = ("_demo.py", "_workflow.py")
+_IGNORED_SCRIPT_PARTS = {
+    ".venv",
+    "venv",
+    "env",
+    "node_modules",
+    "__pycache__",
+    "site-packages",
+}
+
+
+_GENERAL_CHAT_MCP_VARIANTS = {
+    "image-search": {
+        "name": "general-chat-image-search",
+        "description": "General Chat with DINOv3 image_search MCP tools",
+    },
+    "sam-segmentation": {
+        "name": "general-chat-sam-segmentation",
+        "description": "General Chat with SAM 3 concept counting MCP tool",
+    },
+}
+
+
+def _resolve_pnpm_command() -> list[str] | None:
+    """Resolve pnpm command across platforms and installations."""
+    if os.name == "nt":
+        # On Windows, prefer the .cmd shim for CreateProcess compatibility.
+        if shutil.which("pnpm.cmd"):
+            return ["pnpm.cmd"]
+        if shutil.which("pnpm"):
+            return ["pnpm"]
+    else:
+        if shutil.which("pnpm"):
+            return ["pnpm"]
+    # Fallback when pnpm is managed through Corepack
+    if shutil.which("corepack"):
+        return ["corepack", "pnpm"]
+    return None
 
 
 def _find_project_root() -> Path:
@@ -37,7 +76,7 @@ def _detect_port(server_py: Path) -> int:
     ``port=8005`` / ``port = 8005`` in uvicorn.run() calls.
     """
     try:
-        text = server_py.read_text()
+        text = server_py.read_text(encoding="utf-8")
         # --port 8005
         match = re.search(r"--port\s+(\d+)", text)
         if match:
@@ -54,7 +93,7 @@ def _detect_port(server_py: Path) -> int:
 def _get_description(readme: Path) -> str:
     """Get first non-empty, non-heading line from README.md."""
     try:
-        for line in readme.read_text().splitlines():
+        for line in readme.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if stripped and not stripped.startswith("#"):
                 return _truncate(stripped)
@@ -66,7 +105,7 @@ def _get_description(readme: Path) -> str:
 def _get_script_description(script: Path) -> str:
     """Get module docstring first line from a Python script."""
     try:
-        tree = ast.parse(script.read_text())
+        tree = ast.parse(script.read_text(encoding="utf-8"))
         docstring = ast.get_docstring(tree)
         if docstring:
             first_line = docstring.strip().splitlines()[0].strip()
@@ -80,9 +119,22 @@ def _get_script_description(script: Path) -> str:
 
 def _truncate(text: str, max_len: int = 55) -> str:
     """Truncate text for CLI display."""
+    text = _console_safe(text)
     if len(text) > max_len:
         return text[: max_len - 3] + "..."
     return text
+
+
+def _console_safe(text: str) -> str:
+    """Return text that can be written to the active console encoding."""
+    text = (
+        text.replace("\u2192", "->")
+        .replace("\u2014", "--")
+        .replace("\u2013", "-")
+        .replace("\u2026", "...")
+    )
+    encoding = getattr(console.file, "encoding", None) or sys.getdefaultencoding()
+    return text.encode(encoding, errors="replace").decode(encoding)
 
 
 def _wait_for_port(port: int, timeout: int = 15) -> bool:
@@ -95,6 +147,81 @@ def _wait_for_port(port: int, timeout: int = 15) -> bool:
         except OSError:
             time.sleep(0.5)
     return False
+
+
+def _wait_for_backend_health(port: int, timeout: int = 30) -> bool:
+    """Wait until the backend app has completed startup and answers /health."""
+    url = f"http://127.0.0.1:{port}/health"
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            with urllib.request.urlopen(url, timeout=1) as response:
+                if 200 <= response.status < 300:
+                    return True
+        except (OSError, urllib.error.URLError):
+            time.sleep(0.5)
+    return False
+
+
+def _as_posix_path(path: Path) -> str:
+    """Return a resolved path suitable for Docker volume specs."""
+    return path.resolve().as_posix()
+
+
+def _ensure_dir(path: Path) -> Path:
+    """Create a demo runtime directory and return it."""
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _general_chat_mcp_env(variant: str, demo_dir: Path) -> dict[str, str]:
+    """Build environment overrides for dedicated General Chat MCP demo variants."""
+    root = _find_project_root()
+    uploads_dir = _ensure_dir(demo_dir / "uploads")
+
+    common = {
+        "GENERAL_CHAT_MCP_ENABLED": "1",
+        "GENERAL_CHAT_MCP_MODE": "external",
+        "GENERAL_CHAT_MCP_REGISTRY_ENABLED": "0",
+    }
+
+    if variant == "image-search":
+        image_search_root = root / "examples" / "image-search-mcp"
+        data_dir = _ensure_dir(image_search_root / "data")
+        models_dir = _ensure_dir(image_search_root / "models")
+        previews_dir = _ensure_dir(data_dir / "previews")
+        hf_cache_dir = _ensure_dir(Path.home() / ".cache" / "huggingface")
+        token_path = hf_cache_dir / "token"
+        if not token_path.exists():
+            console.print(
+                "[yellow]Warning:[/yellow] Hugging Face token not found at "
+                f"{token_path}. Run 'hf auth login' and accept DINOv3 access if live "
+                "indexing fails."
+            )
+        return {
+            **common,
+            "GENERAL_CHAT_MCP_CONFIG": "mcp/image-search-docker.yaml",
+            "GENERAL_CHAT_MCP_APPROVED_TOOLS": (
+                "image_search.list_index_stats,image_search.search_similar_images"
+            ),
+            "IMAGE_SEARCH_MCP_DATA_PATH": _as_posix_path(data_dir),
+            "IMAGE_SEARCH_MCP_MODELS_PATH": _as_posix_path(models_dir),
+            "IMAGE_SEARCH_MCP_UPLOADS_PATH": _as_posix_path(uploads_dir),
+            "IMAGE_SEARCH_MCP_HF_CACHE_PATH": _as_posix_path(hf_cache_dir),
+            "GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR": str(previews_dir.resolve()),
+        }
+
+    if variant == "sam-segmentation":
+        debug_dir = _ensure_dir(uploads_dir / "_sam_debug")
+        return {
+            **common,
+            "GENERAL_CHAT_MCP_CONFIG": "mcp/sam-segmentation-docker.yaml",
+            "GENERAL_CHAT_MCP_APPROVED_TOOLS": "sam_segmentation.count_objects_with_sam3",
+            "SAM_SEGMENTATION_MCP_UPLOADS_PATH": _as_posix_path(uploads_dir),
+            "SAM_SEGMENTATION_MCP_DEBUG_PATH": _as_posix_path(debug_dir),
+        }
+
+    raise click.ClickException(f"Unknown General Chat MCP demo variant: {variant}")
 
 
 def _discover_demos() -> list[dict]:
@@ -125,13 +252,28 @@ def _discover_demos() -> list[dict]:
             }
         )
 
+        if name == "general-chat":
+            for variant, variant_info in _GENERAL_CHAT_MCP_VARIANTS.items():
+                demos.append(
+                    {
+                        "name": variant_info["name"],
+                        "type": "server",
+                        "dir": demo_dir,
+                        "script": None,
+                        "port": _detect_port(server_py),
+                        "description": variant_info["description"],
+                        "has_frontend": has_frontend,
+                        "mcp_variant": variant,
+                    }
+                )
+
     # 2. Script demos: examples/**/*_demo.py, *_workflow.py
     server_dirs = {d["dir"] for d in demos}
     for script in sorted(examples_dir.rglob("*.py")):
         # Skip non-demo scripts, __init__, node_modules
         if not any(script.name.endswith(s) for s in _SCRIPT_SUFFIXES):
             continue
-        if "node_modules" in str(script) or "__pycache__" in str(script):
+        if any(part in _IGNORED_SCRIPT_PARTS for part in script.parts):
             continue
         # Skip scripts inside server demo dirs (they're part of the server demo)
         if script.parent in server_dirs:
@@ -280,10 +422,15 @@ def _ensure_chat_ui_built(root: Path) -> bool:
 
     console.print("\n[yellow]@openbench/chat-ui not built yet.[/yellow] Building automatically...")
 
+    pnpm_cmd = _resolve_pnpm_command()
+    if not pnpm_cmd:
+        console.print("[red]Error:[/red] pnpm not found (or not resolvable via corepack).")
+        return False
+
     # Install deps
     console.print("[green]  pnpm install[/green] (studio/chat-ui)")
     result = subprocess.run(
-        ["pnpm", "install"],
+        [*pnpm_cmd, "install"],
         cwd=str(chat_ui_dir),
         stdout=sys.stdout,
         stderr=sys.stderr,
@@ -295,7 +442,7 @@ def _ensure_chat_ui_built(root: Path) -> bool:
     # Build
     console.print("[green]  pnpm build[/green] (studio/chat-ui)")
     result = subprocess.run(
-        ["pnpm", "build"],
+        [*pnpm_cmd, "build"],
         cwd=str(chat_ui_dir),
         stdout=sys.stdout,
         stderr=sys.stderr,
@@ -345,8 +492,10 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
     backend_port = port or info["port"]
     has_frontend = info["has_frontend"] and not no_frontend
 
+    pnpm_cmd = _resolve_pnpm_command()
+
     # Check pnpm if frontend needed
-    if has_frontend and not shutil.which("pnpm"):
+    if has_frontend and not pnpm_cmd:
         console.print(
             "[yellow]Warning:[/yellow] pnpm not found. "
             "Frontend won't start. Use --no-frontend to suppress this warning."
@@ -379,7 +528,10 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
                 proc.kill()
 
     # Ensure Python subprocesses flush output immediately
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    demo_env = {}
+    if info.get("mcp_variant"):
+        demo_env = _general_chat_mcp_env(str(info["mcp_variant"]), demo_dir)
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", **demo_env}
 
     # Use the same Python that runs this CLI -- guaranteed to have deps installed
     backend_cmd = [
@@ -408,55 +560,91 @@ def _run_server(info: dict, port: int | None, no_frontend: bool, no_install: boo
 
         # Wait for backend to be ready before starting frontend
         if has_frontend:
-            console.print(f"[dim]Waiting for backend on :{backend_port}...[/dim]")
-            if not _wait_for_port(backend_port):
+            console.print(f"[dim]Waiting for backend health on :{backend_port}...[/dim]")
+            if not _wait_for_backend_health(backend_port):
                 console.print(
-                    "[yellow]Warning:[/yellow] Backend not ready after 15s, starting frontend anyway."
+                    "[yellow]Warning:[/yellow] Backend health not ready after 30s, "
+                    "starting frontend anyway."
                 )
 
         # Start frontend
         frontend_started = False
         if has_frontend:
             frontend_dir = demo_dir / "frontend"
-
-            if not no_install:
-                console.print("[green]Installing frontend dependencies:[/green] pnpm install")
-                install_result = subprocess.run(
-                    ["pnpm", "install"],
-                    cwd=str(frontend_dir),
-                    stdout=sys.stdout,
-                    stderr=sys.stderr,
+            if not frontend_dir.is_dir():
+                console.print(
+                    f"[yellow]Warning:[/yellow] Frontend directory not found: {frontend_dir}. "
+                    "Running backend only."
                 )
-                if install_result.returncode != 0:
+                has_frontend = False
+
+            if has_frontend and not no_install:
+                console.print("[green]Installing frontend dependencies:[/green] pnpm install")
+                try:
+                    install_result = subprocess.run(
+                        [*(pnpm_cmd or ["pnpm"]), "install"],
+                        cwd=str(frontend_dir),
+                        stdout=sys.stdout,
+                        stderr=sys.stderr,
+                    )
+                except FileNotFoundError as exc:
                     console.print(
-                        "[red]Error:[/red] pnpm install failed (exit code "
-                        f"{install_result.returncode}). Skipping frontend.\n"
-                        f"  Try running manually: cd {frontend_dir} && pnpm install"
+                        "[yellow]Warning:[/yellow] Could not run pnpm install. "
+                        "pnpm may be missing from PATH or frontend directory is unavailable. "
+                        "Running backend only.\n"
+                        f"  command: {' '.join([*(pnpm_cmd or ['pnpm']), 'install'])}\n"
+                        f"  cwd: {frontend_dir}\n"
+                        f"  details: {exc}"
                     )
                     has_frontend = False
+                else:
+                    if install_result.returncode != 0:
+                        console.print(
+                            "[red]Error:[/red] pnpm install failed (exit code "
+                            f"{install_result.returncode}). Skipping frontend.\n"
+                            f"  Try running manually: cd {frontend_dir} && pnpm install"
+                        )
+                        has_frontend = False
 
         if has_frontend:
             frontend_dir = demo_dir / "frontend"
             console.print("[green]Starting frontend:[/green] pnpm dev")
-            frontend = subprocess.Popen(
-                ["pnpm", "dev"],
-                cwd=str(frontend_dir),
-                stdout=sys.stdout,
-                stderr=sys.stderr,
-            )
-            processes.append(frontend)
-
-            # Brief health check -- give Vite a moment to crash or start
-            time.sleep(2)
-            if frontend.poll() is not None:
-                console.print(
-                    f"[red]Error:[/red] Frontend exited immediately (code {frontend.returncode}). "
-                    "Running backend only.\n"
-                    f"  Try running manually: cd {frontend_dir} && pnpm dev"
+            frontend_env = {
+                **os.environ,
+                "VITE_BACKEND_URL": f"http://localhost:{backend_port}",
+            }
+            try:
+                frontend = subprocess.Popen(
+                    [*(pnpm_cmd or ["pnpm"]), "dev"],
+                    cwd=str(frontend_dir),
+                    env=frontend_env,
+                    stdout=sys.stdout,
+                    stderr=sys.stderr,
                 )
-                processes.remove(frontend)
+            except FileNotFoundError as exc:
+                console.print(
+                    "[yellow]Warning:[/yellow] Could not start frontend with pnpm dev. "
+                    "Running backend only.\n"
+                    f"  command: {' '.join([*(pnpm_cmd or ['pnpm']), 'dev'])}\n"
+                    f"  cwd: {frontend_dir}\n"
+                    f"  details: {exc}"
+                )
+                frontend = None
+            if frontend is None:
+                has_frontend = False
             else:
-                frontend_started = True
+                processes.append(frontend)
+                # Brief health check -- give Vite a moment to crash or start
+                time.sleep(2)
+                if frontend.poll() is not None:
+                    console.print(
+                        f"[red]Error:[/red] Frontend exited immediately (code {frontend.returncode}). "
+                        "Running backend only.\n"
+                        f"  Try running manually: cd {frontend_dir} && pnpm dev"
+                    )
+                    processes.remove(frontend)
+                else:
+                    frontend_started = True
 
         # Print summary
         lines = [f"[cyan]Backend:[/cyan]  http://localhost:{backend_port}"]

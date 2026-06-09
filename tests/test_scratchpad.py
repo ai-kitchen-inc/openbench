@@ -121,7 +121,10 @@ class TestLocalMarkdownScratchpad(unittest.TestCase):
         real = Path(self._tmpdir.name) / "real.md"
         real.write_text("real content")
         link = Path(self._tmpdir.name) / "link.md"
-        os.symlink(real, link)
+        try:
+            os.symlink(real, link)
+        except OSError as exc:
+            self.skipTest(f"Symlink creation unavailable: {exc}")
         with self.assertRaises(ValueError):
             self.pad.read("link")
 

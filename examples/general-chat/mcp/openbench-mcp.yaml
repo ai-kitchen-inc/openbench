@@ -1,0 +1,24 @@
+mcp:
+  server:
+    name: openbench
+    include_sdk_tools: true
+    transport: stdio
+    policy:
+      allowed_servers:
+        - openbench
+      require_approval_for_risks:
+        - write
+        - artifact_write
+        - external_network
+        - destructive
+  servers:
+    openbench:
+      transport: stdio
+      command: openbench
+      args:
+        - mcp
+        - serve
+        - --config
+        - examples/general-chat/mcp/openbench-mcp.yaml
+      namespace: openbench
+      allowed: true

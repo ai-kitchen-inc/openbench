@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "sam_segmentation": {
+      "command": "python",
+      "args": ["-m", "app.mcp_server", "--transport", "stdio"],
+      "cwd": "examples/sam-segmentation-mcp",
+      "env": {
+        "SAM3_MODEL_PATH": "models/sam3.pt",
+        "SAM3_DEVICE": "cpu"
+      },
+      "type": "stdio"
+    }
+  }
+}

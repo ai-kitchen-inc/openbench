@@ -29,6 +29,7 @@ Example:
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -88,7 +89,7 @@ class FilesystemPersonaSource(PersonaSource):
         Raises:
             FileNotFoundError: If the directory does not exist.
         """
-        self.path = Path(path).expanduser()
+        self.path = _expand_user_path(path)
         if not self.path.is_dir():
             raise FileNotFoundError(f"Persona directory not found: {self.path}")
 
@@ -144,3 +145,12 @@ class InlinePersonaSource(PersonaSource):
     def __repr__(self) -> str:
         filled = [k for k, v in self._values.items() if v]
         return f"InlinePersonaSource(keys={filled!r})"
+
+
+def _expand_user_path(path: str | Path) -> Path:
+    raw = str(path)
+    home = os.environ.get("HOME")
+    if home and (raw == "~" or raw.startswith(("~/", "~\\"))):
+        suffix = raw[2:] if len(raw) > 1 else ""
+        return Path(home, suffix)
+    return Path(path).expanduser()

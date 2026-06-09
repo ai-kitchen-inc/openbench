@@ -65,7 +65,7 @@ def get_skill_paths(include_scratchpad: bool = False) -> list[str]:
 
 def create_lici_agent(
     api_key: str | None = None,
-    model: str = "gemini-3-flash-preview",
+    model: str | None = None,
     temperature: float = 0.3,
     scratchpad: ScratchpadStore | None = None,
     output_store: FileStore | None = None,
@@ -94,6 +94,7 @@ def create_lici_agent(
         FileNotFoundError: If the persona or skills directories are missing.
     """
     key = api_key or os.getenv("GOOGLE_API_KEY")
+    resolved_model = model or os.getenv("LCI_MINI_MODEL", "gemini-2.5-flash")
     if not key:
         raise RuntimeError(
             "GOOGLE_API_KEY is required. Set it in the environment or pass api_key=."
@@ -105,7 +106,7 @@ def create_lici_agent(
         provider="gemini",
         plugin_type="chat",
         credentials={"api_key": key},
-        settings={"model": model},
+        settings={"model": resolved_model},
         is_default=True,
     )
 
@@ -117,7 +118,7 @@ def create_lici_agent(
             "interpret PROPER 2025 requirements, and reason about environmental "
             "impact data."
         ),
-        model=model,
+        model=resolved_model,
         temperature=temperature,
         persona=persona,
         skills=get_skill_paths(include_scratchpad=scratchpad is not None),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -185,6 +186,19 @@ class MockTool(Tool):
         }
 
 
+class SlowMockTool(MockTool):
+    """Mock tool with a configurable execution delay and timeout."""
+
+    def __init__(self, *, delay_seconds: float, timeout_seconds: float):
+        super().__init__("slow_mock_tool")
+        self.delay_seconds = delay_seconds
+        self.timeout_seconds = timeout_seconds
+
+    def execute(self, **params) -> Any:
+        time.sleep(self.delay_seconds)
+        return {"result": "slow", "params": params}
+
+
 class TestToolExecutor(unittest.TestCase):
     """Test ToolExecutor."""
 
@@ -261,6 +275,33 @@ class TestToolExecutor(unittest.TestCase):
             executor.execute("nonexistent")
 
         self.assertIn("not found", str(ctx.exception))
+
+    def test_execute_uses_tool_timeout_seconds_when_omitted(self):
+        """Tool-specific timeout should replace the default 30s timeout."""
+        executor = ToolExecutor()
+        executor.register("slow", SlowMockTool(delay_seconds=0.05, timeout_seconds=0.01))
+
+        with self.assertRaises(TimeoutError) as ctx:
+            executor.execute("slow")
+
+        self.assertIn("exceeded 0.01s timeout", str(ctx.exception))
+
+    def test_execute_explicit_timeout_overrides_tool_timeout_seconds(self):
+        """Explicit timeout should win over the tool's timeout_seconds."""
+        executor = ToolExecutor()
+        executor.register("slow", SlowMockTool(delay_seconds=0.02, timeout_seconds=0.001))
+
+        result = executor.execute("slow", timeout=0.2, query="ok")
+
+        self.assertEqual(result["result"], "slow")
+        self.assertEqual(result["params"]["query"], "ok")
+
+    def test_execute_callable_still_uses_default_timeout(self):
+        """Plain callables should keep the ordinary 30s fallback."""
+        executor = ToolExecutor()
+        executor.register("add", lambda a, b: a + b)
+
+        self.assertEqual(executor.execute("add", a=2, b=3), 5)
 
 
 class MockLLMProvider(LLMProvider):

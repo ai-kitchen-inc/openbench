@@ -13,6 +13,7 @@ Security constraints (§9 of the storage-layer RFC):
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from openbench.intelligence.scratchpad import ScratchpadStore
@@ -65,7 +66,7 @@ class LocalMarkdownScratchpad(ScratchpadStore):
             root: Directory under which markdown files are stored.
                 Tilde expansion is applied.
         """
-        self.root = Path(root).expanduser().resolve()
+        self.root = _expand_user_path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path_for(self, key: str) -> Path:
@@ -138,3 +139,12 @@ class LocalMarkdownScratchpad(ScratchpadStore):
         path = self._path_for(key)
         if path.exists():
             path.unlink()
+
+
+def _expand_user_path(path: str | Path) -> Path:
+    raw = str(path)
+    home = os.environ.get("HOME")
+    if home and (raw == "~" or raw.startswith(("~/", "~\\"))):
+        suffix = raw[2:] if len(raw) > 1 else ""
+        return Path(home, suffix)
+    return Path(path).expanduser()

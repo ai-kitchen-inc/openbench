@@ -7,6 +7,23 @@
         "serve"
       ],
       "type": "stdio"
+    },
+    "image_search": {
+      "command": "C:/Users/Admin/Desktop/openbench/examples/image-search-mcp/.venv/Scripts/python.exe",
+      "args": [
+        "-m",
+        "app.mcp_server",
+        "--transport",
+        "stdio"
+      ],
+      "cwd": "C:/Users/Admin/Desktop/openbench/examples/image-search-mcp",
+      "type": "stdio",
+      "env": {
+        "DATA_PATH": "C:/Users/Admin/Desktop/openbench/examples/image-search-mcp/data",
+        "INDEX_PATH": "C:/Users/Admin/Desktop/openbench/examples/image-search-mcp/data/index",
+        "MODEL_CACHE_PATH": "C:/Users/Admin/Desktop/openbench/examples/image-search-mcp/models",
+        "DEVICE": "cpu"
+      }
     }
   }
 }
