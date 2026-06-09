@@ -51,9 +51,7 @@ IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT = "/general-chat/uploads"
 
-ALLOWED_EXTENSIONS = (
-    DOCUMENT_EXTENSIONS | EXCEL_EXTENSIONS | TEXT_EXTENSIONS | IMAGE_EXTENSIONS
-)
+ALLOWED_EXTENSIONS = DOCUMENT_EXTENSIONS | EXCEL_EXTENSIONS | TEXT_EXTENSIONS | IMAGE_EXTENSIONS
 
 DUCKDUCKGO_SEARCH_URL = "https://html.duckduckgo.com/html/"
 DUCKDUCKGO_RESULT_ANCHOR = "result__a"
@@ -155,18 +153,10 @@ class SourceRecord:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SourceRecord":
         normalized = dict(data)
-        normalized["mime_type"] = normalized.pop(
-            "mimeType", normalized.get("mime_type", "")
-        )
-        normalized["session_id"] = normalized.pop(
-            "sessionId", normalized.get("session_id", "")
-        )
-        normalized["size_bytes"] = normalized.pop(
-            "sizeBytes", normalized.get("size_bytes", 0)
-        )
-        normalized["created_at"] = normalized.pop(
-            "createdAt", normalized.get("created_at", "")
-        )
+        normalized["mime_type"] = normalized.pop("mimeType", normalized.get("mime_type", ""))
+        normalized["session_id"] = normalized.pop("sessionId", normalized.get("session_id", ""))
+        normalized["size_bytes"] = normalized.pop("sizeBytes", normalized.get("size_bytes", 0))
+        normalized["created_at"] = normalized.pop("createdAt", normalized.get("created_at", ""))
         normalized.pop("extractedText", None)
         return cls(**normalized)
 
@@ -275,9 +265,7 @@ class SourceStore:
         return results
 
     def _path(self, session_id: str) -> Path:
-        safe = "".join(
-            ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in session_id
-        )
+        safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in session_id)
         return self.root / f"{safe}.json"
 
 
@@ -359,9 +347,7 @@ class SourceParserRegistry:
         try:
             import pandas as pd
         except ImportError as exc:
-            raise ValueError(
-                "Install pandas and openpyxl for Excel source support."
-            ) from exc
+            raise ValueError("Install pandas and openpyxl for Excel source support.") from exc
 
         try:
             sheets = pd.read_excel(stored_file.path, sheet_name=None)
@@ -402,9 +388,7 @@ class BaseSearchDiscoveryProvider:
 
     provider_name = "base"
 
-    def search(
-        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
-    ) -> SearchProviderResponse:
+    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
         raise NotImplementedError
 
 
@@ -530,9 +514,7 @@ class DuckDuckGoSearchDiscoveryProvider(BaseSearchDiscoveryProvider):
     def __init__(self, transport: SearchHTTPTransport | None = None):
         self._transport = transport or SearchHTTPTransport()
 
-    def search(
-        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
-    ) -> SearchProviderResponse:
+    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
         import requests
 
         try:
@@ -610,9 +592,7 @@ class TavilySearchDiscoveryProvider(BaseSearchDiscoveryProvider):
         self._transport = transport or SearchHTTPTransport()
         self._api_key = api_key or os.getenv("TAVILY_API_KEY", "").strip()
 
-    def search(
-        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
-    ) -> SearchProviderResponse:
+    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
         import requests
 
         if not self._api_key:
@@ -742,9 +722,7 @@ class GroundedSearchDiscoveryProvider(BaseSearchDiscoveryProvider):
 
     provider_name = "grounded"
 
-    def search(
-        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
-    ) -> SearchProviderResponse:
+    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
         try:
             from openbench.data.sources.grounded_search import GroundedSearchSource
 
@@ -799,10 +777,10 @@ class SearchDiscoveryAdapter:
 
     def __init__(self, provider_name: str | None = None):
         requested = (
-            provider_name
-            or os.getenv("GENERAL_CHAT_DISCOVERY_PROVIDER")
-            or "tavily"
-        ).strip().lower()
+            (provider_name or os.getenv("GENERAL_CHAT_DISCOVERY_PROVIDER") or "tavily")
+            .strip()
+            .lower()
+        )
         self.provider_name = requested
         self._cache: dict[str, list[SearchDiscoveryResult]] = {}
         self._providers = self._build_provider_chain(requested)
@@ -946,7 +924,9 @@ class _DuckDuckGoResultsParser(HTMLParser):
                 self._current_link = {"url": href, "title": ""}
                 self._current_snippet_parts = []
                 self._in_anchor = True
-        elif tag in {"a", "span"} and DUCKDUCKGO_RESULT_SNIPPET in class_name and self._current_link:
+        elif (
+            tag in {"a", "span"} and DUCKDUCKGO_RESULT_SNIPPET in class_name and self._current_link
+        ):
             self._in_snippet = True
 
     def handle_endtag(self, tag: str) -> None:
@@ -1052,8 +1032,8 @@ def image_search_text(
             "To count objects matching a text concept in this uploaded image, call "
             "sam_segmentation.count_objects_with_sam3 with "
             f"image_path=\"{metadata['samSegmentationPath']}\" and concept set to "
-            "the noun phrase requested by the user, such as \"dog\", \"person\", "
-            "\"red apple\", or \"yellow school bus\"."
+            'the noun phrase requested by the user, such as "dog", "person", '
+            '"red apple", or "yellow school bus".'
         ),
     ]
     if parsed_text.strip():

@@ -144,7 +144,9 @@ def _sanitize_provider_json_schema(value: Any, *, in_properties: bool = False) -
 
     schema_type = sanitized.get("type")
     if isinstance(schema_type, list):
-        sanitized["type"] = next((entry for entry in schema_type if isinstance(entry, str)), "object")
+        sanitized["type"] = next(
+            (entry for entry in schema_type if isinstance(entry, str)), "object"
+        )
     elif schema_type is not None and not isinstance(schema_type, str):
         sanitized.pop("type", None)
 
@@ -164,7 +166,7 @@ def _strict_json_schema_value(value: Any) -> Any:
         }
     if isinstance(value, list):
         return [_strict_json_schema_value(item) for item in value]
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if isinstance(value, str | int | float | bool) or value is None:
         return value
     return str(value)
 
@@ -227,7 +229,7 @@ def sanitize_json_value(value: Any) -> Any:
         return value
     if isinstance(value, dict):
         return {str(k): sanitize_json_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [sanitize_json_value(v) for v in value]
     return value
 

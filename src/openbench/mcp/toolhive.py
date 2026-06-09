@@ -181,7 +181,9 @@ def validate_toolhive_name(name: str) -> str:
     return cleaned
 
 
-def parse_toolhive_mcpservers_json(raw_json: str, *, host: str | None = None) -> list[ToolHiveWorkload]:
+def parse_toolhive_mcpservers_json(
+    raw_json: str, *, host: str | None = None
+) -> list[ToolHiveWorkload]:
     """Parse ``thv list --format mcpservers`` output."""
     try:
         payload = json.loads(raw_json)
@@ -198,7 +200,9 @@ def parse_toolhive_mcpservers_json(raw_json: str, *, host: str | None = None) ->
             raise ToolHiveError("ToolHive mcpServers entries must be objects keyed by name.")
         name = normalize_server_name(raw_name)
         if name in seen:
-            raise ToolHiveError(f"Duplicate ToolHive server name after normalization: {raw_name!r}.")
+            raise ToolHiveError(
+                f"Duplicate ToolHive server name after normalization: {raw_name!r}."
+            )
         seen.add(name)
         url = raw_config.get("url")
         if not isinstance(url, str) or not url.strip():
@@ -248,7 +252,9 @@ class ToolHiveService:
         start_timeout_seconds: float | None = None,
         host: str | None = None,
     ):
-        self.base_url = (base_url or os.getenv("TOOLHIVE_BASE_URL") or DEFAULT_TOOLHIVE_BASE_URL).rstrip("/")
+        self.base_url = (
+            base_url or os.getenv("TOOLHIVE_BASE_URL") or DEFAULT_TOOLHIVE_BASE_URL
+        ).rstrip("/")
         self.cli_path = cli_path
         self.timeout_seconds = _timeout_from_env(
             "TOOLHIVE_TIMEOUT",
@@ -319,7 +325,10 @@ class ToolHiveService:
         """List running ToolHive workloads with local proxy URLs."""
         try:
             payload = self._api_get("/api/v1beta/workloads")
-            return [_workload_from_mapping(item, host=self.host) for item in _items(payload, "workloads")]
+            return [
+                _workload_from_mapping(item, host=self.host)
+                for item in _items(payload, "workloads")
+            ]
         except Exception:
             result = self._run_thv(["list", "--format", "mcpservers"])
             return parse_toolhive_mcpservers_json(result.stdout, host=self.host)
@@ -411,7 +420,9 @@ class ToolHiveService:
         *,
         timeout_seconds: float | None = None,
     ) -> Any:
-        return self._api_request("POST", path, json_payload=payload, timeout_seconds=timeout_seconds)
+        return self._api_request(
+            "POST", path, json_payload=payload, timeout_seconds=timeout_seconds
+        )
 
     def _api_delete(self, path: str) -> Any:
         return self._api_request("DELETE", path)
@@ -578,7 +589,9 @@ def _workload_from_mapping(raw: dict[str, Any], *, host: str | None = None) -> T
     raw_name = raw.get("name") or raw.get("workload_name") or raw.get("id") or "toolhive"
     raw_url = raw.get("url") or raw.get("mcp_url") or raw.get("proxy_url") or raw.get("endpoint")
     url = rewrite_toolhive_url(str(raw_url), host=host) if raw_url else None
-    transport = str(raw.get("transport") or detect_toolhive_transport(url)) if url else raw.get("transport")
+    transport = (
+        str(raw.get("transport") or detect_toolhive_transport(url)) if url else raw.get("transport")
+    )
     return ToolHiveWorkload(
         name=normalize_server_name(str(raw_name)),
         status=str(raw.get("status") or "unknown"),

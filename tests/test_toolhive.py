@@ -182,7 +182,9 @@ def test_toolhive_ui_cli_candidates_include_documented_paths(monkeypatch):
 
     candidates = _toolhive_ui_cli_candidates()
 
-    assert str(Path("C:\\Users\\Ada\\AppData\\Local") / "ToolHive" / "bin" / "thv.exe") in candidates
+    assert (
+        str(Path("C:\\Users\\Ada\\AppData\\Local") / "ToolHive" / "bin" / "thv.exe") in candidates
+    )
     assert str(Path("/home/ada") / ".toolhive" / "bin" / "thv") in candidates
 
 

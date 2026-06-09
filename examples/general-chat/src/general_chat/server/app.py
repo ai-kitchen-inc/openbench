@@ -76,6 +76,7 @@ _EXT_MIME_MAP = {
     ".webp": "image/webp",
 }
 
+
 def _resolve_mime(filename: str, content_type: str) -> str:
     """Return the best MIME type for a file, using extension as a tiebreaker."""
     if content_type and content_type != "application/octet-stream":
@@ -98,10 +99,14 @@ def create_app() -> FastAPI:
     os.makedirs(upload_dir, exist_ok=True)
 
     default_download_dir = example_root / "downloads"
-    download_dir = str(Path(os.getenv("GENERAL_CHAT_DOWNLOAD_DIR", str(default_download_dir))).resolve())
+    download_dir = str(
+        Path(os.getenv("GENERAL_CHAT_DOWNLOAD_DIR", str(default_download_dir))).resolve()
+    )
     os.makedirs(download_dir, exist_ok=True)
 
-    default_image_search_preview_dir = example_root.parent / "image-search-mcp" / "data" / "previews"
+    default_image_search_preview_dir = (
+        example_root.parent / "image-search-mcp" / "data" / "previews"
+    )
     image_search_preview_dir = str(
         Path(
             os.getenv(
@@ -113,7 +118,9 @@ def create_app() -> FastAPI:
     os.makedirs(image_search_preview_dir, exist_ok=True)
 
     default_storage_root = example_root / ".openbench"
-    storage_root = str(Path(os.getenv("GENERAL_CHAT_STORAGE_ROOT", str(default_storage_root))).resolve())
+    storage_root = str(
+        Path(os.getenv("GENERAL_CHAT_STORAGE_ROOT", str(default_storage_root))).resolve()
+    )
     os.environ["GENERAL_CHAT_MCP_REGISTRY_ROOT"] = storage_root
 
     default_profile_dir = example_root / "profiles"
@@ -314,7 +321,9 @@ def create_app() -> FastAPI:
     @app.get("/toolhive/workloads")
     async def toolhive_workloads() -> dict:
         try:
-            return {"workloads": [workload.to_dict() for workload in toolhive_service.list_workloads()]}
+            return {
+                "workloads": [workload.to_dict() for workload in toolhive_service.list_workloads()]
+            }
         except ToolHiveError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

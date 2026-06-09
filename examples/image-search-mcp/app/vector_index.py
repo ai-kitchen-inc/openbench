@@ -108,7 +108,9 @@ class VectorIndex:
                 if class_name
             },
         }
-        self.manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        self.manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+        )
         if self._index is not None:
             if self.backend == "faiss":
                 import faiss
@@ -123,7 +125,9 @@ class VectorIndex:
         ]
         if not active_indices:
             return np.empty((0, self.dimension or 0), dtype=np.float32), []
-        return self.vectors[active_indices].astype(np.float32), [self.metadata[i] for i in active_indices]
+        return self.vectors[active_indices].astype(np.float32), [
+            self.metadata[i] for i in active_indices
+        ]
 
     def _build_index(self) -> None:
         active_vectors, _ = self._active_rows()
@@ -196,7 +200,10 @@ class VectorIndex:
             pairs = zip(labels[0].tolist(), scores[0].tolist(), strict=False)
         else:
             labels, distances = self._index.knn_query(query, k=k)
-            pairs = ((label, 1.0 - distance) for label, distance in zip(labels[0], distances[0], strict=False))
+            pairs = (
+                (label, 1.0 - distance)
+                for label, distance in zip(labels[0], distances[0], strict=False)
+            )
         hits = []
         for label, score in pairs:
             if label < 0:
@@ -232,7 +239,13 @@ class VectorIndex:
         self.vectors = np.empty((0, 0), dtype=np.float32)
         self.dimension = None
         self._index = None
-        for file_name in ("manifest.json", "metadata.jsonl", "vectors.npy", "index.faiss", "index.hnsw"):
+        for file_name in (
+            "manifest.json",
+            "metadata.jsonl",
+            "vectors.npy",
+            "index.faiss",
+            "index.hnsw",
+        ):
             path = self.path / file_name
             if path.exists():
                 path.unlink()

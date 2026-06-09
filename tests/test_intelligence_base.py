@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import unittest
 import time
+import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
 

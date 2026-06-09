@@ -163,9 +163,7 @@ class DoclingContentExtractor:
             logger.warning("python-docx not installed; install it with: pip install python-docx")
             return _fallback.extract(stored_file)
         except Exception as exc:
-            logger.warning(
-                "python-docx extraction failed for %s: %s", stored_file.name, exc
-            )
+            logger.warning("python-docx extraction failed for %s: %s", stored_file.name, exc)
             return _fallback.extract(stored_file)
 
 

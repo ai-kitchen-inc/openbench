@@ -78,9 +78,7 @@ class AppConfig:
             debug_output_dir=Path(
                 os.getenv("DEBUG_OUTPUT_DIR", "/tmp/sam-segmentation-debug")
             ).expanduser(),
-            debug_output_url_base=(
-                os.getenv("DEBUG_OUTPUT_URL_BASE", "").strip() or None
-            ),
+            debug_output_url_base=(os.getenv("DEBUG_OUTPUT_URL_BASE", "").strip() or None),
         )
 
     def ensure_directories(self) -> None:

@@ -125,7 +125,9 @@ class FakeEmbedder:
         return [0.0, 1.0]
 
     def embed_images(self, images):
-        return normalize_vectors(np.array([self._vector(image) for image in images], dtype=np.float32))
+        return normalize_vectors(
+            np.array([self._vector(image) for image in images], dtype=np.float32)
+        )
 
     def embed_image(self, image):
         return self.embed_images([image])[0]
@@ -254,8 +256,7 @@ def test_preview_url_uses_absolute_path_relative_to_preview_root(service):
 )
 def test_preview_url_normalizes_persisted_preview_paths(service, preview_path):
     assert (
-        service._preview_url(preview_path)
-        == "/image-search/previews/train/cifar10-train-14511.png"
+        service._preview_url(preview_path) == "/image-search/previews/train/cifar10-train-14511.png"
     )
 
 

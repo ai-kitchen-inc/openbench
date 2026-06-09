@@ -46,7 +46,9 @@ class _IndexProgress:
             return False
         return sys.stdout.isatty()
 
-    def update(self, *, seen: int, indexed: int, skipped: int, failed: int, force: bool = False) -> None:
+    def update(
+        self, *, seen: int, indexed: int, skipped: int, failed: int, force: bool = False
+    ) -> None:
         if not self.enabled:
             return
         if not force and seen < self.total and seen - self._last_seen < self._step:
@@ -196,14 +198,13 @@ class ImageSearchService:
             and train_count == expected.train_count
             and test_count == expected.test_count
             and all(
-                int(class_counts.get(class_name, 0)) == int(expected_class_counts.get(class_name, 0))
+                int(class_counts.get(class_name, 0))
+                == int(expected_class_counts.get(class_name, 0))
                 for class_name in expected.class_names
             )
         )
         searchable = (
-            active_count > 0
-            and self.index.dimension is not None
-            and self.index.backend is not None
+            active_count > 0 and self.index.dimension is not None and self.index.backend is not None
         )
         warning = None
         if searchable and not complete:

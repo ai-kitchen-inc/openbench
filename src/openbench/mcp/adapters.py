@@ -79,9 +79,9 @@ def load_mcp_tools(config: MCPConfig | MCPClientConfig) -> list[MCPToolAdapter]:
                     client=client,
                     namespaced_name=namespaced,
                     tool_schema=tool_schema,
-                    timeout_seconds=server_config.timeout_seconds
-                    if server_config is not None
-                    else None,
+                    timeout_seconds=(
+                        server_config.timeout_seconds if server_config is not None else None
+                    ),
                 )
             )
     return tools

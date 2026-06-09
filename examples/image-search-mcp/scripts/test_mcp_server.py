@@ -166,7 +166,9 @@ def run(
         print(_format(stats))
 
         if real_index:
-            label = f"{max_items} CIFAR-10 images" if max_items is not None else "full CIFAR-10 corpus"
+            label = (
+                f"{max_items} CIFAR-10 images" if max_items is not None else "full CIFAR-10 corpus"
+            )
             print(f"\nIndexing {label}...")
             index_result = client.call_tool_sync(
                 "image_search.index_images",

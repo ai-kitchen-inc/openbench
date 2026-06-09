@@ -84,7 +84,9 @@ class _DebugLLMProvider(LLMProvider):
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
 
-    def generate(self, prompt: str | list[dict[str, Any]], model: str = "", **params) -> LLMResponse:
+    def generate(
+        self, prompt: str | list[dict[str, Any]], model: str = "", **params
+    ) -> LLMResponse:
         _dump_prompt(
             prompt,
             model=model,
@@ -403,7 +405,10 @@ class GeneralChatHandler(AGUIHandler):
         else:
             agent_copy.memory = AgentMemory()
 
-        if not agent_copy.memory.messages or agent_copy.memory.messages[0].role != MessageRole.SYSTEM:
+        if (
+            not agent_copy.memory.messages
+            or agent_copy.memory.messages[0].role != MessageRole.SYSTEM
+        ):
             agent_copy.memory.add_system(agent._system_prompt)
 
         agent_copy._llm = agent._llm

@@ -113,9 +113,7 @@ class MCPPolicyEngine:
         self.denied_servers = set(denied_servers or [])
         self.allowed_tools = set(allowed_tools or [])
         self.denied_tools = set(denied_tools or [])
-        self.require_approval_for_risks = {
-            RiskLevel(r) for r in (require_approval_for_risks or [])
-        }
+        self.require_approval_for_risks = {RiskLevel(r) for r in (require_approval_for_risks or [])}
         self.allow_remote_servers = allow_remote_servers
         self.max_timeout_seconds = max_timeout_seconds
         self.max_response_chars = max_response_chars
@@ -139,12 +137,14 @@ class MCPPolicyEngine:
         if namespaced in self.denied_tools or tool in self.denied_tools:
             return self._deny(f"tool {namespaced!r} is denied", risk_level)
         if remote and not self.allow_remote_servers and server not in self.allowed_servers:
-            return self._deny(
-                f"remote server {server!r} is not explicitly allowed", risk_level
-            )
+            return self._deny(f"remote server {server!r} is not explicitly allowed", risk_level)
         if self.allowed_servers and server not in self.allowed_servers:
             return self._deny(f"server {server!r} is not allowed", risk_level)
-        if self.allowed_tools and namespaced not in self.allowed_tools and tool not in self.allowed_tools:
+        if (
+            self.allowed_tools
+            and namespaced not in self.allowed_tools
+            and tool not in self.allowed_tools
+        ):
             return self._deny(f"tool {namespaced!r} is not allowed", risk_level)
         if timeout_seconds and timeout_seconds > self.max_timeout_seconds:
             return self._deny(

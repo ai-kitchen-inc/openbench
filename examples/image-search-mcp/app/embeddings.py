@@ -32,7 +32,9 @@ def embedding_checksum(vector: np.ndarray) -> str:
 class DinoV3Embedder:
     """Lazy DINOv3 embedder using HuggingFace Transformers and PyTorch."""
 
-    def __init__(self, model_id: str, requested_device: str = "auto", cache_dir: Path | None = None):
+    def __init__(
+        self, model_id: str, requested_device: str = "auto", cache_dir: Path | None = None
+    ):
         self.model_id = model_id
         self.requested_device = requested_device
         self.cache_dir = cache_dir

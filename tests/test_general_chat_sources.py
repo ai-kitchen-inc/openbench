@@ -338,7 +338,9 @@ class TestGeneralChatSources(unittest.TestCase):
 
         self.assertIsNotNone(agent.context)
         assert agent.context is not None
-        self.assertEqual(agent.context.data["attachments"][0]["path"], "/general-chat/uploads/file-1/photo.jpg")
+        self.assertEqual(
+            agent.context.data["attachments"][0]["path"], "/general-chat/uploads/file-1/photo.jpg"
+        )
 
     def test_similar_image_prompt_is_allowed_for_image_source(self):
         llm = MockLLMProvider("I will search similar images.")
@@ -637,7 +639,9 @@ class TestGeneralChatSources(unittest.TestCase):
 
     def test_png_ocr_failure_still_creates_searchable_image_source(self):
         extractor = Mock()
-        extractor.extract_image.side_effect = ValueError("Image extraction failed: OCR pipeline unavailable")
+        extractor.extract_image.side_effect = ValueError(
+            "Image extraction failed: OCR pipeline unavailable"
+        )
         parser = SourceParserRegistry(document_extractor=extractor)
         stored = StoredFile(
             id="file-3",
@@ -756,7 +760,6 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(_resolve_mime("photo.jpg", "application/octet-stream"), "image/jpeg")
         self.assertEqual(_resolve_mime("photo.jpeg", "application/octet-stream"), "image/jpeg")
         self.assertEqual(_resolve_mime("poster.webp", "application/octet-stream"), "image/webp")
-
 
     def test_url_validation(self):
         self.assertEqual(validate_url("https://example.com/page"), "https://example.com/page")
@@ -1063,7 +1066,9 @@ class TestGeneralChatSources(unittest.TestCase):
         )
         content, attachments = handler._extract_content(
             {
-                "messages": [{"id": "m1", "role": "user", "content": "What is the capital of France?"}],
+                "messages": [
+                    {"id": "m1", "role": "user", "content": "What is the capital of France?"}
+                ],
                 "forwardedProps": {"sessionId": "chat-session"},
             }
         )
@@ -1194,7 +1199,9 @@ class TestGeneralChatSources(unittest.TestCase):
         stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
         if discovery_adapter is not None:
             stack.enter_context(
-                patch("general_chat.server.app.SearchDiscoveryAdapter", return_value=discovery_adapter)
+                patch(
+                    "general_chat.server.app.SearchDiscoveryAdapter", return_value=discovery_adapter
+                )
             )
         from general_chat.server.app import create_app
 
@@ -1215,21 +1222,24 @@ class TestGeneralChatSources(unittest.TestCase):
     def test_create_agent_mcp_enabled_loads_allowlisted_adapters(self):
         import general_chat.agent as agent_module
 
-        with patch.dict(
-            environ,
-            {
-                "GOOGLE_API_KEY": "test-key",
-                "GENERAL_CHAT_MCP_ENABLED": "1",
-                "GENERAL_CHAT_MCP_MODE": "local",
-                "GENERAL_CHAT_MCP_APPROVED_TOOLS": (
-                    "openbench.filter_records,"
-                    "openbench.distinct_values,"
-                    "openbench.group_and_aggregate,"
-                    "openbench.top_n_records"
-                ),
-            },
-            clear=False,
-        ), patch.object(agent_module, "configure_provider"):
+        with (
+            patch.dict(
+                environ,
+                {
+                    "GOOGLE_API_KEY": "test-key",
+                    "GENERAL_CHAT_MCP_ENABLED": "1",
+                    "GENERAL_CHAT_MCP_MODE": "local",
+                    "GENERAL_CHAT_MCP_APPROVED_TOOLS": (
+                        "openbench.filter_records,"
+                        "openbench.distinct_values,"
+                        "openbench.group_and_aggregate,"
+                        "openbench.top_n_records"
+                    ),
+                },
+                clear=False,
+            ),
+            patch.object(agent_module, "configure_provider"),
+        ):
             agent = agent_module.create_agent()
 
         names = {tool.namespaced_name for tool in agent._mcp_tools}

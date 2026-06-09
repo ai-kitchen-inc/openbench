@@ -29,9 +29,10 @@ def test_vector_index_add_search_persist_reload_remove(tmp_path):
 
     reloaded = VectorIndex(tmp_path / "index", backend=index.backend)
     assert reloaded.count == 2
-    assert reloaded.search(np.array([0.0, 1.0], dtype=np.float32), top_k=1)[0].metadata[
-        "image_id"
-    ] == "b"
+    assert (
+        reloaded.search(np.array([0.0, 1.0], dtype=np.float32), top_k=1)[0].metadata["image_id"]
+        == "b"
+    )
 
     assert reloaded.remove("b") is True
     assert reloaded.count == 1

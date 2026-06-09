@@ -222,7 +222,9 @@ class TestMCPServerRegistryStore(unittest.TestCase):
 
             disabled = store.set_server_enabled(server["id"], False)
             self.assertFalse(disabled.enabled)
-            self.assertEqual(MCPServerRegistryStore(tmpdir).get_server(server["id"]).status, "disabled")
+            self.assertEqual(
+                MCPServerRegistryStore(tmpdir).get_server(server["id"]).status, "disabled"
+            )
 
             enabled = store.set_server_enabled(server["id"], True)
             self.assertTrue(enabled.enabled)
@@ -242,11 +244,15 @@ class TestMCPServerRegistryStore(unittest.TestCase):
                 self.assertTrue(FakeMCPClient.instances[-1].closed)
 
                 updated = store.set_tool_enabled(server["id"], "browser_click", False)
-                self.assertFalse(next(tool for tool in updated.tools if tool.name == "browser_click").enabled)
+                self.assertFalse(
+                    next(tool for tool in updated.tools if tool.name == "browser_click").enabled
+                )
 
                 adapters, summary = store.load_enabled_tool_adapters()
 
-            self.assertEqual([adapter.namespaced_name for adapter in adapters], ["playwright.browser_snapshot"])
+            self.assertEqual(
+                [adapter.namespaced_name for adapter in adapters], ["playwright.browser_snapshot"]
+            )
             self.assertEqual(summary["tools"][0]["name"], "playwright.browser_snapshot")
             loaded_server = FakeMCPClient.instances[-1].config.servers["playwright"]
             self.assertEqual(loaded_server.cwd, "examples/general-chat")
@@ -330,14 +336,19 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             stack.enter_context(
                 patch(
                     "general_chat.server.app.reload_external_mcp_tools",
-                    return_value={"enabled": True, "tools": [{"name": "playwright.browser_snapshot"}]},
+                    return_value={
+                        "enabled": True,
+                        "tools": [{"name": "playwright.browser_snapshot"}],
+                    },
                 )
             )
 
             from general_chat.server.app import create_app
 
             client = TestClient(create_app())
-            invalid = client.post("/mcp/catalogs/import", json={"url": "https://example.com/catalog.json"})
+            invalid = client.post(
+                "/mcp/catalogs/import", json={"url": "https://example.com/catalog.json"}
+            )
             self.assertEqual(invalid.status_code, 400)
             self.assertIn("mcpServers", invalid.json()["detail"])
 
@@ -390,7 +401,11 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
                 json={"enabled": False},
             )
             self.assertEqual(tool_toggle.status_code, 200)
-            tool = next(item for item in tool_toggle.json()["server"]["tools"] if item["name"] == "browser_click")
+            tool = next(
+                item
+                for item in tool_toggle.json()["server"]["tools"]
+                if item["name"] == "browser_click"
+            )
             self.assertFalse(tool["enabled"])
 
             removed = client.delete(f"/mcp/catalogs/servers/{server['id']}")
@@ -424,7 +439,9 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             agent.tools = FakeToolExecutor()
             stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
             stack.enter_context(
-                patch("general_chat.server.app.ToolHiveService", return_value=FakeGitToolHiveService())
+                patch(
+                    "general_chat.server.app.ToolHiveService", return_value=FakeGitToolHiveService()
+                )
             )
             stack.enter_context(patch("general_chat.mcp_registry.MCPClient", FakeGitMCPClient))
 

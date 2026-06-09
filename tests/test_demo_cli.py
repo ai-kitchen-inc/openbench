@@ -129,7 +129,9 @@ def test_run_server_passes_variant_env_to_backend(tmp_path, monkeypatch):
         return FakeProcess()
 
     monkeypatch.setattr(demo_module, "_resolve_pnpm_command", lambda: None)
-    monkeypatch.setattr(demo_module, "_general_chat_mcp_env", lambda variant, demo_dir: {"DEMO_MCP": variant})
+    monkeypatch.setattr(
+        demo_module, "_general_chat_mcp_env", lambda variant, demo_dir: {"DEMO_MCP": variant}
+    )
     monkeypatch.setattr(demo_module.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(demo_module.time, "sleep", lambda _seconds: None)
 

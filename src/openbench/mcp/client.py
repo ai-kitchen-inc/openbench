@@ -52,7 +52,9 @@ class MCPClient:
 
         allowed_servers = set(self.config.policy.allowed_servers)
         allowed_servers.update(
-            name for name, cfg in self._server_configs.items() if cfg.allowed or cfg.transport == "stdio"
+            name
+            for name, cfg in self._server_configs.items()
+            if cfg.allowed or cfg.transport == "stdio"
         )
         self.policy = policy or MCPPolicyEngine(
             allowed_servers=sorted(allowed_servers),

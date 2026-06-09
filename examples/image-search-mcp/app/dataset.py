@@ -60,7 +60,9 @@ class Cifar10CorpusSummary:
             and self.test_count == CIFAR10_TEST_COUNT
             and self.total_count == CIFAR10_TOTAL_COUNT
             and len(self.class_names) == CIFAR10_CLASS_COUNT
-            and all(self.class_counts.get(name) == CIFAR10_PER_CLASS_TOTAL for name in CIFAR10_CLASSES)
+            and all(
+                self.class_counts.get(name) == CIFAR10_PER_CLASS_TOTAL for name in CIFAR10_CLASSES
+            )
         )
 
     def to_dict(self) -> dict:
@@ -107,7 +109,9 @@ class CifarImageRecord:
     original_dataset_index: int
     image: Image.Image
 
-    def metadata(self, preview_path: str | None = None, embedding_checksum: str | None = None) -> dict:
+    def metadata(
+        self, preview_path: str | None = None, embedding_checksum: str | None = None
+    ) -> dict:
         """Return JSON-serializable metadata for this image."""
         metadata = {
             "image_id": self.image_id,
@@ -145,11 +149,15 @@ class Cifar10Store:
 
         if split == "train":
             if self._train is None:
-                self._train = CIFAR10(root=str(self.data_root / "cifar10"), train=True, download=True)
+                self._train = CIFAR10(
+                    root=str(self.data_root / "cifar10"), train=True, download=True
+                )
             return self._train
         if split == "test":
             if self._test is None:
-                self._test = CIFAR10(root=str(self.data_root / "cifar10"), train=False, download=True)
+                self._test = CIFAR10(
+                    root=str(self.data_root / "cifar10"), train=False, download=True
+                )
             return self._test
         raise ValueError("split must be 'train' or 'test'")
 

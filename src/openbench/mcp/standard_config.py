@@ -52,7 +52,9 @@ def parse_standard_mcp_json(raw_json: str) -> MCPClientConfig:
                 f"MCP server names {previous!r} and {raw_name!r} normalize to the same name."
             )
         normalized_seen[normalized_name] = raw_name
-        parsed_servers[normalized_name] = _parse_server_config(raw_name, raw_config, normalized_name)
+        parsed_servers[normalized_name] = _parse_server_config(
+            raw_name, raw_config, normalized_name
+        )
 
     return MCPClientConfig(servers=parsed_servers)
 
@@ -87,7 +89,9 @@ def _parse_server_config(
 
     if command is not None:
         if not isinstance(command, str) or not command.strip():
-            raise MCPConfigImportError(f"MCP server {raw_name!r} command must be a non-empty string.")
+            raise MCPConfigImportError(
+                f"MCP server {raw_name!r} command must be a non-empty string."
+            )
         config["command"] = command.strip()
     if "args" in raw_config:
         args = raw_config["args"]

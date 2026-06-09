@@ -40,9 +40,7 @@ def _default_predictor_factory(overrides: dict[str, Any]) -> Any:
     try:
         from ultralytics.models.sam import SAM3SemanticPredictor
     except ImportError as exc:
-        raise ImportError(
-            "ultralytics>=8.3.237 is required to run SAM 3 concept counting"
-        ) from exc
+        raise ImportError("ultralytics>=8.3.237 is required to run SAM 3 concept counting") from exc
     return SAM3SemanticPredictor(overrides=overrides)
 
 
@@ -317,9 +315,7 @@ def _segments_from_results(
         overlay_masks.append(mask_bool)
 
     if filtered_count:
-        warnings.append(
-            f"Filtered {filtered_count} SAM 3 masks below min_area_pixels={min_area}."
-        )
+        warnings.append(f"Filtered {filtered_count} SAM 3 masks below min_area_pixels={min_area}.")
     return segments, overlay_masks, warnings
 
 
@@ -426,7 +422,9 @@ def _create_debug_segmentation_image(
             if bbox is None and index < len(masks):
                 bbox = _bbox_from_mask(_resize_mask(masks[index], width, height))
             if bbox is None:
-                warning = f"Skipping debug draw for segment {segment.get('id', index + 1)}: invalid bbox."
+                warning = (
+                    f"Skipping debug draw for segment {segment.get('id', index + 1)}: invalid bbox."
+                )
                 warnings.append(warning)
                 logger.warning(warning)
                 continue

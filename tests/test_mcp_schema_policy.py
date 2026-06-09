@@ -30,9 +30,7 @@ def test_openai_function_schema_converts_to_mcp_tool():
         },
     }
 
-    tool = openbench_schema_to_mcp_tool(
-        schema, fallback_name="fallback", source_skill="pdf-tools"
-    )
+    tool = openbench_schema_to_mcp_tool(schema, fallback_name="fallback", source_skill="pdf-tools")
 
     assert tool["name"] == "read_pdf"
     assert tool["inputSchema"]["required"] == ["path"]

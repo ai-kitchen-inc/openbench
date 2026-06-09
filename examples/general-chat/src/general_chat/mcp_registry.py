@@ -117,7 +117,9 @@ def _connection_to_dict(config: MCPServerConnectionConfig) -> dict[str, Any]:
     return config.model_dump(exclude_none=True)
 
 
-def _tool_from_schema(server_name: str, raw: dict[str, Any], previous: RegisteredMCPTool | None) -> RegisteredMCPTool:
+def _tool_from_schema(
+    server_name: str, raw: dict[str, Any], previous: RegisteredMCPTool | None
+) -> RegisteredMCPTool:
     tool_name = str(raw.get("name") or "").strip()
     namespaced = f"{server_name}.{tool_name}"
     return RegisteredMCPTool(
@@ -165,7 +167,11 @@ class MCPServerRegistryStore:
                 "error": None,
                 "registered_at": existing.get("registered_at", now) if existing else now,
                 "updated_at": now,
-                "last_discovered_at": None if config_changed else existing.get("last_discovered_at") if existing else None,
+                "last_discovered_at": (
+                    None
+                    if config_changed
+                    else existing.get("last_discovered_at") if existing else None
+                ),
             }
             servers_by_id[server_id] = server_state
             if config_changed:
@@ -202,11 +208,11 @@ class MCPServerRegistryStore:
                 "error": None,
                 "registered_at": existing.get("registered_at", now) if existing else now,
                 "updated_at": now,
-                "last_discovered_at": None
-                if config_changed
-                else existing.get("last_discovered_at")
-                if existing
-                else None,
+                "last_discovered_at": (
+                    None
+                    if config_changed
+                    else existing.get("last_discovered_at") if existing else None
+                ),
             }
             if config_changed:
                 tools.pop(server_id, None)
@@ -245,7 +251,9 @@ class MCPServerRegistryStore:
         self._save_state(state)
         return self.get_server(server_id)
 
-    def set_tool_enabled(self, server_id: str, tool_name: str, enabled: bool) -> RegisteredMCPServer:
+    def set_tool_enabled(
+        self, server_id: str, tool_name: str, enabled: bool
+    ) -> RegisteredMCPServer:
         state = self._load_state()
         if self._find_server(state, server_id) is None:
             raise KeyError(server_id)
@@ -392,7 +400,9 @@ class MCPServerRegistryStore:
                 item["status"] = "failed"
                 item["error"] = _safe_error(exc)
                 item["updated_at"] = _now()
-                errors.append({"server": item["name"], "error": item["error"] or "MCP discovery failed."})
+                errors.append(
+                    {"server": item["name"], "error": item["error"] or "MCP discovery failed."}
+                )
                 with suppress(Exception):
                     client.close_sync()
 
@@ -416,12 +426,16 @@ class MCPServerRegistryStore:
         discovered = client.discover_and_close_sync(refresh=True)
         return discovered.servers[item["name"]].tools
 
-    def _server_from_state(self, item: dict[str, Any], state: dict[str, Any]) -> RegisteredMCPServer:
+    def _server_from_state(
+        self, item: dict[str, Any], state: dict[str, Any]
+    ) -> RegisteredMCPServer:
         raw_tools = state.setdefault("tools", {}).get(item["id"], {})
         tools = [
             RegisteredMCPTool(
                 name=tool.get("name", name),
-                namespaced_name=tool.get("namespaced_name") or tool.get("namespacedName") or f"{item['name']}.{name}",
+                namespaced_name=tool.get("namespaced_name")
+                or tool.get("namespacedName")
+                or f"{item['name']}.{name}",
                 description=tool.get("description", ""),
                 input_schema=tool.get("input_schema") or tool.get("inputSchema") or {},
                 enabled=bool(tool.get("enabled", True)),
@@ -463,7 +477,9 @@ class MCPServerRegistryStore:
 
     @staticmethod
     def _find_server(state: dict[str, Any], server_id: str) -> dict[str, Any] | None:
-        return next((item for item in state.get("servers", []) if item.get("id") == server_id), None)
+        return next(
+            (item for item in state.get("servers", []) if item.get("id") == server_id), None
+        )
 
 
 def _safe_error(exc: BaseException) -> str:
@@ -476,7 +492,9 @@ def _provider_schema_warning(namespaced_name: str, tool_schema: dict[str, Any]) 
     except ImportError:
         return None
     try:
-        function = mcp_tool_to_openai_schema(tool_schema, namespaced_name=namespaced_name)["function"]
+        function = mcp_tool_to_openai_schema(tool_schema, namespaced_name=namespaced_name)[
+            "function"
+        ]
         types.FunctionDeclaration(
             name=function["name"],
             description=function.get("description", ""),

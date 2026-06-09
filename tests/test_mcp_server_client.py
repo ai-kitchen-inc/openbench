@@ -8,9 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
+import openbench.mcp.adapters as adapters_module
 from openbench.core.abstractions import Tool
 from openbench.intelligence.base import ToolExecutor
-import openbench.mcp.adapters as adapters_module
 from openbench.mcp.adapters import MCPToolAdapter, load_mcp_tools
 from openbench.mcp.client import MCPClient
 from openbench.mcp.config import (
@@ -208,7 +208,9 @@ def fake_streamable_sdk(monkeypatch):
         captured["sse_read_timeout"] = sse_read_timeout
         yield "read", "write", lambda: "session-1"
 
-    monkeypatch.setattr("mcp.client.streamable_http.streamablehttp_client", fake_streamablehttp_client)
+    monkeypatch.setattr(
+        "mcp.client.streamable_http.streamablehttp_client", fake_streamablehttp_client
+    )
     monkeypatch.setattr("mcp.ClientSession", FakeStreamableSession)
     return captured
 
@@ -220,7 +222,9 @@ def test_server_exposes_sdk_tools_resources_and_prompts(openbench_mcp_server):
     assert "filter_records" in tool_names
     assert "read_pdf" in tool_names
     assert "export_to_excel" in tool_names
-    assert any(r["uri"].startswith("openbench://skills/") for r in openbench_mcp_server.list_resources())
+    assert any(
+        r["uri"].startswith("openbench://skills/") for r in openbench_mcp_server.list_resources()
+    )
     assert "summarize_pdf" in {p["name"] for p in openbench_mcp_server.list_prompts()}
 
 
@@ -551,9 +555,7 @@ def test_load_mcp_tools_propagates_server_timeout(monkeypatch):
         def discover_sync(self):
             return SimpleNamespace(
                 servers={
-                    "sam_segmentation": SimpleNamespace(
-                        tools={"count_objects_with_sam3": schema}
-                    )
+                    "sam_segmentation": SimpleNamespace(tools={"count_objects_with_sam3": schema})
                 }
             )
 

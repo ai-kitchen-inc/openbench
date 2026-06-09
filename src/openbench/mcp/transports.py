@@ -87,9 +87,7 @@ class StreamableHTTPTransport(MCPTransport):
                     sse_read_timeout=self.config.timeout_seconds,
                 )
             )
-            self._session = await self._exit_stack.enter_async_context(
-                ClientSession(read, write)
-            )
+            self._session = await self._exit_stack.enter_async_context(ClientSession(read, write))
         return self._session
 
     async def initialize(self) -> dict[str, Any]:

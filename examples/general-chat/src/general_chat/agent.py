@@ -151,9 +151,8 @@ class _ImageSearchRenderTool(Tool):
 
 
 def _wrap_chat_mcp_tool(tool: Any) -> Any:
-    if (
-        getattr(tool, "namespaced_name", None) == _IMAGE_SEARCH_SIMILAR_TOOL
-        and isinstance(tool, Tool)
+    if getattr(tool, "namespaced_name", None) == _IMAGE_SEARCH_SIMILAR_TOOL and isinstance(
+        tool, Tool
     ):
         return _ImageSearchRenderTool(tool)
     return tool
@@ -168,9 +167,7 @@ def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
     from openbench.mcp.transports import InMemoryMCPTransport
 
     mode = os.getenv("GENERAL_CHAT_MCP_MODE", "local").strip().lower()
-    approved_names = set(
-        _csv_env("GENERAL_CHAT_MCP_APPROVED_TOOLS", _DEFAULT_MCP_APPROVED_TOOLS)
-    )
+    approved_names = set(_csv_env("GENERAL_CHAT_MCP_APPROVED_TOOLS", _DEFAULT_MCP_APPROVED_TOOLS))
     config_path = _mcp_config_path()
     config = MCPConfig.from_file(config_path) if config_path.exists() else MCPConfig()
     loaded: list[Any] = []
