@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://YOUR_DOMAIN.com", "http://localhost:5173"],
+    "method": ["GET", "PUT", "POST", "OPTIONS"],
+    "responseHeader": ["Content-Type", "x-goog-resumable"],
+    "maxAgeSeconds": 3600
+  }
+]

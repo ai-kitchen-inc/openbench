@@ -98,6 +98,12 @@ gdrive = [
     "google-auth>=2.25.0",
 ]
 
+gcp = [
+    "google-cloud-storage>=2.16.0",
+    "google-cloud-pubsub>=2.20.0",
+    "psycopg[binary]>=3.1.0",
+]
+
 firebase = [
     "firebase-admin>=6.0.0",
 ]
@@ -119,7 +125,7 @@ mcp = [
 ]
 
 all = [
-    "openbench[dev,data,intelligence,output,security,google,vector,search,extraction,chat,mcp]"
+    "openbench[dev,data,intelligence,output,security,google,vector,search,extraction,chat,mcp,gcp]"
 ]
 
 [project.urls]

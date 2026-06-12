@@ -59,6 +59,8 @@ export interface Attachment {
   mimeType: string;
   sizeBytes?: number;
   file?: File; // Browser File reference (never serialized to server)
+  path?: string; // Server-side path for tools, when available
+  extractedText?: string; // Full server-side extracted context
   extractedPreview?: string; // Text preview from server extraction
 }
 
@@ -181,6 +183,7 @@ export interface ChatConfig {
   streamUrl: string; // POST → SSE AG-UI endpoint (e.g., "/awp")
   actionUrl?: string; // POST → JSON (defaults to "/chat/action")
   uploadUrl?: string; // POST → JSON (defaults to "/chat/upload")
+  uploadFile?: (file: File, options: AttachmentUploadOptions) => Promise<Attachment>;
   sessionsUrl?: string; // REST CRUD endpoint (defaults to "/sessions")
   theme?: "light" | "dark" | "auto";
   maxConcurrentStreams?: number; // Max parallel SSE streams (default: 3)
@@ -207,6 +210,11 @@ export interface ChatConfig {
    * whatever the transport threw. Use to surface a failure toast.
    */
   onUploadError?: (file: File, error: unknown) => void;
+}
+
+export interface AttachmentUploadOptions {
+  sessionId?: string | null;
+  onProgress?: (fraction: number) => void;
 }
 
 export type TransportStatus = "connected" | "disconnected" | "error";

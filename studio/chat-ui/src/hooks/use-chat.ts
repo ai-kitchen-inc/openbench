@@ -199,9 +199,13 @@ export function useChat(config: ChatConfig): UseChatReturn {
                   store.getState().setUploadProgress(att.id, 0);
                   const localFile = att.file;
                   try {
-                    const uploaded = await transport.upload(localFile, {
-                      onProgress: (frac) => store.getState().setUploadProgress(att.id, frac),
-                    });
+                    const uploaded = await (config.uploadFile ?? transport.upload.bind(transport))(
+                      localFile,
+                      {
+                        sessionId,
+                        onProgress: (frac) => store.getState().setUploadProgress(att.id, frac),
+                      },
+                    );
                     URL.revokeObjectURL(att.url);
                     config.onUploadSuccess?.(att.id, uploaded);
                     return { ...uploaded, file: undefined };
@@ -226,7 +230,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
 
       return msg;
     },
-    [store, transport, streamManager],
+    [config, store, transport, streamManager],
   );
 
   // Retry — walk backward from the given message to the nearest user

@@ -8,22 +8,26 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
 from general_chat.extractor import DoclingContentExtractor
+from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.server.handler import GeneralChatHandler
 from general_chat.sources import (
     DEFAULT_DISCOVERY_LIMIT,
     SearchDiscoveryAdapter,
     SourceParserRegistry,
-    SourceStore,
+    SourceRecord,
+    build_source_store,
+    image_search_text,
     mark_source_upload_deleted,
     max_source_bytes_from_env,
     source_record_from_file,
@@ -92,6 +96,95 @@ def _resolve_request_session_id(body: dict) -> str | None:
     return forwarded.get("sessionId") or body.get("threadId")
 
 
+def _gcp_enabled() -> bool:
+    return bool(os.getenv("GENERAL_CHAT_GCP_BUCKET"))
+
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def _build_storage_backend(storage_root: str, *, session_id: str = "default"):
+    if not _gcp_enabled():
+        return LocalStorageBackend(storage_root)
+    from openbench.integrations.gcp import GoogleCloudStorageBackend
+
+    return GoogleCloudStorageBackend.from_env(
+        user_id=os.getenv("GENERAL_CHAT_GCP_USER_ID", "default"),
+        session_id=session_id,
+    )
+
+
+async def _read_upload_limited(file: UploadFile, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=(
+                    f"Multipart upload exceeds {max_bytes} bytes. "
+                    "Use /chat/uploads/initiate for direct Cloud Storage uploads."
+                ),
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _is_gcs_source(record: SourceRecord) -> bool:
+    metadata = record.metadata or {}
+    return bool(metadata.get("gcsObject") or metadata.get("gcsBucket"))
+
+
+def _queued_gcs_upload_record(
+    *,
+    session_id: str,
+    stored,
+    status_label: str = "queued",
+) -> SourceRecord:
+    metadata = {
+        "fileId": stored.id,
+        "gcsUri": stored.web_view_link,
+        "uploadStatus": "uploaded",
+        "parseStatus": status_label,
+    }
+    if stored.web_view_link and stored.web_view_link.startswith("gs://"):
+        without_scheme = stored.web_view_link[len("gs://") :]
+        bucket, _, object_name = without_scheme.partition("/")
+        if bucket:
+            metadata["gcsBucket"] = bucket
+        if object_name:
+            metadata["gcsObject"] = object_name
+    return SourceRecord.create(
+        session_id=session_id,
+        name=stored.name,
+        kind="file",
+        mime_type=stored.mime_type,
+        size_bytes=stored.size_bytes,
+        url=stored.web_view_link,
+        text="",
+        status="processing",
+        metadata=metadata,
+    )
+
+
 def create_app() -> FastAPI:
     example_root = get_persona_dir().parent
 
@@ -127,16 +220,55 @@ def create_app() -> FastAPI:
 
     db_path = os.getenv("GENERAL_CHAT_MEMORY_DB", "general_chat_memory.db")
 
-    storage = LocalStorageBackend(storage_root)
+    storage = _build_storage_backend(storage_root)
     file_store = LocalFileStore(upload_dir=upload_dir)
     extractor = DoclingContentExtractor()
     source_parser = SourceParserRegistry(document_extractor=extractor)
-    source_store = SourceStore(storage_root)
+    source_store = build_source_store(storage_root)
     mcp_registry_store = MCPServerRegistryStore(storage_root)
     toolhive_service = ToolHiveService()
     discovery_adapter = SearchDiscoveryAdapter()
     max_source_bytes = max_source_bytes_from_env()
+    multipart_upload_max_bytes = _env_int(
+        "GENERAL_CHAT_MULTIPART_UPLOAD_MAX_BYTES",
+        25 * 1024 * 1024,
+    )
     agent = create_agent()
+    chat_memory_store = storage.memory_store() if os.getenv("GENERAL_CHAT_DATABASE_URL") else None
+
+    def _storage_for_session(session_id: str):
+        if not _gcp_enabled():
+            return storage
+        return _build_storage_backend(storage_root, session_id=session_id)
+
+    def _file_store_for_session(session_id: str):
+        if not _gcp_enabled():
+            return file_store
+        return _storage_for_session(session_id).file_store()
+
+    def _mcp_upload_path(stored) -> str:
+        destination = Path(upload_dir) / stored.id / Path(stored.name).name
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source = Path(stored.path)
+            if source.exists() and source.resolve() != destination.resolve():
+                shutil.copyfile(source, destination)
+        except Exception:
+            logger.warning(
+                "Failed to mirror chat attachment for MCP file_id=%s",
+                getattr(stored, "id", ""),
+                exc_info=True,
+            )
+        return f"/general-chat/uploads/{stored.id}/{Path(stored.name).name}"
+
+    def _attachment_from_stored_file(stored):
+        attachment = stored.to_attachment(base_url="/uploads")
+        if attachment.type == "image":
+            mcp_path = _mcp_upload_path(stored)
+            stored.path = mcp_path
+            attachment.path = mcp_path
+            attachment.extracted_text = image_search_text(stored)
+        return attachment
 
     def _enabled_tool_count(server) -> int:
         return sum(1 for tool in getattr(server, "tools", []) if getattr(tool, "enabled", True))
@@ -202,6 +334,8 @@ def create_app() -> FastAPI:
 
     def _delete_upload_files_for_records(records: list) -> None:
         for record in records:
+            if _is_gcs_source(record):
+                continue
             for file_id in upload_file_ids_for_source(record):
                 try:
                     file_store.delete(file_id)
@@ -215,7 +349,9 @@ def create_app() -> FastAPI:
 
     def _cleanup_source_uploads_after_use(records: list) -> None:
         records_with_uploads = [
-            record for record in records if upload_file_ids_for_source(record)
+            record
+            for record in records
+            if upload_file_ids_for_source(record) and not _is_gcs_source(record)
         ]
         if not records_with_uploads:
             return
@@ -275,6 +411,13 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def startup() -> None:
+        if _env_flag("GENERAL_CHAT_SEED_ALL_MCP", default=False):
+            seed_summary = seed_all_mcp_registry(storage_root)
+            if seed_summary["errors"]:
+                print(f"  MCP seed errors: {seed_summary['errors']}")
+            else:
+                print(f"  MCP seeded     : {', '.join(seed_summary['seeded']) or '(none)'}")
+            reload_external_mcp_tools(agent)
         persona = agent._persona
         summary = persona.summary() if persona else {}
         print("\n  General Chat")
@@ -291,12 +434,18 @@ def create_app() -> FastAPI:
             )
         print(f"  Memory DB      : {db_path}")
         print(f"  Storage root   : {storage_root}")
+        print(f"  Storage backend: {type(storage).__name__}")
         print(f"  Upload dir     : {upload_dir}")
         print(f"  Download dir   : {download_dir}")
         print(f"  Image previews : {image_search_preview_dir}")
         print(f"  Source max     : {max_source_bytes} bytes")
+        print(f"  Multipart max  : {multipart_upload_max_bytes} bytes")
+        if _gcp_enabled():
+            print(f"  GCS bucket     : {os.getenv('GENERAL_CHAT_GCP_BUCKET')}")
         print("  AG-UI          : POST /awp")
         print("  Upload         : POST /chat/upload")
+        print("  Attachments    : POST /chat/attachments/upload")
+        print("  Direct upload  : POST /chat/uploads/initiate")
         print("  Sessions API   : GET/DELETE /sessions[/{id}]\n")
 
     @app.get("/health")
@@ -557,18 +706,63 @@ def create_app() -> FastAPI:
         reload_summary = reload_external_mcp_tools(agent, server_ids={server_id})
         return {"ok": True, "serverId": server_id, "reload": reload_summary}
 
+    @app.post("/chat/attachments/upload")
+    async def upload_chat_attachment(
+        file: UploadFile = File(...),
+        session_id: str | None = Form(default=None, alias="sessionId"),
+    ) -> dict:
+        """Store a transient chat composer attachment for the next message."""
+        filename = file.filename or "unnamed"
+        mime_type = _resolve_mime(filename, file.content_type or "")
+        if mime_type not in _ALLOWED_MIME_TYPES:
+            raise HTTPException(status_code=400, detail=f"Unsupported attachment type: {mime_type}")
+        target_session_id = session_id or "default"
+        content = await _read_upload_limited(file, multipart_upload_max_bytes)
+        stored = _file_store_for_session(target_session_id).store(filename, content, mime_type)
+        attachment = _attachment_from_stored_file(stored)
+        print(
+            f"  [chat-attachment-upload] id={stored.id} session={target_session_id!r} "
+            f"name={stored.name!r} mime={mime_type} size={stored.size_bytes}B "
+            f"path={attachment.path or '(none)'}"
+        )
+        return attachment.to_dict()
+
     @app.post("/chat/upload")
     async def upload_file(
         file: UploadFile = File(...),
         session_id: str | None = Form(default=None, alias="sessionId"),
     ):
         """Store an uploaded source file and persist extracted text for a session."""
-        content = await file.read()
         filename = file.filename or "unnamed"
         mime_type = _resolve_mime(filename, file.content_type or "")
         target_session_id = session_id or "default"
+        declared_size = getattr(file, "size", None)
+        if isinstance(declared_size, int) and declared_size > multipart_upload_max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=(
+                    f"Multipart upload exceeds {multipart_upload_max_bytes} bytes. "
+                    "Use /chat/uploads/initiate for direct Cloud Storage uploads."
+                ),
+            )
 
-        stored = file_store.store(filename, content, mime_type)
+        content = await _read_upload_limited(file, multipart_upload_max_bytes)
+        user_file_store = _file_store_for_session(target_session_id)
+        stored = user_file_store.store(filename, content, mime_type)
+        if _gcp_enabled():
+            record = _queued_gcs_upload_record(session_id=target_session_id, stored=stored)
+            source_store.upsert(record)
+            print(
+                f"  [source-upload-queued] id={record.id} session={target_session_id!r} "
+                f"name={stored.name!r} mime={mime_type} size={stored.size_bytes}B "
+                f"file_id={stored.id}"
+            )
+            return {
+                **record.to_dict(include_text=False),
+                "url": record.url,
+                "type": record.kind,
+            }
+
         record = source_record_from_file(
             session_id=target_session_id,
             stored_file=stored,
@@ -593,6 +787,137 @@ def create_app() -> FastAPI:
         result["url"] = record.url or attachment.url
         result["type"] = attachment.type
         return result
+
+    @app.post("/chat/uploads/initiate")
+    async def initiate_large_upload(request: Request) -> dict:
+        """Create a direct-to-GCS resumable upload target for large files."""
+        if not _gcp_enabled():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Direct Cloud Storage uploads require GENERAL_CHAT_GCP_BUCKET.",
+            )
+        body = await request.json()
+        filename = str(body.get("filename") or body.get("name") or "unnamed")
+        session_id = str(body.get("sessionId") or "default")
+        declared_size = body.get("sizeBytes", body.get("size"))
+        size_bytes = int(declared_size) if declared_size is not None else None
+        mime_type = _resolve_mime(filename, str(body.get("mimeType") or body.get("type") or ""))
+        user_file_store = _file_store_for_session(session_id)
+        upload = user_file_store.create_resumable_upload_session(
+            filename=filename,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            session_id=session_id,
+            origin=request.headers.get("origin"),
+        )
+        record = SourceRecord.create(
+            session_id=session_id,
+            name=Path(filename).name or "unnamed",
+            kind="file",
+            mime_type=mime_type,
+            size_bytes=size_bytes or 0,
+            url=f"gs://{upload.bucket}/{upload.object_name}",
+            text="",
+            status="processing",
+            metadata={
+                "fileId": upload.file_id,
+                "gcsBucket": upload.bucket,
+                "gcsObject": upload.object_name,
+                "uploadStatus": "reserved",
+                "parseStatus": "waiting_for_upload",
+            },
+        )
+        source_store.upsert(record)
+        return {
+            **upload.to_dict(),
+            "source": record.to_dict(include_text=False),
+            "status": "reserved",
+        }
+
+    @app.post("/chat/uploads/complete")
+    async def complete_large_upload(request: Request) -> dict:
+        """Verify a direct GCS upload and mark its source as queued."""
+        if not _gcp_enabled():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Direct Cloud Storage uploads require GENERAL_CHAT_GCP_BUCKET.",
+            )
+        body = await request.json()
+        file_id = str(body.get("fileId") or "")
+        session_id = str(body.get("sessionId") or "default")
+        if not file_id:
+            raise HTTPException(status_code=400, detail="fileId is required.")
+        user_file_store = _file_store_for_session(session_id)
+        stored = user_file_store.verify_uploaded_object(file_id)
+        if stored is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Uploaded object was not found in Cloud Storage.",
+            )
+        record = source_store.find_by_upload_file_id(file_id, session_id=session_id)
+        if record is None:
+            record = SourceRecord.create(
+                session_id=session_id,
+                name=stored.name,
+                kind="file",
+                mime_type=stored.mime_type,
+                size_bytes=stored.size_bytes,
+                url=stored.web_view_link,
+                text="",
+                status="processing",
+                metadata={"fileId": file_id},
+            )
+        metadata = dict(record.metadata or {})
+        parse_status = str(metadata.get("parseStatus") or "")
+        if record.status in {"ready", "failed"} or parse_status in {"ready", "failed"}:
+            metadata.update(
+                {
+                    "fileId": file_id,
+                    "uploadStatus": "uploaded",
+                    "gcsUri": stored.web_view_link or record.url or "",
+                }
+            )
+            record.metadata = metadata
+            source_store.upsert(record)
+            return {
+                "status": metadata.get("parseStatus") or record.status,
+                "fileId": file_id,
+                "source": record.to_dict(include_text=False),
+            }
+        metadata.update(
+            {
+                "fileId": file_id,
+                "uploadStatus": "uploaded",
+                "parseStatus": "queued",
+                "gcsUri": stored.web_view_link or record.url or "",
+            }
+        )
+        record.metadata = metadata
+        record.size_bytes = stored.size_bytes
+        record.mime_type = stored.mime_type
+        record.status = "processing"
+        source_store.upsert(record)
+        return {
+            "status": "queued",
+            "fileId": file_id,
+            "source": record.to_dict(include_text=False),
+        }
+
+    @app.get("/chat/uploads/{file_id}")
+    async def get_large_upload(
+        file_id: str,
+        sessionId: str | None = None,
+        includeText: bool = False,
+    ) -> dict:
+        record = source_store.find_by_upload_file_id(file_id, session_id=sessionId)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Upload not found.")
+        file_id_value = str((record.metadata or {}).get("fileId") or file_id)
+        return {
+            "status": (record.metadata or {}).get("parseStatus") or record.status,
+            "fileId": file_id_value,
+            "source": record.to_dict(include_text=includeText),
+        }
 
     @app.get("/chat/sources/discover")
     async def discover_sources(q: str = "", limit: int = DEFAULT_DISCOVERY_LIMIT) -> dict:
@@ -697,6 +1022,7 @@ def create_app() -> FastAPI:
         handler = GeneralChatHandler(
             engine=engine,
             db_path=db_path,
+            memory_store=chat_memory_store,
             source_records=source_records,
             on_stream_complete=_cleanup_source_uploads_after_use,
         )

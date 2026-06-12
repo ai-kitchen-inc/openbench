@@ -393,6 +393,35 @@ describe("AGUITransport upload", () => {
     t.dispose();
   });
 
+  it("upload() includes session id and preserves returned MCP path", async () => {
+    createMockAgent([]);
+    const serverResponse = {
+      id: "file-image",
+      type: "image",
+      name: "cats.png",
+      url: "/uploads/file-image/cats.png",
+      mimeType: "image/png",
+      sizeBytes: 9,
+      path: "/general-chat/uploads/file-image/cats.png",
+      extractedText: "sam_segmentation.count_objects_with_sam3 image_path",
+    };
+
+    const xhr = installMockXHR({ status: 200, responseText: JSON.stringify(serverResponse) });
+    const t = new AGUITransport({ ...config, uploadUrl: "/chat/attachments/upload" });
+    const file = new File(["png-bytes"], "cats.png", { type: "image/png" });
+
+    const result = await t.upload(file, { sessionId: "session-1" });
+
+    expect(result.path).toBe("/general-chat/uploads/file-image/cats.png");
+    expect(result.extractedText).toContain("sam_segmentation");
+    expect(xhr.openCalls).toEqual([["POST", "/chat/attachments/upload", true]]);
+    const entries = Array.from((xhr.lastBody as FormData).entries());
+    expect(entries.some(([key]) => key === "file")).toBe(true);
+    expect(entries).toContainEqual(["sessionId", "session-1"]);
+
+    t.dispose();
+  });
+
   it("upload() fires onProgress callback with normalized fractions", async () => {
     createMockAgent([]);
     // A custom XHR fake so we can drive the progress events explicitly.

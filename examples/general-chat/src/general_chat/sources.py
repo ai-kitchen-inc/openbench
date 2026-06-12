@@ -67,6 +67,30 @@ DUCKDUCKGO_RESULT_ANCHOR = "result__a"
 DUCKDUCKGO_RESULT_SNIPPET = "result__snippet"
 
 
+def _without_nul(value: str) -> str:
+    return value.replace("\x00", "\uFFFD")
+
+
+def _sanitize_json_value(value: Any) -> Any:
+    """Remove NUL characters that PostgreSQL JSONB cannot store."""
+    if isinstance(value, str):
+        return _without_nul(value)
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            _without_nul(str(key)): _sanitize_json_value(item)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _source_record_payload(record: SourceRecord) -> dict[str, Any]:
+    return _sanitize_json_value(asdict(record))
+
+
 @dataclass
 class ParsedSourceContent:
     """Normalized parsed source payload before persistence."""
@@ -203,8 +227,8 @@ class SourceRecord:
             size_bytes=size_bytes,
             created_at=datetime.now(timezone.utc).isoformat(),
             url=url,
-            text=text,
-            metadata=metadata,
+            text=_without_nul(text),
+            metadata=_sanitize_json_value(metadata),
         )
 
 
@@ -232,11 +256,24 @@ class SourceStore:
         self.save(record.session_id, records)
         return record
 
+    def upsert(self, record: SourceRecord) -> SourceRecord:
+        records = self.list(record.session_id)
+        replaced = False
+        for i, existing in enumerate(records):
+            if existing.id == record.id:
+                records[i] = record
+                replaced = True
+                break
+        if not replaced:
+            records.append(record)
+        self.save(record.session_id, records)
+        return record
+
     def save(self, session_id: str, records: list[SourceRecord]) -> None:
         path = self._path(session_id)
         payload = {
             "sessionId": session_id,
-            "sources": [asdict(record) for record in records],
+            "sources": [_source_record_payload(record) for record in records],
         }
         path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False),
@@ -255,6 +292,21 @@ class SourceStore:
         path = self._path(session_id)
         if path.exists():
             path.unlink()
+
+    def find_by_upload_file_id(
+        self,
+        file_id: str,
+        *,
+        session_id: str | None = None,
+    ) -> SourceRecord | None:
+        records = self.list(session_id) if session_id else self._list_all()
+        for record in records:
+            if file_id in upload_file_ids_for_source(record):
+                return record
+            metadata = record.metadata or {}
+            if metadata.get("fileId") == file_id:
+                return record
+        return None
 
     def search(self, session_id: str, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
         needle = query.strip().lower()
@@ -286,6 +338,251 @@ class SourceStore:
             ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in session_id
         )
         return self.root / f"{safe}.json"
+
+    def _list_all(self) -> list[SourceRecord]:
+        records: list[SourceRecord] = []
+        for path in self.root.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            records.extend(SourceRecord.from_dict(item) for item in data.get("sources", []))
+        return records
+
+
+class PostgresSourceStore:
+    """PostgreSQL-backed per-session source store for GCE deployments."""
+
+    def __init__(
+        self,
+        database_url: str | None = None,
+        *,
+        conn: Any | None = None,
+        table_name: str = "openbench_sources",
+    ):
+        if conn is None and not database_url:
+            raise ValueError("Either database_url= or conn= must be provided.")
+        self.database_url = database_url
+        self._conn = conn
+        self.table_name = table_name
+        self._init_db()
+
+    def list(self, session_id: str) -> list[SourceRecord]:
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT data FROM {self.table_name}
+                WHERE session_id = %s
+                ORDER BY created_at
+                """,
+                (session_id,),
+            )
+            rows = cur.fetchall()
+        return [self._record_from_data(row[0]) for row in rows]
+
+    def add(self, record: SourceRecord) -> SourceRecord:
+        return self.upsert(record)
+
+    def upsert(self, record: SourceRecord) -> SourceRecord:
+        payload = json.dumps(_source_record_payload(record), ensure_ascii=False)
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    INSERT INTO {self.table_name}
+                        (session_id, source_id, status, file_id, created_at, updated_at, data)
+                    VALUES (%s, %s, %s, %s, %s, now(), %s::jsonb)
+                    ON CONFLICT(session_id, source_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        file_id = EXCLUDED.file_id,
+                        updated_at = now(),
+                        data = EXCLUDED.data
+                    """,
+                    (
+                        record.session_id,
+                        record.id,
+                        record.status,
+                        self._file_id_for(record),
+                        record.created_at,
+                        payload,
+                    ),
+                )
+            conn.commit()
+        return record
+
+    def save(self, session_id: str, records: list[SourceRecord]) -> None:
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {self.table_name} WHERE session_id = %s",
+                    (session_id,),
+                )
+                for record in records:
+                    payload = json.dumps(_source_record_payload(record), ensure_ascii=False)
+                    cur.execute(
+                        f"""
+                        INSERT INTO {self.table_name}
+                            (session_id, source_id, status, file_id, created_at, updated_at, data)
+                        VALUES (%s, %s, %s, %s, %s, now(), %s::jsonb)
+                        """,
+                        (
+                            record.session_id,
+                            record.id,
+                            record.status,
+                            self._file_id_for(record),
+                            record.created_at,
+                            payload,
+                        ),
+                    )
+            conn.commit()
+
+    def delete(self, session_id: str, source_id: str) -> bool:
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    DELETE FROM {self.table_name}
+                    WHERE session_id = %s AND source_id = %s
+                    """,
+                    (session_id, source_id),
+                )
+                rowcount = cur.rowcount
+            conn.commit()
+        return bool(rowcount)
+
+    def clear(self, session_id: str) -> None:
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {self.table_name} WHERE session_id = %s",
+                    (session_id,),
+                )
+            conn.commit()
+
+    def search(self, session_id: str, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        needle = query.strip().lower()
+        if not needle:
+            return []
+        results: list[dict[str, Any]] = []
+        for record in self.list(session_id):
+            if record.status != "ready":
+                continue
+            haystack = record.text.lower()
+            idx = haystack.find(needle)
+            if idx < 0 and needle not in record.name.lower():
+                continue
+            results.append(
+                {
+                    "sourceId": record.id,
+                    "name": record.name,
+                    "kind": record.kind,
+                    "snippet": _snippet(record.text, max(idx, 0), len(needle)),
+                }
+            )
+            if len(results) >= limit:
+                break
+        return results
+
+    def find_by_upload_file_id(
+        self,
+        file_id: str,
+        *,
+        session_id: str | None = None,
+    ) -> SourceRecord | None:
+        with self._connection() as conn, conn.cursor() as cur:
+            if session_id:
+                cur.execute(
+                    f"""
+                    SELECT data FROM {self.table_name}
+                    WHERE session_id = %s AND file_id = %s
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (session_id, file_id),
+                )
+            else:
+                cur.execute(
+                    f"""
+                    SELECT data FROM {self.table_name}
+                    WHERE file_id = %s
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (file_id,),
+                )
+            row = cur.fetchone()
+        return self._record_from_data(row[0]) if row else None
+
+    def _init_db(self) -> None:
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.table_name} (
+                        session_id TEXT NOT NULL,
+                        source_id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        file_id TEXT,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        data JSONB NOT NULL,
+                        PRIMARY KEY (session_id, source_id)
+                    )
+                    """
+                )
+                cur.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_file "
+                    f"ON {self.table_name} (file_id)"
+                )
+                cur.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_session "
+                    f"ON {self.table_name} (session_id, updated_at DESC)"
+                )
+            conn.commit()
+
+    def _connection(self):
+        if self._conn is not None:
+            return _ExternalConnection(self._conn)
+        try:
+            import psycopg
+        except ImportError as exc:
+            raise ImportError(
+                "PostgresSourceStore requires psycopg. Install openbench[gcp]."
+            ) from exc
+        return psycopg.connect(self.database_url)
+
+    @staticmethod
+    def _file_id_for(record: SourceRecord) -> str | None:
+        metadata = record.metadata or {}
+        file_id = metadata.get("fileId")
+        if isinstance(file_id, str):
+            return file_id
+        ids = upload_file_ids_for_source(record)
+        return next(iter(ids), None)
+
+    @staticmethod
+    def _record_from_data(data: Any) -> SourceRecord:
+        if isinstance(data, str):
+            data = json.loads(data)
+        return SourceRecord.from_dict(data)
+
+
+class _ExternalConnection:
+    def __init__(self, conn: Any):
+        self.conn = conn
+
+    def __enter__(self):
+        return self.conn
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+def build_source_store(root: str | Path):
+    database_url = os.getenv("GENERAL_CHAT_DATABASE_URL")
+    if database_url:
+        return PostgresSourceStore(database_url)
+    return SourceStore(root)
 
 
 class SourceParserRegistry:
@@ -1141,6 +1438,10 @@ def image_search_text(
             "Do not use filesystem MCP tools for this /general-chat/uploads path; "
             "it is mounted for image MCP containers and is outside the filesystem "
             "MCP sandbox."
+        ),
+        (
+            "The browser preview URL is not a filesystem path. Image MCP tools can "
+            "only read the /general-chat/uploads path above."
         ),
     ]
     if parsed_text.strip():

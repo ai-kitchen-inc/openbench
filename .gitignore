@@ -110,6 +110,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.gcp
 .venv
 env/
 venv/
@@ -523,6 +524,7 @@ examples/lci-mini/profiles/
 examples/lci-mini/.openbench/
 examples/general-chat/.openbench/
 examples/general-chat/env.cloudrun.yaml
+scripts/nginx-openbench-api.conf
 examples/lci-mini/lci_mini_memory.db
 examples/lci-mini/frontend/dist/
 

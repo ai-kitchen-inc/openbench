@@ -78,6 +78,7 @@ export type {
   A2UISurface,
   A2UITheme,
   Attachment,
+  AttachmentUploadOptions,
   // Config
   ChatConfig,
   // Chat

@@ -233,7 +233,7 @@ export class AGUITransport {
    */
   async upload(
     file: File,
-    options: { onProgress?: (fraction: number) => void } = {},
+    options: { onProgress?: (fraction: number) => void; sessionId?: string | null } = {},
   ): Promise<Attachment> {
     const url = this.config.uploadUrl ?? "/chat/upload";
     const authHeaders = await this._authHeaders();
@@ -241,6 +241,9 @@ export class AGUITransport {
     return new Promise<Attachment>((resolve, reject) => {
       const formData = new FormData();
       formData.append("file", file);
+      if (options.sessionId) {
+        formData.append("sessionId", options.sessionId);
+      }
       const xhr = new XMLHttpRequest();
       xhr.open("POST", url, true);
       for (const [k, v] of Object.entries(authHeaders)) {

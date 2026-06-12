@@ -27,7 +27,7 @@ _SOURCE_CONTEXT_ID = "general-chat-source-context"
 _REDACTED_ATTACHMENT_CONTEXT = (
     "Context data: [previous General Chat source attachment content redacted]"
 )
-_IMAGE_MCP_FILE_PATH_RE = re.compile(r"/general-chat/uploads/file-[^/\"'\s]+/[^\"'\s]+")
+_IMAGE_MCP_FILE_PATH_RE = re.compile(r"/general-chat/uploads/file-[^/\"'\s]+/[^\r\n\"']+")
 
 
 def _debug_prompt_dir() -> Path | None:
@@ -351,12 +351,13 @@ class GeneralChatHandler(AGUIHandler):
         self,
         engine,
         db_path: str = "general_chat_memory.db",
+        memory_store: Any | None = None,
         doc_context: str | None = None,
         source_records: list[SourceRecord] | None = None,
         on_stream_complete: Callable[[list[SourceRecord]], None] | None = None,
     ):
         super().__init__(engine)
-        self._memory_store = SQLiteMemoryStore(db_path=db_path)
+        self._memory_store = memory_store or SQLiteMemoryStore(db_path=db_path)
         self._local = threading.local()
         self._doc_context = doc_context
         self._source_records = source_records or []

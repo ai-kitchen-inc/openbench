@@ -1,0 +1,72 @@
+services:
+  openbench-api:
+    image: ${OPENBENCH_IMAGE:-openbench-general-chat:latest}
+    restart: unless-stopped
+    env_file:
+      - .env.gcp
+    environment:
+      GENERAL_CHAT_STORAGE_ROOT: ${GENERAL_CHAT_STORAGE_ROOT:-/app-data/openbench}
+      GENERAL_CHAT_UPLOAD_DIR: ${GENERAL_CHAT_UPLOAD_DIR:-/general-chat/uploads}
+      GENERAL_CHAT_DOWNLOAD_DIR: ${GENERAL_CHAT_DOWNLOAD_DIR:-/general-chat/downloads}
+      GENERAL_CHAT_GCP_CACHE_ROOT: ${GENERAL_CHAT_GCP_CACHE_ROOT:-/tmp/openbench-gcs-cache}
+      GENERAL_CHAT_SEED_ALL_MCP: ${GENERAL_CHAT_SEED_ALL_MCP:-1}
+      GENERAL_CHAT_MCP_SANDBOX: ${GENERAL_CHAT_MCP_SANDBOX:-/general-chat/mcp-sandbox}
+      GENERAL_CHAT_IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT: ${GENERAL_CHAT_IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT:-/general-chat/uploads}
+      GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR: ${GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR:-/general-chat/image-search/data/previews}
+      IMAGE_SEARCH_MCP_DATA_PATH: ${IMAGE_SEARCH_MCP_DATA_PATH:-/app-data/image-search/data}
+      IMAGE_SEARCH_MCP_MODELS_PATH: ${IMAGE_SEARCH_MCP_MODELS_PATH:-/app-data/image-search/models}
+      IMAGE_SEARCH_MCP_UPLOADS_PATH: ${IMAGE_SEARCH_MCP_UPLOADS_PATH:-/app-data/uploads}
+      IMAGE_SEARCH_MCP_HF_CACHE_PATH: ${IMAGE_SEARCH_MCP_HF_CACHE_PATH:-/app-data/huggingface}
+      SAM_SEGMENTATION_MCP_UPLOADS_PATH: ${SAM_SEGMENTATION_MCP_UPLOADS_PATH:-/app-data/uploads}
+      SAM_SEGMENTATION_MCP_DEBUG_PATH: ${SAM_SEGMENTATION_MCP_DEBUG_PATH:-/app-data/uploads/_sam_debug}
+      OPENBENCH_MCP_DOCKER_PROFILE: ${OPENBENCH_MCP_DOCKER_PROFILE:-openbench}
+      DOCKER_MCP_IN_CONTAINER: ${DOCKER_MCP_IN_CONTAINER:-1}
+    ports:
+      - "${OPENBENCH_API_PORT:-8080}:8080"
+    command:
+      - uvicorn
+      - server:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    volumes:
+      - /app-data/openbench:/app-data/openbench
+      - /app-data/openbench-gcs-cache:/tmp/openbench-gcs-cache
+      - /app-data/uploads:/general-chat/uploads
+      - /app-data/downloads:/general-chat/downloads
+      - /app-data/mcp-sandbox:/general-chat/mcp-sandbox
+      - /app-data/image-search:/general-chat/image-search
+      - /app-data/huggingface:/general-chat/huggingface
+      - /app-data/docker-config:/root/.docker
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  openbench-worker:
+    image: ${OPENBENCH_IMAGE:-openbench-general-chat:latest}
+    restart: unless-stopped
+    env_file:
+      - .env.gcp
+    environment:
+      GENERAL_CHAT_STORAGE_ROOT: ${GENERAL_CHAT_STORAGE_ROOT:-/app-data/openbench}
+      GENERAL_CHAT_UPLOAD_DIR: ${GENERAL_CHAT_UPLOAD_DIR:-/general-chat/uploads}
+      GENERAL_CHAT_DOWNLOAD_DIR: ${GENERAL_CHAT_DOWNLOAD_DIR:-/general-chat/downloads}
+      GENERAL_CHAT_GCP_CACHE_ROOT: ${GENERAL_CHAT_GCP_CACHE_ROOT:-/tmp/openbench-gcs-cache}
+      GENERAL_CHAT_IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT: ${GENERAL_CHAT_IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT:-/general-chat/uploads}
+      GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR: ${GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR:-/general-chat/image-search/data/previews}
+      IMAGE_SEARCH_MCP_DATA_PATH: ${IMAGE_SEARCH_MCP_DATA_PATH:-/app-data/image-search/data}
+      IMAGE_SEARCH_MCP_MODELS_PATH: ${IMAGE_SEARCH_MCP_MODELS_PATH:-/app-data/image-search/models}
+      IMAGE_SEARCH_MCP_UPLOADS_PATH: ${IMAGE_SEARCH_MCP_UPLOADS_PATH:-/app-data/uploads}
+      IMAGE_SEARCH_MCP_HF_CACHE_PATH: ${IMAGE_SEARCH_MCP_HF_CACHE_PATH:-/app-data/huggingface}
+      SAM_SEGMENTATION_MCP_UPLOADS_PATH: ${SAM_SEGMENTATION_MCP_UPLOADS_PATH:-/app-data/uploads}
+      SAM_SEGMENTATION_MCP_DEBUG_PATH: ${SAM_SEGMENTATION_MCP_DEBUG_PATH:-/app-data/uploads/_sam_debug}
+    command:
+      - python
+      - -m
+      - general_chat.gcp_worker
+    volumes:
+      - /app-data/openbench:/app-data/openbench
+      - /app-data/openbench-gcs-cache:/tmp/openbench-gcs-cache
+      - /app-data/uploads:/general-chat/uploads
+      - /app-data/downloads:/general-chat/downloads
+      - /app-data/image-search:/general-chat/image-search
+      - /app-data/huggingface:/general-chat/huggingface

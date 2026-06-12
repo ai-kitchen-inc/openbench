@@ -54,6 +54,8 @@ class Attachment:
             result["sizeBytes"] = self.size_bytes
         if self.extracted_text is not None:
             result["extractedText"] = self.extracted_text
+        if self.path is not None:
+            result["path"] = self.path
         return result
 
     @classmethod

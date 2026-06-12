@@ -1015,6 +1015,11 @@ body {
   background: rgba(176, 32, 32, 0.04);
 }
 
+.source-panel__item--processing {
+  border: 1px solid rgba(35, 131, 226, 0.2);
+  background: rgba(35, 131, 226, 0.04);
+}
+
 .source-panel__item-badge {
   flex-shrink: 0;
   font-size: 9px;

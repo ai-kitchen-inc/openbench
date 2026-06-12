@@ -27,8 +27,9 @@ GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-c
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
-from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.agent import reload_external_mcp_tools
+from general_chat.mcp_bootstrap import seed_all_mcp_registry
+from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.server.handler import GeneralChatHandler
 
 
@@ -73,6 +74,37 @@ PLAYWRIGHT_TIMEOUT_CONFIG = json.dumps(
         }
     }
 )
+
+
+class TestMCPBootstrap(unittest.TestCase):
+    def test_seed_all_mcp_registry_imports_bundled_configs(self):
+        config_dir = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "mcp"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary = seed_all_mcp_registry(tmpdir, config_dir=config_dir)
+            self.assertEqual([], summary["errors"])
+            self.assertEqual([], summary["missing"])
+            self.assertTrue(
+                {
+                    "filesystem",
+                    "generic_api",
+                    "image_search",
+                    "sam_segmentation",
+                    "docker",
+                }.issubset(set(summary["seeded"]))
+            )
+
+            payload = MCPServerRegistryStore(tmpdir).list_payload()
+            names = {server["name"] for server in payload["servers"]}
+            self.assertTrue(
+                {
+                    "filesystem",
+                    "generic_api",
+                    "image_search",
+                    "sam_segmentation",
+                    "docker",
+                    "openbench",
+                }.issubset(names)
+            )
 
 
 class FakeDiscoveredServer:
