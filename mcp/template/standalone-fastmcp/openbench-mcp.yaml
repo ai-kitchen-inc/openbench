@@ -1,13 +1,13 @@
 mcp:
   server:
-    name: openbench-image-search
+    name: openbench-example-mcp
     include_sdk_tools: false
     skills:
-      - examples/image-search-mcp/openbench-skill
+      - mcp/template/standalone-fastmcp/openbench-skill
     transport: stdio
     policy:
       allowed_servers:
-        - openbench-image-search
+        - openbench-example-mcp
       require_approval_for_risks:
         - write
         - artifact_write

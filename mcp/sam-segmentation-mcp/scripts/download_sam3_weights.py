@@ -1,4 +1,4 @@
-"""Prepare SAM 3 weights for the Docker image.
+﻿"""Prepare SAM 3 weights for the Docker image.
 
 The official SAM 3 weights are gated on Hugging Face, so this script supports
 two build-time paths:
@@ -72,7 +72,7 @@ def main() -> int:
     if not token:
         message = (
             "SAM 3 weights are required for this image but were not found. "
-            "Place sam3.pt at examples/sam-segmentation-mcp/weights/sam3.pt, "
+            "Place sam3.pt at mcp/sam-segmentation-mcp/weights/sam3.pt, "
             "or set HF_TOKEN after receiving access to https://huggingface.co/facebook/sam3. "
             "Ultralytics does not auto-download sam3.pt."
         )

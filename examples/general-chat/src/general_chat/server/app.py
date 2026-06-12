@@ -196,7 +196,9 @@ def create_app() -> FastAPI:
     download_dir = str(Path(os.getenv("GENERAL_CHAT_DOWNLOAD_DIR", str(default_download_dir))).resolve())
     os.makedirs(download_dir, exist_ok=True)
 
-    default_image_search_preview_dir = example_root.parent / "image-search-mcp" / "data" / "previews"
+    default_image_search_preview_dir = (
+        example_root.parents[1] / "mcp" / "image-search-mcp" / "data" / "previews"
+    )
     image_search_preview_dir = str(
         Path(
             os.getenv(

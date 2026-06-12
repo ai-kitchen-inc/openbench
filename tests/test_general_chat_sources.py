@@ -463,7 +463,7 @@ class TestGeneralChatSources(unittest.TestCase):
     def test_sam_segmentation_build_script_uses_hf_cli_token(self):
         script = (
             Path(__file__).resolve().parents[1]
-            / "examples"
+            / "mcp"
             / "sam-segmentation-mcp"
             / "scripts"
             / "build_with_sam3.ps1"

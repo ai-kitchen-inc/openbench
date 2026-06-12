@@ -1,16 +1,15 @@
-mcp:
+﻿mcp:
   server:
-    name: openbench-sam-segmentation
+    name: openbench-image-search
     include_sdk_tools: false
     skills:
-      - examples/sam-segmentation-mcp/openbench-skill
+      - mcp/image-search-mcp/openbench-skill
     transport: stdio
     policy:
       allowed_servers:
-        - openbench-sam-segmentation
+        - openbench-image-search
       require_approval_for_risks:
         - write
         - artifact_write
         - external_network
         - destructive
-

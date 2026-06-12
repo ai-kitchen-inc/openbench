@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("cpu", "gpu", "dev")]
     [string]$Profile = "cpu"
 )
@@ -24,7 +24,7 @@ if (-not $tokenWasSet) {
         }
     }
     if ([string]::IsNullOrWhiteSpace($token)) {
-        throw "No HF_TOKEN environment variable is set, and 'hf auth token' did not return a token. Run 'hf auth login' or place sam3.pt at examples\sam-segmentation-mcp\weights\sam3.pt."
+        throw "No HF_TOKEN environment variable is set, and 'hf auth token' did not return a token. Run 'hf auth login' or place sam3.pt at mcp\sam-segmentation-mcp\weights\sam3.pt."
     }
     $env:HF_TOKEN = $token
 }

@@ -1,4 +1,4 @@
-"""Standard MCP server registry for General Chat."""
+﻿"""Standard MCP server registry for General Chat."""
 
 from __future__ import annotations
 
@@ -1114,7 +1114,7 @@ def _connection_failure_hint(item: dict[str, Any], error: str) -> str | None:
             return (
                 "The Docker image-search MCP process exited before handshake. Verify "
                 "Docker can inspect openbench/image-search-mcp:cpu, then run "
-                "`python examples/image-search-mcp/scripts/test_mcp_server.py --mode docker` "
+                "`python mcp/image-search-mcp/scripts/test_mcp_server.py --mode docker` "
                 "for container stderr and startup details."
             )
         return (

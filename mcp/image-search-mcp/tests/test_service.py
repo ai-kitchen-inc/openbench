@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -248,7 +248,7 @@ def test_preview_url_uses_absolute_path_relative_to_preview_root(service):
     [
         r"data\previews\train\cifar10-train-14511.png",
         "data/previews/train/cifar10-train-14511.png",
-        "C:/repo/examples/image-search-mcp/data/previews/train/cifar10-train-14511.png",
+        "C:/repo/mcp/image-search-mcp/data/previews/train/cifar10-train-14511.png",
         "/data/previews/train/cifar10-train-14511.png",
     ],
 )

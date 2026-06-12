@@ -1,4 +1,4 @@
-# General Chat MCP Tutorial
+﻿# General Chat MCP Tutorial
 
 This tutorial verifies MCP in three layers:
 
@@ -263,9 +263,9 @@ Prepare optional dependencies before a full local smoke test:
 
 ```powershell
 hf auth login
-docker compose -f examples\generic-api-mcp\docker-compose.yml --profile cpu build
-docker compose -f examples\image-search-mcp\docker-compose.yml --profile cpu build
-docker compose -f examples\sam-segmentation-mcp\docker-compose.yml --profile cpu build
+docker compose -f mcp\generic-api-mcp\docker-compose.yml --profile cpu build
+docker compose -f mcp\image-search-mcp\docker-compose.yml --profile cpu build
+docker compose -f mcp\sam-segmentation-mcp\docker-compose.yml --profile cpu build
 docker mcp profile create --name openbench
 thv serve
 thv run toolhive-doc-mcp
@@ -367,18 +367,18 @@ local interface unless you add external authentication and authorization.
 ## 11. Image Search MCP Server
 
 General Chat can also use the Dockerized DINOv3 CIFAR-10 image-search MCP
-server from `examples/image-search-mcp`.
+server from `mcp/image-search-mcp`.
 
 From the repository root, build the image:
 
 ```powershell
-docker compose -f examples\image-search-mcp\docker-compose.yml --profile cpu build
+docker compose -f mcp\image-search-mcp\docker-compose.yml --profile cpu build
 ```
 
 Confirm the standalone MCP server works:
 
 ```powershell
-python examples\image-search-mcp\scripts\test_mcp_server.py --mode docker
+python mcp\image-search-mcp\scripts\test_mcp_server.py --mode docker
 ```
 
 If General Chat reports `Failed to discover MCP server 'image_search':
@@ -387,7 +387,7 @@ image, then run the smoke command above to surface Docker-side stderr:
 
 ```powershell
 docker image inspect openbench/image-search-mcp:cpu
-python examples\image-search-mcp\scripts\test_mcp_server.py --mode docker
+python mcp\image-search-mcp\scripts\test_mcp_server.py --mode docker
 ```
 
 Start General Chat with the image-search MCP config:
@@ -435,24 +435,24 @@ read-only into the Docker container.
 ## 12. SAM 3 Concept Counting MCP Server
 
 General Chat can also use the Dockerized Ultralytics SAM 3 concept counting MCP
-server from `examples/sam-segmentation-mcp`. It counts objects matching a text
+server from `mcp/sam-segmentation-mcp`. It counts objects matching a text
 concept such as `dog`, `person`, `red apple`, or `yellow school bus`.
 
 Ultralytics does not auto-download `sam3.pt`, and the official weights are gated
 on Hugging Face. After receiving access, either place `sam3.pt` at
-`examples/sam-segmentation-mcp/weights/sam3.pt` or set `HF_TOKEN` so Docker
+`mcp/sam-segmentation-mcp/weights/sam3.pt` or set `HF_TOKEN` so Docker
 Compose can download the weights during build. From the repository root, build
 the image:
 
 ```powershell
 $env:HF_TOKEN="hf_..."   # optional if weights/sam3.pt already exists
-docker compose -f examples\sam-segmentation-mcp\docker-compose.yml --profile cpu build
+docker compose -f mcp\sam-segmentation-mcp\docker-compose.yml --profile cpu build
 ```
 
 If you already ran `hf auth login`, you can use the helper script instead:
 
 ```powershell
-examples\sam-segmentation-mcp\scripts\build_with_sam3.ps1
+mcp\sam-segmentation-mcp\scripts\build_with_sam3.ps1
 ```
 
 The compose build defaults `SAM3_PREINSTALL=required`, so it fails early if the
@@ -462,7 +462,7 @@ weights cannot be copied or downloaded. General Chat uses the baked-in model at
 Confirm discovery:
 
 ```powershell
-python examples\sam-segmentation-mcp\scripts\test_mcp_server.py --mode docker --discovery-only
+python mcp\sam-segmentation-mcp\scripts\test_mcp_server.py --mode docker --discovery-only
 ```
 
 Start General Chat with the SAM 3 counting MCP config:

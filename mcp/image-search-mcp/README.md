@@ -1,4 +1,4 @@
-# Local DINOv3 CIFAR-10 MCP Image Search
+﻿# Local DINOv3 CIFAR-10 MCP Image Search
 
 This example is a fully local MCP server for image similarity search. It uses
 DINOv3 to embed images, persists CIFAR-10 embeddings into FAISS or
@@ -26,7 +26,7 @@ keeps local MCP usage reasonable.
 ## Setup
 
 ```bash
-cd examples/image-search-mcp
+cd mcp/image-search-mcp
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
@@ -120,7 +120,7 @@ Use `mcp-client.example.json` as a starting point:
     "image_search": {
       "command": "python",
       "args": ["-m", "app.mcp_server", "--transport", "stdio"],
-      "cwd": "examples/image-search-mcp",
+      "cwd": "mcp/image-search-mcp",
       "type": "stdio"
     }
   }
@@ -132,8 +132,8 @@ Use `mcp-client.example.json` as a starting point:
 The OpenBench project skill wrapper lives in `openbench-skill/`.
 
 ```bash
-openbench mcp list-tools --config examples/image-search-mcp/openbench-mcp.yaml
-openbench mcp serve --config examples/image-search-mcp/openbench-mcp.yaml --transport stdio
+openbench mcp list-tools --config mcp/image-search-mcp/openbench-mcp.yaml
+openbench mcp serve --config mcp/image-search-mcp/openbench-mcp.yaml --transport stdio
 ```
 
 ## Docker

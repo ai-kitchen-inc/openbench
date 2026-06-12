@@ -182,9 +182,13 @@ def _ensure_dir(path: Path) -> Path:
     return path
 
 
+def _mcp_example_root(name: str) -> Path:
+    """Return the root directory for a standalone MCP example."""
+    return _find_project_root() / "mcp" / name
+
+
 def _general_chat_mcp_env(variant: str, demo_dir: Path) -> dict[str, str]:
     """Build environment overrides for dedicated General Chat MCP demo variants."""
-    root = _find_project_root()
     uploads_dir = _ensure_dir(demo_dir / "uploads")
 
     common = {
@@ -194,7 +198,7 @@ def _general_chat_mcp_env(variant: str, demo_dir: Path) -> dict[str, str]:
     }
 
     if variant == "image-search":
-        image_search_root = root / "examples" / "image-search-mcp"
+        image_search_root = _mcp_example_root("image-search-mcp")
         data_dir = _ensure_dir(image_search_root / "data")
         models_dir = _ensure_dir(image_search_root / "models")
         previews_dir = _ensure_dir(data_dir / "previews")
@@ -274,14 +278,13 @@ def _general_chat_all_mcp_env(
     seed_registry: bool = True,
 ) -> dict[str, str]:
     """Build environment overrides and seed registry state for all-MCP General Chat."""
-    root = _find_project_root()
     uploads_dir = _ensure_dir(demo_dir / "uploads")
     downloads_dir = _ensure_dir(demo_dir / "downloads")
     storage_root = _ensure_dir(demo_dir / ".openbench" / "all-mcp")
     sandbox_dir = _ensure_dir(demo_dir / "mcp-sandbox")
     sam_debug_dir = _ensure_dir(uploads_dir / "_sam_debug")
 
-    image_search_root = root / "examples" / "image-search-mcp"
+    image_search_root = _mcp_example_root("image-search-mcp")
     image_data_dir = _ensure_dir(image_search_root / "data")
     image_models_dir = _ensure_dir(image_search_root / "models")
     image_previews_dir = _ensure_dir(image_data_dir / "previews")
@@ -326,7 +329,7 @@ def _general_chat_all_mcp_env(
                 "[yellow]Warning:[/yellow] Docker image openbench/generic-api-mcp:cpu "
                 "is not available or Docker API access failed. generic_api may fail "
                 "with 'Connection closed'. Build it with: docker compose -f "
-                "examples\\generic-api-mcp\\docker-compose.yml --profile cpu build. "
+                "mcp\\generic-api-mcp\\docker-compose.yml --profile cpu build. "
                 f"Details: {generic_api_error}"
             )
         image_search_error = _docker_image_inspect_error("openbench/image-search-mcp:cpu")
@@ -335,7 +338,7 @@ def _general_chat_all_mcp_env(
                 "[yellow]Warning:[/yellow] Docker image openbench/image-search-mcp:cpu "
                 "is not available or Docker API access failed. image_search may fail "
                 "with 'Connection closed'. Build it with: docker compose -f "
-                "examples\\image-search-mcp\\docker-compose.yml --profile cpu build. "
+                "mcp\\image-search-mcp\\docker-compose.yml --profile cpu build. "
                 f"Details: {image_search_error}"
             )
     if not _command_available("npx", "npx.cmd"):

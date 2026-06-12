@@ -1,4 +1,4 @@
-# SAM 3 Concept Counting MCP
+﻿# SAM 3 Concept Counting MCP
 
 Standalone Dockerized MCP server for local Ultralytics SAM 3 concept
 segmentation. It accepts an image plus a required text concept and counts the
@@ -31,8 +31,8 @@ Build-time options:
 
 ```powershell
 # Option A: local file copied into the image
-mkdir examples\sam-segmentation-mcp\weights
-# place sam3.pt at examples\sam-segmentation-mcp\weights\sam3.pt
+mkdir mcp\sam-segmentation-mcp\weights
+# place sam3.pt at mcp\sam-segmentation-mcp\weights\sam3.pt
 
 # Option B: gated Hugging Face download during docker compose build
 $env:HF_TOKEN="hf_..."
@@ -42,7 +42,7 @@ If you already ran `hf auth login`, use the helper script instead of manually
 setting `HF_TOKEN`:
 
 ```powershell
-examples\sam-segmentation-mcp\scripts\build_with_sam3.ps1
+mcp\sam-segmentation-mcp\scripts\build_with_sam3.ps1
 ```
 
 `docker compose build` defaults `SAM3_PREINSTALL=required`, so the image build
@@ -54,7 +54,7 @@ fails early unless `weights/sam3.pt` exists or `HF_TOKEN` can download
 Build the CPU image:
 
 ```powershell
-examples\sam-segmentation-mcp\scripts\build_with_sam3.ps1
+mcp\sam-segmentation-mcp\scripts\build_with_sam3.ps1
 ```
 
 Run the MCP server. The default compose build bakes `sam3.pt` into the image at
@@ -62,7 +62,7 @@ Run the MCP server. The default compose build bakes `sam3.pt` into the image at
 
 ```powershell
 docker run --rm -i `
-  -v "${PWD}\examples\sam-segmentation-mcp\example-images:/input:ro" `
+  -v "${PWD}\mcp\sam-segmentation-mcp\example-images:/input:ro" `
   -e SAM3_MODEL_PATH=/models/sam3.pt `
   -e IMAGE_INPUT_ROOTS=/input `
   openbench/sam-segmentation-mcp:cpu
@@ -142,7 +142,7 @@ and a warning instead of crashing.
 Build the image with `weights/sam3.pt` or `HF_TOKEN`, then start General Chat:
 
 ```powershell
-examples\sam-segmentation-mcp\scripts\build_with_sam3.ps1
+mcp\sam-segmentation-mcp\scripts\build_with_sam3.ps1
 
 openbench demo run general-chat-sam-segmentation
 ```
@@ -173,13 +173,13 @@ General Chat should call:
 Discovery does not require real weights:
 
 ```powershell
-python examples\sam-segmentation-mcp\scripts\test_mcp_server.py --mode docker --discovery-only
+python mcp\sam-segmentation-mcp\scripts\test_mcp_server.py --mode docker --discovery-only
 ```
 
 Calling `service_info` reports whether `sam3.pt` is present:
 
 ```powershell
-python examples\sam-segmentation-mcp\scripts\test_mcp_server.py --mode docker
+python mcp\sam-segmentation-mcp\scripts\test_mcp_server.py --mode docker
 ```
 
 ## Troubleshooting
@@ -190,7 +190,7 @@ Dockerfile installs SAM 3's CLIP and ViT backbone dependencies before the MCP
 server starts:
 
 ```cmd
-powershell -NoProfile -ExecutionPolicy Bypass -File examples\sam-segmentation-mcp\scripts\build_with_sam3.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File mcp\sam-segmentation-mcp\scripts\build_with_sam3.ps1
 ```
 
 ## Known Limitations

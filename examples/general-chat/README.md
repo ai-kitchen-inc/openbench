@@ -1,4 +1,4 @@
-# General Chat
+﻿# General Chat
 
 A full-stack general-purpose chat demo built on OpenBench. You can optionally
 add PDFs, Word docs, PowerPoint slides, spreadsheets, URLs, text, or images as
@@ -25,7 +25,7 @@ Get one at [tavily.com](https://tavily.com/).
 
 ---
 
-## 1 — Install OpenBench (parent package)
+## 1 â€” Install OpenBench (parent package)
 
 From the **repo root** (`openbench/`):
 
@@ -37,7 +37,7 @@ This installs the `openbench` SDK that the server imports.
 
 ---
 
-## 2 — Configure environment
+## 2 â€” Configure environment
 
 Copy the template and fill in your key.
 
@@ -83,7 +83,7 @@ The other variables in `.env` are optional overrides:
 
 ---
 
-## 3 — Start with OpenBench demo runner (recommended)
+## 3 â€” Start with OpenBench demo runner (recommended)
 
 ```bash
 openbench demo run general-chat
@@ -144,7 +144,7 @@ openbench demo list
 
 ---
 
-## 4 — Manual startup (fallback)
+## 4 â€” Manual startup (fallback)
 
 Use this only if you do not want to use the demo runner.
 
@@ -185,7 +185,7 @@ cd examples/general-chat/frontend
 # Install deps (uses pnpm)
 pnpm install
 
-# Dev server (hot-reload, proxies /awp → :8005)
+# Dev server (hot-reload, proxies /awp â†’ :8005)
 pnpm dev
 ```
 
@@ -262,7 +262,7 @@ loads or searches the full CIFAR-10 dataset.
 Recommended local startup:
 
 ```powershell
-cd examples\image-search-mcp
+cd mcp\image-search-mcp
 docker compose --profile cpu build
 
 cd ..\general-chat
@@ -271,7 +271,7 @@ cd ..\general-chat
 
 The first full indexing run may download CIFAR-10 via `torchvision` and DINOv3
 weights via Hugging Face. Preview PNGs are written under
-`examples/image-search-mcp/data/previews` and served by the General Chat backend
+`mcp/image-search-mcp/data/previews` and served by the General Chat backend
 at `/image-search/previews/...`.
 The image-search MCP service can search any initialized non-empty index. Verify
 `image_search.list_index_stats` reports `healthy=true`; partial indexes report
@@ -281,7 +281,7 @@ The image-search MCP service can search any initialized non-empty index. Verify
 live chat turn:
 
 ```powershell
-cd examples\image-search-mcp
+cd mcp\image-search-mcp
 $env:VECTOR_BACKEND="hnswlib"
 $env:IMAGE_SEARCH_PROGRESS="1"
 python -c "from app.service import get_service; print(get_service().rebuild_index(batch_size=64))"
@@ -296,9 +296,9 @@ The agent's identity is loaded from `soul/`:
 
 ```
 soul/
-├── SOUL.md    # Who the agent is
-├── STYLE.md   # How it responds
-└── AGENTS.md  # Behavioural rules
+â”œâ”€â”€ SOUL.md    # Who the agent is
+â”œâ”€â”€ STYLE.md   # How it responds
+â””â”€â”€ AGENTS.md  # Behavioural rules
 ```
 
 Edit these files to change the agent's personality without touching code.
@@ -370,7 +370,7 @@ General Chat can also load the local Dockerized DINOv3 CIFAR-10 image search
 MCP server. First build the image-search container from the repo root:
 
 ```powershell
-docker compose -f examples\image-search-mcp\docker-compose.yml --profile cpu build
+docker compose -f mcp\image-search-mcp\docker-compose.yml --profile cpu build
 ```
 
 Make sure Hugging Face access is available on the host:
@@ -412,7 +412,7 @@ test to see container startup errors:
 
 ```powershell
 docker image inspect openbench/image-search-mcp:cpu
-python examples\image-search-mcp\scripts\test_mcp_server.py --mode docker
+python mcp\image-search-mcp\scripts\test_mcp_server.py --mode docker
 ```
 
 In the UI, use explicit tool-forcing prompts:
@@ -441,19 +441,19 @@ FastSAM, or MobileSAM fallbacks.
 
 Ultralytics does not auto-download `sam3.pt`, and the official weights are gated
 on Hugging Face. After receiving access, either place `sam3.pt` at
-`examples/sam-segmentation-mcp/weights/sam3.pt` or set `HF_TOKEN` so Docker
+`mcp/sam-segmentation-mcp/weights/sam3.pt` or set `HF_TOKEN` so Docker
 Compose can download the weights during build. Then build the container from the
 repo root:
 
 ```powershell
 $env:HF_TOKEN="hf_..."   # optional if weights/sam3.pt already exists
-docker compose -f examples\sam-segmentation-mcp\docker-compose.yml --profile cpu build
+docker compose -f mcp\sam-segmentation-mcp\docker-compose.yml --profile cpu build
 ```
 
 If you already ran `hf auth login`, you can use the helper script instead:
 
 ```powershell
-examples\sam-segmentation-mcp\scripts\build_with_sam3.ps1
+mcp\sam-segmentation-mcp\scripts\build_with_sam3.ps1
 ```
 
 The compose build defaults `SAM3_PREINSTALL=required`, so it fails early if the

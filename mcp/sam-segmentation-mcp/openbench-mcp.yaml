@@ -1,13 +1,13 @@
-mcp:
+﻿mcp:
   server:
-    name: openbench-generic-api
+    name: openbench-sam-segmentation
     include_sdk_tools: false
     skills:
-      - examples/generic-api-mcp/openbench-skill
+      - mcp/sam-segmentation-mcp/openbench-skill
     transport: stdio
     policy:
       allowed_servers:
-        - openbench-generic-api
+        - openbench-sam-segmentation
       require_approval_for_risks:
         - write
         - artifact_write

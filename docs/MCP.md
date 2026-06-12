@@ -1,4 +1,4 @@
-# OpenBench MCP
+﻿# OpenBench MCP
 
 OpenBench can expose existing function tools as MCP tools and consume MCP
 servers as agent tools.
@@ -185,9 +185,6 @@ TOOLHIVE_HOST=172.17.0.1                  # common Docker Engine bridge gateway
 Keep credentials in ToolHive secrets. OpenBench stores only server names,
 ToolHive workload names, local proxy URLs, enabled flags, selected tools, and
 timestamps; it redacts likely secrets from displayed config.
-
-The example `examples/mcp/toolhive-server.json` shows both package and remote
-metadata shapes for publishing OpenBench tools through ToolHive.
 
 ## Adding A New MCP Tool
 

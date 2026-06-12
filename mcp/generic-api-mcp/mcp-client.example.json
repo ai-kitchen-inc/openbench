@@ -1,9 +1,9 @@
-{
+﻿{
   "servers": {
     "generic_api": {
       "command": "python",
       "args": ["-m", "app.mcp_server", "--transport", "stdio"],
-      "cwd": "examples/generic-api-mcp",
+      "cwd": "mcp/generic-api-mcp",
       "env": {
         "GENERIC_API_USERNAME": "username",
         "GENERIC_API_PASSWORD": "password",

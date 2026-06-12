@@ -1,4 +1,4 @@
-{
+﻿{
   "servers": {
     "image_search": {
       "command": "python",
@@ -8,12 +8,12 @@
         "--transport",
         "stdio"
       ],
-      "cwd": "examples/image-search-mcp",
+      "cwd": "mcp/image-search-mcp",
       "type": "stdio",
       "env": {
-        "DATA_PATH": "examples/image-search-mcp/data",
-        "INDEX_PATH": "examples/image-search-mcp/data/index",
-        "MODEL_CACHE_PATH": "examples/image-search-mcp/models"
+        "DATA_PATH": "mcp/image-search-mcp/data",
+        "INDEX_PATH": "mcp/image-search-mcp/data/index",
+        "MODEL_CACHE_PATH": "mcp/image-search-mcp/models"
       }
     }
   }

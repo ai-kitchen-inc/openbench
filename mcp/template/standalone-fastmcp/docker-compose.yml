@@ -1,0 +1,10 @@
+services:
+  example-mcp-cpu:
+    build:
+      context: .
+    image: openbench/example-mcp:cpu
+    profiles: ["cpu"]
+    environment:
+      EXAMPLE_MCP_PREFIX: ${EXAMPLE_MCP_PREFIX:-example}
+    stdin_open: true
+    tty: false

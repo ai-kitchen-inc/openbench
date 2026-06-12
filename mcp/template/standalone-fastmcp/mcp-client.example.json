@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "example": {
+      "command": "python",
+      "args": ["-m", "app.mcp_server", "--transport", "stdio"],
+      "cwd": "mcp/template/standalone-fastmcp",
+      "env": {
+        "EXAMPLE_MCP_PREFIX": "example"
+      }
+    }
+  }
+}

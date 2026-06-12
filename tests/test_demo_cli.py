@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -48,7 +48,7 @@ def test_run_demo_help_documents_all_mcp_option():
 def test_discover_demos_ignores_virtualenv_scripts(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     examples = root / "examples"
-    venv_scripts = examples / "image-search-mcp" / ".venv" / "Lib" / "site-packages"
+    venv_scripts = examples / "ignored-demo" / ".venv" / "Lib" / "site-packages"
     venv_scripts.mkdir(parents=True)
     (root / "pyproject.toml").write_text("[project]\nname = 'demo-test'\n", encoding="utf-8")
     (venv_scripts / "accidental_demo.py").write_text(
@@ -60,7 +60,7 @@ def test_discover_demos_ignores_virtualenv_scripts(tmp_path, monkeypatch):
 
     demos = demo_module._discover_demos()
 
-    assert "image-search-mcp/.venv/Lib/site-packages/accidental" not in {
+    assert "ignored-demo/.venv/Lib/site-packages/accidental" not in {
         item["name"] for item in demos
     }
 
@@ -83,14 +83,14 @@ def test_general_chat_image_search_env_creates_expected_paths(tmp_path, monkeypa
     assert env["GENERAL_CHAT_MCP_APPROVED_TOOLS"] == (
         "image_search.list_index_stats,image_search.search_similar_images"
     )
-    assert env["IMAGE_SEARCH_MCP_DATA_PATH"].endswith("/examples/image-search-mcp/data")
-    assert env["IMAGE_SEARCH_MCP_MODELS_PATH"].endswith("/examples/image-search-mcp/models")
+    assert env["IMAGE_SEARCH_MCP_DATA_PATH"].endswith("/mcp/image-search-mcp/data")
+    assert env["IMAGE_SEARCH_MCP_MODELS_PATH"].endswith("/mcp/image-search-mcp/models")
     assert env["IMAGE_SEARCH_MCP_UPLOADS_PATH"].endswith("/examples/general-chat/uploads")
     assert env["IMAGE_SEARCH_MCP_HF_CACHE_PATH"].endswith("/home/.cache/huggingface")
     assert Path(env["GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR"]).is_dir()
     assert (demo_dir / "uploads").is_dir()
-    assert (root / "examples" / "image-search-mcp" / "data" / "previews").is_dir()
-    assert (root / "examples" / "image-search-mcp" / "models").is_dir()
+    assert (root / "mcp" / "image-search-mcp" / "data" / "previews").is_dir()
+    assert (root / "mcp" / "image-search-mcp" / "models").is_dir()
     assert (home_dir / ".cache" / "huggingface").is_dir()
 
 
@@ -212,7 +212,7 @@ def test_general_chat_all_mcp_env_creates_paths_and_seeds_registry(tmp_path, mon
     assert env["GENERAL_CHAT_MCP_ENABLED"] == "0"
     assert env["GENERAL_CHAT_MCP_REGISTRY_ENABLED"] == "1"
     assert Path(env["GENERAL_CHAT_STORAGE_ROOT"]) == (demo_dir / ".openbench" / "all-mcp").resolve()
-    assert env["IMAGE_SEARCH_MCP_DATA_PATH"].endswith("/examples/image-search-mcp/data")
+    assert env["IMAGE_SEARCH_MCP_DATA_PATH"].endswith("/mcp/image-search-mcp/data")
     assert env["SAM_SEGMENTATION_MCP_DEBUG_PATH"].endswith(
         "/examples/general-chat/uploads/_sam_debug"
     )
@@ -277,12 +277,13 @@ def test_general_chat_all_mcp_warns_when_image_search_docker_image_missing(
     demo_module._general_chat_all_mcp_env(demo_dir, seed_registry=False)
 
     output = capsys.readouterr().out
+    normalized_output = " ".join(output.split())
     assert "openbench/image-search-mcp:cpu" in output
     assert "Connection closed" in output
     assert "docker compose -f" in output
-    assert "examples\\image-search-mcp\\docker-compose.yml" in output
+    assert "mcp\\image-search-mcp\\docker-compose.yml" in output
     assert "--profile" in output
-    assert "cpu build" in output
+    assert "cpu build" in normalized_output
     assert "No such image" in output
 
 
