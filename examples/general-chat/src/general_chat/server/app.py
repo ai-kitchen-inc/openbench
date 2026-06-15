@@ -21,6 +21,7 @@ from general_chat.extractor import DoclingContentExtractor
 from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.server.handler import GeneralChatHandler
+from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.sources import (
     DEFAULT_DISCOVERY_LIMIT,
     SearchDiscoveryAdapter,
@@ -229,6 +230,7 @@ def create_app() -> FastAPI:
     source_store = build_source_store(storage_root)
     mcp_registry_store = MCPServerRegistryStore(storage_root)
     toolhive_service = ToolHiveService()
+    mcp_permission_coordinator = GeneralChatMCPPermissionCoordinator()
     discovery_adapter = SearchDiscoveryAdapter()
     max_source_bytes = max_source_bytes_from_env()
     multipart_upload_max_bytes = _env_int(
@@ -1027,6 +1029,7 @@ def create_app() -> FastAPI:
             memory_store=chat_memory_store,
             source_records=source_records,
             on_stream_complete=_cleanup_source_uploads_after_use,
+            mcp_permission_coordinator=mcp_permission_coordinator,
         )
         return await handler.handle(request)
 
@@ -1037,11 +1040,17 @@ def create_app() -> FastAPI:
         session = _resolve_session(session_id)
         engine = _build_engine(session)
         handler = AGUIActionHandler(engine=engine)
+
+        @handler.on("mcp_permission_decision")
+        def handle_mcp_permission(action):
+            return mcp_permission_coordinator.resolve_action(action)
+
         return await handler.handle(request)
 
     @app.get("/chat/actions")
     async def list_actions() -> dict:
         handler = AGUIActionHandler(engine=None)
+        handler.register("mcp_permission_decision", lambda action: [])
         return {"actions": handler.get_registered_actions()}
 
     @app.get("/sessions")

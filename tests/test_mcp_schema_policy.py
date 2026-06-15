@@ -6,6 +6,13 @@ import pytest
 
 from openbench.mcp.config import MCPConfig
 from openbench.mcp.errors import MCPPolicyDeniedError
+from openbench.mcp.permissions import (
+    MCPPermissionContext,
+    MCPPermissionRequest,
+    MCPPermissionSession,
+    parse_permission_response,
+    use_mcp_permission_context,
+)
 from openbench.mcp.policy import MCPPolicyEngine, RiskLevel, classify_tool_risk, redact_secrets
 from openbench.mcp.schema import (
     mcp_tool_to_openai_schema,
@@ -14,6 +21,97 @@ from openbench.mcp.schema import (
     provider_safe_tool_name,
     split_namespaced_tool,
 )
+
+
+def test_parse_permission_response_approves_clear_confirmation():
+    decision = parse_permission_response("yes, approve")
+
+    assert decision.approved is True
+    assert decision.denied is False
+    assert decision.ambiguous is False
+
+
+def test_parse_permission_response_denies_clear_rejection():
+    decision = parse_permission_response("no")
+
+    assert decision.approved is False
+    assert decision.denied is True
+    assert decision.ambiguous is False
+
+
+def test_parse_permission_response_blocks_unclear_response():
+    decision = parse_permission_response("maybe later")
+
+    assert decision.approved is False
+    assert decision.denied is False
+    assert decision.ambiguous is True
+
+
+def test_parse_permission_response_blocks_mixed_response():
+    decision = parse_permission_response("yes but no")
+
+    assert decision.approved is False
+    assert decision.denied is False
+    assert decision.ambiguous is True
+
+
+def test_request_scoped_permission_provider_overrides_session_provider():
+    request = MCPPermissionRequest(
+        tool_name="openbench.distinct_values",
+        purpose="Distinct values",
+        arguments={"column": "region"},
+        risk=RiskLevel.READ,
+        action="Call test tool.",
+    )
+    session = MCPPermissionSession(lambda _request: "no")
+    context = MCPPermissionContext(lambda _request: "yes")
+
+    with use_mcp_permission_context(context):
+        decision = session.request(request)
+
+    assert decision.approved is True
+
+
+def test_request_scoped_permission_cache_does_not_leak_between_contexts():
+    request = MCPPermissionRequest(
+        tool_name="openbench.distinct_values",
+        purpose="Distinct values",
+        arguments={"column": "region"},
+        risk=RiskLevel.READ,
+        action="Call test tool.",
+    )
+    session = MCPPermissionSession()
+    with use_mcp_permission_context(MCPPermissionContext(lambda _request: "yes")):
+        approved = session.request(request)
+    with use_mcp_permission_context(MCPPermissionContext(lambda _request: "no")):
+        denied = session.request(request)
+
+    assert approved.approved is True
+    assert denied.denied is True
+
+
+def test_request_scoped_permission_cache_prompts_once_for_identical_action():
+    request = MCPPermissionRequest(
+        tool_name="openbench.distinct_values",
+        purpose="Distinct values",
+        arguments={"column": "region"},
+        risk=RiskLevel.READ,
+        action="Call test tool.",
+    )
+    calls = []
+
+    def provider(seen_request):
+        calls.append(seen_request)
+        return "yes"
+
+    session = MCPPermissionSession()
+    with use_mcp_permission_context(MCPPermissionContext(provider)):
+        first = session.request(request)
+        second = session.request(request)
+
+    assert first.approved is True
+    assert second.approved is True
+    assert len(calls) == 1
 
 
 def test_openai_function_schema_converts_to_mcp_tool():

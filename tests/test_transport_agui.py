@@ -7,8 +7,14 @@ from typing import Any
 
 from openbench.chat.a2ui.schema import A2UI_VERSION
 from openbench.chat.engine import ChatEngine
-from openbench.chat.transport.agui import AGUIHandler
+from openbench.chat.transport.agui import A2UIStreamMessage, AGUIHandler
 from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult
+from openbench.mcp.permissions import (
+    MCPPermissionContext,
+    MCPPermissionRequest,
+    MCPPermissionSession,
+)
+from openbench.mcp.policy import RiskLevel
 
 
 class MockAgent(Agent):
@@ -60,6 +66,52 @@ class StreamingMockAgent(Agent):
 
     def estimate_cost(self, context: ExecutionContext) -> float:
         return 0.001
+
+
+class PermissionPromptAgent(Agent):
+    """Mock agent that requests MCP permission during execution."""
+
+    @property
+    def agent_type(self) -> str:
+        return "permission-prompt-mock"
+
+    def execute(self, context: ExecutionContext) -> ExecutionResult:
+        request = MCPPermissionRequest(
+            tool_name="openbench.distinct_values",
+            purpose="Distinct values",
+            arguments={"column": "region"},
+            risk=RiskLevel.READ,
+            action="Call MCP tool.",
+        )
+        decision = MCPPermissionSession().request(request)
+        return ExecutionResult(
+            output="approved" if decision.approved else "blocked",
+            status="success",
+            metadata={},
+        )
+
+    def estimate_cost(self, context: ExecutionContext) -> float:
+        return 0.0
+
+
+class PermissionPromptHandler(AGUIHandler):
+    def _create_permission_context(self, *, session_id, thread_id, run_id, queue, loop):
+        def provider(_request):
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                A2UIStreamMessage(
+                    {
+                        "version": A2UI_VERSION,
+                        "createSurface": {
+                            "surfaceId": "permission-surface",
+                            "catalogId": "openbench",
+                        },
+                    }
+                ),
+            )
+            return "yes"
+
+        return MCPPermissionContext(provider)
 
 
 class ErrorMockAgent(Agent):
@@ -179,6 +231,26 @@ class TestAGUIHandlerEventStream(unittest.TestCase):
 
         custom_events = [e for e in events if e["type"] == "CUSTOM" and e.get("name") == "a2ui"]
         self.assertEqual(len(custom_events), 0)
+
+    def test_event_stream_emits_mid_run_a2ui_message(self):
+        """A2UI stream messages should emit as CUSTOM events during a run."""
+        engine = ChatEngine(agent=PermissionPromptAgent())
+        handler = PermissionPromptHandler(engine=engine)
+
+        events = _run(_collect_events(handler, {"content": "Use a tool"}))
+
+        custom_events = [
+            event
+            for event in events
+            if event.get("type") == "CUSTOM" and event.get("name") == "a2ui"
+        ]
+        self.assertEqual(len(custom_events), 1)
+        self.assertEqual(
+            custom_events[0]["value"]["createSurface"]["surfaceId"],
+            "permission-surface",
+        )
+        self.assertEqual(events[-1]["type"], "RUN_FINISHED")
+        self.assertEqual(events[-1]["result"]["content"], "approved")
 
     def test_event_stream_rich_content_has_two_step_pairs_for_non_base_agent(self):
         """Non-BaseAgent with rich content emits 2 STEP pairs (Processing + Rendering).

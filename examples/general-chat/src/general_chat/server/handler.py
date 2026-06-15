@@ -16,6 +16,9 @@ from openbench.chat.transport import AGUIHandler
 from openbench.core.abstractions import LLMProvider, LLMResponse
 from openbench.intelligence.base import AgentMemory, BaseAgent, Message, MessageRole
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
+from openbench.mcp.permissions import MCPPermissionContext
+
+from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -355,6 +358,7 @@ class GeneralChatHandler(AGUIHandler):
         doc_context: str | None = None,
         source_records: list[SourceRecord] | None = None,
         on_stream_complete: Callable[[list[SourceRecord]], None] | None = None,
+        mcp_permission_coordinator: GeneralChatMCPPermissionCoordinator | None = None,
     ):
         super().__init__(engine)
         self._memory_store = memory_store or SQLiteMemoryStore(db_path=db_path)
@@ -362,6 +366,7 @@ class GeneralChatHandler(AGUIHandler):
         self._doc_context = doc_context
         self._source_records = source_records or []
         self._on_stream_complete = on_stream_complete
+        self._mcp_permission_coordinator = mcp_permission_coordinator
 
     async def _event_stream(self, body: dict[str, Any], accept: str) -> Any:
         try:
@@ -388,6 +393,28 @@ class GeneralChatHandler(AGUIHandler):
 
     def _on_session_resolved(self, session_id):
         self._local.session_id = session_id
+
+    def _create_permission_context(
+        self,
+        *,
+        session_id: str,
+        thread_id: str,
+        run_id: str,
+        queue,
+        loop,
+    ):
+        if self._mcp_permission_coordinator is None:
+            return None
+
+        def provider(request):
+            return self._mcp_permission_coordinator.request_permission(
+                session_id=session_id,
+                request=request,
+                queue=queue,
+                loop=loop,
+            )
+
+        return MCPPermissionContext(provider)
 
     def _create_request_agent(self):
         agent = self.engine.agent

@@ -20,6 +20,7 @@ from openbench.mcp.config import (
     MCPServerConfig,
     MCPServerConnectionConfig,
 )
+from openbench.mcp.permissions import MCPPermissionSession, PermissionProvider
 from openbench.mcp.policy import redact_secrets
 from openbench.mcp.schema import mcp_tool_to_openai_schema
 from openbench.mcp.server import OpenBenchMCPServer
@@ -591,10 +592,15 @@ class MCPServerRegistryStore:
     def load_enabled_tool_adapters(
         self,
         server_ids: set[str] | None = None,
+        permission_provider: PermissionProvider | None = None,
+        permission_session: MCPPermissionSession | None = None,
     ) -> tuple[list[MCPToolAdapter], dict[str, Any]]:
         state = self._load_state()
         self._ensure_internal_server_state(state)
         selected_server_ids = set(server_ids) if server_ids is not None else None
+        permission_session = permission_session or MCPPermissionSession(
+            permission_provider
+        )
         adapters: list[MCPToolAdapter] = []
         summaries: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
@@ -681,7 +687,7 @@ class MCPServerRegistryStore:
                         client=client,
                         namespaced_name=namespaced,
                         tool_schema=tool_schema,
-                        approved=True,
+                        permission_session=permission_session,
                         timeout_seconds=server_config.timeout_seconds
                         if server_config is not None
                         else None,

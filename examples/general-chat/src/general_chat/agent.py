@@ -14,6 +14,7 @@ from openbench.chat import render_queue as shared_render_queue
 from openbench.core.abstractions import Tool
 from openbench.core.providers import ProviderConfig, ProviderType, get_provider_service
 from openbench.intelligence import BaseAgent, Persona
+from openbench.mcp.permissions import MCPPermissionSession, PermissionProvider
 
 _DEFAULT_MCP_APPROVED_TOOLS = (
     "openbench.filter_records",
@@ -356,7 +357,9 @@ def _wrap_chat_mcp_tool(tool: Any) -> Any:
     return tool
 
 
-def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
+def _load_mcp_tools_for_chat(
+    permission_session: MCPPermissionSession | None = None,
+) -> tuple[list[Any], dict[str, Any]]:
     """Load MCP-backed OpenBench tools for opt-in General Chat testing."""
     from openbench.mcp.adapters import MCPToolAdapter, load_mcp_tools
     from openbench.mcp.client import MCPClient
@@ -365,9 +368,10 @@ def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
     from openbench.mcp.transports import InMemoryMCPTransport
 
     mode = os.getenv("GENERAL_CHAT_MCP_MODE", "local").strip().lower()
-    approved_names = set(
+    allowed_names = set(
         _csv_env("GENERAL_CHAT_MCP_APPROVED_TOOLS", _DEFAULT_MCP_APPROVED_TOOLS)
     )
+    permission_session = permission_session or MCPPermissionSession()
     config_path = _mcp_config_path()
     config = MCPConfig.from_file(config_path) if config_path.exists() else MCPConfig()
     loaded: list[Any] = []
@@ -380,7 +384,7 @@ def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
         for server_name, discovered_server in discovered.servers.items():
             for tool_name, tool_schema in discovered_server.tools.items():
                 namespaced = f"{server_name}.{tool_name}"
-                if namespaced not in approved_names:
+                if namespaced not in allowed_names:
                     continue
                 loaded.append(
                     _wrap_chat_mcp_tool(
@@ -388,21 +392,21 @@ def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
                             client=client,
                             namespaced_name=namespaced,
                             tool_schema=tool_schema,
-                            approved=True,
+                            permission_session=permission_session,
                         )
                     )
                 )
     else:
-        for adapter in load_mcp_tools(config):
-            if adapter.namespaced_name in approved_names:
-                adapter.approved = True
+        for adapter in load_mcp_tools(config, permission_session=permission_session):
+            if adapter.namespaced_name in allowed_names:
                 loaded.append(_wrap_chat_mcp_tool(adapter))
 
     return loaded, {
         "enabled": True,
         "mode": mode,
         "config_path": str(config_path),
-        "approved_tools": sorted(approved_names),
+        "allowed_tools": sorted(allowed_names),
+        "approved_tools": sorted(allowed_names),
         "tools": [
             {
                 "name": tool.namespaced_name,
@@ -416,6 +420,7 @@ def _load_mcp_tools_for_chat() -> tuple[list[Any], dict[str, Any]]:
 
 def _load_external_mcp_tools_for_chat(
     server_ids: set[str] | None = None,
+    permission_session: MCPPermissionSession | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
     """Load explicitly enabled MCP registry servers."""
     from general_chat.mcp_registry import MCPServerRegistryStore
@@ -425,7 +430,10 @@ def _load_external_mcp_tools_for_chat(
         return [], {"enabled": False, "tools": []}
 
     store = MCPServerRegistryStore(registry_root)
-    tools, summary = store.load_enabled_tool_adapters(server_ids=server_ids)
+    tools, summary = store.load_enabled_tool_adapters(
+        server_ids=server_ids,
+        permission_session=permission_session,
+    )
     return [_wrap_chat_mcp_tool(tool) for tool in tools], summary
 
 
@@ -553,7 +561,10 @@ def reload_external_mcp_tools(
         }
 
     try:
-        tools, summary = _load_external_mcp_tools_for_chat(server_ids=selected_server_ids)
+        tools, summary = _load_external_mcp_tools_for_chat(
+            server_ids=selected_server_ids,
+            permission_session=getattr(agent, "_mcp_permission_session", None),
+        )
     except Exception as exc:
         logger.warning("mcp.chat.load_failed error=%s", exc)
         for name in names_to_unregister:
@@ -681,6 +692,7 @@ def create_agent(
     api_key: str | None = None,
     model: str | None = None,
     temperature: float = 0.3,
+    mcp_permission_provider: PermissionProvider | None = None,
 ) -> BaseAgent:
     """Create the general-purpose chat agent.
 
@@ -699,16 +711,18 @@ def create_agent(
     persona = Persona.from_dir(persona_dir) if persona_dir.is_dir() else None
 
     mcp_tools: list[Any] = []
+    mcp_permission_session = MCPPermissionSession(mcp_permission_provider)
     mcp_summary: dict[str, Any] = {
         "enabled": False,
         "mode": os.getenv("GENERAL_CHAT_MCP_MODE", "local"),
         "tools": [],
         "approved_tools": list(_DEFAULT_MCP_APPROVED_TOOLS),
+        "allowed_tools": list(_DEFAULT_MCP_APPROVED_TOOLS),
     }
     mcp_error: str | None = None
     if _env_flag("GENERAL_CHAT_MCP_ENABLED", default=False):
         try:
-            mcp_tools, mcp_summary = _load_mcp_tools_for_chat()
+            mcp_tools, mcp_summary = _load_mcp_tools_for_chat(mcp_permission_session)
         except Exception as exc:
             mcp_error = str(exc)
             mcp_summary = {
@@ -739,6 +753,7 @@ def create_agent(
     agent._mcp_summary = mcp_summary  # type: ignore[attr-defined]
     agent._mcp_error = mcp_error  # type: ignore[attr-defined]
     agent._mcp_tools = mcp_tools  # type: ignore[attr-defined]
+    agent._mcp_permission_session = mcp_permission_session  # type: ignore[attr-defined]
     agent._external_mcp_summary = external_mcp_summary  # type: ignore[attr-defined]
     agent._external_mcp_tools = external_mcp_tools  # type: ignore[attr-defined]
     agent._external_mcp_tool_names = {tool.name for tool in external_mcp_tools}  # type: ignore[attr-defined]

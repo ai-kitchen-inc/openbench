@@ -21,12 +21,21 @@ import copy
 import logging
 import threading
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from openbench.chat.session import ChatSession
 from openbench.intelligence.base import AgentMemory, BaseAgent, ProgressEvent
+from openbench.mcp.permissions import MCPPermissionContext, use_mcp_permission_context
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class A2UIStreamMessage:
+    """A2UI message emitted while an agent run is still active."""
+
+    message: dict[str, Any]
 
 
 class AGUIHandler:
@@ -144,6 +153,18 @@ class AGUIHandler:
             return agent_copy
         return agent
 
+    def _create_permission_context(
+        self,
+        *,
+        session_id: str,
+        thread_id: str,
+        run_id: str,
+        queue: asyncio.Queue,
+        loop: asyncio.AbstractEventLoop,
+    ) -> MCPPermissionContext | None:
+        """Return an optional MCP permission context for this run."""
+        return None
+
     async def handle(self, request: Any) -> Any:
         """Handle an incoming request and return an SSE StreamingResponse.
 
@@ -239,7 +260,7 @@ class AGUIHandler:
 
             # ── Step 2: Agent execution (with streaming text + progress) ──
             message_id = f"msg-{uuid.uuid4().hex[:8]}"
-            queue: asyncio.Queue[str | ProgressEvent | None] = asyncio.Queue()
+            queue: asyncio.Queue[str | ProgressEvent | A2UIStreamMessage | None] = asyncio.Queue()
             loop = asyncio.get_event_loop()
 
             def on_chunk(delta: str) -> None:
@@ -250,6 +271,14 @@ class AGUIHandler:
                 """Callback from sync agent thread → async queue."""
                 loop.call_soon_threadsafe(queue.put_nowait, event)
 
+            permission_context = self._create_permission_context(
+                session_id=session_id,
+                thread_id=thread_id,
+                run_id=run_id,
+                queue=queue,
+                loop=loop,
+            )
+
             # Clear render items before agent execution
             if self.engine._clear_render_items_fn:
                 self.engine._clear_render_items_fn()
@@ -257,9 +286,9 @@ class AGUIHandler:
             # Run agent in thread pool with per-request agent and session
             agent_task = asyncio.create_task(
                 asyncio.to_thread(
-                    self.engine._execute_agent,
+                    self._execute_agent_with_permission_context,
+                    permission_context,
                     content,
-                    None,
                     attachments,
                     on_chunk,
                     session,
@@ -285,6 +314,9 @@ class AGUIHandler:
                 item = await queue.get()
                 if item is None:
                     break
+                if isinstance(item, A2UIStreamMessage):
+                    yield encoder.encode(CustomEvent(name="a2ui", value=item.message))
+                    continue
                 if isinstance(item, ProgressEvent):
                     # Close previous step, open new one
                     if current_step:
@@ -373,6 +405,27 @@ class AGUIHandler:
                     session.session_id,
                 )
             yield encoder.encode(RunErrorEvent(message=str(e), code="AGENT_ERROR"))
+
+    def _execute_agent_with_permission_context(
+        self,
+        permission_context: MCPPermissionContext | None,
+        content: str,
+        attachments: list | None,
+        on_chunk,
+        session: ChatSession,
+        request_agent: Any,
+        on_progress,
+    ) -> Any:
+        with use_mcp_permission_context(permission_context):
+            return self.engine._execute_agent(
+                content,
+                None,
+                attachments,
+                on_chunk,
+                session,
+                request_agent,
+                on_progress,
+            )
 
     def _extract_content(self, body: dict[str, Any]) -> tuple[str, list | None]:
         """Extract content and attachments from request body.
