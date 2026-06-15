@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openbench"
-version = "0.1.0"
+dynamic = ["version"]
 description = "The Open Source Agentic AI Workbench - Build. Orchestrate. Export. Scale."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -137,11 +137,15 @@ Issues = "https://github.com/ai-kitchen-inc/openbench/issues"
 [project.scripts]
 openbench = "openbench.cli.main:cli"
 
+[tool.setuptools.dynamic]
+version = {attr = "openbench._version.__version__"}
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 openbench = [
+    "py.typed",
     "skills/*/SKILL.md",
     "skills/*/tools.py",
     "skills/*/references/*.md",
@@ -265,3 +269,21 @@ disable_error_code = ["assignment"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
+
+[tool.coverage.run]
+branch = true
+source = ["openbench"]
+omit = [
+    "*/tests/*",
+    "*/examples/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

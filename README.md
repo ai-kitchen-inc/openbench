@@ -13,11 +13,12 @@
 
 **Build. Orchestrate. Export. Scale.**
 
+[![CI](https://github.com/ai-kitchen-inc/openbench/actions/workflows/ci.yml/badge.svg)](https://github.com/ai-kitchen-inc/openbench/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![GitHub Stars](https://img.shields.io/github/stars/ai-kitchen-inc/openbench?style=social)](https://github.com/ai-kitchen-inc/openbench)
 
-[Documentation](docs/README.md) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [Examples](#-use-cases) • [Contributing](CONTRIBUTING.md)
+[Documentation](docs/README.md) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [Examples](#-use-cases) • [Support](SUPPORT.md) • [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -261,8 +262,8 @@ ruff check src/ tests/       # Lint
 ruff check --fix src/ tests/  # Lint + auto-fix
 ruff format src/ tests/       # Format
 
-# Setup pre-commit hooks (runs ruff automatically on git commit)
-pre-commit install
+# Setup git hooks (lefthook runs ruff + biome automatically on git commit)
+npx lefthook install
 
 # Run tests
 python -m unittest discover tests -v
@@ -282,9 +283,26 @@ pnpm vitest               # Run tests
 npx @biomejs/biome check src/  # Lint
 ```
 
+## Troubleshooting
+
+| Symptom | Fix |
+| ------- | --- |
+| `ModuleNotFoundError` for an optional dep (pinecone, fastapi, pandas, ...) | Install the matching extra, e.g. `pip install -e ".[vector]"`, `".[chat]"`, `".[data]"`, or `".[all]"`. |
+| `openbench: command not found` | Reinstall in editable mode: `pip install -e .` and ensure the env's `bin`/`Scripts` is on `PATH`. |
+| LLM calls fail with auth errors | Export the provider key (e.g. `GOOGLE_API_KEY`); OpenBench reads credentials from environment variables. |
+| Frontend build fails | Use **pnpm** (not npm) in `studio/chat-ui`: `pnpm install && pnpm build`. |
+
+Still stuck? See [SUPPORT.md](SUPPORT.md) or ask in
+[Discussions](https://github.com/ai-kitchen-inc/openbench/discussions).
+
 ## Contributing
 
 [Report bugs](https://github.com/ai-kitchen-inc/openbench/issues) | [Request features](https://github.com/ai-kitchen-inc/openbench/discussions) | [Submit PRs](CONTRIBUTING.md) | [Join Discord](https://discord.com/users/openbench.ai)
+
+New here? Read [CONTRIBUTING.md](CONTRIBUTING.md) and our
+[Code of Conduct](CODE_OF_CONDUCT.md). See also
+[GOVERNANCE.md](GOVERNANCE.md), [SECURITY.md](SECURITY.md), and the
+[CHANGELOG.md](CHANGELOG.md).
 
 ## 📄 License
 

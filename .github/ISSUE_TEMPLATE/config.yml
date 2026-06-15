@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / Discussion
+    url: https://github.com/ai-kitchen-inc/openbench/discussions
+    about: Ask questions and discuss ideas with the community.
+  - name: Security vulnerability
+    url: https://github.com/ai-kitchen-inc/openbench/security/advisories/new
+    about: Report security issues privately (see SECURITY.md).
+  - name: Community chat (Discord)
+    url: https://discord.com/users/openbench.ai
+    about: Real-time chat with the OpenBench community.
