@@ -150,6 +150,32 @@ def test_toolhive_unavailable_status_is_user_safe():
     assert status.management_mode == "unavailable"
 
 
+def test_toolhive_cli_uses_utf8_replacement_decoding(monkeypatch):
+    captured_kwargs = {}
+
+    class FakeService(ToolHiveService):
+        def _resolve_cli(self):
+            return ("thv", "cli")
+
+    class FakeResult:
+        returncode = 0
+        stdout = "ToolHive v9.9.9\n"
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        captured_kwargs.update(kwargs)
+        return FakeResult()
+
+    monkeypatch.setattr("openbench.mcp.toolhive.subprocess.run", fake_run)
+
+    result = FakeService()._run_thv(["version"])
+
+    assert result.stdout == "ToolHive v9.9.9\n"
+    assert captured_kwargs["encoding"] == "utf-8"
+    assert captured_kwargs["errors"] == "replace"
+    assert captured_kwargs["text"] is True
+
+
 def test_toolhive_detects_path_cli_before_ui_cli(monkeypatch):
     monkeypatch.setattr("openbench.mcp.toolhive.shutil.which", lambda name: "/usr/bin/thv")
 
