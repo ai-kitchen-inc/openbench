@@ -14,6 +14,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from openbench.chat.transport.validation import (
+    ChatTransportValidationError,
+    raise_invalid_request,
+    validate_action_request_body,
+)
+
 logger = logging.getLogger(__name__)
 
 # Handler type: receives ActionData, returns list of A2UI message dicts
@@ -107,7 +113,10 @@ class AGUIActionHandler:
         Returns:
             List of A2UI message dicts.
         """
-        body = await request.json()
+        try:
+            body = validate_action_request_body(await request.json())
+        except (ChatTransportValidationError, ValueError):
+            raise_invalid_request()
 
         action = ActionData(
             name=body.get("name", ""),
@@ -118,7 +127,7 @@ class AGUIActionHandler:
             thread_id=body.get("threadId"),
         )
 
-        logger.info(f"Action received: {action.name} on surface {action.surface_id}")
+        logger.info("Action received: %s on surface %s", action.name, action.surface_id)
 
         handler = self._handlers.get(action.name)
         if handler:
@@ -128,7 +137,7 @@ class AGUIActionHandler:
                     result = await result
                 return result
             except Exception:
-                logger.exception(f"Handler error for action '{action.name}'")
+                logger.exception("Handler error for action %s", action.name)
                 return self._error_response(action, "Action handler failed")
 
         return self._default_response(action)
@@ -145,7 +154,7 @@ class AGUIActionHandler:
         This prevents destructive behavior for data-binding events
         like 'change' from form fields.
         """
-        logger.debug(f"No handler for action '{action.name}', ignoring")
+        logger.debug("No handler for action %s, ignoring", action.name)
         return []
 
     def _error_response(self, action: ActionData, message: str) -> list[dict[str, Any]]:

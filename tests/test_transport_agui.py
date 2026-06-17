@@ -5,9 +5,12 @@ import json
 import unittest
 from typing import Any
 
+from fastapi import HTTPException
+
 from openbench.chat.a2ui.schema import A2UI_VERSION
 from openbench.chat.engine import ChatEngine
 from openbench.chat.transport.agui import A2UIStreamMessage, AGUIHandler
+from openbench.chat.transport.validation import MAX_CONTENT_LENGTH
 from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult
 from openbench.mcp.permissions import (
     MCPPermissionContext,
@@ -66,6 +69,18 @@ class StreamingMockAgent(Agent):
 
     def estimate_cost(self, context: ExecutionContext) -> float:
         return 0.001
+
+
+class CountingAgent(MockAgent):
+    """Mock agent that records whether execution was reached."""
+
+    def __init__(self, response: str = "Hello!"):
+        super().__init__(response)
+        self.calls = 0
+
+    def execute(self, context: ExecutionContext) -> ExecutionResult:
+        self.calls += 1
+        return super().execute(context)
 
 
 class PermissionPromptAgent(Agent):
@@ -131,11 +146,11 @@ class ErrorMockAgent(Agent):
 class MockRequest:
     """Mock FastAPI Request object."""
 
-    def __init__(self, body: dict[str, Any], accept: str = "text/event-stream"):
+    def __init__(self, body: Any, accept: str = "text/event-stream"):
         self._body = body
         self.headers = {"accept": accept}
 
-    async def json(self) -> dict[str, Any]:
+    async def json(self) -> Any:
         return self._body
 
 
@@ -157,6 +172,17 @@ async def _collect_events(handler: AGUIHandler, body: dict[str, Any]) -> list[di
         if line.startswith("data: "):
             data = json.loads(line[6:])
             events.append(data)
+    return events
+
+
+async def _collect_response_events(response: Any) -> list[dict]:
+    """Collect all SSE events from a StreamingResponse."""
+    events = []
+    async for chunk in response.body_iterator:
+        line = chunk.decode() if isinstance(chunk, bytes) else chunk
+        line = line.strip()
+        if line.startswith("data: "):
+            events.append(json.loads(line[6:]))
     return events
 
 
@@ -549,6 +575,91 @@ class TestAGUIHandlerHandle(unittest.TestCase):
 
         self.assertIsInstance(response, StreamingResponse)
         self.assertEqual(response.media_type, "text/event-stream")
+
+    def test_handle_valid_agui_messages_streams_normally(self):
+        """A valid AG-UI messages body should pass validation and stream."""
+        engine = ChatEngine(agent=MockAgent("Reply"))
+        handler = AGUIHandler(engine=engine)
+        request = MockRequest(
+            {
+                "threadId": "thread-1",
+                "runId": "run-1",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "forwardedProps": {"sessionId": "session-1"},
+            }
+        )
+
+        response = _run(handler.handle(request))
+        events = _run(_collect_response_events(response))
+
+        self.assertEqual(events[0]["type"], "RUN_STARTED")
+        self.assertEqual(events[-1]["type"], "RUN_FINISHED")
+        self.assertEqual(events[-1]["result"]["content"], "Reply")
+
+    def test_handle_rejects_non_object_json_before_agent_execution(self):
+        agent = CountingAgent("Reply")
+        engine = ChatEngine(agent=agent)
+        handler = AGUIHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(MockRequest(["not", "an", "object"])))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(agent.calls, 0)
+        self.assertEqual(handler._sessions, {})
+
+    def test_handle_rejects_invalid_thread_id_before_agent_execution(self):
+        agent = CountingAgent("Reply")
+        engine = ChatEngine(agent=agent)
+        handler = AGUIHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(MockRequest({"content": "Hello", "threadId": "bad id!"})))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(agent.calls, 0)
+
+    def test_handle_rejects_invalid_forwarded_session_id(self):
+        agent = CountingAgent("Reply")
+        engine = ChatEngine(agent=agent)
+        handler = AGUIHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(
+                handler.handle(
+                    MockRequest(
+                        {
+                            "content": "Hello",
+                            "forwardedProps": {"sessionId": "bad/session"},
+                        }
+                    )
+                )
+            )
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(agent.calls, 0)
+
+    def test_handle_rejects_overlong_content(self):
+        agent = CountingAgent("Reply")
+        engine = ChatEngine(agent=agent)
+        handler = AGUIHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(MockRequest({"content": "x" * (MAX_CONTENT_LENGTH + 1)})))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(agent.calls, 0)
+
+    def test_handle_rejects_malformed_messages(self):
+        agent = CountingAgent("Reply")
+        engine = ChatEngine(agent=agent)
+        handler = AGUIHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(MockRequest({"messages": [{"role": "user", "content": 123}]})))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(agent.calls, 0)
 
 
 class TestAGUIHandlerTextStreaming(unittest.TestCase):

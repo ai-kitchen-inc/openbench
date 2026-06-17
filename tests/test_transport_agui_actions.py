@@ -5,6 +5,8 @@ import unittest
 from typing import Any
 from unittest.mock import MagicMock
 
+from fastapi import HTTPException
+
 from openbench.chat.engine import ChatEngine
 from openbench.chat.transport.agui_actions import ActionData, AGUIActionHandler
 from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult
@@ -27,10 +29,10 @@ class MockAgent(Agent):
 class MockRequest:
     """Mock FastAPI Request object."""
 
-    def __init__(self, body: dict[str, Any]):
+    def __init__(self, body: Any):
         self._body = body
 
-    async def json(self) -> dict[str, Any]:
+    async def json(self) -> Any:
         return self._body
 
 
@@ -92,16 +94,16 @@ class TestAGUIActionHandlerDefaultResponse(unittest.TestCase):
         self.assertIsInstance(messages, list)
         self.assertEqual(len(messages), 0)
 
-    def test_action_data_with_missing_fields(self):
-        """Minimal body handled gracefully -- returns empty (no-op)."""
+    def test_missing_surface_id_is_rejected(self):
+        """Action bodies must include required fields at the transport boundary."""
         engine = ChatEngine(agent=MockAgent())
         handler = AGUIActionHandler(engine=engine)
         request = MockRequest({"name": "click"})
 
-        messages = _run(handler.handle(request))
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(request))
 
-        self.assertIsInstance(messages, list)
-        self.assertEqual(len(messages), 0)
+        self.assertEqual(ctx.exception.status_code, 422)
 
 
 class TestAGUIActionHandlerRegistry(unittest.TestCase):
@@ -238,6 +240,108 @@ class TestAGUIActionHandlerRegistry(unittest.TestCase):
             return []
 
         self.assertIs(handler._handlers["test"], my_func)
+
+
+class TestAGUIActionHandlerValidation(unittest.TestCase):
+    """Tests for action request validation at the REST boundary."""
+
+    def test_rejects_non_object_json(self):
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(MockRequest(["not", "an", "object"])))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    def test_missing_name_is_rejected_before_handler_dispatch(self):
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+        called = []
+
+        @handler.on("submit")
+        def capture(action: ActionData):
+            called.append(action)
+            return []
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(MockRequest({"surfaceId": "s-1"})))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(called, [])
+
+    def test_invalid_action_name_is_rejected(self):
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(MockRequest({"name": "bad action", "surfaceId": "s-1"})))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    def test_invalid_thread_id_is_rejected(self):
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(
+                handler.handle(
+                    MockRequest(
+                        {
+                            "name": "submit",
+                            "surfaceId": "s-1",
+                            "threadId": "bad/thread",
+                        }
+                    )
+                )
+            )
+
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    def test_non_object_context_is_rejected(self):
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(
+                handler.handle(
+                    MockRequest(
+                        {
+                            "name": "submit",
+                            "surfaceId": "s-1",
+                            "context": ["not", "an", "object"],
+                        }
+                    )
+                )
+            )
+
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    def test_non_object_data_model_is_rejected_before_handler_dispatch(self):
+        engine = ChatEngine(agent=MockAgent())
+        handler = AGUIActionHandler(engine=engine)
+        called = []
+
+        @handler.on("submit")
+        def capture(action: ActionData):
+            called.append(action)
+            return []
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(
+                handler.handle(
+                    MockRequest(
+                        {
+                            "name": "submit",
+                            "surfaceId": "s-1",
+                            "dataModel": ["not", "an", "object"],
+                        }
+                    )
+                )
+            )
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(called, [])
 
 
 class TestAGUIActionHandlerErrorHandling(unittest.TestCase):

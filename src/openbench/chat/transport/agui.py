@@ -25,6 +25,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from openbench.chat.session import ChatSession
+from openbench.chat.transport.validation import (
+    ChatTransportValidationError,
+    raise_invalid_request,
+    validate_stream_request_body,
+)
 from openbench.intelligence.base import AgentMemory, BaseAgent, ProgressEvent
 from openbench.mcp.permissions import MCPPermissionContext, use_mcp_permission_context
 
@@ -178,7 +183,10 @@ class AGUIHandler:
         """
         from fastapi.responses import StreamingResponse
 
-        body = await request.json()
+        try:
+            body = validate_stream_request_body(await request.json())
+        except (ChatTransportValidationError, ValueError):
+            raise_invalid_request()
         accept = request.headers.get("accept", "text/event-stream")
 
         return StreamingResponse(
