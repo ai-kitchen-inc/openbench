@@ -536,7 +536,8 @@ def create_app() -> FastAPI:
                 raw_config = json.dumps(body)
             else:
                 raise MCPRegistryError("Paste a JSON object containing mcpServers.")
-            return mcp_registry_store.import_config_json(raw_config)
+            secrets = body.get("secrets") if isinstance(body.get("secrets"), dict) else None
+            return mcp_registry_store.import_config_json(raw_config, secret_values=secrets)
         except MCPRegistryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

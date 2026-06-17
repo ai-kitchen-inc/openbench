@@ -31,6 +31,17 @@ const playwrightServer: RegisteredMCPServer = {
     args: ["run", "-i", "--rm", "mcp/playwright"],
     env: { PLAYWRIGHT_TOKEN: "***REDACTED***" },
   },
+  secrets: [
+    {
+      key: "PLAYWRIGHT_TOKEN",
+      secretKey: "PLAYWRIGHT_TOKEN",
+      source: "managed",
+      configured: true,
+      missing: false,
+      status: "configured",
+      value: "***REDACTED***",
+    },
+  ],
 };
 
 const discoveredServer: RegisteredMCPServer = {
@@ -203,6 +214,11 @@ describe("McpCatalogPanel", () => {
         if (String(body.config).includes("bad")) {
           return jsonResponse({ detail: "MCP config must contain a top-level mcpServers object." }, 400);
         }
+        if (String(body.config).includes("PLAYWRIGHT_TOKEN")) {
+          expect(body.secrets).toEqual({ PLAYWRIGHT_TOKEN: "typed-token" });
+          expect(JSON.stringify(body.secrets)).not.toContain("pasted-token");
+          expect(JSON.stringify(body.secrets)).not.toContain("removed-token");
+        }
         return jsonResponse(basePayload);
       }
       throw new Error(`Unexpected request: ${url}`);
@@ -213,14 +229,29 @@ describe("McpCatalogPanel", () => {
 
     await screen.findByText("Add a ToolHive workload, ToolHive URL, or standard mcpServers JSON config.");
     await userEvent.click(screen.getByRole("button", { name: "Add servers" }));
+    const dialog = screen.getByRole("dialog", { name: "Add MCP servers" });
+    expect((screen.getByLabelText("MCP JSON config") as HTMLTextAreaElement).value).not.toContain("HF_TOKEN");
+    expect(within(dialog).getByText("Docker env")).toBeInTheDocument();
+    expect(within(dialog).getByText(/encrypted before saving/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("MCP JSON config"), { target: { value: '{"bad":{}}' } });
-    await userEvent.click(within(screen.getByRole("dialog", { name: "Add MCP servers" })).getByRole("button", { name: "Register servers" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Register servers" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("mcpServers");
     fireEvent.change(screen.getByLabelText("MCP JSON config"), {
-      target: { value: '{"mcpServers":{"playwright":{"command":"docker"}}}' },
+      target: {
+        value:
+          '{"mcpServers":{"playwright":{"command":"docker","env":{"PLAYWRIGHT_TOKEN":"pasted-token"}}}}',
+      },
     });
-    await userEvent.click(within(screen.getByRole("dialog", { name: "Add MCP servers" })).getByRole("button", { name: "Register servers" }));
+    await userEvent.type(within(dialog).getByLabelText("Key"), "REMOVED_TOKEN");
+    await userEvent.type(within(dialog).getByLabelText("Value"), "removed-token");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Add env" }));
+    const keyInputs = within(dialog).getAllByLabelText("Key");
+    const valueInputs = within(dialog).getAllByLabelText("Value");
+    await userEvent.type(keyInputs[1], "PLAYWRIGHT_TOKEN");
+    await userEvent.type(valueInputs[1], "typed-token");
+    await userEvent.click(within(dialog).getAllByRole("button", { name: "Remove" })[0]);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Register servers" }));
 
     expect(await screen.findByText("playwright")).toBeInTheDocument();
   });
@@ -246,6 +277,8 @@ describe("McpCatalogPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(await screen.findByText("browser_click")).toBeInTheDocument();
     expect(screen.getByText("selector: string required")).toBeInTheDocument();
+    expect(screen.getByText("Encrypted and injected at runtime")).toBeInTheDocument();
+    expect(screen.getByText("***REDACTED***")).toBeInTheDocument();
   });
 
   it("toggles servers and individual tools", async () => {

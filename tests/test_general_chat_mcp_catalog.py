@@ -43,6 +43,22 @@ from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordina
 from general_chat.server.handler import GeneralChatHandler
 
 
+class FakeCredentialEncryption:
+    is_available = True
+
+    def encrypt(self, value: str) -> str:
+        return f"enc:v1:{value[::-1]}"
+
+    def decrypt(self, value: str) -> str:
+        if value.startswith("enc:v1:"):
+            return value[len("enc:v1:") :][::-1]
+        return value
+
+
+class DisabledCredentialEncryption:
+    is_available = False
+
+
 def _external_servers(payload: dict) -> list[dict]:
     return [
         server
@@ -98,7 +114,69 @@ PLAYWRIGHT_CONFIG = json.dumps(
                 "command": "docker",
                 "args": ["run", "-i", "--rm", "mcp/playwright"],
                 "cwd": "examples/general-chat",
+            }
+        }
+    }
+)
+
+PLAYWRIGHT_LITERAL_ENV_CONFIG = json.dumps(
+    {
+        "mcpServers": {
+            "playwright": {
+                "command": "docker",
+                "args": ["run", "-i", "--rm", "mcp/playwright"],
+                "cwd": "examples/general-chat",
                 "env": {"PLAYWRIGHT_TOKEN": "secret-token"},
+            }
+        }
+    }
+)
+
+GRAFANA_CONFIG = json.dumps(
+    {
+        "mcpServers": {
+            "grafana": {
+                "command": "docker",
+                "args": [
+                    "run",
+                    "-i",
+                    "--rm",
+                    "-e",
+                    "GRAFANA_URL",
+                    "-e",
+                    "GRAFANA_API_KEY",
+                    "mcp/grafana",
+                    "--transport=stdio",
+                ],
+                "env": {
+                    "GRAFANA_URL": "http://localhost:3000",
+                    "GRAFANA_API_KEY": "grafana-token",
+                },
+            }
+        }
+    }
+)
+
+PLAYWRIGHT_SECRET_REF_CONFIG = json.dumps(
+    {
+        "mcpServers": {
+            "playwright": {
+                "command": "docker",
+                "args": ["run", "-i", "--rm", "mcp/playwright"],
+                "cwd": "examples/general-chat",
+                "env": {"PLAYWRIGHT_TOKEN": "${secret:PLAYWRIGHT_TOKEN}"},
+            }
+        }
+    }
+)
+
+PLAYWRIGHT_ENV_REF_CONFIG = json.dumps(
+    {
+        "mcpServers": {
+            "playwright": {
+                "command": "docker",
+                "args": ["run", "-i", "--rm", "mcp/playwright"],
+                "env": {"PLAYWRIGHT_TOKEN": "${PLAYWRIGHT_TOKEN}"},
             }
         }
     }
@@ -562,8 +640,12 @@ class TestGeneralChatMCPPermissionCoordinator(unittest.TestCase):
 class TestMCPServerRegistryStore(unittest.TestCase):
     def test_import_valid_standard_mcp_json_registers_server(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = MCPServerRegistryStore(tmpdir)
-            payload = store.import_config_json(PLAYWRIGHT_CONFIG)
+            with patch(
+                "general_chat.mcp_registry.get_credential_encryption",
+                return_value=FakeCredentialEncryption(),
+            ):
+                store = MCPServerRegistryStore(tmpdir)
+                payload = store.import_config_json(PLAYWRIGHT_LITERAL_ENV_CONFIG)
 
             self.assertEqual(len(payload["servers"]), 2)
             server = _external_servers(payload)[0]
@@ -579,6 +661,150 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             self.assertEqual(server["displayConfig"]["env"]["PLAYWRIGHT_TOKEN"], "***REDACTED***")
             self.assertNotIn("catalog", json.dumps(payload).lower())
             self.assertNotIn("oci", json.dumps(payload).lower())
+
+    def test_import_docker_literal_env_values_are_encrypted_and_resolved(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict(environ, {}, clear=True),
+                patch(
+                    "general_chat.mcp_registry.get_credential_encryption",
+                    return_value=FakeCredentialEncryption(),
+                ),
+            ):
+                store = MCPServerRegistryStore(tmpdir)
+                payload = store.import_config_json(GRAFANA_CONFIG)
+
+                registry_text = (Path(tmpdir) / "mcp_registry" / "servers.json").read_text(
+                    encoding="utf-8"
+                )
+                secrets_text = (Path(tmpdir) / "mcp_registry" / "secrets.json").read_text(
+                    encoding="utf-8"
+                )
+                self.assertNotIn("http://localhost:3000", registry_text)
+                self.assertNotIn("grafana-token", registry_text)
+                self.assertNotIn("http://localhost:3000", secrets_text)
+                self.assertNotIn("grafana-token", secrets_text)
+
+                server = _external_servers(payload)[0]
+                self.assertEqual(
+                    {secret["secretKey"]: secret["status"] for secret in server["secrets"]},
+                    {"GRAFANA_API_KEY": "configured", "GRAFANA_URL": "configured"},
+                )
+
+                runtime = MCPServerRegistryStore(tmpdir).build_enabled_client_config()
+                self.assertEqual(runtime.servers["grafana"].env["GRAFANA_URL"], "http://localhost:3000")
+                self.assertEqual(runtime.servers["grafana"].env["GRAFANA_API_KEY"], "grafana-token")
+
+    def test_manual_docker_env_rows_are_encrypted_and_override_json_env(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "general_chat.mcp_registry.get_credential_encryption",
+                return_value=FakeCredentialEncryption(),
+            ):
+                store = MCPServerRegistryStore(tmpdir)
+                payload = store.import_config_json(
+                    GRAFANA_CONFIG,
+                    secret_values={
+                        "GRAFANA_API_KEY": "manual-token",
+                        "EXTRA_FLAG": "extra-secret-value",
+                    },
+                )
+
+                registry_text = (Path(tmpdir) / "mcp_registry" / "servers.json").read_text(
+                    encoding="utf-8"
+                )
+                self.assertNotIn("manual-token", registry_text)
+                self.assertNotIn("grafana-token", registry_text)
+                self.assertNotIn("extra-secret-value", registry_text)
+
+                server = _external_servers(payload)[0]
+                self.assertEqual(
+                    {secret["secretKey"]: secret["status"] for secret in server["secrets"]},
+                    {
+                        "EXTRA_FLAG": "configured",
+                        "GRAFANA_API_KEY": "configured",
+                        "GRAFANA_URL": "configured",
+                    },
+                )
+                runtime = store.build_enabled_client_config()
+                self.assertEqual(runtime.servers["grafana"].env["GRAFANA_API_KEY"], "manual-token")
+                self.assertEqual(runtime.servers["grafana"].env["EXTRA_FLAG"], "extra-secret-value")
+
+    def test_import_secret_placeholder_stores_typed_value_encrypted_and_resolves_runtime_env(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "general_chat.mcp_registry.get_credential_encryption",
+                return_value=FakeCredentialEncryption(),
+            ):
+                store = MCPServerRegistryStore(tmpdir)
+                payload = store.import_config_json(
+                    PLAYWRIGHT_SECRET_REF_CONFIG,
+                    secret_values={"PLAYWRIGHT_TOKEN": "typed-token"},
+                )
+
+                registry_text = (Path(tmpdir) / "mcp_registry" / "servers.json").read_text(
+                    encoding="utf-8"
+                )
+                secrets_text = (Path(tmpdir) / "mcp_registry" / "secrets.json").read_text(
+                    encoding="utf-8"
+                )
+                self.assertNotIn("secret-token", registry_text)
+                self.assertNotIn("typed-token", registry_text)
+                self.assertNotIn("typed-token", secrets_text)
+                self.assertIn("enc:v1:", secrets_text)
+
+                server = _external_servers(payload)[0]
+                self.assertEqual(server["secrets"][0]["source"], "managed")
+                self.assertEqual(server["secrets"][0]["secretKey"], "PLAYWRIGHT_TOKEN")
+                self.assertTrue(server["secrets"][0]["configured"])
+
+                runtime = store.build_enabled_client_config()
+                self.assertEqual(runtime.servers["playwright"].env["PLAYWRIGHT_TOKEN"], "typed-token")
+
+                store.remove_server(server["id"])
+                self.assertFalse(store.secret_store.has(server["id"], "PLAYWRIGHT_TOKEN"))
+
+    def test_import_secret_placeholder_reports_missing_secret(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_config_json(PLAYWRIGHT_SECRET_REF_CONFIG)
+
+            server = _external_servers(payload)[0]
+            self.assertEqual(server["secrets"][0]["key"], "PLAYWRIGHT_TOKEN")
+            self.assertTrue(server["secrets"][0]["missing"])
+
+            with self.assertRaisesRegex(MCPRegistryError, "missing from managed storage"):
+                store.build_enabled_client_config()
+
+    def test_local_environment_reference_remains_available_without_managed_secret(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_config_json(PLAYWRIGHT_ENV_REF_CONFIG)
+
+            server = _external_servers(payload)[0]
+            self.assertEqual(server["secrets"], [])
+
+            with patch.dict(environ, {"PLAYWRIGHT_TOKEN": "env-token"}, clear=True):
+                runtime = store.build_enabled_client_config()
+                self.assertEqual(runtime.servers["playwright"].env["PLAYWRIGHT_TOKEN"], "env-token")
+
+    def test_import_managed_secret_fails_when_encryption_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "general_chat.mcp_registry.get_credential_encryption",
+                return_value=DisabledCredentialEncryption(),
+            ):
+                store = MCPServerRegistryStore(tmpdir)
+                with self.assertRaisesRegex(MCPRegistryError, "requires credential encryption"):
+                    store.import_config_json(PLAYWRIGHT_LITERAL_ENV_CONFIG)
+
+                with self.assertRaisesRegex(MCPRegistryError, "requires credential encryption"):
+                    store.import_config_json(PLAYWRIGHT_CONFIG, secret_values={"PLAYWRIGHT_TOKEN": "typed-token"})
+
+                registry_path = Path(tmpdir) / "mcp_registry" / "servers.json"
+                if registry_path.exists():
+                    self.assertNotIn("typed-token", registry_path.read_text(encoding="utf-8"))
+                    self.assertNotIn("secret-token", registry_path.read_text(encoding="utf-8"))
 
     def test_invalid_json_missing_mcp_servers_and_invalid_server_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:

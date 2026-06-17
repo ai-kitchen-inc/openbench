@@ -29,6 +29,7 @@ import { filterServers, type RegistryFilters, type SortMode, type StatusFilter }
 import type {
   MCPDiscoveredTool,
   MCPRegistryPayload,
+  MCPSecretMetadata,
   RegisteredMCPServer,
   ToolHiveRegistryServer,
   ToolHiveStatus,
@@ -37,7 +38,7 @@ import type {
 
 const EXAMPLE_CONFIG = `{
   "mcpServers": {
-    "playwright": {
+    "custom_docker": {
       "command": "docker",
       "args": [
         "run",
@@ -60,6 +61,23 @@ const TOOLHIVE_DOC_SERVER = "toolhive-doc-mcp";
 function readErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+type SecretRow = {
+  id: string;
+  key: string;
+  value: string;
+};
+
+function buildSecretPayload(rows: SecretRow[]): Record<string, string> | undefined {
+  const payload: Record<string, string> = {};
+  for (const row of rows) {
+    const key = row.key.trim();
+    const value = row.value.trim();
+    if (!key || !value) continue;
+    payload[key] = value;
+  }
+  return Object.keys(payload).length ? payload : undefined;
 }
 
 function toolHiveModeLabel(status: ToolHiveStatus | null): string {
@@ -132,13 +150,18 @@ function ImportDialog({
   const [config, setConfig] = useState(EXAMPLE_CONFIG);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const nextSecretId = useRef(2);
+  const [secretRows, setSecretRows] = useState<SecretRow[]>([{ id: "secret-1", key: "", value: "" }]);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setIsSubmitting(true);
     setError("");
     try {
-      const payload = await importMCPConfig({ config });
+      const payload = await importMCPConfig({
+        config,
+        secrets: buildSecretPayload(secretRows),
+      });
       onImported(payload);
       onClose();
     } catch (error) {
@@ -164,6 +187,68 @@ function ImportDialog({
         </label>
         <div className="mcp-warning">
           Validation checks the JSON shape only. OpenBench starts command-based MCP servers only when you load tools or use chat.
+        </div>
+        <div className="mcp-config-list">
+          <h3>Docker env</h3>
+          <div className="mcp-warning">
+            Docker env values entered here or pasted in JSON <code>env</code> are encrypted before saving and only injected at runtime. Use <code>{'${ENV_VAR}'}</code> to read from your local environment instead.
+          </div>
+          <div className="mcp-config-list">
+            {secretRows.map((row) => (
+              <div key={row.id} className="mcp-detail-grid mcp-detail-grid--forms">
+                <label className="mcp-field">
+                  <span>Key</span>
+                  <input
+                    value={row.key}
+                    placeholder="GRAFANA_API_KEY"
+                    onChange={(event) =>
+                      setSecretRows((current) =>
+                        current.map((item) =>
+                          item.id === row.id ? { ...item, key: event.target.value } : item,
+                        ),
+                      )
+                    }
+                  />
+                </label>
+                <label className="mcp-field">
+                  <span>Value</span>
+                  <input
+                    type="password"
+                    value={row.value}
+                    autoComplete="off"
+                    placeholder="Docker env value"
+                    onChange={(event) =>
+                      setSecretRows((current) =>
+                        current.map((item) =>
+                          item.id === row.id ? { ...item, value: event.target.value } : item,
+                        ),
+                      )
+                    }
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="mcp-btn"
+                  onClick={() =>
+                    setSecretRows((current) => current.filter((item) => item.id !== row.id))
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="mcp-btn"
+            onClick={() => {
+              const id = `secret-${nextSecretId.current}`;
+              nextSecretId.current += 1;
+              setSecretRows((current) => [...current, { id, key: "", value: "" }]);
+            }}
+          >
+            Add env
+          </button>
         </div>
         {error && (
           <div className="mcp-state mcp-state--error" role="alert">
@@ -209,6 +294,10 @@ function parameterSummary(schema: Record<string, unknown>): string {
 
 function ConfigPreview({ config }: { config: Record<string, unknown> }) {
   return <pre className="mcp-config-preview">{JSON.stringify(config, null, 2)}</pre>;
+}
+
+function serverSecrets(server: RegisteredMCPServer): MCPSecretMetadata[] {
+  return server.secretMetadata ?? server.secret_metadata ?? server.secrets ?? [];
 }
 
 function buildUrlConfig(name: string, url: string): string {
@@ -676,6 +765,28 @@ function DetailsDialog({
           <h3>Server configuration</h3>
           <ConfigPreview config={server.config ?? server.displayConfig} />
         </div>
+        {serverSecrets(server).length > 0 && (
+          <div className="mcp-config-list">
+            <h3>Managed env</h3>
+            <div className="mcp-tool-list">
+              {serverSecrets(server).map((secret) => {
+                const key = secret.secretKey ?? secret.secret_key ?? secret.envKey ?? secret.env_key ?? secret.key;
+                return (
+                  <div key={key} className="mcp-tool-row">
+                    <span className={`mcp-pill${secret.missing ? " mcp-pill--error" : " mcp-pill--success"}`}>
+                      {secret.status}
+                    </span>
+                    <div>
+                      <strong>{key}</strong>
+                      <p>{secret.source === "managed" ? "Encrypted and injected at runtime" : "Local environment fallback"}</p>
+                      <code>{secret.configured ? "***REDACTED***" : "missing"}</code>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div className="mcp-config-list">
           <h3>Tools</h3>
           <ToolList server={server} onToggleTool={onToggleTool} />

@@ -361,6 +361,50 @@ The MCP Servers panel also accepts standard MCP client JSON:
 }
 ```
 
+For custom Docker imports, Docker `env` values are safe whether you paste them
+in JSON or enter them with the **Docker env** key/value fields. Literal values
+are encrypted before `servers.json` is saved, redacted in the UI, and decrypted
+only when OpenBench starts the MCP server. For example, you can paste:
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GRAFANA_URL",
+        "-e",
+        "GRAFANA_API_KEY",
+        "mcp/grafana",
+        "--transport=stdio"
+      ],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_API_KEY": "<your service account token>"
+      }
+    }
+  }
+}
+```
+
+You can also leave `env` out of the JSON and add rows such as
+`GRAFANA_URL=http://localhost:3000` and `GRAFANA_API_KEY=<token>` in the Docker
+env table. Manual rows are applied to Docker servers and override same-name JSON
+env values. Advanced configs may still reference reusable managed values with
+`${secret:KEY}`.
+
+To avoid storing a value in OpenBench at all, reference your local environment
+and start General Chat with the env var set locally:
+
+```powershell
+$env:GRAFANA_API_KEY="your_service_account_token"
+openbench demo run general-chat
+```
+
 After registration, load tools from the server, toggle the server or individual
 tools, and ask chat questions that use the enabled MCP tools.
 

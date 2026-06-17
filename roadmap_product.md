@@ -118,19 +118,18 @@ and product proof.
 
 ## My TODOs: Custom Docker MCP And Secret Manager
 
-- [ ] Add a Secret Manager flow for custom Docker MCP setup.
-- [ ] When a user imports or asks to use a custom Docker MCP server, detect
-  secret-like env vars such as `API_KEY`, `TOKEN`, `SECRET`, `PASSWORD`, and
-  `HF_TOKEN`.
-- [ ] Let the user optionally store detected secret values in a managed secret
-  store instead of writing plaintext into MCP config.
-- [ ] Pass secrets into Docker MCP at runtime through env injection or
+- [x] Add a Secret Manager flow for custom Docker MCP setup.
+- [x] When a user imports or asks to use a custom Docker MCP server, accept safe
+  Docker env values from pasted JSON `env` blocks and manual key/value rows.
+- [x] Let the user store Docker env values in a managed encrypted store instead
+  of writing plaintext into MCP config.
+- [x] Pass secrets into Docker MCP at runtime through env injection or
   Docker/ToolHive secret support.
 - [ ] Show which secrets are required, optional, and missing before enabling the
   MCP server.
 - [ ] Redact secrets in the UI, logs, registry files, permission prompts, audit
   records, and diagnostics.
-- [ ] Add a clear fallback for local development where users can keep secrets in
+- [x] Add a clear fallback for local development where users can keep secrets in
   their own environment variables without OpenBench storing them.
 
 ## Product Assumptions

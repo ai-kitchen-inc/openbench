@@ -54,14 +54,31 @@ export type RegisteredMCPServer = {
   enabledToolsCount: number;
   displayConfig: Record<string, unknown>;
   config?: Record<string, unknown>;
+  secrets?: MCPSecretMetadata[];
+  secretMetadata?: MCPSecretMetadata[];
+  secret_metadata?: MCPSecretMetadata[];
 };
 
 export type MCPRegistryPayload = {
   servers: RegisteredMCPServer[];
 };
 
+export type MCPSecretMetadata = {
+  key: string;
+  secretKey?: string;
+  secret_key?: string;
+  envKey?: string;
+  env_key?: string;
+  source: "managed" | "environment" | string;
+  configured: boolean;
+  missing: boolean;
+  status: string;
+  value?: string;
+};
+
 export type ImportMCPConfigPayload = {
   config: string;
+  secrets?: Record<string, string>;
 };
 
 export type ToggleServerPayload = {

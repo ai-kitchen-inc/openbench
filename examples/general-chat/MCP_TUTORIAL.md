@@ -164,7 +164,11 @@ comfortable with file writes to the configured downloads directory.
 
 ## 8. Register Standard MCP JSON
 
-Open the MCP Servers panel in the UI and paste standard MCP client JSON:
+Open the MCP Servers panel in the UI and paste standard MCP client JSON. For
+Docker MCP servers, `env` values are safe whether they come from pasted JSON or
+from the **Docker env** key/value fields. Literal values are encrypted before
+`servers.json` is saved, redacted in the UI, and injected only when OpenBench
+starts the MCP server.
 
 ```json
 {
@@ -193,14 +197,43 @@ You can also register from the API:
 $body = @{
   config = '{
     "mcpServers": {
-      "playwright": {
+      "grafana": {
         "command": "docker",
-        "args": ["run", "-i", "--rm", "mcp/playwright"]
+        "args": [
+          "run",
+          "-i",
+          "--rm",
+          "-e",
+          "GRAFANA_URL",
+          "-e",
+          "GRAFANA_API_KEY",
+          "mcp/grafana",
+          "--transport=stdio"
+        ],
+        "env": {
+          "GRAFANA_URL": "http://localhost:3000",
+          "GRAFANA_API_KEY": "<your service account token>"
+        }
       }
     }
   }'
-} | ConvertTo-Json
+} | ConvertTo-Json -Depth 6
 Invoke-RestMethod http://localhost:8005/mcp/catalogs/import -Method Post -ContentType "application/json" -Body $body
+```
+
+In the UI, the equivalent is to leave `env` out of the JSON and add Docker env
+rows such as `GRAFANA_URL=http://localhost:3000` and
+`GRAFANA_API_KEY=<token>`. Manual rows are applied to Docker servers and
+override same-name JSON env values. Advanced configs may still reference a
+reusable managed value with `${secret:KEY}` and provide that key in the Docker
+env table.
+
+To avoid storing a value in OpenBench at all, reference your local environment
+and start General Chat with the variable set:
+
+```powershell
+$env:GRAFANA_API_KEY="your_service_account_token"
+openbench demo run general-chat
 ```
 
 After loading tools, ask a prompt that explicitly uses the enabled server tools.

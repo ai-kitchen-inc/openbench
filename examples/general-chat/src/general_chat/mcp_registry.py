@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import builtins
+import contextlib
+import copy
 import hashlib
 import json
 import logging
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from openbench.core.providers import get_credential_encryption
 from openbench.mcp.adapters import MCPToolAdapter
 from openbench.mcp.client import MCPClient, create_single_server_client
 from openbench.mcp.config import (
@@ -19,6 +23,7 @@ from openbench.mcp.config import (
     MCPPolicyConfig,
     MCPServerConfig,
     MCPServerConnectionConfig,
+    expand_env_vars,
 )
 from openbench.mcp.permissions import MCPPermissionSession, PermissionProvider
 from openbench.mcp.policy import redact_secrets
@@ -50,12 +55,78 @@ MCP_PROVIDER_KINDS = {"docker", "toolhive", "internal", "manual"}
 INTERNAL_MCP_SERVER_NAME = "openbench"
 INTERNAL_MCP_SERVER_ID = "internal-openbench"
 INTERNAL_MCP_SOURCE = "internal"
+_SECRET_PLACEHOLDER_RE = re.compile(r"\$\{secret:([A-Za-z0-9_.-]+)\}")
+_SECRET_PLACEHOLDER_FULL_RE = re.compile(r"^\$\{secret:([A-Za-z0-9_.-]+)\}$")
+_ENV_PLACEHOLDER_RE = re.compile(r"\$\{([^}:]+)(?::-([^}]*))?\}")
 _DEFAULT_INTERNAL_APPROVED_TOOLS = {
     "filter_records",
     "distinct_values",
     "group_and_aggregate",
     "top_n_records",
 }
+
+
+class MCPSecretStore:
+    """Encrypted local storage for MCP secret values."""
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def set(self, server_id: str, key: str, value: str) -> None:
+        encryption = get_credential_encryption()
+        if not encryption.is_available:
+            raise MCPRegistryError(
+                "Managed MCP secret storage requires credential encryption. "
+                "Install openbench[security] or use a normal ${ENV_VAR} reference for local environment fallback."
+            )
+        data = self._load()
+        secrets = data.setdefault("secrets", {}).setdefault(server_id, {})
+        secrets[key] = {
+            "value": encryption.encrypt(value),
+            "updated_at": _now(),
+        }
+        self._save(data)
+
+    def get(self, server_id: str, key: str) -> str | None:
+        entry = self._load().get("secrets", {}).get(server_id, {}).get(key)
+        if not isinstance(entry, dict):
+            return None
+        encrypted = entry.get("value")
+        if not isinstance(encrypted, str):
+            return None
+        encryption = get_credential_encryption()
+        if not encryption.is_available:
+            raise MCPRegistryError(
+                f"Managed MCP secret {key} cannot be decrypted because credential encryption is unavailable."
+            )
+        return encryption.decrypt(encrypted)
+
+    def has(self, server_id: str, key: str) -> bool:
+        return key in self._load().get("secrets", {}).get(server_id, {})
+
+    def remove_server(self, server_id: str) -> None:
+        data = self._load()
+        if server_id in data.get("secrets", {}):
+            data["secrets"].pop(server_id, None)
+            self._save(data)
+
+    def _load(self) -> dict[str, Any]:
+        if not self.path.exists():
+            return {"version": 1, "secrets": {}}
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Failed to load MCP secret store")
+            return {"version": 1, "secrets": {}}
+        data.setdefault("version", 1)
+        data.setdefault("secrets", {})
+        return data
+
+    def _save(self, data: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        with contextlib.suppress(OSError):
+            os.chmod(self.path, 0o600)
 
 
 @dataclass
@@ -113,6 +184,7 @@ class RegisteredMCPServer:
     last_discovered_at: str | None = None
     tools: list[RegisteredMCPTool] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    secrets: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self, *, detail: bool = False) -> dict[str, Any]:
         display_config = redact_secrets(self.config)
@@ -151,6 +223,9 @@ class RegisteredMCPServer:
             "enabled_tools_count": sum(1 for tool in self.tools if tool.enabled),
             "displayConfig": display_config,
             "display_config": display_config,
+            "secrets": self.secrets,
+            "secretMetadata": self.secrets,
+            "secret_metadata": self.secrets,
         }
         if detail:
             data["config"] = display_config
@@ -183,6 +258,45 @@ def _source_type_for_config(config: dict[str, Any], fallback: str = "manual") ->
 
 def _connection_to_dict(config: MCPServerConnectionConfig) -> dict[str, Any]:
     return config.model_dump(exclude_none=True)
+
+
+def _normalize_import_secret_values(secret_values: dict[str, Any] | None) -> dict[str, str]:
+    if not isinstance(secret_values, dict):
+        return {}
+    return {
+        str(key).strip(): value
+        for key, value in secret_values.items()
+        if str(key).strip() and isinstance(value, str) and value
+    }
+
+
+def _secret_placeholders(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return set(_SECRET_PLACEHOLDER_RE.findall(value))
+    if isinstance(value, dict):
+        found: set[str] = set()
+        for item in value.values():
+            found.update(_secret_placeholders(item))
+        return found
+    if isinstance(value, list):
+        found: set[str] = set()
+        for item in value:
+            found.update(_secret_placeholders(item))
+        return found
+    return set()
+
+
+def _secret_reference(key: str) -> str:
+    return f"${{secret:{key}}}"
+
+
+def _secret_reference_key(value: str) -> str | None:
+    match = _SECRET_PLACEHOLDER_FULL_RE.match(value.strip())
+    return match.group(1) if match else None
+
+
+def _contains_local_env_reference(value: str) -> bool:
+    return bool(_ENV_PLACEHOLDER_RE.search(value))
 
 
 def _policy_to_dict(policy: MCPPolicyConfig) -> dict[str, Any]:
@@ -315,20 +429,30 @@ class MCPServerRegistryStore:
         self.root = Path(root).expanduser().resolve() / "mcp_registry"
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "servers.json"
+        self.secret_store = MCPSecretStore(self.root / "secrets.json")
 
-    def import_config_json(self, raw_json: str) -> dict[str, Any]:
+    def import_config_json(
+        self,
+        raw_json: str,
+        *,
+        secret_values: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         try:
             config = parse_standard_mcp_json(raw_json)
         except MCPConfigImportError as exc:
             raise MCPRegistryError(str(exc)) from exc
 
-        return self.import_client_config(config)
+        return self.import_client_config(
+            config,
+            secret_values=_normalize_import_secret_values(secret_values),
+        )
 
     def import_client_config(
         self,
         config: MCPClientConfig,
         *,
         source: str = "manual",
+        secret_values: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Register MCP servers from an already-validated client config."""
         state = self._load_state()
@@ -345,6 +469,14 @@ class MCPServerRegistryStore:
                 config_dict,
                 existing.get("source", source) if existing else source,
             )
+            provider_kind = _provider_kind_for_source(source_type, config_dict)
+            secret_config = self._prepare_secret_config(
+                server_id=server_id,
+                config=config_dict,
+                provider_kind=provider_kind,
+                existing=existing,
+                supplied_secret_values=secret_values or {},
+            )
             previous_config = existing.get("config") if existing else None
             config_changed = previous_config != config_dict
             logger.info(
@@ -358,10 +490,11 @@ class MCPServerRegistryStore:
                 "name": name,
                 "config": config_dict,
                 "source": source_type,
-                "provider_kind": _provider_kind_for_source(source_type, config_dict),
+                "provider_kind": provider_kind,
                 "source_type": source_type,
                 "server_namespace": connection.namespace or name,
                 "is_managed": False,
+                "secrets": secret_config,
                 "policy": policy_dict,
                 "enabled": existing.get("enabled", True) if existing else True,
                 "status": existing.get("status", "enabled") if existing else "enabled",
@@ -452,6 +585,7 @@ class MCPServerRegistryStore:
             raise MCPRegistryError("Managed MCP servers cannot be removed.")
         state["servers"] = [item for item in state["servers"] if item.get("id") != server_id]
         state.setdefault("tools", {}).pop(server_id, None)
+        self.secret_store.remove_server(server_id)
         self._save_state(state)
 
     def set_server_enabled(self, server_id: str, enabled: bool) -> RegisteredMCPServer:
@@ -507,7 +641,9 @@ class MCPServerRegistryStore:
             if item.get("provider_kind") == "internal":
                 namespace = INTERNAL_MCP_SERVER_NAME
             else:
-                server_config = MCPServerConnectionConfig.model_validate(item["config"])
+                server_config = MCPServerConnectionConfig.model_validate(
+                    self._resolved_config_for_item(item)
+                )
                 namespace = _server_namespace(item, server_config)
             discovered = self._discover_single(item)
             previous = {
@@ -574,7 +710,9 @@ class MCPServerRegistryStore:
                 continue
             if item.get("provider_kind") == "internal":
                 continue
-            servers[item["name"]] = MCPServerConnectionConfig.model_validate(item["config"])
+            servers[item["name"]] = MCPServerConnectionConfig.model_validate(
+                self._resolved_config_for_item(item)
+            )
         return MCPClientConfig(
             servers=servers,
             policy=_policy_for_items(
@@ -834,7 +972,7 @@ class MCPServerRegistryStore:
             client, namespace, _server_config = self._build_client_for_item(item)
             return self._discover_with_client(item, client, namespace)
 
-        server_config = MCPServerConnectionConfig.model_validate(item["config"])
+        server_config = MCPServerConnectionConfig.model_validate(self._resolved_config_for_item(item))
         namespace = _server_namespace(item, server_config)
         client = MCPClient(
             MCPClientConfig(
@@ -863,7 +1001,7 @@ class MCPServerRegistryStore:
             client = create_single_server_client(namespace, InMemoryMCPTransport(server))
             return client, namespace, None
 
-        server_config = MCPServerConnectionConfig.model_validate(item["config"])
+        server_config = MCPServerConnectionConfig.model_validate(self._resolved_config_for_item(item))
         namespace = _server_namespace(item, server_config)
         client = MCPClient(
             MCPClientConfig(
@@ -881,6 +1019,117 @@ class MCPServerRegistryStore:
             )
         )
         return client, namespace, server_config
+
+    def _prepare_secret_config(
+        self,
+        *,
+        server_id: str,
+        config: dict[str, Any],
+        provider_kind: str,
+        existing: dict[str, Any] | None,
+        supplied_secret_values: dict[str, str],
+    ) -> dict[str, dict[str, Any]]:
+        if provider_kind != "docker":
+            return {}
+
+        existing_secrets = dict(existing.get("secrets") or {}) if existing else {}
+        secret_config: dict[str, dict[str, Any]] = {}
+
+        def mark_managed(key: str, *, value: str | None = None) -> None:
+            if value is not None:
+                self.secret_store.set(server_id, key, value)
+                secret_config[key] = {
+                    "source": "managed",
+                    "secret_key": key,
+                    "updated_at": _now(),
+                }
+                return
+
+            supplied = supplied_secret_values.get(key, "")
+            if supplied:
+                self.secret_store.set(server_id, key, supplied)
+                secret_config[key] = {
+                    "source": "managed",
+                    "secret_key": key,
+                    "updated_at": _now(),
+                }
+                return
+
+            previous = existing_secrets.get(key)
+            if (
+                isinstance(previous, dict)
+                and previous.get("source") == "managed"
+                and self.secret_store.has(server_id, key)
+            ):
+                secret_config[key] = {
+                    "source": "managed",
+                    "secret_key": key,
+                    "updated_at": previous.get("updated_at") or _now(),
+                }
+                return
+
+            secret_config[key] = {
+                "source": "managed",
+                "secret_key": key,
+                "updated_at": _now(),
+            }
+
+        env = config.get("env")
+        if not isinstance(env, dict):
+            env = {}
+            if supplied_secret_values:
+                config["env"] = env
+
+        for key, value in sorted(supplied_secret_values.items()):
+            existing_value = env.get(key)
+            if isinstance(existing_value, str) and _secret_reference_key(existing_value):
+                continue
+            env[key] = value
+
+        for env_key, raw_value in list(env.items()):
+            if not isinstance(raw_value, str) or raw_value == "":
+                continue
+            explicit_keys = _secret_placeholders(raw_value)
+            if explicit_keys:
+                for key in sorted(explicit_keys):
+                    mark_managed(key)
+                continue
+            if _contains_local_env_reference(raw_value):
+                continue
+
+            secret_key = str(env_key)
+            mark_managed(secret_key, value=raw_value)
+            env[env_key] = _secret_reference(secret_key)
+
+        for key in sorted(_secret_placeholders(config)):
+            if key not in secret_config:
+                mark_managed(key)
+
+        return secret_config
+
+    def _resolved_config_for_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        config = copy.deepcopy(dict(item.get("config") or {}))
+        return expand_env_vars(self._replace_secret_placeholders(config, item))
+
+    def _replace_secret_placeholders(self, value: Any, item: dict[str, Any]) -> Any:
+        if isinstance(value, str):
+            def replace(match: re.Match[str]) -> str:
+                key = match.group(1)
+                if key not in dict(item.get("secrets") or {}):
+                    raise MCPRegistryError(
+                        f"MCP secret {key} is referenced but was not added to the import secrets."
+                    )
+                secret_value = self.secret_store.get(str(item["id"]), key)
+                if not secret_value:
+                    raise MCPRegistryError(f"MCP secret {key} is missing from managed storage.")
+                return secret_value
+
+            return _SECRET_PLACEHOLDER_RE.sub(replace, value)
+        if isinstance(value, dict):
+            return {key: self._replace_secret_placeholders(item_value, item) for key, item_value in value.items()}
+        if isinstance(value, list):
+            return [self._replace_secret_placeholders(item_value, item) for item_value in value]
+        return value
 
     def _discover_with_client(
         self,
@@ -1071,7 +1320,30 @@ class MCPServerRegistryStore:
             last_discovered_at=item.get("last_discovered_at"),
             tools=tools,
             diagnostics=dict(item.get("diagnostics") or {}),
+            secrets=self._secret_metadata_for_item(item),
         )
+
+    def _secret_metadata_for_item(self, item: dict[str, Any]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for key, raw in sorted(dict(item.get("secrets") or {}).items()):
+            if not isinstance(raw, dict):
+                continue
+            secret_key = str(raw.get("secret_key") or raw.get("env_key") or key)
+            source = str(raw.get("source") or "managed")
+            configured = self.secret_store.has(str(item["id"]), secret_key)
+            result.append(
+                {
+                    "key": secret_key,
+                    "secretKey": secret_key,
+                    "secret_key": secret_key,
+                    "source": source,
+                    "configured": configured,
+                    "missing": not configured,
+                    "status": "configured" if configured else "missing",
+                    "value": "***REDACTED***" if configured else "",
+                }
+            )
+        return result
 
     def _load_state(self) -> dict[str, Any]:
         if not self.path.exists():
