@@ -8,9 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
+import openbench.mcp.adapters as adapters_module
 from openbench.core.abstractions import Tool
 from openbench.intelligence.base import ToolExecutor
-import openbench.mcp.adapters as adapters_module
 from openbench.mcp.adapters import MCPToolAdapter, load_mcp_tools
 from openbench.mcp.client import MCPClient
 from openbench.mcp.config import (
@@ -309,7 +309,7 @@ def test_client_discovery_timeout_is_separate_from_tool_timeout(monkeypatch):
         )
     )
 
-    with pytest.raises(Exception, match="Timed out discovering MCP server 'sam' after 0.01s"):
+    with pytest.raises(Exception, match=r"Timed out discovering MCP server 'sam' after 0\.01s"):
         client.discover_sync()
 
     assert slow_transport.closed is True
@@ -761,10 +761,18 @@ def test_load_mcp_tools_propagates_server_timeout(monkeypatch):
     }
 
     class FakeMCPClient:
+        instances = []
+
         def __init__(self, config):
             self.config = config
+            self.closed = False
+            FakeMCPClient.instances.append(self)
 
         def discover_sync(self):
+            raise AssertionError("load_mcp_tools should use one-shot discovery")
+
+        def discover_and_close_sync(self, refresh: bool = False):
+            self.closed = True
             return SimpleNamespace(
                 servers={
                     "sam_segmentation": SimpleNamespace(
@@ -774,6 +782,7 @@ def test_load_mcp_tools_propagates_server_timeout(monkeypatch):
             )
 
     monkeypatch.setattr(adapters_module, "MCPClient", FakeMCPClient)
+    FakeMCPClient.instances = []
     config = MCPClientConfig(
         servers={
             "sam": MCPServerConnectionConfig(
@@ -789,3 +798,7 @@ def test_load_mcp_tools_propagates_server_timeout(monkeypatch):
     assert len(tools) == 1
     assert tools[0].namespaced_name == "sam_segmentation.count_objects_with_sam3"
     assert tools[0].timeout_seconds == 456.0
+    assert len(FakeMCPClient.instances) == 2
+    assert FakeMCPClient.instances[0].closed is True
+    assert FakeMCPClient.instances[1].closed is False
+    assert tools[0].client is FakeMCPClient.instances[1]

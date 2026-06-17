@@ -347,6 +347,15 @@ class FakeConnectionClosedMCPClient(FakeMCPClient):
         raise RuntimeError("Failed to discover MCP server 'image_search': Connection closed")
 
 
+class FakeStreamableHTTPConnectMCPClient(FakeMCPClient):
+    def discover_sync(self, refresh: bool = False):
+        raise RuntimeError("Failed to discover MCP server 'git': All connection attempts failed")
+
+    def discover_and_close_sync(self, refresh: bool = False):
+        self.closed = True
+        raise RuntimeError("Failed to discover MCP server 'git': All connection attempts failed")
+
+
 class FakeDiscoveryOnlyMCPClient(FakeGitMCPClient):
     def discover_sync(self, refresh: bool = False):
         raise AssertionError("load should use persisted discovery state")
@@ -733,9 +742,12 @@ class TestMCPServerRegistryStore(unittest.TestCase):
                 self.assertEqual(sum(1 for tool in discovered.tools if tool.enabled), 1)
                 adapters, summary = store.load_enabled_tool_adapters()
 
-            self.assertNotIn("git.git_status", [adapter.namespaced_name for adapter in adapters])
-            self.assertIn("toolhive/git", summary["error"])
-            self.assertTrue(any(item.get("category") == "server_unreachable" for item in summary["errors"]))
+            self.assertIn("git.git_status", [adapter.namespaced_name for adapter in adapters])
+            self.assertIsNone(summary["error"])
+            self.assertEqual(len(FakeMCPClient.instances), 3)
+            self.assertTrue(FakeMCPClient.instances[0].closed)
+            self.assertTrue(FakeMCPClient.instances[1].closed)
+            self.assertFalse(FakeMCPClient.instances[2].closed)
 
     def test_multiple_servers_with_overlapping_tool_names_remain_namespaced(self):
         config = json.dumps(
@@ -785,8 +797,11 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             with patch("general_chat.mcp_registry.MCPClient", FakeMultiServerMCPClient):
                 adapters, summary = store.load_enabled_tool_adapters(server_ids={alpha["id"]})
 
-            self.assertEqual(len(FakeMCPClient.instances), 1)
+            self.assertEqual(len(FakeMCPClient.instances), 2)
+            self.assertTrue(FakeMCPClient.instances[0].closed)
+            self.assertFalse(FakeMCPClient.instances[1].closed)
             self.assertEqual(list(FakeMCPClient.instances[0].config.servers), ["alpha"])
+            self.assertEqual(list(FakeMCPClient.instances[1].config.servers), ["alpha"])
             namespaced = {adapter.namespaced_name for adapter in adapters}
             self.assertEqual(namespaced, {"alpha.status"})
             self.assertEqual([item["server"] for item in summary["tools"]], ["alpha"])
@@ -924,6 +939,7 @@ class TestMCPServerRegistryStore(unittest.TestCase):
                 adapters, summary = store.load_enabled_tool_adapters()
 
             self.assertEqual(discovered.status, "failed")
+            self.assertTrue(discovered.enabled)
             self.assertEqual(discovered.error, "Cancelled via cancel scope")
             self.assertTrue(
                 any(
@@ -934,6 +950,38 @@ class TestMCPServerRegistryStore(unittest.TestCase):
                 )
             )
             self.assertNotIn("playwright.browser_snapshot", [adapter.namespaced_name for adapter in adapters])
+
+    def test_streamable_http_discovery_failure_remains_enabled_with_clean_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_toolhive_workloads(
+                [
+                    ToolHiveWorkload(
+                        name="git",
+                        status="running",
+                        url="http://127.0.0.1:39670/mcp",
+                    )
+                ]
+            )
+            server = payload["servers"][0]
+
+            with patch("general_chat.mcp_registry.MCPClient", FakeStreamableHTTPConnectMCPClient):
+                discovered = store.discover_server(server["id"])
+                adapters, summary = store.load_enabled_tool_adapters()
+
+            self.assertEqual(discovered.status, "failed")
+            self.assertTrue(discovered.enabled)
+            self.assertEqual(discovered.config["transport"], "streamable-http")
+            self.assertIn("All connection attempts failed", discovered.error or "")
+            self.assertTrue(
+                any(
+                    item.get("server") == "git"
+                    and item.get("category") == "server_unreachable"
+                    and "All connection attempts failed" in item.get("error", "")
+                    for item in summary["errors"]
+                )
+            )
+            self.assertNotIn("git.git_status", [adapter.namespaced_name for adapter in adapters])
 
     def test_docker_connection_closed_includes_actionable_hint(self):
         config = json.dumps(
@@ -956,6 +1004,7 @@ class TestMCPServerRegistryStore(unittest.TestCase):
                 _adapters, summary = store.load_enabled_tool_adapters()
 
             self.assertEqual(discovered.status, "failed")
+            self.assertTrue(discovered.enabled)
             self.assertIn("Connection closed", discovered.error or "")
             self.assertIn("test_mcp_server.py --mode docker", discovered.diagnostics["hint"])
             image_error = next(item for item in summary["errors"] if item["server"] == "image_search")
@@ -1327,8 +1376,11 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
                 FakeMCPClient.instances = []
                 scoped_summary = reload_external_mcp_tools(agent, server_ids={alpha["id"]})
 
-            self.assertEqual(len(FakeMCPClient.instances), 1)
+            self.assertEqual(len(FakeMCPClient.instances), 2)
+            self.assertTrue(FakeMCPClient.instances[0].closed)
+            self.assertFalse(FakeMCPClient.instances[1].closed)
             self.assertEqual(list(FakeMCPClient.instances[0].config.servers), ["alpha"])
+            self.assertEqual(list(FakeMCPClient.instances[1].config.servers), ["alpha"])
             self.assertEqual(scoped_summary["registered_tools"], ["alpha_status"])
             self.assertIn("alpha_status", agent.tools._tools)
             self.assertIn("beta_status", agent.tools._tools)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
@@ -73,8 +74,9 @@ class StreamableHTTPTransport(MCPTransport):
             try:
                 from contextlib import AsyncExitStack
 
-                from mcp import ClientSession
                 from mcp.client.streamable_http import streamablehttp_client
+
+                from mcp import ClientSession
             except ImportError as exc:
                 raise ImportError("MCP SDK is required for Streamable HTTP MCP") from exc
 
@@ -121,8 +123,8 @@ class StreamableHTTPTransport(MCPTransport):
         if self._exit_stack is not None:
             try:
                 await self._exit_stack.aclose()
-            except RuntimeError as exc:
-                if "Attempted to exit cancel scope in a different task" not in str(exc):
+            except BaseException as exc:
+                if not _is_mcp_sdk_shutdown_noise(exc):
                     raise
             self._exit_stack = None
             self._session = None
@@ -140,8 +142,9 @@ class StdioMCPTransport(MCPTransport):
         try:
             from contextlib import AsyncExitStack
 
-            from mcp import ClientSession, StdioServerParameters
             from mcp.client.stdio import stdio_client
+
+            from mcp import ClientSession, StdioServerParameters
         except ImportError as exc:
             raise ImportError("MCP SDK is required for stdio MCP transport") from exc
 
@@ -177,8 +180,8 @@ class StdioMCPTransport(MCPTransport):
         if self._exit_stack is not None:
             try:
                 await self._exit_stack.aclose()
-            except RuntimeError as exc:
-                if "Attempted to exit cancel scope in a different task" not in str(exc):
+            except BaseException as exc:
+                if not _is_mcp_sdk_shutdown_noise(exc):
                     raise
             self._exit_stack = None
             self._session = None
@@ -205,6 +208,24 @@ def _model_to_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     return {"result": value}
+
+
+def _is_mcp_sdk_shutdown_noise(exc: BaseException) -> bool:
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        return False
+    name = exc.__class__.__name__
+    message = str(exc)
+    if name == "GeneratorExit":
+        return True
+    if (
+        "Attempted to exit cancel scope in a different task" in message
+        or "athrow(): asynchronous generator is already running" in message
+    ):
+        return True
+    exception_group = getattr(builtins, "BaseExceptionGroup", None)
+    if exception_group is not None and isinstance(exc, exception_group):
+        return any(_is_mcp_sdk_shutdown_noise(item) for item in exc.exceptions)
+    return False
 
 
 async def gather_with_concurrency(limit: int, *coros: Any) -> list[Any]:

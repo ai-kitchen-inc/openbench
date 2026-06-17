@@ -627,6 +627,11 @@ class MCPServerRegistryStore:
                 client, namespace, server_config = self._build_client_for_item(item)
                 previous_tools = state.setdefault("tools", {}).get(item["id"], {})
                 discovered = self._discover_with_client(item, client, namespace)
+                runtime_client = client
+                if provider != "internal":
+                    runtime_client, _runtime_namespace, _runtime_server_config = (
+                        self._build_client_for_item(item)
+                    )
                 discovered_tools = {
                     raw_name: asdict(
                         _tool_from_schema(
@@ -684,7 +689,7 @@ class MCPServerRegistryStore:
                     }
                     namespaced = f"{namespace}.{persisted_name}"
                     adapter = MCPToolAdapter(
-                        client=client,
+                        client=runtime_client,
                         namespaced_name=namespaced,
                         tool_schema=tool_schema,
                         permission_session=permission_session,
@@ -883,7 +888,10 @@ class MCPServerRegistryStore:
         client: MCPClient,
         namespace: str,
     ) -> dict[str, dict[str, Any]]:
-        discovered = client.discover_sync(refresh=True)
+        if item.get("provider_kind") == "internal":
+            discovered = client.discover_sync(refresh=True)
+        else:
+            discovered = client.discover_and_close_sync(refresh=True)
         server = discovered.servers.get(namespace)
         if server is None and len(discovered.servers) == 1:
             server = next(iter(discovered.servers.values()))

@@ -121,8 +121,8 @@ def load_mcp_tools(
 ) -> list[MCPToolAdapter]:
     """Discover configured MCP servers and return Tool adapters."""
     client_config = config.client_config() if isinstance(config, MCPConfig) else config
-    client = MCPClient(client_config)
-    discovered = client.discover_sync()
+    discovery_client = MCPClient(client_config)
+    discovered = discovery_client.discover_and_close_sync(refresh=True)
     tools: list[MCPToolAdapter] = []
     shared_permission_session = permission_session or MCPPermissionSession(
         permission_provider
@@ -131,13 +131,24 @@ def load_mcp_tools(
         server_config.namespace or server_name: server_config
         for server_name, server_config in client_config.servers.items()
     }
+    runtime_clients: dict[str, MCPClient] = {}
     for server_name, server in discovered.servers.items():
         server_config = configs_by_namespace.get(server_name)
+        if server_config is None:
+            runtime_client = MCPClient(client_config)
+        else:
+            runtime_client = MCPClient(
+                MCPClientConfig(
+                    servers={server_name: server_config},
+                    policy=client_config.policy,
+                )
+            )
+        runtime_clients[server_name] = runtime_client
         for tool_name, tool_schema in server.tools.items():
             namespaced = f"{server_name}.{tool_name}"
             tools.append(
                 MCPToolAdapter(
-                    client=client,
+                    client=runtime_clients[server_name],
                     namespaced_name=namespaced,
                     tool_schema=tool_schema,
                     permission_session=shared_permission_session,
