@@ -19,6 +19,25 @@ Guidance for Codex when working with this repository.
 - Skip running tests after changes
 - Guess when you can ask the user
 
+## Deployment (general-chat)
+
+The `general-chat` example is deployed to GCP. **Read [deploy/DEPLOY.md](deploy/DEPLOY.md)
+before any deploy/infra work** — it is the single source of truth for the
+architecture (Firebase Hosting SPA → VM nginx/TLS at `35-188-138-52.sslip.io` →
+`openbench-api` container; Firebase Google auth + email allowlist) and the full
+resource inventory. All deploy actions go through [deploy/deploy.sh](deploy/deploy.sh):
+
+```bash
+bash deploy/deploy.sh all            # build image + roll out VM + deploy SPA + verify
+bash deploy/deploy.sh backend        # API image → Cloud Build → VM
+bash deploy/deploy.sh frontend       # SPA → Firebase Hosting
+bash deploy/deploy.sh add-user EMAIL # grant a Google account access (allowlist)
+bash deploy/deploy.sh verify         # probe the live deployment
+```
+
+Secrets live only in the VM's `.env.gcp` (never in the repo). `examples/lci-mini`
+uses Cloud Run and is unrelated.
+
 ## Project Overview
 
 **OpenBench** - Open-source Python SDK for composable AI workflows.
