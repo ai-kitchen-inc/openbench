@@ -22,7 +22,7 @@ services:
       OPENBENCH_MCP_DOCKER_PROFILE: ${OPENBENCH_MCP_DOCKER_PROFILE:-openbench}
       DOCKER_MCP_IN_CONTAINER: ${DOCKER_MCP_IN_CONTAINER:-1}
     ports:
-      - "${OPENBENCH_API_PORT:-8080}:8080"
+      - "${OPENBENCH_API_BIND:-127.0.0.1}:${OPENBENCH_API_PORT:-8080}:8080"
     command:
       - uvicorn
       - server:app

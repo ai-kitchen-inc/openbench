@@ -1,7 +1,8 @@
 """FastAPI application for General Chat.
 
 A simplified chat server with optional file, URL, text, and image context,
-plus a general-purpose Gemini agent. No authentication required.
+plus a general-purpose Gemini agent. Firebase authentication is enforced
+when GENERAL_CHAT_FIREBASE_PROJECT_ID is configured.
 """
 
 from __future__ import annotations
@@ -13,13 +14,14 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
 from general_chat.extractor import DoclingContentExtractor
 from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
+from general_chat.server.auth import auth_enabled, require_firebase_user
 from general_chat.server.handler import GeneralChatHandler
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.sources import (
@@ -83,6 +85,26 @@ _EXT_MIME_MAP = {
     ".webp": "image/webp",
 }
 
+_AUTH_PROTECTED_PREFIXES = (
+    "/awp",
+    "/chat",
+    "/downloads",
+    "/image-search",
+    "/mcp",
+    "/persona",
+    "/sessions",
+    "/skills",
+    "/toolhive",
+    "/uploads",
+)
+
+
+def _requires_auth_path(path: str) -> bool:
+    return path in _AUTH_PROTECTED_PREFIXES or any(
+        path.startswith(f"{prefix}/") for prefix in _AUTH_PROTECTED_PREFIXES
+    )
+
+
 def _resolve_mime(filename: str, content_type: str) -> str:
     """Return the best MIME type for a file, using extension as a tiebreaker."""
     if content_type and content_type != "application/octet-stream":
@@ -99,6 +121,21 @@ def _resolve_request_session_id(body: dict) -> str | None:
 
 def _gcp_enabled() -> bool:
     return bool(os.getenv("GENERAL_CHAT_GCP_BUCKET"))
+
+
+def cors_allowed_origins() -> list[str]:
+    """Return the CORS allowlist.
+
+    Set GENERAL_CHAT_ALLOWED_ORIGINS to a comma-separated list of origins
+    (e.g. the Firebase Hosting URLs) to scope cross-origin access in
+    production. Defaults to ``["*"]`` when unset so local/dev and tests keep
+    working. Requests still require a valid Firebase token regardless of CORS.
+    """
+    raw = os.getenv("GENERAL_CHAT_ALLOWED_ORIGINS", "").strip()
+    if not raw:
+        return ["*"]
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    return origins or ["*"]
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -404,14 +441,33 @@ def create_app() -> FastAPI:
         session_store.save(session)
         return session
 
-    app = FastAPI(title="General Chat")
+    # Disable the interactive docs / schema endpoints in deployed environments:
+    # they are not behind the auth middleware and would disclose the API surface.
+    app = FastAPI(title="General Chat", docs_url=None, redoc_url=None, openapi_url=None)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_allowed_origins(),
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def firebase_auth_middleware(request: Request, call_next):
+        if (
+            auth_enabled()
+            and request.method.upper() != "OPTIONS"
+            and _requires_auth_path(request.url.path)
+        ):
+            try:
+                await require_firebase_user(request)
+            except HTTPException as exc:
+                return JSONResponse(
+                    {"detail": exc.detail},
+                    status_code=exc.status_code,
+                    headers=exc.headers,
+                )
+        return await call_next(request)
 
     @app.on_event("startup")
     async def startup() -> None:
@@ -444,6 +500,7 @@ def create_app() -> FastAPI:
         print(f"  Image previews : {image_search_preview_dir}")
         print(f"  Source max     : {max_source_bytes} bytes")
         print(f"  Multipart max  : {multipart_upload_max_bytes} bytes")
+        print(f"  Firebase auth  : {'enabled' if auth_enabled() else 'disabled'}")
         if _gcp_enabled():
             print(f"  GCS bucket     : {os.getenv('GENERAL_CHAT_GCP_BUCKET')}")
         print("  AG-UI          : POST /awp")

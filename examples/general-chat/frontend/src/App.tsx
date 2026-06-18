@@ -7,11 +7,13 @@ import {
   type AttachmentUploadOptions,
   type ChatConfig,
 } from "@openbench/chat-ui";
+import { onAuthStateChanged, signInWithPopup, signOut, type User } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import "@openbench/chat-ui/styles/chat-ui.css";
 import "@openbench/chat-ui/styles/bundle.css";
-import { apiPath } from "./api";
+import { apiFetch, apiPath, authHeaders, setAuthTokenProvider } from "./api";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { getFirebaseAuth, googleProvider, isFirebaseConfigured } from "./firebase";
 import { McpCatalogPanel } from "./mcp-catalog/McpCatalogPanel";
 import { ToastProvider, useToast } from "./Toast";
 import "./global.css";
@@ -129,7 +131,7 @@ function PersonaBadge() {
     setIsLoading(true);
     (async () => {
       try {
-        const response = await fetch(apiPath("/persona"));
+        const response = await apiFetch(apiPath("/persona"));
         if (cancelled) return;
         if (!response.ok) {
           setPersona({ loaded: false });
@@ -185,7 +187,7 @@ function SkillBadge() {
     setIsLoading(true);
     (async () => {
       try {
-        const response = await fetch(apiPath("/skills"));
+        const response = await apiFetch(apiPath("/skills"));
         if (cancelled) return;
         if (!response.ok) {
           setData({ loaded: false, skills: [] });
@@ -438,7 +440,7 @@ async function uploadMultipartSourceFile(
   const form = new FormData();
   form.append("file", file);
   form.append("sessionId", sessionId);
-  return (await xhrUpload("POST", apiPath("/chat/upload"), form, undefined, onProgress)) as SourceItem;
+  return (await xhrUpload("POST", apiPath("/chat/upload"), form, await authHeaders(), onProgress)) as SourceItem;
 }
 
 async function uploadLargeSourceFile(
@@ -446,7 +448,7 @@ async function uploadLargeSourceFile(
   sessionId: string,
   onProgress: (fraction: number) => void,
 ): Promise<SourceItem> {
-  const initiateResponse = await fetch(apiPath("/chat/uploads/initiate"), {
+  const initiateResponse = await apiFetch(apiPath("/chat/uploads/initiate"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -461,7 +463,7 @@ async function uploadLargeSourceFile(
     onProgress(Math.min(fraction * 0.95, 0.95));
   });
   onProgress(0.98);
-  const completeResponse = await fetch(apiPath("/chat/uploads/complete"), {
+  const completeResponse = await apiFetch(apiPath("/chat/uploads/complete"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ fileId: session.fileId, sessionId }),
@@ -490,7 +492,7 @@ async function fetchUploadStatus(
   const params = new URLSearchParams({ sessionId });
   const includeText = options.includeText ?? false;
   if (includeText) params.set("includeText", "true");
-  const response = await fetch(
+  const response = await apiFetch(
     apiPath(`/chat/uploads/${encodeURIComponent(fileId)}?${params.toString()}`),
   );
   return normalizeDirectUploadStatus(
@@ -566,7 +568,7 @@ export function SourcePanel({
     async (targetSessionId: string): Promise<SourceItem[]> => {
       setIsLoadingSources(true);
       try {
-        const response = await fetch(apiPath(`/chat/sources/${encodeURIComponent(targetSessionId)}`));
+        const response = await apiFetch(apiPath(`/chat/sources/${encodeURIComponent(targetSessionId)}`));
         const items = await parseJsonResponse<SourceItem[]>(response);
         setSources(items);
         return items;
@@ -680,7 +682,7 @@ export function SourcePanel({
     if (!url) return;
     setIsMutating(true);
     try {
-      const response = await fetch(apiPath(`/chat/sources/${encodeURIComponent(sessionId)}/url`), {
+      const response = await apiFetch(apiPath(`/chat/sources/${encodeURIComponent(sessionId)}/url`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
@@ -707,7 +709,7 @@ export function SourcePanel({
     if (!text) return;
     setIsMutating(true);
     try {
-      const response = await fetch(apiPath(`/chat/sources/${encodeURIComponent(sessionId)}/text`), {
+      const response = await apiFetch(apiPath(`/chat/sources/${encodeURIComponent(sessionId)}/text`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "Pasted text", text }),
@@ -733,7 +735,7 @@ export function SourcePanel({
       if (!sessionId) return;
       setIsMutating(true);
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           apiPath(`/chat/sources/${encodeURIComponent(sessionId)}/${encodeURIComponent(sourceId)}`),
           { method: "DELETE" },
         );
@@ -761,7 +763,7 @@ export function SourcePanel({
       setSelectedResultIds([]);
 
       try {
-        const response = await fetch(apiPath(`/chat/sources/discover?q=${encodeURIComponent(query)}`));
+        const response = await apiFetch(apiPath(`/chat/sources/discover?q=${encodeURIComponent(query)}`));
         const payload = await parseJsonResponse<{ query: string; results: DiscoveryResult[] }>(response);
         setSubmittedQuery(payload.query);
         setDiscoveryResults(payload.results);
@@ -791,7 +793,7 @@ export function SourcePanel({
     try {
       const records = await Promise.all(
         selected.map(async (result) => {
-          const response = await fetch(apiPath(`/chat/sources/${encodeURIComponent(sessionId)}/url`), {
+          const response = await apiFetch(apiPath(`/chat/sources/${encodeURIComponent(sessionId)}/url`), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ url: result.url }),
@@ -1028,10 +1030,12 @@ export function SourcePanel({
   );
 }
 
-function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRefreshToken }: {
+function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRefreshToken, user, onSignOut }: {
   persistentAttachments: Attachment[];
   setPersistentAttachments: (attachments: Attachment[]) => void;
   sourceRefreshToken: number;
+  user: User;
+  onSignOut: () => void;
 }) {
   const { activeSessionId, sidebarOpen } = useChatContext();
   const toast = useToast();
@@ -1075,15 +1079,23 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
         acceptedFileTypes={SOURCE_ACCEPT}
         onAttachmentError={(message) => toast.show(message, "error")}
         headerRight={
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={toggleDark}
-            title={dark ? "Switch to light mode" : "Switch to dark mode"}
-            aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
-          >
-            <ThemeIcon dark={dark} />
-          </button>
+          <div className="chat-header-actions">
+            <span className="auth-user" title={user.email ?? user.displayName ?? user.uid}>
+              {user.email ?? user.displayName ?? "Signed in"}
+            </span>
+            <button type="button" className="auth-signout" onClick={onSignOut}>
+              Sign out
+            </button>
+            <button
+              type="button"
+              className="theme-toggle"
+              onClick={toggleDark}
+              title={dark ? "Switch to light mode" : "Switch to dark mode"}
+              aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              <ThemeIcon dark={dark} />
+            </button>
+          </div>
         }
       />
       <McpCatalogPanel open={mcpCatalogOpen} onClose={() => setMcpCatalogOpen(false)} />
@@ -1091,16 +1103,18 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
   );
 }
 
-function ChatShell() {
+function ChatShell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const toast = useToast();
   const [persistentAttachments, setPersistentAttachments] = useState<Attachment[]>([]);
   const [sourceRefreshToken, setSourceRefreshToken] = useState(0);
+  const getAuthToken = useCallback(() => user.getIdToken(), [user]);
 
   const chatConfig = useMemo<ChatConfig>(
     () => ({
       streamUrl: STREAM_URL,
       actionUrl: apiPath("/chat/action"),
       sessionsUrl: apiPath("/sessions"),
+      getAuthToken,
       uploadFile: async (file: File, options: AttachmentUploadOptions) => {
         const sessionId = options.sessionId;
         if (!sessionId) throw new Error("A chat session is required before uploading files.");
@@ -1119,7 +1133,7 @@ function ChatShell() {
         toast.show(`Upload failed for ${file.name}: ${readErrorMessage(error)}`, "error");
       },
     }),
-    [toast],
+    [getAuthToken, toast],
   );
 
   return (
@@ -1129,16 +1143,181 @@ function ChatShell() {
           persistentAttachments={persistentAttachments}
           setPersistentAttachments={setPersistentAttachments}
           sourceRefreshToken={sourceRefreshToken}
+          user={user}
+          onSignOut={onSignOut}
         />
       </ErrorBoundary>
     </ChatProvider>
   );
 }
 
+type AuthzState = "checking" | "authorized" | "denied" | "error";
+
+function AuthGate() {
+  const toast = useToast();
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [authz, setAuthz] = useState<AuthzState>("checking");
+  const [probeNonce, setProbeNonce] = useState(0);
+
+  useEffect(() => {
+    if (!isFirebaseConfigured()) {
+      setError("Firebase is not configured for this deployment.");
+      setIsLoading(false);
+      return;
+    }
+
+    const auth = getFirebaseAuth();
+    return onAuthStateChanged(
+      auth,
+      (nextUser) => {
+        setUser(nextUser);
+        setIsLoading(false);
+      },
+      (authError) => {
+        setError(authError.message);
+        setIsLoading(false);
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setAuthTokenProvider(null);
+      return;
+    }
+    setAuthTokenProvider(() => user.getIdToken());
+    return () => setAuthTokenProvider(null);
+  }, [user]);
+
+  // Probe a protected endpoint to confirm this signed-in account is on the
+  // backend allowlist. Firebase admits any Google account, so authorization is
+  // decided server-side: 200 = allowed, 403 = not on the allowlist, anything
+  // else (network/401/5xx) = could not verify -> offer a retry.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    setAuthz("checking");
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const response = await fetch(apiPath("/persona"), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (cancelled) return;
+        if (response.ok) {
+          setAuthz("authorized");
+        } else if (response.status === 403) {
+          setAuthz("denied");
+        } else {
+          setAuthz("error");
+        }
+      } catch {
+        if (!cancelled) setAuthz("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, probeNonce]);
+
+  const handleSignIn = async () => {
+    setError("");
+    try {
+      await signInWithPopup(getFirebaseAuth(), googleProvider);
+    } catch (signInError) {
+      setError(readErrorMessage(signInError));
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(getFirebaseAuth());
+      toast.show("Signed out", "success");
+    } catch (signOutError) {
+      toast.show(`Sign out failed: ${readErrorMessage(signOutError)}`, "error");
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-panel">
+          <div className="auth-title">General Chat</div>
+          <div className="auth-copy">Checking authentication...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-panel">
+          <div className="auth-title">General Chat</div>
+          <div className="auth-copy">Sign in with your approved Google account to continue.</div>
+          {error && <div className="auth-error">{error}</div>}
+          <button type="button" className="auth-primary" onClick={() => void handleSignIn()}>
+            Sign in with Google
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (authz === "checking") {
+    return (
+      <div className="auth-screen">
+        <div className="auth-panel">
+          <div className="auth-title">General Chat</div>
+          <div className="auth-copy">Checking access...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (authz === "denied") {
+    return (
+      <div className="auth-screen">
+        <div className="auth-panel">
+          <div className="auth-title">Access not authorized</div>
+          <div className="auth-copy">
+            {user.email ?? "This account"} is not approved for this deployment. Ask an administrator
+            to add your email to the allowlist, then sign in again.
+          </div>
+          <button type="button" className="auth-primary" onClick={() => void handleSignOut()}>
+            Sign out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (authz === "error") {
+    return (
+      <div className="auth-screen">
+        <div className="auth-panel">
+          <div className="auth-title">General Chat</div>
+          <div className="auth-copy">Could not verify access. Check your connection and try again.</div>
+          <button type="button" className="auth-primary" onClick={() => setProbeNonce((value) => value + 1)}>
+            Retry
+          </button>
+          <button type="button" className="auth-signout" onClick={() => void handleSignOut()}>
+            Sign out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return <ChatShell user={user} onSignOut={() => void handleSignOut()} />;
+}
+
 export default function App() {
   return (
     <ToastProvider>
-      <ChatShell />
+      <AuthGate />
     </ToastProvider>
   );
 }

@@ -20,6 +20,92 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Auth */
+
+.auth-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--ob-bg, #fff);
+  color: var(--ob-text, #1a1a1a);
+}
+
+.auth-panel {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--ob-border, rgba(0, 0, 0, 0.08));
+  border-radius: 8px;
+  background: var(--ob-bg, #fff);
+}
+
+.auth-title {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.auth-copy,
+.auth-error {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.62));
+}
+
+.auth-error {
+  color: #b02020;
+}
+
+.auth-primary,
+.auth-signout {
+  border: 1px solid var(--ob-border, rgba(0, 0, 0, 0.08));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ob-text, #1a1a1a);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.auth-primary {
+  min-height: 36px;
+  padding: 8px 12px;
+  background: var(--ob-text, #1a1a1a);
+  border-color: var(--ob-text, #1a1a1a);
+  color: var(--ob-bg, #fff);
+}
+
+.auth-signout {
+  min-height: 28px;
+  padding: 4px 8px;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.62));
+}
+
+.auth-primary:hover,
+.auth-signout:hover {
+  opacity: 0.88;
+}
+
+.chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.auth-user {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.62));
+  font-size: 12px;
+}
+
 /* Fullscreen layout */
 .chat-layout {
   display: flex;

@@ -47,8 +47,8 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=$APP_DIR
 Environment=OPENBENCH_IMAGE=$IMAGE
-ExecStart=/usr/bin/docker compose -f docker-compose.gce.yml up -d
-ExecStop=/usr/bin/docker compose -f docker-compose.gce.yml down
+ExecStart=/usr/bin/docker compose --env-file .env.gcp -f docker-compose.gce.yml up -d
+ExecStop=/usr/bin/docker compose --env-file .env.gcp -f docker-compose.gce.yml down
 TimeoutStartSec=0
 
 [Install]
@@ -62,7 +62,7 @@ cat <<EOF
 Bootstrap complete.
 
 Next steps:
-1. Edit $APP_DIR/.env.gcp.
+1. Edit $APP_DIR/.env.gcp. Keep OPENBENCH_API_BIND set to 127.0.0.1 unless a private VPC-only address is required.
 2. Build or pull the image: $IMAGE.
 3. Start: sudo systemctl start openbench-general-chat
 EOF
