@@ -10,15 +10,6 @@ from openbench.chat.files import FileContentExtractor, StoredFile
 
 logger = logging.getLogger(__name__)
 
-_DOCLING_MIME_TYPES = {
-    "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "application/vnd.ms-powerpoint",
-}
-_DOCLING_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt"}
-
 _DOCX_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/msword",
@@ -31,17 +22,80 @@ _PDF_EXTENSIONS = {".pdf"}
 _IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
+# PPTX/PPT have no lightweight extractor here, so they still use Docling.
+_PPTX_MIME_TYPES = {
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.ms-powerpoint",
+}
+_PPTX_EXTENSIONS = {".pptx", ".ppt"}
+
+# Heuristic: a digital PDF yields real text via pypdf; a scanned/image-only PDF
+# yields ~nothing. Fall back to Docling OCR only when the text is essentially
+# empty (tiny absolute floor + a small per-page floor to catch mostly-blank
+# multi-page scans), so genuine text never pays the OCR cost.
+_PDF_MIN_TOTAL_CHARS = 16
+_PDF_MIN_CHARS_PER_PAGE = 4
+
 _fallback = FileContentExtractor()
+
+# Docling's DocumentConverter loads layout/table/OCR models on construction, so
+# cache a single instance for the whole process instead of rebuilding per file.
+_converter: Any | None = None
+
+
+def _get_converter() -> Any:
+    """Return a lazily-built, process-wide Docling DocumentConverter."""
+    global _converter
+    if _converter is None:
+        from docling.document_converter import DocumentConverter
+
+        _converter = DocumentConverter()
+    return _converter
 
 
 class DoclingContentExtractor:
-    """Extract text and image OCR using Docling, with narrow fallbacks."""
+    """Extract document text fast-first (pypdf/python-docx), with Docling as the
+    OCR fallback for scanned PDFs and the primary path for PPTX/image OCR."""
 
     def extract(self, stored_file: StoredFile) -> str:
         ext = Path(stored_file.name).suffix.lower()
-        if stored_file.mime_type in _DOCLING_MIME_TYPES or ext in _DOCLING_EXTENSIONS:
+        # Fast path: digital PDFs via pypdf, only OCR via Docling when sparse.
+        if _is_pdf(stored_file):
+            return self._extract_pdf(stored_file)
+        # Fast path: DOCX via python-docx, Docling only if it yields nothing.
+        if stored_file.mime_type in _DOCX_MIME_TYPES or ext in _DOCX_EXTENSIONS:
+            return self._extract_docx(stored_file)
+        # PPTX/PPT: no lightweight extractor available — use Docling.
+        if stored_file.mime_type in _PPTX_MIME_TYPES or ext in _PPTX_EXTENSIONS:
             return self._extract_with_docling(stored_file)
         return _fallback.extract(stored_file)
+
+    def _extract_pdf(self, stored_file: StoredFile) -> str:
+        """pypdf first; fall back to Docling OCR if the text layer is sparse."""
+        text, pages = self._pdf_fast(stored_file)
+        threshold = max(_PDF_MIN_TOTAL_CHARS, pages * _PDF_MIN_CHARS_PER_PAGE)
+        if len(text.strip()) >= threshold:
+            return text
+        logger.info(
+            "pypdf yielded sparse text for %s (%d chars, %d pages); trying Docling OCR",
+            stored_file.name,
+            len(text.strip()),
+            pages,
+        )
+        ocr_text = self._extract_with_docling(stored_file, allow_pdf_fallback=False)
+        if ocr_text.strip():
+            return ocr_text
+        if text.strip():
+            return text
+        return f"[{stored_file.name}] (document appears empty after extraction)"
+
+    def _extract_docx(self, stored_file: StoredFile) -> str:
+        text = self._extract_with_python_docx(stored_file)
+        if text.strip() and "(document appears empty" not in text:
+            return text
+        # Empty result from python-docx — try Docling before giving up.
+        docling_text = self._extract_with_docling(stored_file, allow_pdf_fallback=False)
+        return docling_text if docling_text.strip() else text
 
     def extract_image(self, stored_file: StoredFile) -> dict[str, Any]:
         ext = Path(stored_file.name).suffix.lower()
@@ -49,14 +103,10 @@ class DoclingContentExtractor:
             raise ValueError(f"Unsupported image source type: {ext or stored_file.mime_type}")
 
         try:
-            from docling.document_converter import DocumentConverter
+            result = _get_converter().convert(stored_file.path)
+            markdown = result.document.export_to_markdown().strip()
         except ImportError as exc:
             raise RuntimeError("docling is required for image OCR support.") from exc
-
-        try:
-            converter = DocumentConverter()
-            result = converter.convert(stored_file.path)
-            markdown = result.document.export_to_markdown().strip()
         except Exception as exc:
             logger.warning("Docling image extraction failed for %s: %s", stored_file.name, exc)
             raise ValueError(f"Image extraction failed: {exc}") from exc
@@ -88,54 +138,51 @@ class DoclingContentExtractor:
             },
         }
 
-    def _extract_with_docling(self, stored_file: StoredFile) -> str:
+    def _extract_with_docling(
+        self, stored_file: StoredFile, *, allow_pdf_fallback: bool = True
+    ) -> str:
         try:
-            from docling.document_converter import DocumentConverter
-
-            converter = DocumentConverter()
-            result = converter.convert(stored_file.path)
+            result = _get_converter().convert(stored_file.path)
             text = result.document.export_to_markdown()
             if not text.strip():
                 return f"[{stored_file.name}] (document appears empty after extraction)"
             return text
         except ImportError:
-            if _is_pdf(stored_file):
-                logger.warning("docling not installed; trying pypdf for %s", stored_file.name)
-                return self._extract_with_pypdf(stored_file)
-            logger.warning("docling not installed; trying python-docx for %s", stored_file.name)
+            # Docling not installed — degrade to the lightweight extractors.
+            if allow_pdf_fallback and _is_pdf(stored_file):
+                logger.warning("docling not installed; using pypdf for %s", stored_file.name)
+                return self._pdf_fast(stored_file)[0]
+            logger.warning("docling not installed; using python-docx for %s", stored_file.name)
             return self._extract_with_python_docx(stored_file)
         except Exception as exc:
             logger.warning("Docling extraction failed for %s: %s", stored_file.name, exc)
             ext = Path(stored_file.name).suffix.lower()
-            if _is_pdf(stored_file):
-                logger.info("Falling back to pypdf for %s", stored_file.name)
-                return self._extract_with_pypdf(stored_file)
+            if allow_pdf_fallback and _is_pdf(stored_file):
+                return self._pdf_fast(stored_file)[0]
             if stored_file.mime_type in _DOCX_MIME_TYPES or ext in _DOCX_EXTENSIONS:
-                logger.info("Falling back to python-docx for %s", stored_file.name)
                 return self._extract_with_python_docx(stored_file)
             return f"[{stored_file.name}] (extraction failed: {exc})"
 
-    def _extract_with_pypdf(self, stored_file: StoredFile) -> str:
+    def _pdf_fast(self, stored_file: StoredFile) -> tuple[str, int]:
+        """Extract PDF text with pypdf. Returns (text, page_count)."""
         try:
             from pypdf import PdfReader
         except ImportError:
             logger.warning("pypdf not installed; install it with: pip install pypdf")
-            return f"[{stored_file.name}] (extraction failed: pypdf is required for PDF extraction)"
+            return "", 0
 
         try:
             reader = PdfReader(stored_file.path)
+            pages = len(reader.pages)
             parts: list[str] = []
             for index, page in enumerate(reader.pages, start=1):
                 text = (page.extract_text() or "").strip()
                 if text:
                     parts.append(f"### Page {index}\n\n{text}")
-            full_text = "\n\n".join(parts).strip()
-            if not full_text:
-                return f"[{stored_file.name}] (document appears empty after extraction)"
-            return full_text
+            return "\n\n".join(parts).strip(), pages
         except Exception as exc:
             logger.warning("pypdf extraction failed for %s: %s", stored_file.name, exc)
-            return f"[{stored_file.name}] (extraction failed: {exc})"
+            return "", 0
 
     def _extract_with_python_docx(self, stored_file: StoredFile) -> str:
         try:

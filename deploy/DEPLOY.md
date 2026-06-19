@@ -135,6 +135,40 @@ Expected: `/health` 200 · `/persona` 401 (no token) · `/openapi.json` 404
 (docs disabled) · Hosting 200 · raw `:8080` unreachable. Real end-to-end:
 open the Hosting URL, sign in with an allowlisted Google account, send a message.
 
+## Pub/Sub worker subscription
+
+The worker consumes `openbench-worker-file-processing`. File processing must finish
+within the ack deadline or messages redeliver (duplicate work + rising error rate /
+oldest-unacked age). Applied settings:
+
+```bash
+gcloud pubsub subscriptions update openbench-worker-file-processing \
+  --project sss-poc1-corporate \
+  --ack-deadline=60 --min-retry-delay=10s --max-retry-delay=600s
+```
+
+Optional dead-letter queue (caps infinite redelivery of poison messages; needs IAM
+on the Pub/Sub service agent `service-920070146333@gcp-sa-pubsub.iam.gserviceaccount.com`):
+
+```bash
+gcloud pubsub topics create openbench-worker-file-processing-dlq --project sss-poc1-corporate
+gcloud pubsub subscriptions create openbench-worker-file-processing-dlq-sub \
+  --topic openbench-worker-file-processing-dlq --message-retention-duration=7d --project sss-poc1-corporate
+gcloud pubsub topics add-iam-policy-binding openbench-worker-file-processing-dlq \
+  --member="serviceAccount:service-920070146333@gcp-sa-pubsub.iam.gserviceaccount.com" \
+  --role=roles/pubsub.publisher --project sss-poc1-corporate
+gcloud pubsub subscriptions add-iam-policy-binding openbench-worker-file-processing \
+  --member="serviceAccount:service-920070146333@gcp-sa-pubsub.iam.gserviceaccount.com" \
+  --role=roles/pubsub.subscriber --project sss-poc1-corporate
+gcloud pubsub subscriptions update openbench-worker-file-processing \
+  --dead-letter-topic=openbench-worker-file-processing-dlq \
+  --max-delivery-attempts=5 --project sss-poc1-corporate
+```
+
+Worker subscriber bounds in-flight messages via `GENERAL_CHAT_PUBSUB_MAX_MESSAGES`
+(default 8). Extraction is fast-first (pypdf/python-docx; Docling only OCRs scanned
+PDFs), so per-file CPU time is low and stays well under the 60s deadline.
+
 ## Rollback
 
 - **Frontend:** `cd examples/general-chat && firebase hosting:rollback` (or redeploy a prior build).

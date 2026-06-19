@@ -222,6 +222,47 @@ class GCSFileStore:
     def verify_uploaded_object(self, file_id: str) -> StoredFile | None:
         return self.get(file_id)
 
+    def get_by_object(self, object_name: str) -> StoredFile | None:
+        """Like :meth:`get` but addresses the blob by its exact object name.
+
+        Avoids the ``list_blobs`` scan in :meth:`_find_blob`; use when the caller
+        already knows the object path (e.g. a Cloud Storage finalize event).
+        """
+        if not object_name:
+            return None
+        blob = self._bucket().blob(object_name)
+        try:
+            blob.reload()
+        except Exception as exc:
+            logger.debug("GCSFileStore.get_by_object(%s) reload failed: %s", object_name, exc)
+            return None
+        file_id = _blob_file_id(blob) or _file_id_from_object_name(object_name) or object_name
+        return self._stored_from_blob(blob, file_id=file_id)
+
+    def get_local_path_for_object(self, object_name: str, file_id: str) -> str | None:
+        """Download the exact object to the local cache (no ``list_blobs`` scan)."""
+        if not object_name or not file_id:
+            return None
+        self._gc_cache()
+        blob = self._bucket().blob(object_name)
+        try:
+            blob.reload()
+        except Exception as exc:
+            logger.warning("GCSFileStore: metadata lookup failed for %s: %s", object_name, exc)
+            return None
+        name = _blob_original_name(blob) or Path(blob.name).name or "unnamed"
+        cache_path = self._cache_path(file_id, name)
+        if cache_path.exists() and not self._is_stale(cache_path):
+            os.utime(cache_path, None)
+            return str(cache_path.absolute())
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            blob.download_to_filename(str(cache_path))
+        except Exception as exc:
+            logger.warning("GCSFileStore: download failed for %s: %s", object_name, exc)
+            return None
+        return str(cache_path.absolute())
+
     def object_name_for(
         self,
         *,
@@ -381,3 +422,18 @@ def _blob_original_name(blob: Any) -> str | None:
     metadata = getattr(blob, "metadata", None) or {}
     value = metadata.get(_APP_ORIGINAL_NAME_KEY)
     return str(value) if value else None
+
+
+def _blob_file_id(blob: Any) -> str | None:
+    metadata = getattr(blob, "metadata", None) or {}
+    value = metadata.get(_APP_ID_KEY)
+    return str(value) if value else None
+
+
+def _file_id_from_object_name(object_name: str) -> str | None:
+    """Recover the ``file-...`` id from the ``.../<file_id>/<filename>`` path."""
+    parts = [part for part in object_name.split("/") if part]
+    for part in reversed(parts):
+        if part.startswith("file-"):
+            return part
+    return None

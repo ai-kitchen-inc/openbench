@@ -35,6 +35,17 @@ logger = logging.getLogger(__name__)
 
 _FILE_ID_RE = re.compile(r"/(file-[A-Za-z0-9_-]+)/")
 
+# Reuse one parser/extractor across messages so the Docling converter (cached in
+# extractor.py) is built once per process, not once per file.
+_source_parser: SourceParserRegistry | None = None
+
+
+def _get_source_parser() -> SourceParserRegistry:
+    global _source_parser
+    if _source_parser is None:
+        _source_parser = SourceParserRegistry(document_extractor=DoclingContentExtractor())
+    return _source_parser
+
 
 @dataclass(frozen=True)
 class GCSObjectEvent:
@@ -63,16 +74,16 @@ def process_gcs_object(
     user_id, session_id, filename = _path_parts(event.object_name)
     source_store = source_store or _default_source_store()
     file_store = file_store or _default_file_store(session_id=session_id)
-    source_parser = source_parser or SourceParserRegistry(
-        document_extractor=DoclingContentExtractor()
-    )
+    source_parser = source_parser or _get_source_parser()
 
     record = source_store.find_by_upload_file_id(file_id, session_id=session_id)
     if record is not None and _already_processed(record, event.generation):
         logger.info("Skipping already-processed upload: file_id=%s", file_id)
         return record
 
-    stored = file_store.verify_uploaded_object(file_id)
+    # Address the blob by its exact object name (from the finalize event) to skip
+    # the list_blobs scan in GCSFileStore._find_blob.
+    stored = file_store.get_by_object(event.object_name)
     if stored is None:
         record = record or _placeholder_record(
             file_id=file_id,
@@ -89,7 +100,7 @@ def process_gcs_object(
         source_store.upsert(record)
         return record
 
-    local_path = file_store.get_local_path(file_id)
+    local_path = file_store.get_local_path_for_object(event.object_name, file_id)
     if local_path is None:
         record = record or _placeholder_record(
             file_id=file_id,
@@ -224,7 +235,12 @@ def run_pubsub_worker() -> None:
             return
         message.ack()
 
-    future = subscriber.subscribe(subscription, callback=callback)
+    # Bound in-flight messages so the client's lease-extension threads are not
+    # starved by long CPU callbacks, and so multiple files overlap on I/O.
+    flow_control = pubsub_v1.types.FlowControl(
+        max_messages=_env_int("GENERAL_CHAT_PUBSUB_MAX_MESSAGES", 8)
+    )
+    future = subscriber.subscribe(subscription, callback=callback, flow_control=flow_control)
     logger.info("Listening for GCS finalize events on %s", subscription)
     try:
         while not stop.is_set():
