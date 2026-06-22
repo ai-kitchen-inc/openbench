@@ -19,6 +19,12 @@ export interface ChatInputProps {
   multiple?: boolean;
   /** Max size per file in bytes. Files larger than this are rejected. */
   maxUploadSize?: number;
+  /**
+   * Optional fallback transcriber for browsers without the Web Speech API.
+   * Given a recorded audio blob, returns the transcript text. When omitted
+   * and Web Speech is unavailable, the mic button is hidden.
+   */
+  onTranscribe?: (audio: Blob) => Promise<string>;
 }
 
 export function ChatInput({
@@ -29,6 +35,7 @@ export function ChatInput({
   onAttachmentError,
   multiple = true,
   maxUploadSize,
+  onTranscribe,
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -40,6 +47,97 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
+
+  // Voice input: "idle" → "listening" (Web Speech / recording) → "transcribing"
+  // (only the recorder fallback hits this while awaiting onTranscribe).
+  const [micState, setMicState] = useState<"idle" | "listening" | "transcribing">("idle");
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  const speechApiSupported = typeof window !== "undefined" && getSpeechRecognition() !== null;
+  const micAvailable = speechApiSupported || !!onTranscribe;
+
+  const appendTranscript = useCallback((transcript: string) => {
+    const clean = transcript.trim();
+    if (!clean) return;
+    setText((prev) => (prev ? `${prev} ${clean}` : clean));
+    textareaRef.current?.focus();
+  }, []);
+
+  const stopVoiceInput = useCallback(() => {
+    recognitionRef.current?.stop();
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+  }, []);
+
+  const startWebSpeech = useCallback(() => {
+    const Ctor = getSpeechRecognition();
+    if (!Ctor) return false;
+    const recognition: SpeechRecognitionLike = new Ctor();
+    recognition.lang = navigator.language || "en-US";
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.onresult = (event: SpeechRecognitionEventLike) => {
+      let combined = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        combined += event.results[i]?.[0]?.transcript ?? "";
+      }
+      appendTranscript(combined);
+    };
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      setMicState("idle");
+    };
+    recognition.onerror = () => {
+      recognitionRef.current = null;
+      setMicState("idle");
+    };
+    recognitionRef.current = recognition;
+    recognition.start();
+    setMicState("listening");
+    return true;
+  }, [appendTranscript]);
+
+  const startRecording = useCallback(async () => {
+    if (!onTranscribe || !navigator.mediaDevices?.getUserMedia) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        for (const track of stream.getTracks()) track.stop();
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        mediaRecorderRef.current = null;
+        setMicState("transcribing");
+        try {
+          appendTranscript(await onTranscribe(blob));
+        } finally {
+          setMicState("idle");
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setMicState("listening");
+    } catch {
+      setMicState("idle");
+    }
+  }, [appendTranscript, onTranscribe]);
+
+  const handleMicClick = useCallback(() => {
+    if (micState === "transcribing") return;
+    if (micState === "listening") {
+      stopVoiceInput();
+      return;
+    }
+    if (!startWebSpeech()) void startRecording();
+  }, [micState, startWebSpeech, startRecording, stopVoiceInput]);
+
+  // Stop any in-flight capture on unmount.
+  useEffect(() => () => stopVoiceInput(), [stopVoiceInput]);
 
   // Revoke blob URLs on unmount to prevent memory leaks
   useEffect(() => {
@@ -207,6 +305,33 @@ export function ChatInput({
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
           </svg>
         </button>
+        {micAvailable && (
+          <button
+            className={`chat-input__mic-btn ${micState !== "idle" ? "is-recording" : ""}`}
+            onClick={handleMicClick}
+            disabled={disabled || micState === "transcribing"}
+            type="button"
+            aria-label={micState === "listening" ? "Stop voice input" : "Start voice input"}
+            aria-pressed={micState === "listening"}
+          >
+            <svg
+              aria-hidden="true"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </svg>
+          </button>
+        )}
         <textarea
           ref={textareaRef}
           className="chat-input__textarea"
@@ -288,4 +413,31 @@ function formatOversizeMessage(files: File[], maxBytes: number): string {
   const mb = Math.round(maxBytes / (1024 * 1024));
   const names = files.map((file) => file.name).join(", ");
   return `File too large (max ${mb} MB): ${names}`;
+}
+
+// Minimal Web Speech API surface — the DOM lib doesn't ship these types and
+// support is vendor-prefixed in some browsers.
+interface SpeechRecognitionEventLike {
+  resultIndex: number;
+  results: ArrayLike<ArrayLike<{ transcript: string }>>;
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+function getSpeechRecognition(): (new () => SpeechRecognitionLike) | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as {
+    SpeechRecognition?: new () => SpeechRecognitionLike;
+    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }

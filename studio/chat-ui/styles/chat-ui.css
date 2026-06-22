@@ -662,6 +662,7 @@
 }
 
 .chat-input__attach-btn,
+.chat-input__mic-btn,
 .chat-input__send-btn {
   display: flex;
   align-items: center;
@@ -674,13 +675,30 @@
   flex-shrink: 0;
 }
 
-.chat-input__attach-btn {
+.chat-input__attach-btn,
+.chat-input__mic-btn {
   background: none;
   color: var(--ob-text-secondary);
 }
 
-.chat-input__attach-btn:hover:not(:disabled) {
+.chat-input__attach-btn:hover:not(:disabled),
+.chat-input__mic-btn:hover:not(:disabled) {
   background: var(--ob-border);
+}
+
+.chat-input__mic-btn.is-recording {
+  color: #e5484d;
+  animation: ob-mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ob-mic-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .chat-input__send-btn {
@@ -693,7 +711,8 @@
 }
 
 .chat-input__send-btn:disabled,
-.chat-input__attach-btn:disabled {
+.chat-input__attach-btn:disabled,
+.chat-input__mic-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }

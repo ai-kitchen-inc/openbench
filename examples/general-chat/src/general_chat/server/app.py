@@ -824,6 +824,22 @@ def create_app() -> FastAPI:
         )
         return attachment.to_dict()
 
+    @app.post("/chat/transcribe")
+    async def transcribe_audio(
+        file: UploadFile = File(...),
+        session_id: str | None = Form(default=None, alias="sessionId"),
+    ) -> dict:
+        """Transcribe a recorded audio blob to text (mic voice input fallback)."""
+        content = await _read_upload_limited(file, multipart_upload_max_bytes)
+        mime_type = file.content_type or "audio/webm"
+        try:
+            from openbench.intelligence.transcription import get_transcriber
+
+            transcript = get_transcriber().transcribe(content, mime_type=mime_type)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
+        return {"transcript": transcript.strip()}
+
     @app.post("/chat/upload")
     async def upload_file(
         file: UploadFile = File(...),

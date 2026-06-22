@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentPreview } from "../src/components/AttachmentPreview";
@@ -242,6 +242,80 @@ describe("ChatInput", () => {
     fireEvent.change(input, { target: { files: [audio] } });
     expect(onAttachmentError).not.toHaveBeenCalled();
     expect(screen.getByText("note.mp3")).toBeTruthy();
+  });
+
+  it("hides the mic button when no Web Speech API and no onTranscribe", () => {
+    const w = window as unknown as Record<string, unknown>;
+    const prev = { SpeechRecognition: w.SpeechRecognition, webkitSpeechRecognition: w.webkitSpeechRecognition };
+    delete w.SpeechRecognition;
+    delete w.webkitSpeechRecognition;
+    render(<ChatInput onSend={vi.fn()} />);
+    expect(screen.queryByLabelText("Start voice input")).toBeNull();
+    Object.assign(w, prev);
+  });
+
+  it("shows the mic button when onTranscribe is provided", () => {
+    const w = window as unknown as Record<string, unknown>;
+    const prev = { SpeechRecognition: w.SpeechRecognition, webkitSpeechRecognition: w.webkitSpeechRecognition };
+    delete w.SpeechRecognition;
+    delete w.webkitSpeechRecognition;
+    render(<ChatInput onSend={vi.fn()} onTranscribe={vi.fn(async () => "hi")} />);
+    expect(screen.getByLabelText("Start voice input")).toBeTruthy();
+    Object.assign(w, prev);
+  });
+
+  it("starts and stops Web Speech dictation on mic click", () => {
+    const w = window as unknown as Record<string, unknown>;
+    const prev = w.SpeechRecognition;
+    const start = vi.fn();
+    const stop = vi.fn();
+    class FakeRecognition {
+      lang = "";
+      interimResults = false;
+      continuous = false;
+      onresult: ((e: unknown) => void) | null = null;
+      onend: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      start = start;
+      stop = stop;
+    }
+    w.SpeechRecognition = FakeRecognition;
+    render(<ChatInput onSend={vi.fn()} />);
+    const mic = screen.getByLabelText("Start voice input");
+    fireEvent.click(mic);
+    expect(start).toHaveBeenCalled();
+    // Now in listening state → label flips to Stop.
+    fireEvent.click(screen.getByLabelText("Stop voice input"));
+    expect(stop).toHaveBeenCalled();
+    w.SpeechRecognition = prev;
+  });
+
+  it("inserts recognized speech into the textarea", () => {
+    const w = window as unknown as Record<string, unknown>;
+    const prev = w.SpeechRecognition;
+    let instance: { onresult: ((e: unknown) => void) | null } | null = null;
+    class FakeRecognition {
+      lang = "";
+      interimResults = false;
+      continuous = false;
+      onresult: ((e: unknown) => void) | null = null;
+      onend: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      start = vi.fn();
+      stop = vi.fn();
+      constructor() {
+        instance = this;
+      }
+    }
+    w.SpeechRecognition = FakeRecognition;
+    render(<ChatInput onSend={vi.fn()} />);
+    fireEvent.click(screen.getByLabelText("Start voice input"));
+    act(() => {
+      instance?.onresult?.({ resultIndex: 0, results: [[{ transcript: "hello world" }]] });
+    });
+    const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
+    expect(textarea.value).toBe("hello world");
+    w.SpeechRecognition = prev;
   });
 
   it("shows and clears a drag-over state for file drags", () => {

@@ -11,7 +11,7 @@ import { onAuthStateChanged, signInWithPopup, signOut, type User } from "firebas
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import "@openbench/chat-ui/styles/chat-ui.css";
 import "@openbench/chat-ui/styles/bundle.css";
-import { apiFetch, apiPath, authHeaders, setAuthTokenProvider } from "./api";
+import { apiFetch, apiPath, authHeaders, setAuthTokenProvider, transcribeAudio } from "./api";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { getFirebaseAuth, googleProvider, isFirebaseConfigured } from "./firebase";
 import { McpCatalogPanel } from "./mcp-catalog/McpCatalogPanel";
@@ -1081,6 +1081,7 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
         persistentAttachments={persistentAttachments}
         acceptedFileTypes={SOURCE_ACCEPT}
         onAttachmentError={(message) => toast.show(message, "error")}
+        onTranscribe={transcribeAudio}
         headerRight={
           <div className="chat-header-actions">
             <span className="auth-user" title={user.email ?? user.displayName ?? user.uid}>

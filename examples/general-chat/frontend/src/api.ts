@@ -34,3 +34,16 @@ export function apiPath(path: string): string {
   if (!API_BASE_URL) return normalizedPath;
   return `${API_BASE_URL}${normalizedPath}`;
 }
+
+/** Transcribe a recorded audio blob via the backend (mic voice-input fallback). */
+export async function transcribeAudio(blob: Blob): Promise<string> {
+  const form = new FormData();
+  const ext = blob.type.includes("ogg") ? "ogg" : "webm";
+  form.append("file", blob, `voice-input.${ext}`);
+  const response = await apiFetch(apiPath("/chat/transcribe"), { method: "POST", body: form });
+  if (!response.ok) {
+    throw new Error(`Transcription request failed: ${response.status}`);
+  }
+  const data = (await response.json()) as { transcript?: string };
+  return data.transcript ?? "";
+}
