@@ -139,3 +139,77 @@ def _ext_mime(ext: str) -> str:
         ".jpeg": "image/jpeg",
         ".webp": "image/webp",
     }.get(ext, "application/octet-stream")
+
+
+# --- Video helpers -------------------------------------------------------
+
+# Containers Gemini accepts directly; anything else is transcoded to mp4.
+_GEMINI_VIDEO_EXTS = {".mp4", ".mpeg", ".mpg", ".mov", ".webm", ".flv", ".wmv", ".3gp", ".3gpp"}
+
+
+def _ffmpeg_exe() -> str:
+    """Return the bundled ffmpeg executable path (imageio-ffmpeg)."""
+    try:
+        import imageio_ffmpeg
+    except ImportError as exc:
+        raise RuntimeError(
+            "imageio-ffmpeg is required for video support. "
+            "Install with: pip install 'openbench[media]'"
+        ) from exc
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def ensure_video_for_gemini(path: str | Path, mime_type: str = "") -> tuple[str, str]:
+    """Return a Gemini-compatible video path, transcoding the container if needed.
+
+    AVI (and any non-listed container) is transcoded to H.264/AAC mp4; already
+    compatible containers are returned unchanged.
+    """
+    src = Path(path)
+    if src.suffix.lower() in _GEMINI_VIDEO_EXTS:
+        return str(src), mime_type or "video/mp4"
+    return transcode_video_to_mp4(src), "video/mp4"
+
+
+def transcode_video_to_mp4(path: str | Path) -> str:
+    """Transcode a video to H.264/AAC mp4 next to the source.
+
+    Raises:
+        RuntimeError: If imageio-ffmpeg is missing.
+        ValueError: If ffmpeg fails.
+    """
+    import subprocess
+
+    src = Path(path)
+    out = src.with_suffix(".gemini.mp4")
+    exe = _ffmpeg_exe()
+    result = subprocess.run(
+        [exe, "-y", "-i", str(src), "-c:v", "libx264", "-c:a", "aac", str(out)],
+        capture_output=True,
+    )
+    if result.returncode != 0 or not out.exists():
+        raise ValueError(f"Video transcode failed for {src.name}: {result.stderr.decode(errors='ignore')[:200]}")
+    return str(out)
+
+
+def extract_audio_track(path: str | Path) -> str | None:
+    """Extract a video's audio track to a 16 kHz mono WAV for transcription.
+
+    Returns the WAV path, or None when the video has no audio track or ffmpeg
+    fails (caller treats that as "no transcript available").
+    """
+    import subprocess
+
+    src = Path(path)
+    out = src.with_suffix(".audio.wav")
+    try:
+        exe = _ffmpeg_exe()
+    except RuntimeError:
+        return None
+    result = subprocess.run(
+        [exe, "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", str(out)],
+        capture_output=True,
+    )
+    if result.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+        return None
+    return str(out)

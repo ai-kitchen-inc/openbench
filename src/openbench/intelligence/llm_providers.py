@@ -294,6 +294,12 @@ class GeminiLLMProvider(LLMProvider):
             try:
                 import os as _os
 
+                # Transcode video containers Gemini can't ingest (e.g. AVI).
+                if media_type == "video":
+                    from openbench.utils.media import ensure_video_for_gemini
+
+                    path, mime = ensure_video_for_gemini(path, mime)
+
                 size = _os.path.getsize(path)
                 if size <= self._INLINE_MEDIA_LIMIT:
                     from pathlib import Path as _Path

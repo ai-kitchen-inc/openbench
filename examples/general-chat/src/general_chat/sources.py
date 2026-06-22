@@ -59,6 +59,9 @@ AUDIO_MIME_TYPES = {
 }
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac"}
 
+VIDEO_MIME_TYPES = {"video/mp4", "video/webm", "video/quicktime", "video/x-msvideo"}
+VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".avi"}
+
 IMAGE_MIME_TYPES = {
     "image/png",
     "image/jpeg",
@@ -97,6 +100,7 @@ ALLOWED_EXTENSIONS = (
     | TEXT_EXTENSIONS
     | IMAGE_EXTENSIONS
     | AUDIO_EXTENSIONS
+    | VIDEO_EXTENSIONS
 )
 
 DUCKDUCKGO_SEARCH_URL = "https://html.duckduckgo.com/html/"
@@ -647,6 +651,12 @@ class SourceParserRegistry:
         ):
             return ParsedSourceContent(text=self._parse_audio(stored_file))
         if (
+            stored_file.mime_type.startswith("video/")
+            or stored_file.mime_type in VIDEO_MIME_TYPES
+            or ext in VIDEO_EXTENSIONS
+        ):
+            return ParsedSourceContent(text=self._parse_video(stored_file))
+        if (
             stored_file.mime_type.startswith("text/")
             or stored_file.mime_type in TEXT_MIME_TYPES
             or ext in TEXT_EXTENSIONS
@@ -736,6 +746,21 @@ class SourceParserRegistry:
         if not transcript.strip():
             raise ValueError(f"No speech could be transcribed from {stored_file.name}.")
         return transcript
+
+    def _parse_video(self, stored_file: StoredFile) -> str:
+        from openbench.intelligence.transcription import get_transcriber
+        from openbench.utils.media import extract_audio_track
+
+        audio_path = extract_audio_track(stored_file.path)
+        if not audio_path:
+            raise ValueError(f"No audio track to transcribe in {stored_file.name}.")
+        try:
+            transcript = get_transcriber().transcribe(audio_path, mime_type="audio/wav")
+        except Exception as exc:
+            raise ValueError(f"Video transcription failed: {exc}") from exc
+        if not transcript.strip():
+            raise ValueError(f"No speech could be transcribed from {stored_file.name}.")
+        return f"# Transcript of {stored_file.name}\n\n{transcript}"
 
     def _parse_image(self, stored_file: StoredFile) -> ParsedSourceContent:
         image_data = self.document_extractor.extract_image(stored_file)

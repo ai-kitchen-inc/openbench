@@ -273,6 +273,9 @@ class FileContentExtractor:
         if mime.startswith("audio/"):
             return self._extract_audio(stored_file)
 
+        if mime.startswith("video/"):
+            return self._extract_video(stored_file)
+
         if mime.startswith("text/") or mime in _TEXT_LIKE_MIMES:
             return self._extract_text(stored_file)
 
@@ -319,6 +322,28 @@ class FileContentExtractor:
         except Exception as e:
             logger.warning(f"Audio transcription failed for {stored_file.name}: {e}")
             return f"[Audio: {stored_file.name}] (transcription failed: {e})"
+
+    def _extract_video(self, stored_file: StoredFile) -> str:
+        """Build a searchable text track for a video.
+
+        Visual understanding comes from the native multimodal channel; this
+        text track transcribes the video's audio so the content is searchable
+        and survives on models that can't ingest video.
+        """
+        try:
+            from openbench.intelligence.transcription import get_transcriber
+            from openbench.utils.media import extract_audio_track
+
+            audio_path = extract_audio_track(stored_file.path)
+            if not audio_path:
+                return f"[Video: {stored_file.name}] (no audio track to transcribe)"
+            transcript = get_transcriber().transcribe(audio_path, mime_type="audio/wav")
+            if transcript.strip():
+                return f"# Transcript of {stored_file.name}\n\n{transcript}"
+            return f"[Video: {stored_file.name}] (no speech detected)"
+        except Exception as e:
+            logger.warning(f"Video processing failed for {stored_file.name}: {e}")
+            return f"[Video: {stored_file.name}] (processing failed: {e})"
 
     def _extract_text(self, stored_file: StoredFile) -> str:
         """Read text file directly."""
