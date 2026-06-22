@@ -358,6 +358,7 @@ class ProviderService:
             DataStoreRegistry,
             LLMProviderRegistry,
             PluginRegistry,
+            TranscriptionRegistry,
         )
 
         config = self.get(name) if name else self.get_default(provider_type)
@@ -369,13 +370,13 @@ class ProviderService:
             raise ValueError(f"Provider '{config.name}' is disabled")
 
         # Currently supported provider type → registry mappings.
-        # EMBEDDING, STORAGE, and VOICE are reserved for future registries.
+        # EMBEDDING and STORAGE are reserved for future registries.
         registry_map: dict[ProviderType, PluginRegistry] = {
             ProviderType.LLM: LLMProviderRegistry,
             ProviderType.VECTOR: DataStoreRegistry,
+            ProviderType.VOICE: TranscriptionRegistry,
             # ProviderType.EMBEDDING: reserved — use EmbeddingProvider directly
             # ProviderType.STORAGE: reserved — no StorageRegistry yet
-            # ProviderType.VOICE: reserved — no VoiceRegistry yet
         }
 
         registry = registry_map.get(provider_type)
@@ -383,7 +384,6 @@ class ProviderService:
             reserved = {
                 ProviderType.EMBEDDING,
                 ProviderType.STORAGE,
-                ProviderType.VOICE,
             }
             if provider_type in reserved:
                 raise NotImplementedError(

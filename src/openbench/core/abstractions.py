@@ -491,6 +491,35 @@ class LLMProvider(ABC):
         yield self.generate(prompt, model, **params)
 
 
+class TranscriptionProvider(ABC):
+    """Abstract interface for speech-to-text (audio transcription) providers.
+
+    Implementation-agnostic: could be Gemini native audio, Whisper, an
+    OpenAI-compatible audio endpoint, or a cloud STT service. The audio
+    extractor depends only on this interface, so swapping the backend is a
+    matter of registering a different provider — no extractor changes.
+    """
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        """Provider name ('gemini', 'openai', 'whisper', ...)."""
+
+    @abstractmethod
+    def transcribe(self, audio: str | bytes, model: str = "", **params) -> str:
+        """Transcribe audio to text.
+
+        Args:
+            audio: Local file path (str) or raw audio bytes.
+            model: Model identifier (uses the provider default if empty).
+            **params: Provider-specific options. ``mime_type`` is required
+                when ``audio`` is bytes.
+
+        Returns:
+            The transcript text.
+        """
+
+
 class EmbeddingProvider(ABC):
     """
     Abstract interface for embedding providers.

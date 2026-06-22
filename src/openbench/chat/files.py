@@ -270,6 +270,9 @@ class FileContentExtractor:
         if mime in _EXCEL_MIMES:
             return self._extract_excel(stored_file)
 
+        if mime.startswith("audio/"):
+            return self._extract_audio(stored_file)
+
         if mime.startswith("text/") or mime in _TEXT_LIKE_MIMES:
             return self._extract_text(stored_file)
 
@@ -301,6 +304,21 @@ class FileContentExtractor:
         except Exception as e:
             logger.warning(f"EPUB extraction failed for {stored_file.name}: {e}")
             return f"[EPUB: {stored_file.name}] (extraction failed: {e})"
+
+    def _extract_audio(self, stored_file: StoredFile) -> str:
+        """Transcribe audio to text via the resolved TranscriptionProvider."""
+        try:
+            from openbench.intelligence.transcription import get_transcriber
+
+            transcript = get_transcriber().transcribe(
+                stored_file.path, mime_type=stored_file.mime_type
+            )
+            if transcript.strip():
+                return transcript
+            return f"[Audio: {stored_file.name}] (no speech detected)"
+        except Exception as e:
+            logger.warning(f"Audio transcription failed for {stored_file.name}: {e}")
+            return f"[Audio: {stored_file.name}] (transcription failed: {e})"
 
     def _extract_text(self, stored_file: StoredFile) -> str:
         """Read text file directly."""

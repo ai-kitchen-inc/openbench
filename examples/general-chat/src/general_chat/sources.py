@@ -49,6 +49,16 @@ EXCEL_EXTENSIONS = {".xlsx", ".xls"}
 TEXT_MIME_TYPES = {"application/json"}
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json"}
 
+AUDIO_MIME_TYPES = {
+    "audio/mpeg",
+    "audio/wav",
+    "audio/mp4",
+    "audio/ogg",
+    "audio/aac",
+    "audio/flac",
+}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac"}
+
 IMAGE_MIME_TYPES = {
     "image/png",
     "image/jpeg",
@@ -82,7 +92,11 @@ UPLOAD_METADATA_KEYS = {
 _UPLOAD_FILE_ID_PATTERN = re.compile(r"(?:^|/)(file-[A-Za-z0-9_-]+)(?:/|$)")
 
 ALLOWED_EXTENSIONS = (
-    DOCUMENT_EXTENSIONS | EXCEL_EXTENSIONS | TEXT_EXTENSIONS | IMAGE_EXTENSIONS
+    DOCUMENT_EXTENSIONS
+    | EXCEL_EXTENSIONS
+    | TEXT_EXTENSIONS
+    | IMAGE_EXTENSIONS
+    | AUDIO_EXTENSIONS
 )
 
 DUCKDUCKGO_SEARCH_URL = "https://html.duckduckgo.com/html/"
@@ -627,6 +641,12 @@ class SourceParserRegistry:
         if stored_file.mime_type in IMAGE_MIME_TYPES or ext in IMAGE_EXTENSIONS:
             return self._parse_image(stored_file)
         if (
+            stored_file.mime_type.startswith("audio/")
+            or stored_file.mime_type in AUDIO_MIME_TYPES
+            or ext in AUDIO_EXTENSIONS
+        ):
+            return ParsedSourceContent(text=self._parse_audio(stored_file))
+        if (
             stored_file.mime_type.startswith("text/")
             or stored_file.mime_type in TEXT_MIME_TYPES
             or ext in TEXT_EXTENSIONS
@@ -703,6 +723,19 @@ class SourceParserRegistry:
             else:
                 parts.append(df.to_markdown(index=False))
         return "\n\n".join(parts).strip()
+
+    def _parse_audio(self, stored_file: StoredFile) -> str:
+        from openbench.intelligence.transcription import get_transcriber
+
+        try:
+            transcript = get_transcriber().transcribe(
+                stored_file.path, mime_type=stored_file.mime_type
+            )
+        except Exception as exc:
+            raise ValueError(f"Audio transcription failed: {exc}") from exc
+        if not transcript.strip():
+            raise ValueError(f"No speech could be transcribed from {stored_file.name}.")
+        return transcript
 
     def _parse_image(self, stored_file: StoredFile) -> ParsedSourceContent:
         image_data = self.document_extractor.extract_image(stored_file)

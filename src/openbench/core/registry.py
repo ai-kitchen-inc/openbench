@@ -542,6 +542,7 @@ from openbench.core.abstractions import (  # noqa: E402
     LLMProvider,
     OutputGenerator,
     Tool,
+    TranscriptionProvider,
 )
 
 # Create typed registries
@@ -549,6 +550,9 @@ DataSourceRegistry = PluginRegistry[DataSource]("data_source", DataSource)
 DataStoreRegistry = PluginRegistry[DataStore]("data_store", DataStore)
 AgentRegistry = PluginRegistry[Agent]("agent", Agent)
 LLMProviderRegistry = PluginRegistry[LLMProvider]("llm_provider", LLMProvider)
+TranscriptionRegistry = PluginRegistry[TranscriptionProvider](
+    "transcription_provider", TranscriptionProvider
+)
 ToolRegistry = PluginRegistry[Tool]("tool", Tool)
 OutputGeneratorRegistry = PluginRegistry[OutputGenerator]("output_generator", OutputGenerator)
 
