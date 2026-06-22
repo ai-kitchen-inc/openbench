@@ -20,7 +20,10 @@ import "./global.css";
 
 const STREAM_URL = apiPath("/awp");
 export const SOURCE_ACCEPT =
-  ".xlsx,.xls,.pdf,.docx,.doc,.pptx,.ppt,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.webp";
+  ".xlsx,.xls,.pdf,.epub,.docx,.doc,.pptx,.ppt,.txt,.md,.csv,.json," +
+  ".png,.jpg,.jpeg,.webp,.gif,.heic,.heif,.tiff,.tif,.bmp,.svg," +
+  ".mp3,.wav,.m4a,.ogg,.aac,.flac," +
+  ".mp4,.webm,.mov,.avi";
 export const DIRECT_UPLOAD_THRESHOLD_BYTES = 25 * 1024 * 1024;
 const DIRECT_UPLOAD_POLL_INTERVAL_MS = 2000;
 const DIRECT_UPLOAD_MAX_POLLS = 90;

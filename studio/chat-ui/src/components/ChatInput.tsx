@@ -17,6 +17,8 @@ export interface ChatInputProps {
   onAttachmentError?: (message: string, files: File[]) => void;
   /** Whether users can attach more than one file. Defaults to true. */
   multiple?: boolean;
+  /** Max size per file in bytes. Files larger than this are rejected. */
+  maxUploadSize?: number;
 }
 
 export function ChatInput({
@@ -26,6 +28,7 @@ export function ChatInput({
   acceptedFileTypes,
   onAttachmentError,
   multiple = true,
+  maxUploadSize,
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -75,11 +78,18 @@ export function ChatInput({
     const asArray = Array.from(files as FileList);
     if (asArray.length === 0) return;
     const selectedFiles = multiple ? asArray : asArray.slice(0, 1);
-    const acceptedFiles = selectedFiles.filter((file) => isAcceptedFile(file, acceptedFileTypes));
-    const rejectedFiles = selectedFiles.filter((file) => !isAcceptedFile(file, acceptedFileTypes));
+    const typeRejected = selectedFiles.filter((file) => !isAcceptedFile(file, acceptedFileTypes));
+    const typeOk = selectedFiles.filter((file) => isAcceptedFile(file, acceptedFileTypes));
+    const oversize = maxUploadSize
+      ? typeOk.filter((file) => file.size > maxUploadSize)
+      : [];
+    const acceptedFiles = typeOk.filter((file) => !maxUploadSize || file.size <= maxUploadSize);
 
-    if (rejectedFiles.length > 0) {
-      onAttachmentError?.(formatRejectedFilesMessage(rejectedFiles), rejectedFiles);
+    if (typeRejected.length > 0) {
+      onAttachmentError?.(formatRejectedFilesMessage(typeRejected), typeRejected);
+    }
+    if (oversize.length > 0) {
+      onAttachmentError?.(formatOversizeMessage(oversize, maxUploadSize as number), oversize);
     }
 
     if (acceptedFiles.length === 0) return;
@@ -94,7 +104,7 @@ export function ChatInput({
       file: file,
     }));
     setAttachments((prev) => [...prev, ...newAttachments]);
-  }, [acceptedFileTypes, multiple, onAttachmentError]);
+  }, [acceptedFileTypes, maxUploadSize, multiple, onAttachmentError]);
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -272,4 +282,10 @@ function formatRejectedFilesMessage(files: File[]): string {
     return `Unsupported file type: ${files[0]?.name ?? "file"}`;
   }
   return `Unsupported file types: ${files.map((file) => file.name).join(", ")}`;
+}
+
+function formatOversizeMessage(files: File[], maxBytes: number): string {
+  const mb = Math.round(maxBytes / (1024 * 1024));
+  const names = files.map((file) => file.name).join(", ");
+  return `File too large (max ${mb} MB): ${names}`;
 }

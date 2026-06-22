@@ -38,6 +38,14 @@ Auth boundary: Firebase admits any Google account; **authorization** is decided
 server-side. `GENERAL_CHAT_ALLOWED_EMAILS` / `GENERAL_CHAT_ALLOWED_DOMAINS` gate
 access (403 for non-listed). The SPA shows an "Access not authorized" screen on 403.
 
+File support (EPUB / audio / image / video): the API image installs the `epub`
+and `media` extras plus the system libs `libcairo2` (SVG rasterization) and
+`libheif1` (HEIC) — see [`Dockerfile.general-chat`](../Dockerfile.general-chat).
+`imageio-ffmpeg` bundles its own ffmpeg binary, so no apt `ffmpeg` is needed.
+Audio/video transcription uses **Gemini native audio** (the existing
+`GOOGLE_API_KEY`) — no extra STT service. Large media extraction is slow, so it
+runs in the `openbench-worker` (Pub/Sub) rather than blocking uploads.
+
 ## Resource inventory
 
 | Thing | Value |

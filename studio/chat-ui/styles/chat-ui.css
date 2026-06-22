@@ -724,6 +724,26 @@
   color: var(--ob-text-secondary);
 }
 
+.chat-attachment-preview__thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: var(--ob-radius-sm);
+  border: 1px solid var(--ob-border);
+  flex-shrink: 0;
+}
+
+.chat-attachment-preview__media {
+  max-width: 200px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+video.chat-attachment-preview__media {
+  height: auto;
+  max-height: 120px;
+}
+
 .chat-attachment-preview__info {
   display: flex;
   flex-direction: column;

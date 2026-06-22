@@ -176,6 +176,25 @@ function PaperclipIcon() {
   );
 }
 
+function BookIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </svg>
+  );
+}
+
 function DownloadIcon() {
   return (
     <svg
@@ -200,6 +219,7 @@ type MimeEntry = { prefix: string; icon: () => React.JSX.Element };
 
 const MIME_ICONS: MimeEntry[] = [
   { prefix: "application/pdf", icon: FileTextIcon },
+  { prefix: "application/epub+zip", icon: BookIcon },
   { prefix: "text/plain", icon: FileTextIcon },
   { prefix: "text/csv", icon: SheetIcon },
   { prefix: "application/json", icon: FileJsonIcon },

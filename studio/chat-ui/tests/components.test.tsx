@@ -215,6 +215,35 @@ describe("ChatInput", () => {
     expect(input?.getAttribute("accept")).toBe(".pdf,image/*");
   });
 
+  it("rejects files over maxUploadSize via onAttachmentError", () => {
+    const onAttachmentError = vi.fn();
+    const big = new File([new Uint8Array(10)], "clip.mp4", { type: "video/mp4" });
+    Object.defineProperty(big, "size", { value: 50 * 1024 * 1024 });
+    const { container } = render(
+      <ChatInput onSend={vi.fn()} maxUploadSize={20 * 1024 * 1024} onAttachmentError={onAttachmentError} />,
+    );
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [big] } });
+    expect(onAttachmentError).toHaveBeenCalled();
+    expect(onAttachmentError.mock.calls[0][0]).toMatch(/too large/i);
+  });
+
+  it("accepts audio/video by mime wildcard", () => {
+    const onAttachmentError = vi.fn();
+    const audio = new File(["x"], "note.mp3", { type: "audio/mpeg" });
+    const { container } = render(
+      <ChatInput
+        onSend={vi.fn()}
+        acceptedFileTypes="audio/*,video/*,.epub"
+        onAttachmentError={onAttachmentError}
+      />,
+    );
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [audio] } });
+    expect(onAttachmentError).not.toHaveBeenCalled();
+    expect(screen.getByText("note.mp3")).toBeTruthy();
+  });
+
   it("shows and clears a drag-over state for file drags", () => {
     const file = new File(["hello"], "notes.txt", { type: "text/plain" });
     const { container } = render(<ChatInput onSend={vi.fn()} />);
