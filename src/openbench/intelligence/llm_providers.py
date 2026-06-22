@@ -92,6 +92,13 @@ class GeminiLLMProvider(LLMProvider):
         self.temperature = temperature
         self.max_output_tokens = max_output_tokens
         self._client = None
+        # Cache of Files-API uploads keyed by (path, size, mtime) so re-asking
+        # about the same large video/audio doesn't re-upload every turn.
+        self._files_cache: dict[tuple, Any] = {}
+
+    # Files <= this size are sent inline as bytes; larger payloads go through
+    # the Gemini Files API. Gemini's inline request cap is ~20 MB; stay under it.
+    _INLINE_MEDIA_LIMIT = 18 * 1024 * 1024
 
     @property
     def provider_name(self) -> str:
@@ -119,7 +126,7 @@ class GeminiLLMProvider(LLMProvider):
 
         return self._client
 
-    def _convert_messages(self, messages: list[dict[str, Any]]) -> tuple:
+    def _convert_messages(self, messages: list[dict[str, Any]], model: str = "") -> tuple:
         """Convert OpenAI-style messages to Gemini format.
 
         BaseAgent sends messages as:
@@ -128,8 +135,17 @@ class GeminiLLMProvider(LLMProvider):
         Gemini expects:
             system_instruction (str) + contents (list of Content objects)
 
+        A user message may carry provider-neutral ``media`` references
+        (:class:`~openbench.core.abstractions.MediaContent` dicts). This is the
+        per-provider translation point: each LLMProvider turns those neutral
+        references into its own SDK shape. Here they become Gemini ``Part``s
+        (inline bytes for small files, Files-API URIs for large ones), gated by
+        the active model's multimodal capability flags.
+
         Args:
             messages: OpenAI-style message list from AgentMemory.
+            model: Active model id (for capability gating). Defaults to the
+                instance model.
 
         Returns:
             Tuple of (system_instruction, contents) for Gemini API.
@@ -158,12 +174,11 @@ class GeminiLLMProvider(LLMProvider):
                 system_instruction = content
 
             elif role == "user":
-                contents.append(
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(text=content)],
-                    )
-                )
+                parts = [types.Part.from_text(text=content)]
+                media = msg.get("media")
+                if media:
+                    parts.extend(self._build_media_parts(media, model or self.model))
+                contents.append(types.Content(role="user", parts=parts))
 
             elif role == "assistant":
                 # Use raw content if available (preserves thought_signature)
@@ -228,6 +243,109 @@ class GeminiLLMProvider(LLMProvider):
                 )
 
         return system_instruction, contents
+
+    def _model_supports_media(self, model: str, media_type: str) -> bool:
+        """Whether ``model`` can natively consume ``media_type``.
+
+        Reads the capability flags from the model registry. Unknown models are
+        assumed capable (Gemini models are natively multimodal); a wrong guess
+        is caught by the per-part try/except, which degrades to the text track.
+        """
+        try:
+            from openbench.core.config import get_config
+
+            info = get_config().get_model(model)
+        except Exception:
+            info = None
+        if info is None:
+            return True
+        if media_type == "image":
+            return info.supports_vision
+        if media_type == "audio":
+            return getattr(info, "supports_audio", False)
+        if media_type == "video":
+            return getattr(info, "supports_video", False)
+        return False
+
+    def _build_media_parts(self, media: list[dict[str, Any]], model: str) -> list:
+        """Translate provider-neutral media references into Gemini Parts.
+
+        Small files are sent inline as bytes; large files (video, long audio)
+        go through the Files API. Any failure degrades gracefully — the part is
+        skipped and the model still has the message text / extracted transcript.
+        """
+        from google.genai import types
+
+        parts: list[Any] = []
+        for item in media:
+            media_type = item.get("type", "")
+            mime = item.get("mime_type", "")
+            path = item.get("path")
+            if not path or not mime:
+                continue
+            if not self._model_supports_media(model, media_type):
+                logger.info(
+                    "Model %s does not support %s natively; relying on text track for %s",
+                    model,
+                    media_type,
+                    item.get("metadata", {}).get("name", path),
+                )
+                continue
+            try:
+                import os as _os
+
+                size = _os.path.getsize(path)
+                if size <= self._INLINE_MEDIA_LIMIT:
+                    from pathlib import Path as _Path
+
+                    parts.append(
+                        types.Part.from_bytes(data=_Path(path).read_bytes(), mime_type=mime)
+                    )
+                else:
+                    uploaded = self._upload_via_files_api(path, mime)
+                    parts.append(
+                        types.Part.from_uri(
+                            file_uri=uploaded.uri,
+                            mime_type=getattr(uploaded, "mime_type", mime),
+                        )
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to attach media %s natively (%s); using text fallback",
+                    path,
+                    exc,
+                )
+        return parts
+
+    def _upload_via_files_api(self, path: str, mime: str) -> Any:
+        """Upload a large file via the Gemini Files API, cached per file.
+
+        Cache key is (path, size, mtime) so an edited file re-uploads but the
+        same file across turns is uploaded once. Waits briefly for video/audio
+        that the API needs to process before it can be referenced.
+        """
+        import os as _os
+        import time as _time
+
+        stat = _os.stat(path)
+        key = (path, stat.st_size, stat.st_mtime)
+        cached = self._files_cache.get(key)
+        if cached is not None:
+            return cached
+
+        client = self._get_client()
+        uploaded = client.files.upload(file=path)
+
+        # Files (esp. video) may need server-side processing before use.
+        for _ in range(30):
+            state = getattr(getattr(uploaded, "state", None), "name", None)
+            if state != "PROCESSING":
+                break
+            _time.sleep(1)
+            uploaded = client.files.get(name=uploaded.name)
+
+        self._files_cache[key] = uploaded
+        return uploaded
 
     def _convert_tools(self, tools: list[dict[str, Any]]) -> list:
         """Convert OpenAI-style tool schemas to Gemini FunctionDeclarations.
@@ -519,7 +637,7 @@ class GeminiLLMProvider(LLMProvider):
             system_instruction = None
             contents = prompt
         else:
-            system_instruction, contents = self._convert_messages(prompt)
+            system_instruction, contents = self._convert_messages(prompt, model=model)
 
         # Build generation config
         config = types.GenerateContentConfig(
@@ -637,7 +755,7 @@ class GeminiLLMProvider(LLMProvider):
             system_instruction = None
             contents = prompt
         else:
-            system_instruction, contents = self._convert_messages(prompt)
+            system_instruction, contents = self._convert_messages(prompt, model=model)
 
         # Build generation config
         config = types.GenerateContentConfig(

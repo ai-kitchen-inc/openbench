@@ -10,6 +10,7 @@ All core abstractions are Chainable, enabling L1 component-level composition.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +18,49 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 from openbench.core.chainable import Chainable
+
+
+@dataclass
+class MediaContent:
+    """Provider-agnostic media attachment for a chat message.
+
+    Carries a *reference* to the bytes (local ``path`` or remote ``uri``)
+    plus the MIME type, so any :class:`LLMProvider` can translate it into
+    its own SDK shape — a Gemini ``Part``, an OpenAI ``image_url`` block, etc.
+
+    Raw bytes are intentionally not stored here: providers read them from
+    ``path`` at send time. That keeps a message JSON-serializable for
+    persistent memory and avoids holding large payloads in conversation
+    history.
+    """
+
+    type: str  # "image" | "audio" | "video"
+    mime_type: str
+    path: str | None = None
+    uri: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain JSON-safe dict."""
+        result: dict[str, Any] = {"type": self.type, "mime_type": self.mime_type}
+        if self.path:
+            result["path"] = self.path
+        if self.uri:
+            result["uri"] = self.uri
+        if self.metadata:
+            result["metadata"] = self.metadata
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MediaContent:
+        """Reconstruct from a plain dict (inverse of :meth:`to_dict`)."""
+        return cls(
+            type=data["type"],
+            mime_type=data["mime_type"],
+            path=data.get("path"),
+            uri=data.get("uri"),
+            metadata=data.get("metadata", {}),
+        )
 
 # ============================================================================
 # Data Layer Abstractions

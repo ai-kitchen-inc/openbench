@@ -36,6 +36,7 @@ from openbench.core.abstractions import (
     ExecutionContext,
     ExecutionResult,
     FrameworkAdapter,
+    MediaContent,
 )
 from openbench.core.chainable import Chainable, RunnableConfig
 
@@ -556,6 +557,26 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                     att_data.append(entry)
                 if att_data:
                     data["attachments"] = att_data
+                # Provider-neutral media references for native multimodal
+                # understanding. Independent of extracted_text: audio/video
+                # may have no text yet, but the model can still see/hear them.
+                media_items: list[MediaContent] = []
+                for a in attachments:
+                    if a.type not in ("image", "audio", "video"):
+                        continue
+                    path = getattr(a, "path", None)
+                    if not path:
+                        continue
+                    media_items.append(
+                        MediaContent(
+                            type=a.type,
+                            mime_type=a.mime_type,
+                            path=path,
+                            metadata={"name": a.name},
+                        )
+                    )
+                if media_items:
+                    data["_media"] = media_items
             context = ExecutionContext(
                 goal=content,
                 data=data,

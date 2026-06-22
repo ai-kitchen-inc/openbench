@@ -54,6 +54,8 @@ class ModelInfo:
     context_window: int = 128000
     max_output_tokens: int = 4096
     supports_vision: bool = False
+    supports_audio: bool = False
+    supports_video: bool = False
     supports_tools: bool = True
     cost_per_1k_input: float = 0.0
     cost_per_1k_output: float = 0.0
@@ -67,6 +69,8 @@ class ModelInfo:
             "context_window": self.context_window,
             "max_output_tokens": self.max_output_tokens,
             "supports_vision": self.supports_vision,
+            "supports_audio": self.supports_audio,
+            "supports_video": self.supports_video,
             "supports_tools": self.supports_tools,
             "cost_per_1k_input": self.cost_per_1k_input,
             "cost_per_1k_output": self.cost_per_1k_output,
@@ -82,6 +86,8 @@ class ModelInfo:
             context_window=data.get("context_window", 128000),
             max_output_tokens=data.get("max_output_tokens", 4096),
             supports_vision=data.get("supports_vision", False),
+            supports_audio=data.get("supports_audio", False),
+            supports_video=data.get("supports_video", False),
             supports_tools=data.get("supports_tools", True),
             cost_per_1k_input=data.get("cost_per_1k_input", 0.0),
             cost_per_1k_output=data.get("cost_per_1k_output", 0.0),
@@ -401,6 +407,42 @@ DEFAULT_MODELS = [
         cost_per_1k_input=0.0008,
         cost_per_1k_output=0.004,
         aliases=["claude-haiku", "haiku"],
+    ),
+    # Gemini models are natively multimodal (image + audio + video). The
+    # supports_* flags gate whether an LLMProvider sends media bytes natively;
+    # a model without a flag falls back to the text/transcript track.
+    ModelInfo(
+        name="gemini-2.5-flash",
+        provider="gemini",
+        context_window=1000000,
+        max_output_tokens=8192,
+        supports_vision=True,
+        supports_audio=True,
+        supports_video=True,
+        supports_tools=True,
+        aliases=["gemini-flash"],
+    ),
+    ModelInfo(
+        name="gemini-2.5-pro",
+        provider="gemini",
+        context_window=1000000,
+        max_output_tokens=8192,
+        supports_vision=True,
+        supports_audio=True,
+        supports_video=True,
+        supports_tools=True,
+        aliases=["gemini-pro"],
+    ),
+    ModelInfo(
+        name="gemini-3-flash-preview",
+        provider="gemini",
+        context_window=1000000,
+        max_output_tokens=8192,
+        supports_vision=True,
+        supports_audio=True,
+        supports_video=True,
+        supports_tools=True,
+        aliases=["gemini-3-flash"],
     ),
 ]
 

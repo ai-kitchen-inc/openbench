@@ -36,6 +36,7 @@ from openbench.core.abstractions import (
     ExecutionResult,
     LLMProvider,
     LLMResponse,
+    MediaContent,
     Query,
     Tool,
 )
@@ -64,6 +65,7 @@ class Message:
     tool_call_id: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
     raw_content: Any = field(default=None, repr=False)
+    media: list[MediaContent] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to LLM-compatible format."""
@@ -76,6 +78,10 @@ class Message:
             result["tool_calls"] = self.tool_calls
         if self.raw_content is not None:
             result["raw_content"] = self.raw_content
+        if self.media:
+            # Provider-neutral media references; each LLMProvider translates
+            # these into its own multimodal format in _convert_messages.
+            result["media"] = [m.to_dict() for m in self.media]
         return result
 
 
@@ -141,9 +147,9 @@ class AgentMemory:
         """Add system message."""
         self.add(MessageRole.SYSTEM, content)
 
-    def add_user(self, content: str) -> None:
-        """Add user message."""
-        self.add(MessageRole.USER, content)
+    def add_user(self, content: str, media: list[MediaContent] | None = None) -> None:
+        """Add user message, optionally with provider-neutral media references."""
+        self.add(MessageRole.USER, content, media=media)
 
     def add_assistant(
         self,
@@ -1086,7 +1092,13 @@ Provide clear, actionable responses."""
 
         # Add user message with context
         user_message = f"Goal: {context.goal}"
+        media_payload: list[MediaContent] | None = None
         if context.data:
+            # Pull provider-neutral media references out before serializing the
+            # rest of the data to text — they travel on the message, not in the
+            # JSON blob. Each LLMProvider decides whether to send them natively.
+            if isinstance(context.data, dict):
+                media_payload = context.data.pop("_media", None) or None
             # Format RAG context specially if present
             data_to_show = context.data
             if isinstance(data_to_show, dict) and "_rag_context" in data_to_show:
@@ -1095,11 +1107,11 @@ Provide clear, actionable responses."""
                 user_message += f"\n\n## Retrieved Context ({rag_sources} sources):\n{rag_context}"
                 if data_to_show:
                     user_message += f"\n\n## Additional Data:\n{json.dumps(data_to_show, indent=2, default=str)}"
-            else:
+            elif data_to_show:
                 user_message += (
                     f"\n\nContext data:\n{json.dumps(data_to_show, indent=2, default=str)}"
                 )
-        self.memory.add_user(user_message)
+        self.memory.add_user(user_message, media=media_payload)
 
         import time
 
