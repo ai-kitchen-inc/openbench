@@ -686,18 +686,66 @@
   background: var(--ob-border);
 }
 
-.chat-input__mic-btn.is-recording {
-  color: #e5484d;
-  animation: ob-mic-pulse 1.2s ease-in-out infinite;
+/* Voice recording bar (ChatGPT-style waveform) */
+.chat-input__voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
 }
 
-@keyframes ob-mic-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
+.chat-input__voice-canvas {
+  flex: 1;
+  height: 36px;
+  min-width: 0;
+  color: var(--ob-text-secondary);
+}
+
+.chat-input__voice-cancel,
+.chat-input__voice-confirm,
+.chat-input__voice-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.chat-input__voice-cancel {
+  background: none;
+  color: var(--ob-text-secondary);
+  cursor: pointer;
+}
+
+.chat-input__voice-cancel:hover {
+  background: var(--ob-border);
+}
+
+.chat-input__voice-confirm {
+  background: var(--ob-primary);
+  color: var(--ob-primary-text);
+  cursor: pointer;
+}
+
+.chat-input__voice-confirm:hover {
+  background: var(--ob-primary-hover);
+}
+
+.chat-input__voice-spinner {
+  color: var(--ob-text-secondary);
+}
+
+.chat-input__voice-spinner svg {
+  animation: ob-voice-spin 0.8s linear infinite;
+}
+
+@keyframes ob-voice-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

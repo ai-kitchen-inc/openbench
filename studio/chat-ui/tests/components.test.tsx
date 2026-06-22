@@ -155,6 +155,53 @@ describe("AttachmentPreview", () => {
 
 // ── ChatInput ──
 
+// jsdom has no media stack — mock getUserMedia + MediaRecorder + AudioContext
+// so the voice recorder logic is exercisable. Returns a restore function.
+class FakeMediaRecorder {
+  state = "inactive";
+  mimeType = "audio/webm";
+  ondataavailable: ((e: { data: Blob }) => void) | null = null;
+  onstop: (() => void) | null = null;
+  start() {
+    this.state = "recording";
+  }
+  stop() {
+    this.state = "inactive";
+    this.ondataavailable?.({ data: new Blob(["x"]) });
+    this.onstop?.();
+  }
+}
+
+class FakeAudioContext {
+  state = "running";
+  createAnalyser() {
+    return { fftSize: 0, getByteTimeDomainData: () => {} };
+  }
+  createMediaStreamSource() {
+    return { connect: () => {} };
+  }
+  close() {
+    this.state = "closed";
+    return Promise.resolve();
+  }
+}
+
+function installVoiceMocks(): () => void {
+  const nav = navigator as unknown as { mediaDevices?: unknown };
+  const w = window as unknown as Record<string, unknown>;
+  const prev = { md: nav.mediaDevices, mr: w.MediaRecorder, ac: w.AudioContext };
+  nav.mediaDevices = {
+    getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: vi.fn() }] })),
+  };
+  w.MediaRecorder = FakeMediaRecorder;
+  w.AudioContext = FakeAudioContext;
+  return () => {
+    nav.mediaDevices = prev.md;
+    w.MediaRecorder = prev.mr;
+    w.AudioContext = prev.ac;
+  };
+}
+
 describe("ChatInput", () => {
   it("renders textarea and send button", () => {
     render(<ChatInput onSend={vi.fn()} />);
@@ -244,78 +291,63 @@ describe("ChatInput", () => {
     expect(screen.getByText("note.mp3")).toBeTruthy();
   });
 
-  it("hides the mic button when no Web Speech API and no onTranscribe", () => {
-    const w = window as unknown as Record<string, unknown>;
-    const prev = { SpeechRecognition: w.SpeechRecognition, webkitSpeechRecognition: w.webkitSpeechRecognition };
-    delete w.SpeechRecognition;
-    delete w.webkitSpeechRecognition;
+  it("hides the mic button when no onTranscribe is provided", () => {
+    const restore = installVoiceMocks();
     render(<ChatInput onSend={vi.fn()} />);
     expect(screen.queryByLabelText("Start voice input")).toBeNull();
-    Object.assign(w, prev);
+    restore();
   });
 
-  it("shows the mic button when onTranscribe is provided", () => {
-    const w = window as unknown as Record<string, unknown>;
-    const prev = { SpeechRecognition: w.SpeechRecognition, webkitSpeechRecognition: w.webkitSpeechRecognition };
-    delete w.SpeechRecognition;
-    delete w.webkitSpeechRecognition;
+  it("hides the mic button when getUserMedia is unavailable", () => {
+    const nav = navigator as unknown as { mediaDevices?: unknown };
+    const prev = nav.mediaDevices;
+    delete nav.mediaDevices;
     render(<ChatInput onSend={vi.fn()} onTranscribe={vi.fn(async () => "hi")} />);
-    expect(screen.getByLabelText("Start voice input")).toBeTruthy();
-    Object.assign(w, prev);
+    expect(screen.queryByLabelText("Start voice input")).toBeNull();
+    nav.mediaDevices = prev;
   });
 
-  it("starts and stops Web Speech dictation on mic click", () => {
-    const w = window as unknown as Record<string, unknown>;
-    const prev = w.SpeechRecognition;
-    const start = vi.fn();
-    const stop = vi.fn();
-    class FakeRecognition {
-      lang = "";
-      interimResults = false;
-      continuous = false;
-      onresult: ((e: unknown) => void) | null = null;
-      onend: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      start = start;
-      stop = stop;
-    }
-    w.SpeechRecognition = FakeRecognition;
-    render(<ChatInput onSend={vi.fn()} />);
+  it("shows the mic and enters recording mode on click", async () => {
+    const restore = installVoiceMocks();
+    render(<ChatInput onSend={vi.fn()} onTranscribe={vi.fn(async () => "hi")} />);
     const mic = screen.getByLabelText("Start voice input");
-    fireEvent.click(mic);
-    expect(start).toHaveBeenCalled();
-    // Now in listening state → label flips to Stop.
-    fireEvent.click(screen.getByLabelText("Stop voice input"));
-    expect(stop).toHaveBeenCalled();
-    w.SpeechRecognition = prev;
+    await act(async () => {
+      fireEvent.click(mic);
+    });
+    expect(screen.getByLabelText("Cancel voice input")).toBeTruthy();
+    expect(screen.getByLabelText("Confirm voice input")).toBeTruthy();
+    restore();
   });
 
-  it("inserts recognized speech into the textarea", () => {
-    const w = window as unknown as Record<string, unknown>;
-    const prev = w.SpeechRecognition;
-    let instance: { onresult: ((e: unknown) => void) | null } | null = null;
-    class FakeRecognition {
-      lang = "";
-      interimResults = false;
-      continuous = false;
-      onresult: ((e: unknown) => void) | null = null;
-      onend: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      start = vi.fn();
-      stop = vi.fn();
-      constructor() {
-        instance = this;
-      }
-    }
-    w.SpeechRecognition = FakeRecognition;
-    render(<ChatInput onSend={vi.fn()} />);
-    fireEvent.click(screen.getByLabelText("Start voice input"));
-    act(() => {
-      instance?.onresult?.({ resultIndex: 0, results: [[{ transcript: "hello world" }]] });
+  it("confirm transcribes and inserts the text", async () => {
+    const restore = installVoiceMocks();
+    const onTranscribe = vi.fn(async () => "hello from voice");
+    render(<ChatInput onSend={vi.fn()} onTranscribe={onTranscribe} />);
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Start voice input"));
     });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Confirm voice input"));
+    });
+    expect(onTranscribe).toHaveBeenCalledTimes(1);
     const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
-    expect(textarea.value).toBe("hello world");
-    w.SpeechRecognition = prev;
+    expect(textarea.value).toBe("hello from voice");
+    restore();
+  });
+
+  it("cancel discards without transcribing", async () => {
+    const restore = installVoiceMocks();
+    const onTranscribe = vi.fn(async () => "should not appear");
+    render(<ChatInput onSend={vi.fn()} onTranscribe={onTranscribe} />);
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Start voice input"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Cancel voice input"));
+    });
+    expect(onTranscribe).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Start voice input")).toBeTruthy();
+    restore();
   });
 
   it("shows and clears a drag-over state for file drags", () => {

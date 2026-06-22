@@ -213,3 +213,28 @@ def extract_audio_track(path: str | Path) -> str | None:
     if result.returncode != 0 or not out.exists() or out.stat().st_size == 0:
         return None
     return str(out)
+
+
+def transcode_audio_to_wav(path: str | Path) -> str | None:
+    """Transcode any audio container (webm/opus, mp4, ogg, ...) to 16 kHz mono WAV.
+
+    Browser ``MediaRecorder`` produces ``audio/webm;codecs=opus`` which Gemini
+    does not accept; normalizing to WAV makes transcription format-independent.
+    Returns the WAV path, or None when ffmpeg is unavailable or the conversion
+    fails (caller falls back to the raw bytes).
+    """
+    import subprocess
+
+    src = Path(path)
+    out = src.with_suffix(".converted.wav")
+    try:
+        exe = _ffmpeg_exe()
+    except RuntimeError:
+        return None
+    result = subprocess.run(
+        [exe, "-y", "-i", str(src), "-ac", "1", "-ar", "16000", str(out)],
+        capture_output=True,
+    )
+    if result.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+        return None
+    return str(out)

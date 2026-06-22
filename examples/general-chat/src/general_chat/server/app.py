@@ -829,15 +829,42 @@ def create_app() -> FastAPI:
         file: UploadFile = File(...),
         session_id: str | None = Form(default=None, alias="sessionId"),
     ) -> dict:
-        """Transcribe a recorded audio blob to text (mic voice input fallback)."""
+        """Transcribe a recorded audio blob to text (mic voice input).
+
+        The browser records ``audio/webm;codecs=opus``, which Gemini does not
+        accept, so we transcode to WAV via ffmpeg before transcribing. If ffmpeg
+        is unavailable, fall back to the raw bytes.
+        """
+        import contextlib
+        import os
+        import tempfile
+
         content = await _read_upload_limited(file, multipart_upload_max_bytes)
         mime_type = file.content_type or "audio/webm"
-        try:
-            from openbench.intelligence.transcription import get_transcriber
 
-            transcript = get_transcriber().transcribe(content, mime_type=mime_type)
+        from openbench.intelligence.transcription import get_transcriber
+        from openbench.utils.media import transcode_audio_to_wav
+
+        tmp_path: str | None = None
+        wav_path: str | None = None
+        try:
+            suffix = os.path.splitext(file.filename or "")[1] or ".webm"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+            wav_path = transcode_audio_to_wav(tmp_path)
+            transcriber = get_transcriber()
+            if wav_path:
+                transcript = transcriber.transcribe(wav_path, mime_type="audio/wav")
+            else:
+                transcript = transcriber.transcribe(content, mime_type=mime_type)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
+        finally:
+            for path in (tmp_path, wav_path):
+                if path and os.path.exists(path):
+                    with contextlib.suppress(OSError):
+                        os.unlink(path)
         return {"transcript": transcript.strip()}
 
     @app.post("/chat/upload")
