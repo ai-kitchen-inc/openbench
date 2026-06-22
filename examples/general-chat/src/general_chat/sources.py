@@ -32,12 +32,13 @@ TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
 DOCUMENT_MIME_TYPES = {
     "application/pdf",
+    "application/epub+zip",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "application/vnd.ms-powerpoint",
 }
-DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt"}
+DOCUMENT_EXTENSIONS = {".pdf", ".epub", ".docx", ".doc", ".pptx", ".ppt"}
 
 EXCEL_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -48,8 +49,30 @@ EXCEL_EXTENSIONS = {".xlsx", ".xls"}
 TEXT_MIME_TYPES = {"application/json"}
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json"}
 
-IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+IMAGE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/heic",
+    "image/heif",
+    "image/tiff",
+    "image/bmp",
+    "image/svg+xml",
+}
+IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".heic",
+    ".heif",
+    ".tiff",
+    ".tif",
+    ".bmp",
+    ".svg",
+}
 IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT = "/general-chat/uploads"
 UPLOAD_METADATA_KEYS = {
     "imageSearchPath",

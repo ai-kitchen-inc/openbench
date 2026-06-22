@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 _ALLOWED_MIME_TYPES = {
     "application/pdf",
+    "application/epub+zip",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -63,12 +64,29 @@ _ALLOWED_MIME_TYPES = {
     "image/png",
     "image/jpeg",
     "image/webp",
+    "image/gif",
+    "image/heic",
+    "image/heif",
+    "image/tiff",
+    "image/bmp",
+    "image/svg+xml",
+    "audio/mpeg",
+    "audio/wav",
+    "audio/mp4",
+    "audio/ogg",
+    "audio/aac",
+    "audio/flac",
+    "video/mp4",
+    "video/webm",
+    "video/quicktime",
+    "video/x-msvideo",
     "application/octet-stream",  # browser fallback
 }
 
 # Extension-to-MIME override when the browser sends application/octet-stream
 _EXT_MIME_MAP = {
     ".pdf": "application/pdf",
+    ".epub": "application/epub+zip",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".doc": "application/msword",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -83,6 +101,23 @@ _EXT_MIME_MAP = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".tiff": "image/tiff",
+    ".tif": "image/tiff",
+    ".bmp": "image/bmp",
+    ".svg": "image/svg+xml",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".avi": "video/x-msvideo",
 }
 
 _AUTH_PROTECTED_PREFIXES = (

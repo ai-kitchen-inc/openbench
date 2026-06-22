@@ -780,13 +780,13 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(record.metadata["format"], "webp")
         extractor.extract_image.assert_called_once_with(stored)
 
-    def test_invalid_image_type_is_rejected(self):
+    def test_invalid_source_type_is_rejected(self):
         parser = SourceParserRegistry()
         stored = StoredFile(
             id="file-6",
-            name="animation.gif",
-            path="animation.gif",
-            mime_type="image/gif",
+            name="firmware.bin",
+            path="firmware.bin",
+            mime_type="application/x-unknown",
             size_bytes=24,
             stored_at="2026-01-01T00:00:00+00:00",
         )

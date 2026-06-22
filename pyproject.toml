@@ -112,6 +112,18 @@ extraction = [
     "langextract>=1.0.0",
 ]
 
+epub = [
+    "ebooklib>=0.18",
+    "beautifulsoup4>=4.12.0",
+]
+
+media = [
+    "pillow>=10.0.0",
+    "pillow-heif>=0.16.0",
+    "cairosvg>=2.7.0",
+    "imageio-ffmpeg>=0.5.0",
+]
+
 chat = [
     "fastapi>=0.100.0",
     "uvicorn>=0.25.0",
@@ -125,7 +137,7 @@ mcp = [
 ]
 
 all = [
-    "openbench[dev,data,intelligence,output,security,google,vector,search,extraction,chat,mcp,gcp]"
+    "openbench[dev,data,intelligence,output,security,google,vector,search,extraction,epub,media,chat,mcp,gcp]"
 ]
 
 [project.urls]

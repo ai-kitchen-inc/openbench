@@ -19,8 +19,30 @@ _DOCX_EXTENSIONS = {".docx", ".doc"}
 _PDF_MIME_TYPES = {"application/pdf"}
 _PDF_EXTENSIONS = {".pdf"}
 
-_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
-_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+_IMAGE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/heic",
+    "image/heif",
+    "image/tiff",
+    "image/bmp",
+    "image/svg+xml",
+}
+_IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".heic",
+    ".heif",
+    ".tiff",
+    ".tif",
+    ".bmp",
+    ".svg",
+}
 
 # PPTX/PPT have no lightweight extractor here, so they still use Docling.
 _PPTX_MIME_TYPES = {
@@ -102,20 +124,35 @@ class DoclingContentExtractor:
         if stored_file.mime_type not in _IMAGE_MIME_TYPES and ext not in _IMAGE_EXTENSIONS:
             raise ValueError(f"Unsupported image source type: {ext or stored_file.mime_type}")
 
+        from openbench.utils.media import is_svg, normalize_image, read_svg_text
+
+        # Normalize HEIC/TIFF/BMP/GIF/SVG to a raster PNG/JPEG that Docling OCR
+        # accepts. SVG markup is also captured directly as text.
+        svg_text = read_svg_text(stored_file.path) if is_svg(stored_file.name, stored_file.mime_type) else ""
         try:
-            result = _get_converter().convert(stored_file.path)
+            ocr_path, _ = normalize_image(stored_file.path, stored_file.mime_type)
+        except Exception as exc:
+            logger.warning("Image normalization failed for %s: %s", stored_file.name, exc)
+            ocr_path = stored_file.path
+
+        try:
+            result = _get_converter().convert(ocr_path)
             markdown = result.document.export_to_markdown().strip()
         except ImportError as exc:
             raise RuntimeError("docling is required for image OCR support.") from exc
         except Exception as exc:
             logger.warning("Docling image extraction failed for %s: %s", stored_file.name, exc)
-            raise ValueError(f"Image extraction failed: {exc}") from exc
+            markdown = ""
+
+        # SVG: the markup itself is meaningful text even when OCR finds nothing.
+        if svg_text and not markdown:
+            markdown = svg_text.strip()
 
         if not markdown:
             raise ValueError(f"No OCR text could be extracted from {stored_file.name}.")
 
         image_format = _image_format(stored_file.name, stored_file.mime_type)
-        dimensions = _image_dimensions(stored_file.path)
+        dimensions = _image_dimensions(ocr_path)
         width = dimensions.get("width")
         height = dimensions.get("height")
         description = _image_description(stored_file.name, image_format, width, height, markdown)

@@ -242,6 +242,7 @@ class FileContentExtractor:
 
     Supports:
     - application/pdf: Uses PDFSource for extraction
+    - application/epub+zip: Uses EPUBSource for extraction
     - Excel (.xlsx/.xls): Converts sheets to markdown tables (first 10 rows)
     - text/* and text-like (JSON, XML, YAML, JS, TS): Direct file read
     - image/*: Returns metadata description
@@ -258,9 +259,13 @@ class FileContentExtractor:
             Extracted text content.
         """
         mime = stored_file.mime_type
+        ext = os.path.splitext(stored_file.name)[1].lower()
 
         if mime == "application/pdf":
             return self._extract_pdf(stored_file)
+
+        if mime == "application/epub+zip" or ext == ".epub":
+            return self._extract_epub(stored_file)
 
         if mime in _EXCEL_MIMES:
             return self._extract_excel(stored_file)
@@ -284,6 +289,18 @@ class FileContentExtractor:
         except Exception as e:
             logger.warning(f"PDF extraction failed for {stored_file.name}: {e}")
             return f"[PDF: {stored_file.name}] (extraction failed: {e})"
+
+    def _extract_epub(self, stored_file: StoredFile) -> str:
+        """Extract text from an EPUB using EPUBSource."""
+        try:
+            from openbench.data.sources.epub import EPUBSource
+
+            source = EPUBSource(path=stored_file.path)
+            raw_data = source.extract()
+            return raw_data.content
+        except Exception as e:
+            logger.warning(f"EPUB extraction failed for {stored_file.name}: {e}")
+            return f"[EPUB: {stored_file.name}] (extraction failed: {e})"
 
     def _extract_text(self, stored_file: StoredFile) -> str:
         """Read text file directly."""
@@ -323,6 +340,7 @@ def _guess_mime_type(filename: str) -> str:
     ext = os.path.splitext(filename)[1].lower()
     mime_map = {
         ".pdf": "application/pdf",
+        ".epub": "application/epub+zip",
         ".txt": "text/plain",
         ".md": "text/markdown",
         ".csv": "text/csv",
@@ -332,11 +350,22 @@ def _guess_mime_type(filename: str) -> str:
         ".jpeg": "image/jpeg",
         ".gif": "image/gif",
         ".svg": "image/svg+xml",
+        ".heic": "image/heic",
+        ".heif": "image/heif",
+        ".tiff": "image/tiff",
+        ".tif": "image/tiff",
+        ".bmp": "image/bmp",
         ".mp3": "audio/mpeg",
         ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".ogg": "audio/ogg",
+        ".aac": "audio/aac",
+        ".flac": "audio/flac",
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".xls": "application/vnd.ms-excel",
         ".mp4": "video/mp4",
         ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
     }
     return mime_map.get(ext, "application/octet-stream")
