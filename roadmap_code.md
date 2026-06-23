@@ -108,10 +108,14 @@ embedding tests already mock cleanly via the `no_provider_env` fixture
 
 ## P3 — Maintainability, Architecture, Observability
 
-- [ ] **Split god-modules.** `intelligence/base.py` (1486 LOC, 5+
+- [x] **Split god-modules.** `intelligence/base.py` (1486 LOC, 5+
   responsibilities) → extract `ToolExecutor`, `AgentMemory`, `QueryRewriter`,
   `Message`/`MessageRole` into focused modules. `output/generators.py`
   (890 LOC, 5 formats) → one class per file. *(§7.2 Architecture Smells, §11 Maintainability)*
+  *Done: `base.py` → `messages.py` + `agent_memory.py` + `tool_executor.py` +
+  `query_rewriter.py` (base re-exports all for backward compat). `generators.py`
+  → `output/generators/` package (pdf/markdown/powerpoint/dashboard/audio, one
+  class per file; both import paths preserved).*
 
 - [x] **Replace `print()` with structured logging.** ~20 files (CLI +
   others) write to stdout, bypassing log levels and structured capture.
