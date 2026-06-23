@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from openbench.core.constants import DEFAULT_EMBED_BATCH_SIZE
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -568,7 +570,7 @@ class EmbeddingProvider(ABC):
 
     @abstractmethod
     def embed_batch(
-        self, texts: list[str], model: str | None = None, batch_size: int = 100
+        self, texts: list[str], model: str | None = None, batch_size: int = DEFAULT_EMBED_BATCH_SIZE
     ) -> list[list[float]]:
         """
         Generate embeddings for multiple texts.

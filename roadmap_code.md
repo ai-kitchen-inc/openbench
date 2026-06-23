@@ -134,11 +134,17 @@ embedding tests already mock cleanly via the `no_provider_env` fixture
   `agent.total_ms`; `ToolExecutor.execute()` times each dispatch
   (`agent.tool_execute`). All via lazy import to avoid an mcp↔intelligence cycle.*
 
-- [ ] **Centralize scattered magic constants.** Timeouts (30s/5s/15s/60s),
+- [x] **Centralize scattered magic constants.** Timeouts (30s/5s/15s/60s),
   batch sizes (100), and `max_retries=3` are duplicated across `base.py`,
   `cli/commands/demo.py`, and `pinecone.py`; CLI hardcodes `gpt-4`
   ([cli/commands/agent.py:30](src/openbench/cli/commands/agent.py)) vs the
   `core/config.py` default. → Extract to `core/constants.py` / config. *(§4.2 Naming, §11)*
+  *Done: new `core/constants.py` holds `DEFAULT_TOOL_TIMEOUT_S`,
+  `DEFAULT_INDEX_READY_TIMEOUT_S`, the demo wait timeouts,
+  `DEFAULT_EMBED_BATCH_SIZE`, `DEFAULT_MAX_RETRIES`; wired into `tool_executor`,
+  `pinecone`, `data/stores/base`, `core/abstractions`, `embeddings`,
+  `llm_providers`, `cli/demo`. CLI `agent create` now defaults to
+  `get_default_model()` (gpt-4o) instead of hardcoded `gpt-4`.*
 
 - [ ] **Provide a true async agent path.** `BaseAgent.execute()` is synchronous
   and blocks inside the async transport

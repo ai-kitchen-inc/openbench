@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 from openbench.core.abstractions import LLMProvider, LLMResponse
+from openbench.core.constants import DEFAULT_MAX_RETRIES
 from openbench.intelligence.memory_validator import validate_tool_call_pairs
 from openbench.mcp.schema import normalize_provider_json_schema
 
@@ -575,7 +576,7 @@ class GeminiLLMProvider(LLMProvider):
         model: str,
         contents: Any,
         config: Any,
-        max_retries: int = 3,
+        max_retries: int = DEFAULT_MAX_RETRIES,
     ) -> Any:
         """Call Gemini API with retry on 429 RESOURCE_EXHAUSTED errors.
 

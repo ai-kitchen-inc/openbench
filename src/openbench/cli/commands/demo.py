@@ -17,6 +17,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from openbench.core.constants import (
+    DEFAULT_HEALTH_WAIT_TIMEOUT_S,
+    DEFAULT_PORT_WAIT_TIMEOUT_S,
+    DEFAULT_PROC_WAIT_TIMEOUT_S,
+)
+
 console = Console()
 
 # Script suffixes to discover as runnable demos
@@ -145,7 +151,7 @@ def _console_safe(text: str) -> str:
     return text.encode(encoding, errors="replace").decode(encoding)
 
 
-def _wait_for_port(port: int, timeout: int = 15) -> bool:
+def _wait_for_port(port: int, timeout: int = DEFAULT_PORT_WAIT_TIMEOUT_S) -> bool:
     """Wait until a port is accepting connections."""
     start = time.time()
     while time.time() - start < timeout:
@@ -157,7 +163,7 @@ def _wait_for_port(port: int, timeout: int = 15) -> bool:
     return False
 
 
-def _wait_for_backend_health(port: int, timeout: int = 30) -> bool:
+def _wait_for_backend_health(port: int, timeout: int = DEFAULT_HEALTH_WAIT_TIMEOUT_S) -> bool:
     """Wait until the backend app has completed startup and answers /health."""
     url = f"http://127.0.0.1:{port}/health"
     start = time.time()
@@ -761,7 +767,7 @@ def _run_server(
                 proc.terminate()
         for proc in processes:
             try:
-                proc.wait(timeout=5)
+                proc.wait(timeout=DEFAULT_PROC_WAIT_TIMEOUT_S)
             except subprocess.TimeoutExpired:
                 proc.kill()
 

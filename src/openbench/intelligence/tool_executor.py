@@ -16,6 +16,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from openbench.core.abstractions import Tool
+from openbench.core.constants import DEFAULT_TOOL_TIMEOUT_S
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -131,11 +132,11 @@ class ToolExecutor:
             raise ValueError(f"Tool not found: {name}")
         resolved_timeout = timeout
         if resolved_timeout is None:
-            resolved_timeout = getattr(tool, "timeout_seconds", 30)
+            resolved_timeout = getattr(tool, "timeout_seconds", DEFAULT_TOOL_TIMEOUT_S)
         try:
             resolved_timeout = float(resolved_timeout)
         except (TypeError, ValueError):
-            resolved_timeout = 30.0
+            resolved_timeout = DEFAULT_TOOL_TIMEOUT_S
 
         import contextvars
         from queue import Empty, SimpleQueue
