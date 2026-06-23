@@ -113,9 +113,13 @@ embedding tests already mock cleanly via the `no_provider_env` fixture
   `Message`/`MessageRole` into focused modules. `output/generators.py`
   (890 LOC, 5 formats) → one class per file. *(§7.2 Architecture Smells, §11 Maintainability)*
 
-- [ ] **Replace `print()` with structured logging.** ~20 files (CLI +
+- [x] **Replace `print()` with structured logging.** ~20 files (CLI +
   others) write to stdout, bypassing log levels and structured capture.
   → Route through `logging.getLogger(__name__)`. *(§2.9 Observability)*
+  *Done: the "~20 files" was a grep overcount — CLI uses `rich.Console`
+  (intentional UX), the rest were docstring `>>>` examples or the e2b sandbox
+  `python -c` string. Only genuine stdout violation was the chart-push
+  diagnostics in `skills/data-visualization/tools.py` → now `logger`.*
 
 - [ ] **Add observability to the agent reasoning loop.** No correlation IDs or
   metrics around the loop ([intelligence/base.py:1140-1330](src/openbench/intelligence/base.py))
