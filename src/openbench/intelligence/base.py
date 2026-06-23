@@ -669,6 +669,15 @@ Provide clear, actionable responses."""
         response = None
         start_time = time.monotonic()
 
+        # Per-request observability: scope a correlation ID over the reasoning
+        # loop and time the LLM + tool calls through the shared MCP metrics
+        # sink. Imported lazily to avoid an import cycle (mcp <-> intelligence).
+        from openbench.mcp.observability import (
+            correlation_context,
+            metrics,
+            timed_operation,
+        )
+
         # Gemini 3 Confidence Dropout retry: when the model returns
         # no text and no tool calls (all-thought response), retry up
         # to this many times before accepting an empty result. Without
@@ -691,7 +700,7 @@ Provide clear, actionable responses."""
             # function call turn" 400. The user-message add (line
             # above) is intentionally OUTSIDE the turn so the user's
             # own text survives a failed turn.
-            with self.memory.turn():
+            with correlation_context(), self.memory.turn():
                 while iterations < self.max_iterations:
                     iterations += 1
                     iter_start = time.monotonic()
@@ -709,28 +718,29 @@ Provide clear, actionable responses."""
                         "temperature": self.temperature,
                     }
 
-                    if use_stream:
-                        # Streaming path: yield deltas via on_chunk
-                        full_text = ""
-                        final_response = None
-                        for chunk in llm.generate_stream(**gen_kwargs):
-                            if chunk.text:
-                                on_chunk(chunk.text)
-                                full_text += chunk.text
-                            final_response = chunk
+                    with timed_operation("agent.llm_generate", iteration=iterations):
+                        if use_stream:
+                            # Streaming path: yield deltas via on_chunk
+                            full_text = ""
+                            final_response = None
+                            for chunk in llm.generate_stream(**gen_kwargs):
+                                if chunk.text:
+                                    on_chunk(chunk.text)
+                                    full_text += chunk.text
+                                final_response = chunk
 
-                        if final_response is None:
-                            response = LLMResponse(
-                                text="", model=self.model, tokens_used=0, cost=0.0
-                            )
+                            if final_response is None:
+                                response = LLMResponse(
+                                    text="", model=self.model, tokens_used=0, cost=0.0
+                                )
+                            else:
+                                response = final_response
+                                # Ensure full accumulated text (stream yields deltas)
+                                if full_text and not getattr(response, "tool_calls", None):
+                                    response.text = full_text
                         else:
-                            response = final_response
-                            # Ensure full accumulated text (stream yields deltas)
-                            if full_text and not getattr(response, "tool_calls", None):
-                                response.text = full_text
-                    else:
-                        # Non-streaming path (backward compatible)
-                        response = llm.generate(**gen_kwargs)
+                            # Non-streaming path (backward compatible)
+                            response = llm.generate(**gen_kwargs)
 
                     total_tokens += response.tokens_used
                     total_cost += response.cost
@@ -837,6 +847,8 @@ Provide clear, actionable responses."""
                         raise
 
             total_duration = round(time.monotonic() - start_time, 3)
+            metrics.inc("agent.execute")
+            metrics.observe_ms("agent.total_ms", total_duration * 1000)
 
             # Determine completion status
             if response is None:
@@ -867,6 +879,8 @@ Provide clear, actionable responses."""
 
         except Exception as e:
             total_duration = round(time.monotonic() - start_time, 3)
+            metrics.inc("agent.execute_failed")
+            metrics.observe_ms("agent.total_ms", total_duration * 1000)
             logger.error(f"Agent execution failed: {e}")
             return ExecutionResult(
                 output=None,

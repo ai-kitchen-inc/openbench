@@ -154,24 +154,29 @@ class ToolExecutor:
             except Exception as e:
                 q.put(("err", e))
 
-        # Propagate ContextVar values so tool functions can access
-        # per-request state (e.g. render items, attachments).
-        ctx = contextvars.copy_context()
-        thread = threading.Thread(target=ctx.run, args=(_run,), daemon=True)
-        thread.start()
-        thread.join(timeout=resolved_timeout)
+        # Time each tool dispatch through the shared MCP metrics sink.
+        # Imported lazily to avoid an import cycle (mcp <-> intelligence).
+        from openbench.mcp.observability import timed_operation
 
-        if thread.is_alive():
-            raise TimeoutError(f"Tool '{name}' exceeded {resolved_timeout:g}s timeout")
+        with timed_operation("agent.tool_execute", tool=name):
+            # Propagate ContextVar values so tool functions can access
+            # per-request state (e.g. render items, attachments).
+            ctx = contextvars.copy_context()
+            thread = threading.Thread(target=ctx.run, args=(_run,), daemon=True)
+            thread.start()
+            thread.join(timeout=resolved_timeout)
 
-        try:
-            status, value = q.get_nowait()
-        except Empty:
-            raise TimeoutError(f"Tool '{name}' finished but produced no result") from None
-        if status == "err":
-            raise value
+            if thread.is_alive():
+                raise TimeoutError(f"Tool '{name}' exceeded {resolved_timeout:g}s timeout")
 
-        return value
+            try:
+                status, value = q.get_nowait()
+            except Empty:
+                raise TimeoutError(f"Tool '{name}' finished but produced no result") from None
+            if status == "err":
+                raise value
+
+            return value
 
     def execute_parallel(
         self, calls: list[dict[str, Any]], timeout: int | float | None = None

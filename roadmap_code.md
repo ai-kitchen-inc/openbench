@@ -125,10 +125,14 @@ embedding tests already mock cleanly via the `no_provider_env` fixture
   `python -c` string. Only genuine stdout violation was the chart-push
   diagnostics in `skills/data-visualization/tools.py` → now `logger`.*
 
-- [ ] **Add observability to the agent reasoning loop.** No correlation IDs or
+- [x] **Add observability to the agent reasoning loop.** No correlation IDs or
   metrics around the loop ([intelligence/base.py:1140-1330](src/openbench/intelligence/base.py))
   or tool-execution timing. → Reuse the existing `mcp/observability.py`
   `correlation_id` contextvar + `MCPMetrics` sink. *(§2.9)*
+  *Done: `BaseAgent.execute()` scopes a `correlation_context()` over the loop,
+  times each LLM call (`agent.llm_generate`) and emits `agent.execute` /
+  `agent.total_ms`; `ToolExecutor.execute()` times each dispatch
+  (`agent.tool_execute`). All via lazy import to avoid an mcp↔intelligence cycle.*
 
 - [ ] **Centralize scattered magic constants.** Timeouts (30s/5s/15s/60s),
   batch sizes (100), and `max_retries=3` are duplicated across `base.py`,
