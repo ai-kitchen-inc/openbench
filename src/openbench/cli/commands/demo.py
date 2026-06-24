@@ -683,36 +683,60 @@ def _run_script(info: dict):
         console.print("\n[yellow]Interrupted.[/yellow]\n")
 
 
+def _chat_ui_dist_stale(chat_ui_dir: Path, dist_entry: Path) -> bool:
+    """True if any SDK source file is newer than the built dist entry.
+
+    Without this, an existing ``dist/`` is reused even after the SDK source
+    changed, so the frontend serves a stale build.
+    """
+    if not dist_entry.exists():
+        return True
+    dist_mtime = dist_entry.stat().st_mtime
+    for sub in ("src", "styles"):
+        source_dir = chat_ui_dir / sub
+        if not source_dir.exists():
+            continue
+        for path in source_dir.rglob("*"):
+            if path.is_file() and path.stat().st_mtime > dist_mtime:
+                return True
+    return False
+
+
 def _ensure_chat_ui_built(root: Path) -> bool:
-    """Build studio/chat-ui if dist/ doesn't exist. Returns True on success."""
+    """Build studio/chat-ui if dist/ is missing or stale. Returns True on success."""
     chat_ui_dir = root / "studio" / "chat-ui"
     dist_dir = chat_ui_dir / "dist"
+    dist_entry = dist_dir / "index.js"
 
-    if dist_dir.exists() and any(dist_dir.iterdir()):
+    built = dist_dir.exists() and any(dist_dir.iterdir())
+    stale = _chat_ui_dist_stale(chat_ui_dir, dist_entry)
+    if built and not stale:
         return True
 
     if not chat_ui_dir.exists():
         console.print("[red]Error:[/red] studio/chat-ui not found.")
         return False
 
-    console.print("\n[yellow]@openbench/chat-ui not built yet.[/yellow] Building automatically...")
+    reason = "not built yet" if not built else "out of date"
+    console.print(f"\n[yellow]@openbench/chat-ui {reason}.[/yellow] Building automatically...")
 
     pnpm_cmd = _resolve_pnpm_command()
     if not pnpm_cmd:
         console.print("[red]Error:[/red] pnpm not found (or not resolvable via corepack).")
         return False
 
-    # Install deps
-    console.print("[green]  pnpm install[/green] (studio/chat-ui)")
-    result = subprocess.run(
-        [*pnpm_cmd, "install"],
-        cwd=str(chat_ui_dir),
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-    )
-    if result.returncode != 0:
-        console.print("[red]Error:[/red] pnpm install failed for studio/chat-ui.")
-        return False
+    # Install deps only when missing (a rebuild on source change shouldn't reinstall).
+    if not (chat_ui_dir / "node_modules").exists():
+        console.print("[green]  pnpm install[/green] (studio/chat-ui)")
+        result = subprocess.run(
+            [*pnpm_cmd, "install"],
+            cwd=str(chat_ui_dir),
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+        )
+        if result.returncode != 0:
+            console.print("[red]Error:[/red] pnpm install failed for studio/chat-ui.")
+            return False
 
     # Build
     console.print("[green]  pnpm build[/green] (studio/chat-ui)")

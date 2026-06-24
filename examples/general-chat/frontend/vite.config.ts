@@ -10,10 +10,13 @@ export default defineConfig({
     dedupe: ["react", "react-dom"],
   },
   // The workspace SDK is a file: dep hard-linked from studio/chat-ui/dist.
-  // Excluding it from pre-bundling stops vite caching a stale copy — dist
-  // changes (after `pnpm --filter @openbench/chat-ui build`) reflect on reload.
+  // Vite only invalidates its dep pre-bundle on lockfile/version changes, not
+  // when the hard-linked dist content changes — so a rebuilt SDK would keep
+  // serving a stale bundle. Force re-optimization on every dev start so the
+  // current dist is always picked up. (Pre-bundling stays ON so the SDK's
+  // transitive deps — recharts, zustand, etc. — resolve correctly.)
   optimizeDeps: {
-    exclude: ["@openbench/chat-ui"],
+    force: true,
   },
   test: {
     environment: "jsdom",
