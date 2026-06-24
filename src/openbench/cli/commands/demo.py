@@ -38,6 +38,10 @@ _IGNORED_SCRIPT_PARTS = {
 
 
 _GENERAL_CHAT_MCP_VARIANTS = {
+    "dashboard-generator": {
+        "name": "general-chat-dashboard-generator",
+        "description": "General Chat with dashboard_generator MCP tools",
+    },
     "image-search": {
         "name": "general-chat-image-search",
         "description": "General Chat with DINOv3 image_search MCP tools",
@@ -49,6 +53,7 @@ _GENERAL_CHAT_MCP_VARIANTS = {
 }
 _GENERAL_CHAT_ALL_MCP_NAME = "general-chat-all"
 _GENERAL_CHAT_ALL_MCP_CONFIGS = (
+    "dashboard-generator-stdio.yaml",
     "filesystem-mcp.yaml",
     "generic-api-docker.yaml",
     "image-search-docker.yaml",
@@ -195,13 +200,35 @@ def _mcp_example_root(name: str) -> Path:
 
 def _general_chat_mcp_env(variant: str, demo_dir: Path) -> dict[str, str]:
     """Build environment overrides for dedicated General Chat MCP demo variants."""
+    root = _find_project_root()
     uploads_dir = _ensure_dir(demo_dir / "uploads")
+    downloads_dir = _ensure_dir(demo_dir / "downloads")
 
     common = {
         "GENERAL_CHAT_MCP_ENABLED": "1",
         "GENERAL_CHAT_MCP_MODE": "external",
         "GENERAL_CHAT_MCP_REGISTRY_ENABLED": "0",
     }
+
+    if variant == "dashboard-generator":
+        dashboard_mcp_root = root / "mcp" / "dashboard-generator-mcp"
+        return {
+            **common,
+            "GENERAL_CHAT_MCP_CONFIG": "mcp/dashboard-generator-stdio.yaml",
+            "GENERAL_CHAT_MCP_APPROVED_TOOLS": (
+                "dashboard_generator.extract_metadata,"
+                "dashboard_generator.aggregate_data,"
+                "dashboard_generator.generate_dashboard"
+            ),
+            "GENERAL_CHAT_DASHBOARD_SKILL_ENABLED": "0",
+            "OPENBENCH_EXPORT_DIR": str(downloads_dir.resolve()),
+            "OPENBENCH_EXPORT_URL_BASE": "/downloads",
+            "DASHBOARD_GENERATOR_MCP_PYTHON": sys.executable,
+            "DASHBOARD_RENDER_ADAPTER": os.getenv("DASHBOARD_RENDER_ADAPTER", "default"),
+            "DASHBOARD_GENERATOR_MCP_PYTHONPATH": os.pathsep.join(
+                [str((root / "src").resolve()), str(dashboard_mcp_root.resolve())]
+            ),
+        }
 
     if variant == "image-search":
         image_search_root = _mcp_example_root("image-search-mcp")
@@ -284,6 +311,7 @@ def _general_chat_all_mcp_env(
     seed_registry: bool = True,
 ) -> dict[str, str]:
     """Build environment overrides and seed registry state for all-MCP General Chat."""
+    root = _find_project_root()
     uploads_dir = _ensure_dir(demo_dir / "uploads")
     downloads_dir = _ensure_dir(demo_dir / "downloads")
     storage_root = _ensure_dir(demo_dir / ".openbench" / "all-mcp")
@@ -302,7 +330,17 @@ def _general_chat_all_mcp_env(
         "GENERAL_CHAT_STORAGE_ROOT": str(storage_root.resolve()),
         "GENERAL_CHAT_UPLOAD_DIR": str(uploads_dir.resolve()),
         "GENERAL_CHAT_DOWNLOAD_DIR": str(downloads_dir.resolve()),
+        "OPENBENCH_EXPORT_DIR": str(downloads_dir.resolve()),
+        "OPENBENCH_EXPORT_URL_BASE": "/downloads",
+        "DASHBOARD_GENERATOR_MCP_PYTHON": sys.executable,
         "GENERAL_CHAT_MCP_SANDBOX": str(sandbox_dir.resolve()),
+        "DASHBOARD_GENERATOR_MCP_PYTHONPATH": os.pathsep.join(
+            [
+                str((root / "src").resolve()),
+                str((root / "mcp" / "dashboard-generator-mcp").resolve()),
+            ]
+        ),
+        "DASHBOARD_RENDER_ADAPTER": os.getenv("DASHBOARD_RENDER_ADAPTER", "default"),
         "GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR": str(image_previews_dir.resolve()),
         "IMAGE_SEARCH_MCP_DATA_PATH": _as_posix_path(image_data_dir),
         "IMAGE_SEARCH_MCP_MODELS_PATH": _as_posix_path(image_models_dir),

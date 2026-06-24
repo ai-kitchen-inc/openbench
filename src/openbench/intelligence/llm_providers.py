@@ -28,9 +28,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import time
+from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -166,6 +169,8 @@ class GeminiLLMProvider(LLMProvider):
 
         system_instruction = None
         contents = []
+        skipped_tool_response_ids: set[str] = set()
+        skipped_unidentified_tool_responses = 0
 
         for msg in messages:
             role = msg["role"]
@@ -182,44 +187,56 @@ class GeminiLLMProvider(LLMProvider):
                 contents.append(types.Content(role="user", parts=parts))
 
             elif role == "assistant":
-                # Use raw content if available (preserves thought_signature)
+                tool_calls = msg.get("tool_calls") or []
+                # Use raw content only when it is faithful to the parsed
+                # tool_calls. Streaming Gemini can split function_call parts
+                # across chunks; replaying the first raw chunk while sending
+                # every tool response creates a Gemini-invalid sequence.
                 raw_content = msg.get("raw_content")
-                if raw_content is not None:
+                if raw_content is not None and self._raw_content_matches_tool_calls(
+                    raw_content,
+                    tool_calls,
+                ):
                     contents.append(raw_content)
                     continue
 
-                # Reconstruct from extracted data (fallback)
-                parts = []
+                if tool_calls:
+                    for tc in tool_calls:
+                        tc_id = self._tool_call_id(tc)
+                        if tc_id:
+                            skipped_tool_response_ids.add(tc_id)
+                        else:
+                            skipped_unidentified_tool_responses += 1
+                    logger.warning(
+                        "Skipping Gemini assistant tool-call replay because matching raw_content "
+                        "is unavailable. This avoids reconstructing function_call parts without "
+                        "Gemini thought_signature metadata."
+                    )
+                    # Do not synthesize Gemini function_call parts from persisted
+                    # generic tool_calls. Thinking models require the original
+                    # thought_signature attached to the model's function_call part.
+                    # The following tool-role messages are skipped by id below.
+                    # Drop this assistant turn as a unit; it was an in-progress
+                    # tool-call turn, not the final answer.
+                    continue
+
                 if content:
-                    parts.append(types.Part.from_text(text=content))
-
-                # Handle tool_calls from assistant message
-                if msg.get("tool_calls"):
-                    for tc in msg["tool_calls"]:
-                        name = tc["function"]["name"] if "function" in tc else tc.get("name", "")
-                        args = (
-                            tc["function"]["arguments"]
-                            if "function" in tc
-                            else tc.get("arguments", {})
+                    contents.append(
+                        types.Content(
+                            role="model",
+                            parts=[types.Part.from_text(text=content)],
                         )
-                        # Parse JSON string arguments if needed
-                        if isinstance(args, str):
-                            try:
-                                args = json.loads(args)
-                            except (json.JSONDecodeError, TypeError):
-                                args = {"raw": args}
-
-                        parts.append(
-                            types.Part.from_function_call(
-                                name=name,
-                                args=args,
-                            )
-                        )
-
-                if parts:
-                    contents.append(types.Content(role="model", parts=parts))
+                    )
 
             elif role == "tool":
+                tool_call_id = msg.get("tool_call_id")
+                if isinstance(tool_call_id, str) and tool_call_id in skipped_tool_response_ids:
+                    skipped_tool_response_ids.remove(tool_call_id)
+                    continue
+                if skipped_unidentified_tool_responses > 0:
+                    skipped_unidentified_tool_responses -= 1
+                    continue
+
                 tool_name = msg.get("name", "")
                 tool_content = content
                 # Parse JSON content if possible
@@ -354,6 +371,165 @@ class GeminiLLMProvider(LLMProvider):
         self._files_cache[key] = uploaded
         return uploaded
 
+    @staticmethod
+    def _normalize_tool_arg_value(value: Any) -> Any:
+        """Convert SDK/proto/Pydantic values into stable JSON-like values."""
+        if hasattr(value, "model_dump"):
+            try:
+                value = value.model_dump(by_alias=True, exclude_none=True)
+            except TypeError:
+                value = value.model_dump()
+            except Exception:
+                pass
+        elif hasattr(value, "dict") and not isinstance(value, dict):
+            try:
+                value = value.dict()
+            except Exception:
+                pass
+
+        if isinstance(value, Mapping):
+            return {
+                str(key): GeminiLLMProvider._normalize_tool_arg_value(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [GeminiLLMProvider._normalize_tool_arg_value(item) for item in value]
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+
+        try:
+            return json.loads(json.dumps(value, default=str, allow_nan=False))
+        except (TypeError, ValueError):
+            return str(value)
+
+    @classmethod
+    def _normalize_tool_args(cls, args: Any) -> dict[str, Any]:
+        """Return a stable dict for Gemini/OpenAI-style tool arguments."""
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except (json.JSONDecodeError, TypeError):
+                return {"raw": args}
+
+        if hasattr(args, "model_dump"):
+            try:
+                args = args.model_dump(by_alias=True, exclude_none=True)
+            except TypeError:
+                args = args.model_dump()
+            except Exception:
+                pass
+
+        if not isinstance(args, Mapping) and hasattr(args, "items"):
+            try:
+                args = dict(args.items())
+            except Exception:
+                pass
+
+        if not isinstance(args, Mapping):
+            return {}
+
+        normalized = cls._normalize_tool_arg_value(args)
+        return normalized if isinstance(normalized, dict) else {}
+
+    @classmethod
+    def _normalized_tool_call_signature(cls, tool_call: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        """Return ``(name, args)`` for either flat or OpenAI-style tool calls."""
+        if "function" in tool_call:
+            func = tool_call.get("function") or {}
+            name = str(func.get("name") or "")
+            args = func.get("arguments", {})
+        else:
+            name = str(tool_call.get("name") or "")
+            args = tool_call.get("arguments", {})
+        return name, cls._normalize_tool_args(args)
+
+    @staticmethod
+    def _tool_call_id(tool_call: dict[str, Any]) -> str | None:
+        """Return the persisted OpenAI-style tool call id, when available."""
+        tc_id = tool_call.get("id")
+        return tc_id if isinstance(tc_id, str) and tc_id else None
+
+    @classmethod
+    def _raw_content_matches_tool_calls(
+        cls,
+        raw_content: Any,
+        tool_calls: list[dict[str, Any]] | None,
+    ) -> bool:
+        """Return True when raw Gemini content can be safely replayed.
+
+        For assistant tool-call turns, Gemini requires the replayed model
+        content to contain exactly the function calls that the following
+        function_response turns answer. A partial raw streaming chunk is worse
+        than no raw content, so only raw content with matching count, name, and
+        args is safe to replay.
+        """
+        parts = getattr(raw_content, "parts", None) or []
+        raw_calls: list[tuple[str, dict[str, Any]]] = []
+        for part in parts:
+            fc = getattr(part, "function_call", None)
+            if not fc:
+                continue
+            raw_calls.append(
+                (
+                    str(getattr(fc, "name", "") or ""),
+                    cls._normalize_tool_args(getattr(fc, "args", {}) or {}),
+                )
+            )
+
+        expected = [
+            cls._normalized_tool_call_signature(tc)
+            for tc in (tool_calls or [])
+            if isinstance(tc, dict)
+        ]
+        if expected:
+            return raw_calls == expected
+        return not raw_calls
+
+    @classmethod
+    def _merge_tool_call_raw_content(
+        cls,
+        chunks: list[Any],
+        tool_calls: list[dict[str, Any]],
+    ) -> Any | None:
+        """Build replayable Gemini model content from streamed tool-call chunks.
+
+        Gemini may split several function_call parts across stream chunks.
+        Replaying only the first chunk drops later calls; rebuilding from the
+        generic tool_calls drops Gemini's thought_signature metadata. Instead,
+        keep the original SDK Part objects and merge just the function_call
+        parts into one model Content for the next request in the same agent
+        turn.
+        """
+        if not chunks:
+            return None
+
+        merged_parts: list[Any] = []
+        for chunk in chunks:
+            candidates = getattr(chunk, "candidates", None) or []
+            if not candidates:
+                continue
+            content = getattr(candidates[0], "content", None)
+            for part in getattr(content, "parts", None) or []:
+                if getattr(part, "function_call", None):
+                    merged_parts.append(part)
+
+        if not merged_parts:
+            return None
+
+        from google.genai import types
+
+        try:
+            raw_content = types.Content(role="model", parts=merged_parts)
+        except Exception:
+            # Tests may use lightweight mocks instead of SDK Part objects.
+            raw_content = SimpleNamespace(role="model", parts=merged_parts)
+
+        if cls._raw_content_matches_tool_calls(raw_content, tool_calls):
+            return raw_content
+        return None
+
     def _convert_tools(self, tools: list[dict[str, Any]]) -> list:
         """Convert OpenAI-style tool schemas to Gemini FunctionDeclarations.
 
@@ -467,7 +643,7 @@ class GeminiLLMProvider(LLMProvider):
                     {
                         "id": f"call_{id_offset + i}",
                         "name": fc.name,
-                        "arguments": dict(fc.args) if fc.args else {},
+                        "arguments": self._normalize_tool_args(fc.args if fc.args else {}),
                     }
                 )
 
@@ -786,7 +962,7 @@ class GeminiLLMProvider(LLMProvider):
         last_chunk = None
         has_text = False
         tool_calls: list[dict[str, Any]] = []
-        tool_call_chunk: Any = None  # chunk that held the first tool call (for raw_content)
+        tool_call_chunks: list[Any] = []  # chunks that held tool calls (for raw_content)
         part_summary: dict[str, Any] | None = None
 
         for chunk in client.models.generate_content_stream(
@@ -806,8 +982,7 @@ class GeminiLLMProvider(LLMProvider):
             # Accumulate tool calls as they stream in.
             chunk_calls = self._extract_tool_calls(chunk, id_offset=len(tool_calls))
             if chunk_calls:
-                if tool_call_chunk is None:
-                    tool_call_chunk = chunk
+                tool_call_chunks.append(chunk)
                 tool_calls.extend(chunk_calls)
 
         # Extract token usage from last chunk
@@ -838,15 +1013,12 @@ class GeminiLLMProvider(LLMProvider):
             )
             final.tool_calls = tool_calls
 
-            # Store raw content for replay. Prefer the chunk that actually
-            # carried the function_call parts (preserves thought_signature
-            # + function_call together for Gemini 2.5+/3 replay); fall
-            # back to the last chunk if we lost track.
-            source = tool_call_chunk or last_chunk
-            if source and hasattr(source, "candidates") and source.candidates:
-                candidate = source.candidates[0]
-                if hasattr(candidate, "content") and candidate.content:
-                    final.raw_content = candidate.content
+            # Store raw content for replay. When several function_call parts are
+            # split across chunks, merge the original SDK Part objects so Gemini's
+            # thought_signature metadata survives the immediate follow-up request.
+            raw_content = self._merge_tool_call_raw_content(tool_call_chunks, tool_calls)
+            if raw_content is not None:
+                final.raw_content = raw_content
 
             yield final
 

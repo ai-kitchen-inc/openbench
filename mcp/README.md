@@ -101,6 +101,7 @@ directory.
 
 ## Included Servers
 
+- `dashboard-generator-mcp`: metadata-first CSV/XLSX dashboard generation.
 - `generic-api-mcp`: authenticated GET access to user-provided API endpoints.
 - `image-search-mcp`: local image similarity search with DINOv3/CIFAR assets.
 - `sam-segmentation-mcp`: SAM 3 concept counting and segmentation helper.

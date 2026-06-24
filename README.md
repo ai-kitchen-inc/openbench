@@ -30,7 +30,7 @@ OpenBench is the **open source workbench for the agentic AI era**. It's not just
 
 Think of it as your **AI-native operating system** for knowledge work:
 
-- **Ingest anything**: PDFs, APIs, web search—if it contains information, OpenBench can work with it
+- **Ingest anything**: PDFs, APIs, web search, images—if it contains information, OpenBench can work with it
 - **Agent-powered workflows**: Author sophisticated agentic flows that actually get work done
 - **Export everywhere**: Turn insights into presentations, reports, markdown, or raw data
 
@@ -94,7 +94,7 @@ result = workflow.run()
 |-------|--------|
 | **Phase 1: Core Abstractions** | ✅ Complete - Interfaces, plugin registry, DAG workflows, state management |
 | **Phase 2: Infrastructure** | ✅ Complete - Provider Service, Config, Agent interface, L2 layers, 759 tests |
-| **Phase 3: Providers** | 🚧 In Progress - LLM (Gemini ✅, OpenAI 🚧, Anthropic 📋), Vector (Pinecone ✅, ChromaDB 📋), Output (PDF ✅, PPTX ✅, Markdown ✅) |
+| **Phase 3: Providers** | 🚧 In Progress - LLM (Gemini ✅, OpenAI 🚧, Anthropic 📋), VLM (Gemini/Gemma ✅), Vector (Pinecone ✅, ChromaDB 📋), Output (PDF ✅, PPTX ✅, Markdown ✅) |
 
 ```bash
 pip install -e ".[all]" && python examples/workflows/reports/sustainability_report.py

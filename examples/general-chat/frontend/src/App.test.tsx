@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
+  DashboardArtifactPanel,
   DIRECT_UPLOAD_THRESHOLD_BYTES,
   SOURCE_ACCEPT,
   SourcePanel,
@@ -668,5 +669,91 @@ describe("SourcePanel discovery flow", () => {
     expect(await screen.findByText("big-notes.pdf")).toBeInTheDocument();
     expect(screen.getByText("Processing: queued")).toBeInTheDocument();
     expect(screen.getByText("Queued for parsing")).toBeInTheDocument();
+  });
+});
+
+describe("DashboardArtifactPanel", () => {
+  it("renders the A2UI dashboard surface when ViewModel and dashboardUrl both exist", () => {
+    const viewModel = {
+      title: "Sales Dashboard",
+      description: "Native dashboard data.",
+      kpis: [{ label: "Revenue", value: 1200 }],
+      sections: [],
+      datasets: {},
+    };
+    const artifact = {
+      messageId: "msg-1",
+      title: "Sales Dashboard",
+      url: "/downloads/sales.html",
+      fileName: "sales.html",
+      summary: "Native dashboard data.",
+      surface: {
+        surfaceId: "msg-1-dashboard-artifact",
+        catalogId: "openbench",
+        components: new Map([
+          [
+            "root",
+            {
+              id: "root",
+              component: "ObDashboardFrame",
+              title: "Sales Dashboard",
+              dashboardUrl: "/downloads/sales.html",
+              viewModel,
+            },
+          ],
+        ]),
+        dataModel: {},
+      },
+    };
+
+    const { container } = render(
+      <DashboardArtifactPanel artifact={artifact} onClose={vi.fn()} />,
+    );
+
+    expect(screen.getAllByText("Sales Dashboard").length).toBeGreaterThan(0);
+    expect(container.querySelector('[data-dashboard-renderer="a2ui"]')).not.toBeNull();
+    expect(container.querySelector("iframe")).toBeNull();
+  });
+
+  it("renders the A2UI dashboard surface when ViewModel is inside legacy properties", () => {
+    const viewModel = {
+      title: "Dashboard Penjualan Kopi",
+      description: "Native dashboard data.",
+      kpis: [{ label: "Revenue", value: 1200 }],
+      sections: [],
+      datasets: {},
+    };
+    const artifact = {
+      messageId: "msg-1",
+      title: "Dashboard Penjualan Kopi",
+      url: "/downloads/kopi.html",
+      fileName: "kopi.html",
+      summary: "Native dashboard data.",
+      surface: {
+        surfaceId: "msg-1-dashboard-artifact",
+        catalogId: "openbench",
+        components: new Map([
+          [
+            "root",
+            {
+              id: "root",
+              component: "ObDashboardFrame",
+              title: "Dashboard Penjualan Kopi",
+              dashboardUrl: "/downloads/kopi.html",
+              properties: { viewModel },
+            },
+          ],
+        ]),
+        dataModel: {},
+      },
+    };
+
+    const { container } = render(
+      <DashboardArtifactPanel artifact={artifact} onClose={vi.fn()} />,
+    );
+
+    expect(screen.getAllByText("Dashboard Penjualan Kopi").length).toBeGreaterThan(0);
+    expect(container.querySelector('[data-dashboard-renderer="a2ui"]')).not.toBeNull();
+    expect(container.querySelector("iframe")).toBeNull();
   });
 });

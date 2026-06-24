@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import threading
 import time
 import types
@@ -44,7 +45,7 @@ from general_chat.agent import (  # noqa: E402
 )
 from general_chat.extractor import DoclingContentExtractor  # noqa: E402
 from general_chat.server.app import _resolve_mime, _resolve_request_session_id  # noqa: E402
-from general_chat.server.handler import GeneralChatHandler  # noqa: E402
+from general_chat.server.handler import GeneralChatHandler, sanitize_messages  # noqa: E402
 from general_chat.sources import (  # noqa: E402
     SearchDiscoveryResponse,
     SearchDiscoveryResult,
@@ -100,6 +101,93 @@ class MockLLMProvider(LLMProvider):
 
 
 class TestGeneralChatSources(unittest.TestCase):
+    def test_sanitize_messages_drops_unresolved_tool_exchange_before_new_user(self):
+        messages = [
+            Message(role=MessageRole.SYSTEM, content="system"),
+            Message(role=MessageRole.USER, content="old request"),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="",
+                tool_calls=[{"id": "call_0", "name": "generate_dashboard", "arguments": {}}],
+            ),
+            Message(
+                role=MessageRole.TOOL,
+                content='{"type": "dashboard"}',
+                name="generate_dashboard",
+                tool_call_id="call_0",
+            ),
+            Message(role=MessageRole.USER, content="new request"),
+        ]
+
+        sanitized = sanitize_messages(messages)
+
+        self.assertEqual(
+            [message.role for message in sanitized],
+            [MessageRole.SYSTEM, MessageRole.USER],
+        )
+        self.assertEqual(sanitized[-1].content, "new request")
+
+    def test_sanitize_messages_drops_completed_tool_exchange_without_raw_content(self):
+        messages = [
+            Message(role=MessageRole.SYSTEM, content="system"),
+            Message(role=MessageRole.USER, content="old request"),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="",
+                tool_calls=[{"id": "call_0", "name": "extract_metadata", "arguments": {}}],
+            ),
+            Message(
+                role=MessageRole.TOOL,
+                content='{"row_count": 10}',
+                name="extract_metadata",
+                tool_call_id="call_0",
+            ),
+            Message(role=MessageRole.ASSISTANT, content="Dashboard done"),
+        ]
+
+        sanitized = sanitize_messages(messages)
+
+        self.assertEqual(
+            [message.role for message in sanitized],
+            [MessageRole.SYSTEM, MessageRole.USER, MessageRole.ASSISTANT],
+        )
+        self.assertEqual(sanitized[-1].content, "Dashboard done")
+        self.assertFalse(any(message.tool_calls for message in sanitized))
+
+    def test_sanitize_messages_keeps_completed_tool_exchange_with_raw_content(self):
+        raw_content = object()
+        messages = [
+            Message(role=MessageRole.SYSTEM, content="system"),
+            Message(role=MessageRole.USER, content="old request"),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="",
+                tool_calls=[{"id": "call_0", "name": "extract_metadata", "arguments": {}}],
+                raw_content=raw_content,
+            ),
+            Message(
+                role=MessageRole.TOOL,
+                content='{"row_count": 10}',
+                name="extract_metadata",
+                tool_call_id="call_0",
+            ),
+            Message(role=MessageRole.ASSISTANT, content="Dashboard done"),
+        ]
+
+        sanitized = sanitize_messages(messages)
+
+        self.assertEqual(
+            [message.role for message in sanitized],
+            [
+                MessageRole.SYSTEM,
+                MessageRole.USER,
+                MessageRole.ASSISTANT,
+                MessageRole.TOOL,
+                MessageRole.ASSISTANT,
+            ],
+        )
+        self.assertIs(sanitized[2].raw_content, raw_content)
+
     def test_resolve_request_session_id_prefers_forwarded_session(self):
         body = {
             "threadId": "transport-thread",
@@ -389,6 +477,112 @@ class TestGeneralChatSources(unittest.TestCase):
         assert agent.context is not None
         self.assertEqual(agent.context.data["attachments"][0]["path"], "/general-chat/uploads/file-1/photo.jpg")
 
+    def test_image_source_runs_vision_agent_when_local_path_available(self):
+        class FakeVisionAgent:
+            def __init__(self):
+                self.context: ExecutionContext | None = None
+
+            def execute(self, context: ExecutionContext) -> ExecutionResult:
+                self.context = context
+                return ExecutionResult(
+                    output="The image shows a white car with plate B 1234 CD.",
+                    status="completed",
+                    metadata={"provider": "gemini", "model": "gemini-2.5-flash"},
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = Path(tmp) / "plate.jpg"
+            image_path.write_bytes(b"fake-image")
+            vision_agent = FakeVisionAgent()
+            agent = MockAgent()
+            agent._vision_agent = vision_agent
+            engine = ChatEngine(agent=agent)
+            source = SourceRecord.create(
+                session_id="chat-session",
+                name="plate.jpg",
+                kind="image",
+                mime_type="image/jpeg",
+                size_bytes=20,
+                url="/uploads/file-1/plate.jpg",
+                text="Image source: plate.jpg",
+                metadata={
+                    "imageSearchPath": "/general-chat/uploads/file-1/plate.jpg",
+                    "localFilePath": str(image_path),
+                },
+            )
+            handler = GeneralChatHandler(
+                engine=engine,
+                db_path=":memory:",
+                source_records=[source],
+            )
+
+            content, attachments = handler._extract_content(
+                {
+                    "messages": [{"id": "m1", "role": "user", "content": "baca plat nomor"}],
+                    "forwardedProps": {"sessionId": "chat-session"},
+                }
+            )
+
+        self.assertIsNotNone(attachments)
+        assert attachments is not None
+        self.assertEqual(attachments[0].path, str(image_path))
+        self.assertEqual(attachments[-1].name, "visual-observations.md")
+        self.assertIn("B 1234 CD", attachments[-1].extracted_text or "")
+        self.assertIsNotNone(vision_agent.context)
+        assert vision_agent.context is not None
+        self.assertEqual(
+            vision_agent.context.data["attachments"][0]["path"],
+            str(image_path),
+        )
+
+        engine._execute_agent(content, None, attachments=attachments)
+        self.assertIsNotNone(agent.context)
+        assert agent.context is not None
+        contents = "\n".join(item["content"] for item in agent.context.data["attachments"])
+        self.assertIn("Visual observation from the configured OpenBench VLM", contents)
+        self.assertIn("B 1234 CD", contents)
+
+    def test_spreadsheet_source_attachment_includes_dashboard_path(self):
+        agent = MockAgent()
+        engine = ChatEngine(agent=agent)
+        source = SourceRecord.create(
+            session_id="chat-session",
+            name="sales.csv",
+            kind="spreadsheet",
+            mime_type="text/csv",
+            size_bytes=20,
+            url="/uploads/file-1/sales.csv",
+            text="Spreadsheet source: sales.csv\n\n| raw_column |\n| should_not_enter_prompt |",
+            metadata={"localFilePath": "C:/tmp/openbench/sales.csv"},
+        )
+        handler = GeneralChatHandler(
+            engine=engine,
+            db_path=":memory:",
+            source_records=[source],
+        )
+
+        content, attachments = handler._extract_content(
+            {
+                "messages": [{"id": "m1", "role": "user", "content": "buatkan dashboard"}],
+                "forwardedProps": {"sessionId": "chat-session"},
+            }
+        )
+
+        self.assertEqual(content, "buatkan dashboard")
+        self.assertIsNotNone(attachments)
+        assert attachments is not None
+        self.assertEqual(attachments[0].type, "file")
+        self.assertEqual(attachments[0].path, "C:/tmp/openbench/sales.csv")
+        self.assertIn("extract_metadata", attachments[0].extracted_text or "")
+        self.assertIn("C:/tmp/openbench/sales.csv", attachments[0].extracted_text or "")
+        self.assertNotIn("should_not_enter_prompt", attachments[0].extracted_text or "")
+
+        engine._execute_agent(content, None, attachments=attachments)
+
+        self.assertIsNotNone(agent.context)
+        assert agent.context is not None
+        self.assertEqual(agent.context.data["attachments"][0]["path"], "C:/tmp/openbench/sales.csv")
+
     def test_similar_image_prompt_is_allowed_for_image_source(self):
         llm = MockLLMProvider("I will search similar images.")
         agent = BaseAgent(goal="General chat")
@@ -635,11 +829,47 @@ class TestGeneralChatSources(unittest.TestCase):
             if tmpdir.exists():
                 tmpdir.rmdir()
 
-        text = parsed.text
-        self.assertIn("Sheet: People", text)
-        self.assertIn("Ada", text)
-        self.assertIn("Sheet: Inventory", text)
-        self.assertIn("Widget", text)
+        self.assertEqual(parsed.text, "")
+        self.assertEqual((parsed.metadata or {})["spreadsheetContextMode"], "metadata-first")
+
+    def test_csv_source_becomes_dashboard_ready_spreadsheet(self):
+        try:
+            import pandas  # noqa: F401
+        except ImportError:
+            self.skipTest("pandas is not installed")
+
+        tmpdir = Path("tests/.tmp") / f"csv-{uuid.uuid4().hex}"
+        tmpdir.mkdir(parents=True, exist_ok=True)
+        path = tmpdir / "sales.csv"
+        path.write_text("region,revenue\nEU,100\nUS,150\n", encoding="utf-8")
+        try:
+            stored = StoredFile(
+                id="file-1",
+                name="sales.csv",
+                path=str(path),
+                mime_type="text/csv",
+                size_bytes=path.stat().st_size,
+                stored_at="2026-01-01T00:00:00+00:00",
+            )
+            record = source_record_from_file(
+                session_id="s1",
+                stored_file=stored,
+                parser=SourceParserRegistry(),
+                max_bytes=1000,
+            )
+        finally:
+            if path.exists():
+                path.unlink()
+            if tmpdir.exists():
+                tmpdir.rmdir()
+
+        self.assertEqual(record.status, "ready")
+        self.assertEqual(record.kind, "spreadsheet")
+        self.assertTrue((record.metadata or {})["dashboardSource"])
+        self.assertIn("localFilePath", record.metadata or {})
+        self.assertIn("extract_metadata", record.text)
+        self.assertIn("Raw spreadsheet rows are not included", record.text)
+        self.assertNotIn("| region", record.text)
 
     def test_png_ocr_success_creates_searchable_image_source(self):
         extractor = Mock()
@@ -1331,6 +1561,41 @@ class TestGeneralChatSources(unittest.TestCase):
         search = client.get("/chat/sources/s-clean/search?q=Useful").json()
         self.assertEqual(search["results"][0]["sourceId"], payload["id"])
 
+    def test_awp_stream_preserves_spreadsheet_upload_for_dashboard_turns(self):
+        try:
+            import pandas  # noqa: F401
+        except ImportError:
+            self.skipTest("pandas is not installed")
+
+        client = self._build_test_client(agent=MockAgent())
+        response = client.post(
+            "/chat/upload",
+            files={"file": ("sales.csv", b"region,revenue\nEU,100\n", "text/csv")},
+            data={"sessionId": "s-dashboard"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        file_id = payload["url"].split("/")[2]
+        file_dir = Path(environ["GENERAL_CHAT_UPLOAD_DIR"]) / file_id
+        self.assertEqual(payload["kind"], "spreadsheet")
+        self.assertTrue(file_dir.exists())
+
+        response = client.post(
+            "/awp",
+            json={
+                "threadId": "s-dashboard",
+                "messages": [{"role": "user", "content": "buatkan dashboard"}],
+                "forwardedProps": {"sessionId": "s-dashboard"},
+            },
+            headers={"accept": "text/event-stream"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(file_dir.exists())
+        sources = client.get("/chat/sources/s-dashboard").json()
+        self.assertEqual(sources[0]["metadata"]["dashboardSource"], True)
+        self.assertIn("localFilePath", sources[0]["metadata"])
+
     def test_delete_source_removes_referenced_upload_file(self):
         client = self._build_test_client()
         payload, file_dir = self._upload_text_source(client, session_id="s-delete")
@@ -1377,7 +1642,14 @@ class TestGeneralChatSources(unittest.TestCase):
 
         self.assertFalse(agent._mcp_enabled)
         self.assertEqual(agent._mcp_tools, [])
-        self.assertEqual(len(agent.tools), 0)
+        self.assertTrue(agent._vlm_summary["enabled"])
+        self.assertEqual(agent._vlm_summary["model"], "gemini-2.5-flash")
+        self.assertIsNotNone(agent._vision_agent)
+        self.assertEqual(len(agent.tools), 3)
+        self.assertEqual(
+            set(agent._dashboard_skill_tools),
+            {"aggregate_data", "extract_metadata", "generate_dashboard"},
+        )
 
     def test_configure_general_chat_provider_does_not_persist_provider_state(self):
         import general_chat.agent as agent_module
@@ -1401,6 +1673,89 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(config.credentials, {"api_key": "test-key"})
         self.assertEqual(config.settings, {"model": "test-model"})
         self.assertTrue(config.is_default)
+
+    def test_configure_general_chat_vlm_provider_does_not_persist_provider_state(self):
+        import general_chat.agent as agent_module
+
+        captured = {}
+
+        class FakeProviderService:
+            def configure(self, config, save=True):
+                captured["config"] = config
+                captured["save"] = save
+
+        with patch.object(agent_module, "get_provider_service", return_value=FakeProviderService()):
+            agent_module._configure_general_chat_vlm_provider(
+                api_key="test-key",
+                provider="gemini",
+                model="gemini-2.5-flash",
+                temperature=0.2,
+                max_output_tokens=2048,
+            )
+
+        config = captured["config"]
+        self.assertFalse(captured["save"])
+        self.assertEqual(config.name, "general-chat-vlm")
+        self.assertEqual(config.provider_type.value, "vlm")
+        self.assertEqual(config.provider, "gemini")
+        self.assertEqual(config.plugin_type, "vision")
+        self.assertEqual(config.credentials, {"api_key": "test-key"})
+        self.assertEqual(
+            config.settings,
+            {"model": "gemini-2.5-flash", "temperature": 0.2, "max_output_tokens": 2048},
+        )
+        self.assertTrue(config.is_default)
+
+    def test_gemma_vlm_model_resolves_to_ollama_provider(self):
+        import general_chat.agent as agent_module
+
+        with patch.dict(
+            environ,
+            {
+                "GENERAL_CHAT_VLM_MODEL": "gemma-2b",
+                "GENERAL_CHAT_VLM_BASE_URL": "http://localhost:11434/v1",
+            },
+            clear=False,
+        ):
+            environ.pop("GENERAL_CHAT_VLM_PROVIDER", None)
+            environ.pop("OPENBENCH_VLM_PROVIDER", None)
+            provider, model, requested = agent_module._resolve_vlm_selection()
+
+        self.assertEqual(provider, "ollama")
+        self.assertEqual(model, "gemma4:e2b")
+        self.assertEqual(requested, "gemma-2b")
+
+    def test_configure_ollama_vlm_uses_local_base_url(self):
+        import general_chat.agent as agent_module
+
+        captured = {}
+
+        class FakeProviderService:
+            def configure(self, config, save=True):
+                captured["config"] = config
+                captured["save"] = save
+
+        with patch.dict(
+            environ,
+            {"GENERAL_CHAT_VLM_BASE_URL": "http://localhost:11434/v1"},
+            clear=False,
+        ):
+            with patch.object(agent_module, "get_provider_service", return_value=FakeProviderService()):
+                details = agent_module._configure_general_chat_vlm_provider(
+                    api_key="test-key",
+                    provider="gemma",
+                    model="gemma4:e2b",
+                    temperature=0.2,
+                    max_output_tokens=2048,
+                )
+
+        config = captured["config"]
+        self.assertFalse(captured["save"])
+        self.assertEqual(details["provider"], "ollama")
+        self.assertEqual(details["base_url"], "http://localhost:11434/v1")
+        self.assertEqual(config.provider, "ollama")
+        self.assertEqual(config.settings["model"], "gemma4:e2b")
+        self.assertEqual(config.settings["base_url"], "http://localhost:11434/v1")
 
     def test_create_agent_mcp_enabled_loads_allowlisted_adapters(self):
         import general_chat.agent as agent_module
@@ -1433,7 +1788,7 @@ class TestGeneralChatSources(unittest.TestCase):
                 "openbench.top_n_records",
             },
         )
-        self.assertEqual(len(agent.tools), 4)
+        self.assertEqual(len(agent.tools), 7)
 
     def test_mcp_tools_endpoint_disabled_by_default(self):
         client = self._build_test_client()

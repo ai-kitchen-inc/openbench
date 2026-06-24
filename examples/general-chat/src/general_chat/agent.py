@@ -15,6 +15,8 @@ from openbench.core.abstractions import Tool
 from openbench.core.providers import ProviderConfig, ProviderType, get_provider_service
 from openbench.intelligence import BaseAgent, Persona
 from openbench.mcp.permissions import MCPPermissionSession, PermissionProvider
+from openbench.intelligence.base import Message, MessageRole
+from openbench.intelligence.skill_registry import SkillRegistry
 
 _DEFAULT_MCP_APPROVED_TOOLS = (
     "openbench.filter_records",
@@ -25,8 +27,28 @@ _DEFAULT_MCP_APPROVED_TOOLS = (
 _IMAGE_SEARCH_SIMILAR_TOOL = "image_search.search_similar_images"
 _SAM_COUNT_TOOL = "sam_segmentation.count_objects_with_sam3"
 _SAM_SERVICE_INFO_TOOL = "sam_segmentation.service_info"
+_DASHBOARD_TOOL_PREFIX = "dashboard_generator."
+_DASHBOARD_GENERATE_TOOL = "dashboard_generator.generate_dashboard"
 _PROVIDER_NAME = "gemini-general-chat"
+_VLM_PROVIDER_NAME = "general-chat-vlm"
+_DASHBOARD_SKILL_NAME = "dashboard-generator"
+_VEHICLE_PLATE_SKILL_NAME = "vehicle-plate-reading"
+_OLLAMA_VLM_DEFAULT_BASE_URL = "http://localhost:11434/v1"
 logger = logging.getLogger(__name__)
+
+_VLM_MODEL_ALIASES: dict[str, tuple[str, str]] = {
+    "gemini": ("gemini", "gemini-2.5-flash"),
+    "gemini-flash": ("gemini", "gemini-2.5-flash"),
+    "gemini-2.5-flash": ("gemini", "gemini-2.5-flash"),
+    "gemma-2b": ("ollama", "gemma4:e2b"),
+    "gemma 2b": ("ollama", "gemma4:e2b"),
+    "gemma2b": ("ollama", "gemma4:e2b"),
+    "gemma4:e2b": ("ollama", "gemma4:e2b"),
+    "gemma-4b": ("ollama", "gemma4:e4b"),
+    "gemma 4b": ("ollama", "gemma4:e4b"),
+    "gemma4b": ("ollama", "gemma4:e4b"),
+    "gemma4:e4b": ("ollama", "gemma4:e4b"),
+}
 
 
 def _example_root() -> Path:
@@ -51,6 +73,28 @@ def _csv_env(name: str, default: tuple[str, ...] = ()) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using %s", name, raw, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using %s", name, raw, default)
+        return default
+
+
 def _mcp_config_path() -> Path:
     raw = os.getenv("GENERAL_CHAT_MCP_CONFIG", "mcp/openbench-mcp.yaml")
     path = Path(raw)
@@ -66,6 +110,68 @@ def _mcp_registry_root() -> Path | None:
     if not raw:
         return None
     return Path(raw).expanduser().resolve()
+
+
+def _dashboard_skill_dir() -> Path:
+    import openbench
+
+    return Path(openbench.__file__).resolve().parent / "skills" / _DASHBOARD_SKILL_NAME
+
+
+def _vehicle_plate_skill_dir() -> Path:
+    import openbench
+
+    return Path(openbench.__file__).resolve().parent / "skills" / _VEHICLE_PLATE_SKILL_NAME
+
+
+def _normalize_vlm_provider(provider: str | None) -> str:
+    normalized = (provider or "").strip().lower()
+    if normalized in {"gemma", "ollama-gemma"}:
+        return "ollama"
+    return normalized
+
+
+def _resolve_vlm_selection() -> tuple[str, str, str]:
+    requested = os.getenv("GENERAL_CHAT_VLM_MODEL") or os.getenv("OPENBENCH_VLM_MODEL")
+    requested = (requested or "gemini-2.5-flash").strip()
+    alias_key = requested.lower()
+    provider, model = _VLM_MODEL_ALIASES.get(alias_key, ("", requested))
+    provider = _normalize_vlm_provider(
+        os.getenv("GENERAL_CHAT_VLM_PROVIDER")
+        or os.getenv("OPENBENCH_VLM_PROVIDER")
+        or provider
+        or ("ollama" if model.lower().startswith("gemma") else "gemini")
+    )
+    return provider, model, requested
+
+
+def _sync_agent_system_message(agent: BaseAgent) -> None:
+    if agent.memory.messages and agent.memory.messages[0].role == MessageRole.SYSTEM:
+        agent.memory.messages[0] = Message(role=MessageRole.SYSTEM, content=agent._system_prompt)
+    else:
+        agent.memory.add_system(agent._system_prompt)
+
+
+def _load_dashboard_skill(agent: BaseAgent) -> None:
+    """Load only the dashboard SDK skill into General Chat."""
+    registry = SkillRegistry()
+    registry.load_project_skills([_dashboard_skill_dir()])
+    skill_context = registry.compose_context()
+    if skill_context:
+        agent._system_prompt = f"{agent._system_prompt}\n\n{skill_context}"
+        _sync_agent_system_message(agent)
+
+    registered: set[str] = set()
+    for tool_name, tool_fn, tool_schema in registry.collect_tools():
+        if tool_name in agent.tools._tools:
+            raise ValueError(
+                f"Dashboard skill tool '{tool_name}' conflicts with an existing chat tool."
+            )
+        agent.tools.register(tool_name, tool_fn, schema=tool_schema)
+        registered.add(tool_name)
+
+    agent._skill_registry = registry  # type: ignore[attr-defined]
+    agent._dashboard_skill_tools = sorted(registered)  # type: ignore[attr-defined]
 
 
 def _format_score(value: Any) -> str:
@@ -157,6 +263,57 @@ class _ImageSearchRenderTool(Tool):
     def execute(self, **params: Any) -> Any:
         payload = self.inner.execute(**params)
         shared_render_queue.push_many(_image_search_render_items(payload))
+        return payload
+
+    def get_schema(self) -> dict[str, Any]:
+        return self.inner.get_schema()
+
+
+class _DashboardGeneratorRenderTool(Tool):
+    """Tool wrapper that renders dashboard MCP artifacts in General Chat."""
+
+    def __init__(self, inner: Tool):
+        self.inner = inner
+
+    @property
+    def name(self) -> str:
+        return self.inner.name
+
+    @property
+    def description(self) -> str:
+        return self.inner.description
+
+    @property
+    def namespaced_name(self) -> str:
+        return str(getattr(self.inner, "namespaced_name", self.name))
+
+    @property
+    def tool_schema(self) -> dict[str, Any]:
+        schema = getattr(self.inner, "tool_schema", {})
+        return schema if isinstance(schema, dict) else {}
+
+    @property
+    def approved(self) -> bool:
+        return bool(getattr(self.inner, "approved", False))
+
+    @approved.setter
+    def approved(self, value: bool) -> None:
+        if hasattr(self.inner, "approved"):
+            self.inner.approved = value
+
+    @property
+    def timeout_seconds(self) -> Any:
+        return getattr(self.inner, "timeout_seconds", None)
+
+    def execute(self, **params: Any) -> Any:
+        payload = self.inner.execute(**params)
+        if isinstance(payload, dict) and payload.get("type") == "dashboard" and not payload.get("error"):
+            payload.setdefault(
+                "final_answer_hint",
+                "Dashboard artifact is ready and has been rendered in the side panel. "
+                "Do not paste the full ViewModel unless the user asks for implementation details.",
+            )
+            shared_render_queue.push(payload)
         return payload
 
     def get_schema(self) -> dict[str, Any]:
@@ -343,6 +500,11 @@ class _DiagnosticMCPToolDescription(Tool):
 
 def _wrap_chat_mcp_tool(tool: Any) -> Any:
     if (
+        getattr(tool, "namespaced_name", None) == _DASHBOARD_GENERATE_TOOL
+        and isinstance(tool, Tool)
+    ):
+        return _DashboardGeneratorRenderTool(tool)
+    if (
         getattr(tool, "namespaced_name", None) == _IMAGE_SEARCH_SIMILAR_TOOL
         and isinstance(tool, Tool)
     ):
@@ -399,6 +561,14 @@ def _load_mcp_tools_for_chat(
     else:
         for adapter in load_mcp_tools(config, permission_session=permission_session):
             if adapter.namespaced_name in allowed_names:
+                if adapter.namespaced_name.startswith(_DASHBOARD_TOOL_PREFIX):
+                    # Keep the dashboard stdio MCP process alive across the
+                    # metadata -> aggregate -> render workflow. On Windows,
+                    # closing stdio/AnyIO immediately after each call can hang
+                    # long enough for the outer tool timeout to fire even when
+                    # the dashboard tool itself has already completed.
+                    adapter.close_after_execute = False
+                adapter.approved = True
                 loaded.append(_wrap_chat_mcp_tool(adapter))
 
     return loaded, {
@@ -688,6 +858,95 @@ def _configure_general_chat_provider(api_key: str, model: str) -> None:
     )
 
 
+def _configure_general_chat_vlm_provider(
+    *,
+    api_key: str | None,
+    provider: str,
+    model: str,
+    temperature: float,
+    max_output_tokens: int,
+) -> dict[str, Any]:
+    """Configure the demo VLM provider without writing user-level provider state."""
+    provider = _normalize_vlm_provider(provider)
+    credentials: dict[str, Any] = {}
+    settings: dict[str, Any] = {"model": model, "temperature": temperature}
+    base_url: str | None = None
+
+    if provider == "gemini":
+        credentials["api_key"] = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        settings["max_output_tokens"] = max_output_tokens
+    else:
+        if os.getenv("OPENBENCH_VLM_API_KEY") or os.getenv("GEMMA_VLM_API_KEY"):
+            credentials["api_key"] = (
+                os.getenv("OPENBENCH_VLM_API_KEY") or os.getenv("GEMMA_VLM_API_KEY")
+            )
+        settings["max_tokens"] = max_output_tokens
+        base_url = (
+            os.getenv("GENERAL_CHAT_VLM_BASE_URL")
+            or os.getenv("OPENBENCH_VLM_BASE_URL")
+            or os.getenv("GEMMA_VLM_BASE_URL")
+            or _OLLAMA_VLM_DEFAULT_BASE_URL
+        )
+        settings["base_url"] = base_url
+
+    get_provider_service().configure(
+        ProviderConfig(
+            name=_VLM_PROVIDER_NAME,
+            provider_type=ProviderType.VLM,
+            provider=provider,
+            plugin_type="vision",
+            credentials=credentials,
+            settings=settings,
+            is_default=True,
+        ),
+        save=False,
+    )
+    return {"provider": provider, "model": model, "base_url": base_url}
+
+
+def _create_vision_agent(api_key: str | None) -> tuple[Any | None, dict[str, Any]]:
+    if not _env_flag("GENERAL_CHAT_VLM_ENABLED", default=True):
+        return None, {"enabled": False}
+
+    from openbench.intelligence import VisionAgent
+
+    provider, model, requested = _resolve_vlm_selection()
+    temperature = _env_float("GENERAL_CHAT_VLM_TEMPERATURE", 0.2)
+    max_output_tokens = _env_int("GENERAL_CHAT_VLM_MAX_OUTPUT_TOKENS", 2048)
+    provider_details = _configure_general_chat_vlm_provider(
+        api_key=api_key,
+        provider=provider,
+        model=model,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+    )
+    print(f"[vision] provider={provider_details['provider']} resolved_model={model}")
+
+    vision_agent = VisionAgent(
+        goal="Understand uploaded images for General Chat.",
+        model=model,
+        provider_name=_VLM_PROVIDER_NAME,
+        temperature=temperature,
+        skills=[_vehicle_plate_skill_dir()],
+        system_prompt=(
+            "You are the image understanding stage for General Chat. Describe the "
+            "uploaded image only from visible evidence. If the user asks for a vehicle "
+            "plate number, follow the vehicle-plate-reading protocol. Otherwise, give a "
+            "concise general visual observation that helps the chat agent answer."
+        ),
+    )
+    return vision_agent, {
+        "enabled": True,
+        "provider": provider,
+        "model": model,
+        "requested_model": requested,
+        "base_url": provider_details.get("base_url"),
+        "temperature": temperature,
+        "max_output_tokens": max_output_tokens,
+        "skill": _VEHICLE_PLATE_SKILL_NAME,
+    }
+
+
 def create_agent(
     api_key: str | None = None,
     model: str | None = None,
@@ -706,6 +965,7 @@ def create_agent(
         raise RuntimeError("GOOGLE_API_KEY is required. Set it in .env or the environment.")
 
     _configure_general_chat_provider(key, resolved_model)
+    vision_agent, vlm_summary = _create_vision_agent(key)
 
     persona_dir = get_persona_dir()
     persona = Persona.from_dir(persona_dir) if persona_dir.is_dir() else None
@@ -739,16 +999,27 @@ def create_agent(
     agent = BaseAgent(
         goal=(
             "Help users by answering questions, reasoning over optional context, "
-            "using enabled tools when useful, and thinking through problems. For "
+            "using enabled tools when useful, and thinking through problems. When "
+            "the user uploads a CSV/XLSX source and asks for a dashboard, follow "
+            "the dashboard-generator skill/MCP SOP: extract metadata, aggregate data, "
+            "compose a declarative ViewModel, then generate the dashboard artifact. For "
+            "uploaded images, use the provided visual observations as the source of "
+            "truth for general image understanding and vehicle plate reading. For "
             "uploaded image counting, call the SAM count tool once per image/concept "
-            "and answer from the returned count; /general-chat/uploads paths are for "
-            "image MCP tools, not filesystem MCP inspection."
+            "when that MCP tool is enabled, and answer from the returned count; "
+            "/general-chat/uploads paths are for image MCP tools, not filesystem MCP "
+            "inspection."
         ),
         model=resolved_model,
         temperature=temperature,
         persona=persona,
         tools=mcp_tools or None,
     )
+    if _env_flag("GENERAL_CHAT_DASHBOARD_SKILL_ENABLED", default=True):
+        _load_dashboard_skill(agent)
+    else:
+        agent._skill_registry = None  # type: ignore[attr-defined]
+        agent._dashboard_skill_tools = []  # type: ignore[attr-defined]
     agent._mcp_enabled = bool(mcp_summary.get("enabled"))  # type: ignore[attr-defined]
     agent._mcp_summary = mcp_summary  # type: ignore[attr-defined]
     agent._mcp_error = mcp_error  # type: ignore[attr-defined]
@@ -758,6 +1029,8 @@ def create_agent(
     agent._external_mcp_tools = external_mcp_tools  # type: ignore[attr-defined]
     agent._external_mcp_tool_names = {tool.name for tool in external_mcp_tools}  # type: ignore[attr-defined]
     agent._external_mcp_tool_servers = {}  # type: ignore[attr-defined]
+    agent._vision_agent = vision_agent  # type: ignore[attr-defined]
+    agent._vlm_summary = vlm_summary  # type: ignore[attr-defined]
     if _mcp_registry_root() is not None:
         reload_external_mcp_tools(agent)
     return agent

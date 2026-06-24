@@ -2,7 +2,9 @@
 
 A full-stack general-purpose chat demo built on OpenBench. You can optionally
 add PDFs, Word docs, PowerPoint slides, spreadsheets, URLs, text, or images as
-context while still asking normal chat questions.
+context while still asking normal chat questions. Uploaded images are analyzed
+through OpenBench's VLM layer before the text agent answers, so the same chat
+can describe general images or read visible vehicle plate numbers.
 
 **Stack:** FastAPI backend (AG-UI / SSE) + React frontend (`@openbench/chat-ui`)
 
@@ -62,11 +64,28 @@ GOOGLE_API_KEY=YOUR_KEY_HERE
 TAVILY_API_KEY=YOUR_TAVILY_KEY_HERE
 ```
 
+Dashboard generation from CSV/XLSX works with the built-in local renderer. If
+you have a Stitch endpoint, you can also set:
+
+```dotenv
+DASHBOARD_RENDER_ADAPTER=auto
+STITCH_API_KEY=YOUR_STITCH_KEY_HERE
+STITCH_API_URL=https://stitch.googleapis.com/mcp
+# Optional: reuse an existing project instead of creating one per dashboard.
+STITCH_PROJECT_ID=
+```
+
 The other variables in `.env` are optional overrides:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `GENERAL_CHAT_MODEL` | `gemini-3-flash-preview` | Gemini model to use |
+| `GENERAL_CHAT_VLM_ENABLED` | `1` | Enable VLM analysis for uploaded images |
+| `GENERAL_CHAT_VLM_MODEL` | `gemini-2.5-flash` | Vision model: `gemini-2.5-flash`, `gemma-2b`, `gemma-4b`, or a raw model id |
+| `GENERAL_CHAT_VLM_PROVIDER` | inferred | Optional override: `gemini` or `ollama` |
+| `GENERAL_CHAT_VLM_BASE_URL` | `http://localhost:11434/v1` | OpenAI-compatible endpoint for local Gemma/Ollama VLM calls |
+| `GENERAL_CHAT_VLM_TEMPERATURE` | `0.2` | VLM sampling temperature |
+| `GENERAL_CHAT_VLM_MAX_OUTPUT_TOKENS` | `2048` | Max visual-analysis output tokens |
 | `GENERAL_CHAT_UPLOAD_DIR` | `uploads/` | Where uploaded files are stored |
 | `GENERAL_CHAT_DOWNLOAD_DIR` | `downloads/` | Where generated exports go |
 | `GENERAL_CHAT_STORAGE_ROOT` | `.openbench/` | Session + source JSON storage |
@@ -80,6 +99,11 @@ The other variables in `.env` are optional overrides:
 | `GENERAL_CHAT_MCP_CONFIG` | `mcp/openbench-mcp.yaml` | MCP config file for General Chat |
 | `GENERAL_CHAT_MCP_APPROVED_TOOLS` | query tools | Comma-separated namespaced MCP tools exposed to the chat agent |
 | `GENERAL_CHAT_MCP_REGISTRY_ENABLED` | `1` | Set to `0` for dedicated single-server demo scripts so saved registry servers are ignored |
+| `DASHBOARD_RENDER_ADAPTER` | `auto` | Dashboard presentation adapter: `auto`, `default`, or `stitch` |
+| `STITCH_API_KEY` | unset | Optional Stitch credential for dashboard HTML generation |
+| `STITCH_API_URL` | unset | Optional Stitch endpoint; `https://stitch.googleapis.com/mcp` uses MCP mode |
+| `STITCH_API_MODE` | auto | Optional `mcp` or `direct`; `/mcp` URLs are detected automatically |
+| `STITCH_PROJECT_ID` | unset | Optional existing Stitch project id to reuse |
 
 ---
 
@@ -99,29 +123,44 @@ What this does:
   in `.env` or `.openbench`
 
 MCP-enabled demos remain available through dedicated commands such as
+`openbench demo run general-chat-dashboard-generator`,
 `openbench demo run general-chat-image-search` and
 `openbench demo run general-chat-sam-segmentation`, or by starting the backend
 manually with explicit `GENERAL_CHAT_MCP_*` environment variables.
 
 To launch one session with every bundled General Chat MCP integration registered
-together, use:
+together, use either command below:
 
 ```bash
 openbench demo run general-chat --all-mcp
 # or
-openbench demo run general-chat-all --all-mcp
+openbench demo run general-chat-all
 ```
 
 This all-MCP launcher keeps General Chat in registry mode, seeds the MCP Servers
-registry with filesystem, generic API, image-search, SAM segmentation, Docker
-MCP Gateway, and internal OpenBench tools, then imports any currently running
-ToolHive workloads. It does not start ToolHive workloads for you; start them in
-ToolHive first if you want ToolHive tools available in the same chat session.
+registry with dashboard generator, filesystem, generic API, image-search, SAM
+segmentation, Docker MCP Gateway, and internal OpenBench tools, then imports any
+currently running ToolHive workloads. It does not start ToolHive workloads for
+you; start them in ToolHive first if you want ToolHive tools available in the
+same chat session.
 
 The all-MCP launcher uses an isolated registry under `.openbench/all-mcp`.
 Existing servers saved through the regular General Chat MCP UI stay available to
 `openbench demo run general-chat`, but stopped or stale entries from that default
 registry are not loaded by `general-chat-all`.
+
+Dashboard-specific MCP test:
+
+```bash
+openbench demo run general-chat-dashboard-generator
+```
+
+This starts General Chat with only the standardized
+`mcp/dashboard-generator-mcp` server enabled. The legacy SDK dashboard skill is
+disabled for that run, so a successful dashboard proves the MCP path is working.
+After upload, ask `buatkan dashboard dari data ini`; the progress should move
+from `dashboard_generator_extract_metadata` to aggregation and then
+`dashboard_generator_generate_dashboard`.
 
 Useful options:
 
@@ -220,12 +259,131 @@ uvicorn server:app --port 8005
 | PDF | Upload via paperclip |
 | Word (`.docx`, `.doc`) | Upload via paperclip |
 | PowerPoint (`.pptx`, `.ppt`) | Upload via paperclip |
-| Excel (`.xlsx`, `.xls`) | Upload via paperclip |
-| Plain text / CSV / Markdown / JSON | Upload via paperclip |
+| CSV / Excel (`.csv`, `.xlsx`, `.xls`) | Upload via paperclip; dashboard-ready |
+| Plain text / Markdown / JSON | Upload via paperclip |
+| Image (`.png`, `.jpg`, `.jpeg`, `.webp`) | Upload via paperclip; VLM-ready |
 | Website | Paste a URL in the Sources panel |
 | Raw text | Paste directly in the Sources panel |
 
 Max file size: 25 MB per source (override with `GENERAL_CHAT_MAX_SOURCE_BYTES`).
+
+---
+
+## Image understanding and plate reading
+
+General Chat configures an OpenBench VLM provider at startup. The default is
+Gemini 2.5 Flash through the Gemini API:
+
+```dotenv
+GENERAL_CHAT_VLM_ENABLED=1
+GENERAL_CHAT_VLM_MODEL=gemini-2.5-flash
+GOOGLE_API_KEY=YOUR_KEY_HERE
+```
+
+To use your local Ollama Gemma models instead:
+
+```powershell
+# 2B model
+$env:GENERAL_CHAT_VLM_MODEL="gemma-2b"
+
+# or 4B model
+$env:GENERAL_CHAT_VLM_MODEL="gemma-4b"
+
+# default Ollama OpenAI-compatible endpoint
+$env:GENERAL_CHAT_VLM_BASE_URL="http://localhost:11434/v1"
+```
+
+`gemma-2b` resolves to Ollama model `gemma4:e2b`, and `gemma-4b` resolves to
+`gemma4:e4b`. `GENERAL_CHAT_VLM_BASE_URL` is only used for the local
+Ollama/Gemma provider; Gemini continues to use the Google Gemini API.
+
+The aliases map to the downloaded Ollama model names:
+
+| Env value | Provider | Model sent to provider |
+|-----------|----------|------------------------|
+| `gemini-2.5-flash` | Gemini API | `gemini-2.5-flash` |
+| `gemma-2b` | Ollama/OpenAI-compatible | `gemma4:e2b` |
+| `gemma-4b` | Ollama/OpenAI-compatible | `gemma4:e4b` |
+
+When an image source is attached, the server runs `VisionAgent` first and adds a
+`visual-observations.md` context attachment for the main chat agent. The
+VisionAgent loads only the `vehicle-plate-reading` skill as a domain prompt,
+so plate-number requests get a structured result while normal image questions
+stay general.
+
+Try prompts like:
+
+```text
+gambar ini tentang apa?
+```
+
+```text
+baca plat nomor kendaraan pada gambar ini
+```
+
+For plate tasks, the expected answer separates `plate_text`, `confidence`,
+`evidence`, and `uncertainty`. If the plate is not readable, the agent should
+say that no readable plate is visible instead of guessing.
+
+---
+
+## Dashboard generator
+
+General Chat loads the OpenBench `dashboard-generator` SDK skill by default, and
+the same tools are also available as the standardized
+`mcp/dashboard-generator-mcp` server. Upload a CSV/XLSX file, then ask something
+like:
+
+```text
+buatkan dashboard dari data ini
+```
+
+The agent follows the dashboard SOP from the skill:
+
+1. Read file metadata with `extract_metadata`.
+2. Write read-only SQLite SQL queries against table `data`.
+3. Run `aggregate_data` with the SQL query.
+4. Build a declarative ViewModel (A2UI-style JSON, not raw UI code).
+5. Render the artifact with `generate_dashboard`.
+
+Spreadsheet rows are not pasted into the LLM prompt. General Chat passes only
+the local file path and dashboard SOP to the agent; the skill tools inspect
+metadata and run aggregations from the file.
+
+The result appears as a chat link and in the right-side dashboard artifact
+window. Generated HTML files are written to `downloads/` and served from
+`/downloads/...`.
+
+To test the standalone MCP version only:
+
+```powershell
+cd examples\general-chat
+.\scripts\run_with_dashboard_generator_mcp.ps1
+```
+
+This starts General Chat with `GENERAL_CHAT_DASHBOARD_SKILL_ENABLED=0`, loads
+`mcp/dashboard-generator-mcp` over stdio, and exposes these provider-safe tools
+to the agent:
+
+- `dashboard_generator_extract_metadata`
+- `dashboard_generator_aggregate_data`
+- `dashboard_generator_generate_dashboard`
+
+In the web UI, open the MCP Servers panel, confirm the `dashboard_generator`
+server/tools are loaded if you are using registry mode, upload the spreadsheet
+through the paperclip/Sources area, then ask `buatkan dashboard dari data ini`.
+The dashboard should appear in the right-side artifact panel.
+
+Dashboard rendering uses the OpenBench dashboard adapter layer. By default,
+`DASHBOARD_RENDER_ADAPTER=auto` uses Stitch when a Stitch key is configured and
+falls back to the built-in `DashboardGenerator`; set it to `default` to force
+the local renderer or `stitch` to force the Stitch adapter path.
+
+For `https://stitch.googleapis.com/mcp`, OpenBench uses the Stitch MCP flow:
+`tools/list`, `create_project` (unless `STITCH_PROJECT_ID` is set), and
+`generate_screen_from_text`. A successful MCP response is treated as Stitch
+usage even when the response contains project/screen metadata instead of raw
+HTML.
 
 ---
 
@@ -329,7 +487,7 @@ For a complete walkthrough, see [MCP_TUTORIAL.md](MCP_TUTORIAL.md).
 To test all bundled MCP integrations in one run:
 
 ```powershell
-openbench demo run general-chat --all-mcp
+openbench demo run general-chat-all
 ```
 
 Then inspect:
@@ -339,9 +497,9 @@ Invoke-RestMethod http://localhost:8005/mcp/tools
 ```
 
 Expected `namespaced_tool_names` include the internal OpenBench query tools and,
-when dependencies are available, tools from `filesystem`, `generic_api`,
-`image_search`, `sam_segmentation`, Docker MCP Gateway, and any running
-ToolHive workloads.
+when dependencies are available, tools from `dashboard_generator`, `filesystem`,
+`generic_api`, `image_search`, `sam_segmentation`, Docker MCP Gateway, and any
+running ToolHive workloads.
 Optional services that are missing or not built remain visible through
 `/mcp/catalogs` and `/mcp/tools` diagnostics rather than being silently hidden.
 `general-chat-all` uses the isolated `examples/general-chat/.openbench/all-mcp`

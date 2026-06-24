@@ -543,6 +543,7 @@ from openbench.core.abstractions import (  # noqa: E402
     OutputGenerator,
     Tool,
     TranscriptionProvider,
+    VLMProvider,
 )
 
 # Create typed registries
@@ -553,6 +554,7 @@ LLMProviderRegistry = PluginRegistry[LLMProvider]("llm_provider", LLMProvider)
 TranscriptionRegistry = PluginRegistry[TranscriptionProvider](
     "transcription_provider", TranscriptionProvider
 )
+VLMProviderRegistry = PluginRegistry[VLMProvider]("vlm_provider", VLMProvider)
 ToolRegistry = PluginRegistry[Tool]("tool", Tool)
 OutputGeneratorRegistry = PluginRegistry[OutputGenerator]("output_generator", OutputGenerator)
 

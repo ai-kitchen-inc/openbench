@@ -84,10 +84,18 @@ class FakeDrive:
                 raise RuntimeError(f"not found: {fid}")
             return MagicMock(execute=MagicMock(return_value=rec["content"]))
 
+        def _delete(**kwargs):
+            fid = kwargs["fileId"]
+            if fid not in self._files:
+                raise RuntimeError(f"not found: {fid}")
+            del self._files[fid]
+            return MagicMock(execute=MagicMock(return_value={}))
+
         files = MagicMock()
         files.create = MagicMock(side_effect=_create)
         files.get = MagicMock(side_effect=_get)
         files.get_media = MagicMock(side_effect=_get_media)
+        files.delete = MagicMock(side_effect=_delete)
         svc.files = MagicMock(return_value=files)
         return svc
 
@@ -173,6 +181,16 @@ class TestGoogleDriveFileStore(unittest.TestCase):
     def test_get_missing_id_returns_none(self):
         self.assertIsNone(self.store.get("never-stored"))
         self.assertIsNone(self.store.get_local_path("never-stored"))
+
+    def test_delete_removes_drive_file_and_cache(self):
+        stored = self.store.store("old.csv", b"a,b\n1,2", "text/csv")
+        self.assertTrue(Path(stored.path).exists())
+        self.assertTrue(self.store.delete(stored.id))
+        self.assertIsNone(self.store.get(stored.id))
+        self.assertFalse(Path(stored.path).exists())
+
+    def test_delete_missing_id_returns_false(self):
+        self.assertFalse(self.store.delete("never-stored"))
 
     def test_get_returns_metadata_without_downloading(self):
         stored = self.store.store("notes.md", b"body", "text/markdown")

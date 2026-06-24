@@ -163,6 +163,9 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             if failed:
                 components = self._build_error_components(err_msg)
                 data_model = None
+                if extra_items:
+                    extra_components, data_model = self._render_content(None, extra_items)
+                    components.extend(extra_components)
             else:
                 components, data_model = self._render_content(agent_output, extra_items)
 
@@ -247,6 +250,9 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             if failed:
                 components = self._build_error_components(err_msg)
                 data_model = None
+                if extra_items:
+                    extra_components, data_model = self._render_content(None, extra_items)
+                    components.extend(extra_components)
             else:
                 components, data_model = self._render_content(agent_output, extra_items)
             components = self._ensure_root(components)
@@ -341,6 +347,9 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             if failed:
                 components = self._build_error_components(err_msg)
                 data_model = None
+                if extra_items:
+                    extra_components, data_model = self._render_content(None, extra_items)
+                    components.extend(extra_components)
             else:
                 components, data_model = self._render_content(agent_output, extra_items)
             components = self._ensure_root(components)
@@ -785,6 +794,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         Agents may call the same tool multiple times during reasoning
         iterations (e.g. refining a form). For forms, only keep the last one.
         For charts, keep multiple but deduplicate by title.
+        For dashboard artifacts, deduplicate by URL/name/title.
         For file cards, deduplicate by name.
         For code blocks, deduplicate by title (if present); keep all untitled.
         For media, deduplicate by src URL (last wins).
@@ -800,8 +810,9 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         7. Code: "code" in item and "language" in item
         8. Media: "src" in item and "mediaType" in item
         9. Chart: "data" in item and "title" in item
-        10. File: "url" in item and "name" in item
-        11. Other: fallthrough
+        10. Dashboard: type == "dashboard" and URL or ViewModel present
+        11. File: "url" in item and "name" in item
+        12. Other: fallthrough
         """
         forms: list[dict] = []
         tabs: list[dict] = []
@@ -810,6 +821,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
         tables: dict[str, dict] = {}  # keyed by title
         callouts: list[dict] = []
         charts: dict[str, dict] = {}  # keyed by title
+        dashboards: dict[str, dict] = {}  # keyed by URL/name
         files: dict[str, dict] = {}  # keyed by name
         media: dict[str, dict] = {}  # keyed by src URL
         code_titled: dict[str, dict] = {}  # keyed by title
@@ -843,6 +855,23 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
                 media[item["src"]] = item  # last one wins per src URL
             elif "data" in item and "title" in item:
                 charts[item["title"]] = item  # last one wins per title
+            elif item.get("type") == "dashboard" and (
+                item.get("url")
+                or item.get("dashboardUrl")
+                or item.get("viewModel")
+                or item.get("view_model")
+                or item.get("datasets")
+                or item.get("kpis")
+                or item.get("sections")
+            ):
+                key = str(
+                    item.get("url")
+                    or item.get("dashboardUrl")
+                    or item.get("name")
+                    or item.get("title")
+                    or ""
+                )
+                dashboards[key] = item  # last one wins per artifact
             elif "url" in item and "name" in item:
                 files[item["name"]] = item  # last one wins per name
             else:
@@ -867,6 +896,7 @@ class ChatEngine(Chainable[Any, dict[str, Any]]):
             result.append(callouts[-1])
         result.extend(media.values())
         result.extend(charts.values())
+        result.extend(dashboards.values())
         result.extend(files.values())
         result.extend(code_titled.values())
         result.extend(code_untitled)

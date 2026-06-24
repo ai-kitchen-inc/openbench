@@ -522,6 +522,52 @@ class TranscriptionProvider(ABC):
         """
 
 
+class VLMProvider(ABC):
+    """
+    Abstract interface for vision-language model providers.
+
+    VLM providers accept text plus one or more image references. Image values
+    are intentionally provider-agnostic: implementations may accept local file
+    paths, HTTP URLs, data URLs, or attachment-like dictionaries.
+    """
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        """Provider name ('gemini', 'gemma', 'ollama', etc.)."""
+
+    @abstractmethod
+    def generate(
+        self,
+        prompt: str,
+        images: list[Any],
+        model: str,
+        **params,
+    ) -> LLMResponse:
+        """
+        Generate a response from text plus image inputs.
+
+        Args:
+            prompt: Text prompt for the visual task.
+            images: Image references (paths, URLs, data URLs, or dicts).
+            model: Model identifier.
+            **params: Model-specific parameters.
+
+        Returns:
+            LLMResponse with generated text.
+        """
+
+    def generate_stream(
+        self,
+        prompt: str,
+        images: list[Any],
+        model: str,
+        **params,
+    ) -> Iterator[LLMResponse]:
+        """Stream VLM response chunks. Default: single blocking response."""
+        yield self.generate(prompt, images, model, **params)
+
+
 class EmbeddingProvider(ABC):
     """
     Abstract interface for embedding providers.

@@ -36,6 +36,8 @@ READ_TOOLS = {
     "group_and_aggregate",
     "distinct_values",
     "top_n_records",
+    "extract_metadata",
+    "aggregate_data",
     "read_memory",
     "list_memory_keys",
     "list_index_stats",
@@ -58,6 +60,7 @@ ARTIFACT_TOOLS = {
     "merge_pdfs",
     "split_pdf",
     "generate_pdf",
+    "generate_dashboard",
 }
 
 NETWORK_TOOLS = {"web_search", "web_search_multi"}

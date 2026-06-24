@@ -427,7 +427,9 @@ def create_app() -> FastAPI:
         records_with_uploads = [
             record
             for record in records
-            if upload_file_ids_for_source(record) and not _is_gcs_source(record)
+            if upload_file_ids_for_source(record)
+            and not _is_gcs_source(record)
+            and getattr(record, "kind", "") not in {"spreadsheet", "image"}
         ]
         if not records_with_uploads:
             return
@@ -517,6 +519,20 @@ def create_app() -> FastAPI:
         summary = persona.summary() if persona else {}
         print("\n  General Chat")
         print(f"  Model          : {agent.model}")
+        vlm_summary = getattr(agent, "_vlm_summary", {})
+        if isinstance(vlm_summary, dict) and vlm_summary.get("enabled"):
+            print(
+                "[vision] enabled=True "
+                f"model={vlm_summary.get('model')} "
+                f"base_url={vlm_summary.get('base_url') or 'google-genai'}"
+            )
+            print(
+                "  Vision model   : "
+                f"{vlm_summary.get('provider')} / {vlm_summary.get('model')}"
+            )
+        else:
+            print("[vision] enabled=False model=(none) base_url=(none)")
+            print("  Vision model   : disabled")
         print(f"  Persona source : {summary.get('source', '(none)')}")
         if persona:
             print(f"  Persona total  : {summary['total_chars']:>5} chars")

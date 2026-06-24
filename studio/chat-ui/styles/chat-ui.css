@@ -1592,6 +1592,201 @@ video.chat-attachment-preview__media {
 
 /* ── Custom Components ── */
 
+.ob-dashboard-frame {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
+  border-radius: var(--ob-radius-md, 8px);
+  background: var(--ob-card-bg, #ffffff);
+}
+
+.ob-dashboard-frame--native {
+  gap: 16px;
+  padding-bottom: 16px;
+}
+
+.ob-dashboard-frame__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border-bottom: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
+}
+
+.ob-dashboard-frame__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--ob-text-secondary, #787774);
+}
+
+.ob-dashboard-frame__title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.ob-dashboard-frame__title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ob-text, #37352f);
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ob-dashboard-frame__description,
+.ob-dashboard-frame__meta {
+  margin: 4px 0 0;
+  color: var(--ob-text-secondary, #787774);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.ob-dashboard-frame__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ob-dashboard-frame__open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
+  border-radius: var(--ob-radius-sm, 6px);
+  color: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.ob-dashboard-frame__open:hover {
+  background: var(--ob-hover-bg, rgba(55, 53, 47, 0.04));
+}
+
+.ob-dashboard-frame__iframe {
+  width: 100%;
+  border: 0;
+  background: #ffffff;
+}
+
+.ob-dashboard-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.ob-dashboard-kpi {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
+  border-radius: var(--ob-radius-sm, 6px);
+  background: var(--ob-bg, #fbfbfa);
+}
+
+.ob-dashboard-kpi__label {
+  overflow: hidden;
+  color: var(--ob-text-secondary, #787774);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ob-dashboard-kpi__value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 6px;
+  color: var(--ob-text, #37352f);
+  font-size: 1.25rem;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.ob-dashboard-kpi__value span,
+.ob-dashboard-kpi__delta,
+.ob-dashboard-kpi__note {
+  color: var(--ob-text-secondary, #787774);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.ob-dashboard-kpi__delta,
+.ob-dashboard-kpi__note {
+  margin-top: 6px;
+  line-height: 1.35;
+}
+
+.ob-dashboard-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.ob-dashboard-section__heading h3,
+.ob-dashboard-panel__header h3,
+.ob-dashboard-panel--text h3 {
+  margin: 0;
+  color: var(--ob-text, #37352f);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.ob-dashboard-section__heading p,
+.ob-dashboard-panel__description,
+.ob-dashboard-panel--text p {
+  margin: 4px 0 0;
+  color: var(--ob-text-secondary, #787774);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.ob-dashboard-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 8px;
+}
+
+.ob-dashboard-panel {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
+  border-radius: var(--ob-radius-sm, 6px);
+  background: var(--ob-card-bg, #ffffff);
+}
+
+.ob-dashboard-panel--chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ob-dashboard-panel--table {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ob-dashboard-frame__empty {
+  margin: 0 12px;
+  padding: 12px;
+  border: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
+  border-radius: var(--ob-radius-sm, 6px);
+  color: var(--ob-text-secondary, #787774);
+  font-size: 0.8125rem;
+}
+
 .ob-chart__title {
   font-size: 0.9375rem;
   font-weight: 600;

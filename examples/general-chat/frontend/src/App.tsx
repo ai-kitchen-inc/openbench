@@ -2,10 +2,14 @@ import {
   ChatPanel,
   ChatProvider,
   SessionSidebar,
+  SurfaceRenderer,
   useChatContext,
+  type A2UIComponent,
+  type A2UISurface,
   type Attachment,
   type AttachmentUploadOptions,
   type ChatConfig,
+  type ChatMessage,
 } from "@openbench/chat-ui";
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
@@ -34,6 +38,7 @@ const SUGGESTIONS = [
   "Compare a few options and tradeoffs",
   "Use available tools if they help",
   "Summarize optional context I add",
+  "Create a dashboard from my spreadsheet",
 ];
 
 type PersonaSummary = {
@@ -108,6 +113,154 @@ function normalizeDirectUploadStatus(payload: DirectUploadStatusResponse | Sourc
     fileId,
     source,
   };
+}
+
+type DashboardArtifact = {
+  messageId: string;
+  title: string;
+  url?: string;
+  fileName: string;
+  summary: string;
+  fileSize?: number;
+  surface: A2UISurface;
+};
+
+function componentString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function componentNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function componentValue(component: A2UIComponent, key: string): unknown {
+  if (component[key] !== undefined) return component[key];
+  const nestedProperties = component.properties;
+  if (isRecord(nestedProperties)) return nestedProperties[key];
+  return undefined;
+}
+
+function hasDashboardData(component: A2UIComponent): boolean {
+  return Boolean(
+    componentValue(component, "viewModel") ??
+      componentValue(component, "view_model") ??
+      componentValue(component, "datasets") ??
+      componentValue(component, "kpis") ??
+      componentValue(component, "sections"),
+  );
+}
+
+function dashboardArtifactSurface(
+  messageId: string,
+  sourceSurface: A2UISurface,
+  component: A2UIComponent,
+): A2UISurface {
+  const rootComponent = { ...component, id: "root" };
+  return {
+    surfaceId: `${messageId}-dashboard-artifact`,
+    catalogId: sourceSurface.catalogId,
+    components: new Map([["root", rootComponent]]),
+    dataModel: sourceSurface.dataModel ?? {},
+    theme: sourceSurface.theme,
+    sendDataModel: sourceSurface.sendDataModel,
+  };
+}
+
+export function findLatestDashboard(messages: ChatMessage[]): DashboardArtifact | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    const surfaces = message.surfaces ?? [];
+    for (let surfaceIndex = surfaces.length - 1; surfaceIndex >= 0; surfaceIndex -= 1) {
+      const surface = surfaces[surfaceIndex];
+      const components = Array.from(surface.components.values()).reverse();
+      for (const component of components) {
+        if (component.component !== "ObDashboardFrame") continue;
+        const url = componentString(
+          componentValue(component, "dashboardUrl") ?? componentValue(component, "url"),
+        );
+        if (!url && !hasDashboardData(component)) continue;
+        return {
+          messageId: message.id,
+          title: componentString(componentValue(component, "title")) || "Dashboard",
+          url: url || undefined,
+          fileName: componentString(componentValue(component, "fileName")) || "dashboard.html",
+          summary: componentString(
+            componentValue(component, "summary") ?? componentValue(component, "description"),
+          ),
+          fileSize: componentNumber(componentValue(component, "fileSize")),
+          surface: dashboardArtifactSurface(message.id, surface, component),
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function formatArtifactSize(value: number | undefined): string {
+  if (value == null) return "";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+export function DashboardArtifactPanel({
+  artifact,
+  onClose,
+}: {
+  artifact: DashboardArtifact;
+  onClose: () => void;
+}) {
+  const sizeText = formatArtifactSize(artifact.fileSize);
+  return (
+    <aside className="dashboard-artifact" aria-label="Dashboard artifact">
+      <div className="dashboard-artifact__header">
+        <div className="dashboard-artifact__title-wrap">
+          <div className="dashboard-artifact__eyebrow">Dashboard</div>
+          <h2 className="dashboard-artifact__title">{artifact.title}</h2>
+          <div className="dashboard-artifact__meta">
+            {artifact.fileName}
+            {sizeText ? ` - ${sizeText}` : ""}
+          </div>
+        </div>
+        {artifact.url && (
+          <a
+            className="dashboard-artifact__icon-btn"
+            href={artifact.url}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Open dashboard export in a new tab"
+            title="Open dashboard export"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M15 3h6v6" />
+              <path d="M10 14 21 3" />
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            </svg>
+          </a>
+        )}
+        <button
+          type="button"
+          className="dashboard-artifact__icon-btn"
+          onClick={onClose}
+          aria-label="Close dashboard panel"
+          title="Close dashboard"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+      {artifact.summary && <div className="dashboard-artifact__summary">{artifact.summary}</div>}
+      <div className="dashboard-artifact__surface">
+        <SurfaceRenderer surface={artifact.surface} />
+      </div>
+    </aside>
+  );
 }
 
 function BadgeSkeleton({ title, rows }: { title: string; rows: number }) {
@@ -345,7 +498,9 @@ function sourceToComposerAttachment(source: SourceItem): Attachment {
 function sourceKindLabel(source: SourceItem): string {
   if (source.kind === "url") return "WEB";
   if (source.kind === "text") return "TEXT";
-  if (source.kind === "spreadsheet") return "XLSX";
+  if (source.kind === "spreadsheet") {
+    return source.name.toLowerCase().endsWith(".csv") ? "CSV" : "XLSX";
+  }
   if (source.kind === "image") return "IMAGE";
   return source.kind.toUpperCase();
 }
@@ -1040,10 +1195,23 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
   user: User;
   onSignOut: () => void;
 }) {
-  const { activeSessionId, sidebarOpen } = useChatContext();
+  const { activeSessionId, sidebarOpen, messages } = useChatContext();
   const toast = useToast();
   const [dark, toggleDark] = useDarkMode();
   const [mcpCatalogOpen, setMcpCatalogOpen] = useState(false);
+  const latestDashboard = useMemo(() => findLatestDashboard(messages), [messages]);
+  const [dismissedDashboardKey, setDismissedDashboardKey] = useState<string | null>(null);
+  const dashboardKey = latestDashboard
+    ? `${latestDashboard.messageId}:${latestDashboard.url ?? latestDashboard.title}`
+    : null;
+  const showDashboard =
+    latestDashboard !== null && dashboardKey !== null && dashboardKey !== dismissedDashboardKey;
+
+  useEffect(() => {
+    if (dashboardKey && dismissedDashboardKey && dashboardKey !== dismissedDashboardKey) {
+      setDismissedDashboardKey(null);
+    }
+  }, [dashboardKey, dismissedDashboardKey]);
 
   return (
     <div className="chat-layout">
@@ -1073,35 +1241,43 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
           <SkillBadge />
         </div>
       )}
-      <ChatPanel
-        title="General Chat"
-        suggestions={SUGGESTIONS}
-        placeholder="Ask anything, add sources, or discover useful links..."
-        greeting="Welcome to General Chat"
-        persistentAttachments={persistentAttachments}
-        acceptedFileTypes={SOURCE_ACCEPT}
-        onAttachmentError={(message) => toast.show(message, "error")}
-        onTranscribe={transcribeAudio}
-        headerRight={
-          <div className="chat-header-actions">
-            <span className="auth-user" title={user.email ?? user.displayName ?? user.uid}>
-              {user.email ?? user.displayName ?? "Signed in"}
-            </span>
-            <button type="button" className="auth-signout" onClick={onSignOut}>
-              Sign out
-            </button>
-            <button
-              type="button"
-              className="theme-toggle"
-              onClick={toggleDark}
-              title={dark ? "Switch to light mode" : "Switch to dark mode"}
-              aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
-            >
-              <ThemeIcon dark={dark} />
-            </button>
-          </div>
-        }
-      />
+      <div className="chat-layout__main">
+        <ChatPanel
+          title="General Chat"
+          suggestions={SUGGESTIONS}
+          placeholder="Ask anything, add sources, generate a dashboard, or discover useful links..."
+          greeting="Welcome to General Chat"
+          persistentAttachments={persistentAttachments}
+          acceptedFileTypes={SOURCE_ACCEPT}
+          onAttachmentError={(message) => toast.show(message, "error")}
+          onTranscribe={transcribeAudio}
+          headerRight={
+            <div className="chat-header-actions">
+              <span className="auth-user" title={user.email ?? user.displayName ?? user.uid}>
+                {user.email ?? user.displayName ?? "Signed in"}
+              </span>
+              <button type="button" className="auth-signout" onClick={onSignOut}>
+                Sign out
+              </button>
+              <button
+                type="button"
+                className="theme-toggle"
+                onClick={toggleDark}
+                title={dark ? "Switch to light mode" : "Switch to dark mode"}
+                aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+              >
+                <ThemeIcon dark={dark} />
+              </button>
+            </div>
+          }
+        />
+      </div>
+      {showDashboard && latestDashboard && (
+        <DashboardArtifactPanel
+          artifact={latestDashboard}
+          onClose={() => setDismissedDashboardKey(dashboardKey)}
+        />
+      )}
       <McpCatalogPanel open={mcpCatalogOpen} onClose={() => setMcpCatalogOpen(false)} />
     </div>
   );

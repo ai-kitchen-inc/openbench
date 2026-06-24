@@ -8,11 +8,29 @@
 import type { A2UIComponentRenderer } from "../../types";
 import { resolveBoolean, resolveValue } from "../data-binding";
 
+function formatCell(value: unknown): string {
+  if (value == null) return "";
+  if (Array.isArray(value)) {
+    return value.map(formatCell).filter(Boolean).join(", ");
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const preferred = record.value ?? record.label ?? record.name ?? record.title;
+    if (preferred !== undefined) return formatCell(preferred);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+  return String(value);
+}
+
 export const ObTable: A2UIComponentRenderer = ({ component, surface }) => {
   const rawHeaders = resolveValue(component.headers, surface);
   const rawRows = resolveValue(component.rows, surface);
-  const headers = Array.isArray(rawHeaders) ? (rawHeaders as string[]) : [];
-  const rows = Array.isArray(rawRows) ? (rawRows as string[][]) : [];
+  const headers = Array.isArray(rawHeaders) ? rawHeaders.map(formatCell) : [];
+  const rows = Array.isArray(rawRows) ? rawRows : [];
   const striped = component.striped != null ? resolveBoolean(component.striped, surface) : true;
   const compact = component.compact != null ? resolveBoolean(component.compact, surface) : false;
 
@@ -42,7 +60,7 @@ export const ObTable: A2UIComponentRenderer = ({ component, surface }) => {
               <tr key={rowIdx} className="ob-table__row">
                 {(Array.isArray(row) ? row : []).map((cell, cellIdx) => (
                   <td key={cellIdx} className="ob-table__td">
-                    {String(cell ?? "")}
+                    {formatCell(cell)}
                   </td>
                 ))}
               </tr>

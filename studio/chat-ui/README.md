@@ -14,7 +14,7 @@ Standalone React component library for building chat interfaces powered by OpenB
 ### A2UI Rendering
 
 - **SurfaceRenderer** -- Converts A2UI adjacency list to React component tree
-- **24 components** -- 18 standard A2UI (Text, Image, Button, TextField, Tabs, Modal, ...) + 6 custom OpenBench (ObChart, ObFileCard, ObCodeBlock, ObMarkdown, ObTable, ObCallout)
+- **25 components** -- 18 standard A2UI (Text, Image, Button, TextField, Tabs, Modal, ...) + 7 custom OpenBench (ObChart, ObDashboardFrame, ObFileCard, ObCodeBlock, ObMarkdown, ObTable, ObCallout)
 - **Data binding** -- JSON Pointer resolution, DynamicString/Number/Boolean, 14 standard functions
 - **Extensible catalog** -- Register custom components via `registerCustomComponent()`
 

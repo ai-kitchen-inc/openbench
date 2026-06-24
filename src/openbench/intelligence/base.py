@@ -655,6 +655,10 @@ Provide clear, actionable responses."""
                     f"\n\nContext data:\n{json.dumps(data_to_show, indent=2, default=str)}"
                 )
         self.memory.add_user(user_message, media=media_payload)
+        # The user message lives outside the atomic tool turn so it remains in
+        # history if the model/tool loop fails. Everything appended after this
+        # point belongs to the agent's attempt and can be rolled back safely.
+        turn_start_len = len(self.memory.messages)
 
         import time
 
@@ -858,6 +862,7 @@ Provide clear, actionable responses."""
                 logger.warning(
                     f"Agent reached max_iterations ({self.max_iterations}) with pending tool calls"
                 )
+                self.memory.truncate_to(turn_start_len)
             else:
                 status = "completed"
 
@@ -882,6 +887,7 @@ Provide clear, actionable responses."""
             metrics.inc("agent.execute_failed")
             metrics.observe_ms("agent.total_ms", total_duration * 1000)
             logger.error(f"Agent execution failed: {e}")
+            self.memory.truncate_to(turn_start_len)
             return ExecutionResult(
                 output=None,
                 status="failed",

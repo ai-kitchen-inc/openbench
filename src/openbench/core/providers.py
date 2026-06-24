@@ -136,6 +136,7 @@ class ProviderType(Enum):
     """Types of providers supported by OpenBench."""
 
     LLM = "llm"
+    VLM = "vlm"
     EMBEDDING = "embedding"
     VECTOR = "vector"
     STORAGE = "storage"
@@ -359,6 +360,7 @@ class ProviderService:
             LLMProviderRegistry,
             PluginRegistry,
             TranscriptionRegistry,
+            VLMProviderRegistry,
         )
 
         config = self.get(name) if name else self.get_default(provider_type)
@@ -373,6 +375,7 @@ class ProviderService:
         # EMBEDDING and STORAGE are reserved for future registries.
         registry_map: dict[ProviderType, PluginRegistry] = {
             ProviderType.LLM: LLMProviderRegistry,
+            ProviderType.VLM: VLMProviderRegistry,
             ProviderType.VECTOR: DataStoreRegistry,
             ProviderType.VOICE: TranscriptionRegistry,
             # ProviderType.EMBEDDING: reserved — use EmbeddingProvider directly

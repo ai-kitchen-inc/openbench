@@ -45,9 +45,13 @@ EXCEL_MIME_TYPES = {
     "application/vnd.ms-excel",
 }
 EXCEL_EXTENSIONS = {".xlsx", ".xls"}
+CSV_MIME_TYPES = {"text/csv", "application/csv"}
+CSV_EXTENSIONS = {".csv"}
+SPREADSHEET_MIME_TYPES = EXCEL_MIME_TYPES | CSV_MIME_TYPES
+SPREADSHEET_EXTENSIONS = EXCEL_EXTENSIONS | CSV_EXTENSIONS
 
 TEXT_MIME_TYPES = {"application/json"}
-TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json"}
+TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".json"}
 
 AUDIO_MIME_TYPES = {
     "audio/mpeg",
@@ -91,12 +95,13 @@ UPLOAD_METADATA_KEYS = {
     "imageSearchPath",
     "samSegmentationPath",
     "imageSearchPreviewUrl",
+    "localFilePath",
 }
 _UPLOAD_FILE_ID_PATTERN = re.compile(r"(?:^|/)(file-[A-Za-z0-9_-]+)(?:/|$)")
 
 ALLOWED_EXTENSIONS = (
     DOCUMENT_EXTENSIONS
-    | EXCEL_EXTENSIONS
+    | SPREADSHEET_EXTENSIONS
     | TEXT_EXTENSIONS
     | IMAGE_EXTENSIONS
     | AUDIO_EXTENSIONS
@@ -640,8 +645,11 @@ class SourceParserRegistry:
                 stored_file.name,
             )
             return ParsedSourceContent(text=text)
-        if stored_file.mime_type in EXCEL_MIME_TYPES or ext in EXCEL_EXTENSIONS:
-            return ParsedSourceContent(text=self._parse_excel(stored_file))
+        if (
+            stored_file.mime_type in SPREADSHEET_MIME_TYPES
+            or ext in SPREADSHEET_EXTENSIONS
+        ):
+            return self._parse_spreadsheet(stored_file)
         if stored_file.mime_type in IMAGE_MIME_TYPES or ext in IMAGE_EXTENSIONS:
             return self._parse_image(stored_file)
         if (
@@ -711,6 +719,39 @@ class SourceParserRegistry:
             return path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             return path.read_text(encoding="latin-1")
+
+    def _parse_spreadsheet(self, stored_file: StoredFile) -> ParsedSourceContent:
+        return ParsedSourceContent(
+            text="",
+            metadata={
+                "spreadsheetContextMode": "metadata-first",
+                "spreadsheetContextNote": (
+                    "Raw spreadsheet rows are intentionally omitted from chat "
+                    "context. Use dashboard-generator tools to inspect metadata "
+                    "and aggregate data from the local file path."
+                ),
+            },
+        )
+
+    def _parse_csv(self, stored_file: StoredFile) -> str:
+        try:
+            import pandas as pd
+        except ImportError as exc:
+            raise ValueError("Install pandas for CSV source support.") from exc
+
+        try:
+            df = pd.read_csv(stored_file.path, encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            df = pd.read_csv(stored_file.path, encoding="latin-1")
+        except Exception as exc:
+            raise ValueError(f"CSV extraction failed: {exc}") from exc
+
+        parts = [f"### CSV: {stored_file.name} ({len(df)} rows)"]
+        if df.empty:
+            parts.append("(empty CSV)")
+        else:
+            parts.append(df.head(50).to_markdown(index=False))
+        return "\n\n".join(parts).strip()
 
     def _parse_excel(self, stored_file: StoredFile) -> str:
         try:
@@ -1412,7 +1453,40 @@ def image_search_metadata(
     result["imageSearchPath"] = image_path
     result["samSegmentationPath"] = image_path
     result["imageSearchPreviewUrl"] = f"/uploads/{stored_file.id}/{stored_file.name}"
+    result["localFilePath"] = str(Path(stored_file.path).resolve())
     return result
+
+
+def dashboard_source_metadata(
+    stored_file: StoredFile,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return metadata that lets dashboard tools read an uploaded spreadsheet."""
+    result = dict(metadata or {})
+    result["localFilePath"] = str(Path(stored_file.path).resolve())
+    result["dashboardSource"] = True
+    result["dashboardSourceFormat"] = Path(stored_file.name).suffix.lower().lstrip(".")
+    return result
+
+
+def dashboard_source_text(stored_file: StoredFile, *, parsed_text: str) -> str:
+    """Build source text with explicit dashboard tool instructions."""
+    metadata = dashboard_source_metadata(stored_file)
+    parts = [
+        f"Spreadsheet source: {stored_file.name}",
+        f"Dashboard source path: {metadata['localFilePath']}",
+        "",
+        (
+            "For dashboard requests, call extract_metadata with "
+            f"path=\"{metadata['localFilePath']}\" first. Then write read-only "
+            "SQLite SQL against table `data`, call aggregate_data with the SQL "
+            "query, build a declarative dashboard ViewModel, and call "
+            "generate_dashboard."
+        ),
+        "",
+        "Raw spreadsheet rows are not included in the chat prompt.",
+    ]
+    return "\n".join(parts).strip()
 
 
 def upload_file_ids_for_source(record: SourceRecord) -> set[str]:
@@ -1500,6 +1574,7 @@ def image_search_text(
     parts = [
         f"Image source: {stored_file.name}",
         f"Browser URL: {metadata['imageSearchPreviewUrl']}",
+        f"Local VLM path: {metadata['localFilePath']}",
         f"image_search MCP path: {metadata['imageSearchPath']}",
         f"sam_segmentation MCP path: {metadata['samSegmentationPath']}",
         "",
@@ -1567,6 +1642,9 @@ def source_record_from_file(
         if kind == "image":
             metadata = image_search_metadata(stored_file, metadata)
             text = image_search_text(stored_file, parsed_text=parsed.text)
+        if kind == "spreadsheet":
+            metadata = dashboard_source_metadata(stored_file, metadata)
+            text = dashboard_source_text(stored_file, parsed_text=parsed.text)
         return SourceRecord.create(
             session_id=session_id,
             name=stored_file.name,
@@ -1666,7 +1744,7 @@ def kind_for_file(filename: str, mime_type: str) -> str:
     ext = Path(filename).suffix.lower()
     if mime_type in DOCUMENT_MIME_TYPES or ext in DOCUMENT_EXTENSIONS:
         return ext.lstrip(".") or "document"
-    if mime_type in EXCEL_MIME_TYPES or ext in EXCEL_EXTENSIONS:
+    if mime_type in SPREADSHEET_MIME_TYPES or ext in SPREADSHEET_EXTENSIONS:
         return "spreadsheet"
     if mime_type in IMAGE_MIME_TYPES or ext in IMAGE_EXTENSIONS:
         return "image"
