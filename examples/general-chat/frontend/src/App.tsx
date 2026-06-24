@@ -1331,6 +1331,11 @@ function ChatShell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           if (!response.ok) throw new Error(`Export failed: ${response.status}`);
           return await response.json();
         },
+        loadHtml: async (url: string) => {
+          const response = await apiFetch(apiPath(url));
+          if (!response.ok) throw new Error(`Load failed: ${response.status}`);
+          return response.text();
+        },
       },
     }),
     [getAuthToken, toast],

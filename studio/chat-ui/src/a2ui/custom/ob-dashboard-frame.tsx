@@ -2,7 +2,7 @@
  * ObDashboardFrame - OpenBench native dashboard renderer.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useChatContextOptional } from "../../components/ChatProvider";
 import { formatFileSize } from "../../core/utils";
 import type { A2UIComponent, A2UIComponentRenderer, A2UISurface } from "../../types";
@@ -421,6 +421,122 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
   );
 }
 
+function clampPreviewHeight(height: number): string {
+  return `${Math.max(260, Math.min(height, 720))}px`;
+}
+
+/**
+ * "Open" control. When the host provides an authenticated ``loadHtml``,
+ * fetch the HTML and open it as a blob (the raw URL is auth-protected and a
+ * plain anchor / new tab can't attach the bearer token). Otherwise fall back
+ * to a normal link, which works in no-auth/local setups.
+ */
+function OpenDashboardLink({ url }: { url: string }) {
+  const loadHtml = useChatContextOptional()?.dashboardActions?.loadHtml;
+  const [busy, setBusy] = useState(false);
+
+  if (!loadHtml) {
+    return (
+      <a
+        className="ob-dashboard-frame__open"
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <ExternalLinkIcon />
+        Open
+      </a>
+    );
+  }
+
+  async function handleOpen() {
+    if (!loadHtml) return;
+    setBusy(true);
+    try {
+      const html = await loadHtml(url);
+      const blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+      window.open(blobUrl, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    } catch {
+      // Surface nothing intrusive; the inline preview already shows errors.
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className="ob-dashboard-frame__open"
+      onClick={handleOpen}
+      disabled={busy}
+    >
+      <ExternalLinkIcon />
+      {busy ? "Opening…" : "Open"}
+    </button>
+  );
+}
+
+/**
+ * Inline preview for the html-fallback path. When ``loadHtml`` is available,
+ * fetch the authenticated HTML and render it via a sandboxed ``srcDoc`` iframe
+ * (a bare ``src`` to an auth-protected URL 401s and renders blank/black).
+ */
+function HtmlFallbackPreview({
+  url,
+  title,
+  height,
+}: {
+  url: string;
+  title: string;
+  height: number;
+}) {
+  const loadHtml = useChatContextOptional()?.dashboardActions?.loadHtml;
+  const [html, setHtml] = useState<string | null>(null);
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+  const style = { height: clampPreviewHeight(height) };
+
+  useEffect(() => {
+    if (!loadHtml) return;
+    let cancelled = false;
+    setState("loading");
+    loadHtml(url)
+      .then((text) => {
+        if (!cancelled) {
+          setHtml(text);
+          setState("idle");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadHtml, url]);
+
+  if (!loadHtml) {
+    return (
+      <iframe title={title} src={url} className="ob-dashboard-frame__iframe" style={style} />
+    );
+  }
+  if (state === "error") {
+    return <div className="ob-dashboard-frame__empty">Couldn't load dashboard preview.</div>;
+  }
+  if (html == null) {
+    return <div className="ob-dashboard-frame__empty">Loading preview…</div>;
+  }
+  return (
+    <iframe
+      title={title}
+      srcDoc={html}
+      sandbox=""
+      className="ob-dashboard-frame__iframe"
+      style={style}
+    />
+  );
+}
+
 function NativeHeader({
   title,
   description,
@@ -452,17 +568,7 @@ function NativeHeader({
         )}
       </div>
       <div className="ob-dashboard-frame__header-actions">
-        {dashboardUrl && (
-          <a
-            className="ob-dashboard-frame__open"
-            href={dashboardUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <ExternalLinkIcon />
-            Open
-          </a>
-        )}
+        {dashboardUrl && <OpenDashboardLink url={dashboardUrl} />}
         {viewModel != null && <HeaderActions viewModel={viewModel} title={title} />}
       </div>
     </header>
@@ -753,12 +859,7 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
           fileSize={fileSize}
         />
         {preview && dashboardUrl && (
-          <iframe
-            title={title}
-            src={dashboardUrl}
-            className="ob-dashboard-frame__iframe"
-            style={{ height: `${Math.max(260, Math.min(height, 720))}px` }}
-          />
+          <HtmlFallbackPreview url={dashboardUrl} title={title} height={height} />
         )}
       </section>
     );

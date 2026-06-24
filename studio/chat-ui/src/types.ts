@@ -224,6 +224,13 @@ export interface DashboardActions {
   publish?: (viewModel: unknown) => Promise<{ url: string }>;
   /** Convert the ViewModel to a Grafana dashboard JSON model. */
   exportGrafana?: (viewModel: unknown) => Promise<unknown>;
+  /**
+   * Fetch a dashboard's standalone HTML through the host's authenticated
+   * client. Lets the renderer preview an auth-protected artifact URL via a
+   * sandboxed ``srcDoc`` iframe instead of a bare ``src`` the browser can't
+   * authenticate. Returns the raw HTML text.
+   */
+  loadHtml?: (url: string) => Promise<string>;
 }
 
 export interface AttachmentUploadOptions {
