@@ -426,6 +426,22 @@ function clampPreviewHeight(height: number): string {
 }
 
 /**
+ * Stamp the app's resolved theme onto the standalone dashboard HTML so the
+ * sandboxed preview matches the app (the generated CSS honors
+ * ``<html data-theme>``). Reads the document's data-theme; if absent the HTML
+ * falls back to ``prefers-color-scheme`` on its own.
+ */
+function applyThemeToHtml(html: string): string {
+  if (typeof document === "undefined") return html;
+  const theme = document.documentElement.getAttribute("data-theme");
+  if (theme !== "dark" && theme !== "light") return html;
+  return html.replace(/<html(\s[^>]*)?>/i, (match, attrs = "") => {
+    if (/\sdata-theme=/i.test(match)) return match;
+    return `<html${attrs} data-theme="${theme}">`;
+  });
+}
+
+/**
  * "Open" control. When the host provides an authenticated ``loadHtml``,
  * fetch the HTML and open it as a blob (the raw URL is auth-protected and a
  * plain anchor / new tab can't attach the bearer token). Otherwise fall back
@@ -503,7 +519,7 @@ function HtmlFallbackPreview({
     loadHtml(url)
       .then((text) => {
         if (!cancelled) {
-          setHtml(text);
+          setHtml(applyThemeToHtml(text));
           setState("idle");
         }
       })
@@ -575,9 +591,40 @@ function NativeHeader({
   );
 }
 
-function KpiCard({ item, index }: { item: DashboardRecord; index: number }) {
+function resolveKpiValue(item: DashboardRecord, datasets: DashboardDatasets): unknown {
+  if (item.value != null) return item.value;
+  const datasetKey = stringValue(item.dataset_id ?? item.dataset ?? item.source);
+  const column = stringValue(
+    item.value_column ?? item.value_key ?? item.column ?? item.field,
+  );
+  if (datasetKey && column) {
+    const records = datasets[datasetKey];
+    const row = records?.[0];
+    if (row && Object.prototype.hasOwnProperty.call(row, column)) return row[column];
+  }
+  return undefined;
+}
+
+function formatKpiValue(item: DashboardRecord, datasets: DashboardDatasets): string {
+  const text = formatDashboardValue(resolveKpiValue(item, datasets));
+  if (!text) return "";
+  const fmt = stringValue(item.format);
+  if (fmt.includes("$") && !text.startsWith("$")) return `$${text}`;
+  if (fmt.includes("%") && !text.endsWith("%")) return `${text}%`;
+  return text;
+}
+
+function KpiCard({
+  item,
+  index,
+  datasets,
+}: {
+  item: DashboardRecord;
+  index: number;
+  datasets: DashboardDatasets;
+}) {
   const label = stringValue(item.label ?? item.title, `KPI ${index + 1}`);
-  const value = formatDashboardValue(item.value);
+  const value = formatKpiValue(item, datasets);
   const unit = stringValue(item.unit);
   const delta = stringValue(item.delta ?? item.change);
   const note = stringValue(item.description ?? item.note);
@@ -905,7 +952,12 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
       {kpis.length > 0 && (
         <div className="ob-dashboard-kpi-grid">
           {kpis.map((item, index) => (
-            <KpiCard key={stableKey(item, "kpi")} item={item} index={index} />
+            <KpiCard
+              key={stableKey(item, "kpi")}
+              item={item}
+              index={index}
+              datasets={datasets}
+            />
           ))}
         </div>
       )}

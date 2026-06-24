@@ -164,7 +164,9 @@ class DashboardGenerator(OutputGenerator):
         description = _escape(str(view_model.get("description") or ""))
         body_parts = [
             self._render_header(title, description),
-            self._render_kpis(view_model.get("kpis") or []),
+            self._render_kpis(
+                view_model.get("kpis") or [], _normalize_datasets(view_model.get("datasets"))
+            ),
             self._render_sections(view_model),
         ]
         generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -198,13 +200,16 @@ class DashboardGenerator(OutputGenerator):
             f"<h1>{title}</h1>{desc_html}</header>"
         )
 
-    def _render_kpis(self, kpis: list[Any]) -> str:
+    def _render_kpis(
+        self, kpis: list[Any], datasets: dict[str, list[dict[str, Any]]] | None = None
+    ) -> str:
+        datasets = datasets or {}
         cards: list[str] = []
         for item in kpis:
             if not isinstance(item, dict):
                 continue
             label = _escape(str(item.get("label") or item.get("title") or "KPI"))
-            value = _escape(_format_value(item.get("value")))
+            value = _escape(_format_kpi_value(item, datasets))
             unit = _escape(str(item.get("unit") or ""))
             delta = _escape(str(item.get("delta") or item.get("change") or ""))
             note = _escape(str(item.get("description") or item.get("note") or ""))
@@ -228,7 +233,15 @@ class DashboardGenerator(OutputGenerator):
                 continue
             title = _escape(str(section.get("title") or f"Section {idx + 1}"))
             description = _escape(str(section.get("description") or ""))
-            items = section.get("items") or section.get("components") or []
+            items = (
+                section.get("items")
+                or section.get("components")
+                or section.get("widgets")
+                or section.get("panels")
+                or section.get("charts")
+                or section.get("cards")
+                or []
+            )
             desc_html = f'<p class="ob-section__description">{description}</p>' if description else ""
             panel_html = "".join(
                 self._render_item(item, datasets) for item in items if isinstance(item, dict)
@@ -251,7 +264,7 @@ class DashboardGenerator(OutputGenerator):
         if item_type in {"text", "markdown", "summary"}:
             return self._render_text_panel(item)
         if item_type in {"kpi", "metric"}:
-            return self._render_kpis([item])
+            return self._render_kpis([item], datasets)
         return self._render_text_panel(item)
 
     def _resolve_item_data(
@@ -270,13 +283,30 @@ class DashboardGenerator(OutputGenerator):
     ) -> str:
         title = _escape(str(item.get("title") or "Chart"))
         description = _escape(str(item.get("description") or ""))
-        chart_type = str(item.get("chart_type") or item.get("chartType") or item.get("type") or "bar")
+        chart_type = str(
+            item.get("chart_type")
+            or item.get("chartType")
+            or item.get("visualization")
+            or item.get("type")
+            or "bar"
+        )
         records = self._resolve_item_data(item, datasets)
-        x_key = str(item.get("x") or item.get("x_key") or item.get("xKey") or _first_key(records))
+        x_key = str(
+            item.get("x")
+            or item.get("x_key")
+            or item.get("xKey")
+            or item.get("x_axis")
+            or item.get("xAxis")
+            or item.get("xField")
+            or _first_key(records)
+        )
         y_key = str(
             item.get("y")
             or item.get("y_key")
             or item.get("yKey")
+            or item.get("y_axis")
+            or item.get("yAxis")
+            or item.get("yField")
             or _first_numeric_key(records, fallback=x_key)
         )
         desc_html = f'<p class="ob-panel__description">{description}</p>' if description else ""
@@ -347,6 +377,42 @@ def _format_value(value: Any) -> str:
                 return _format_value(value.get(key))
         return json.dumps(value, ensure_ascii=False, default=str)
     return str(value)
+
+
+def _resolve_kpi_value(item: dict[str, Any], datasets: dict[str, list[dict[str, Any]]]) -> Any:
+    """Resolve a KPI's value from an inline ``value`` or a dataset column.
+
+    Supports the dataset-backed dialect ``{dataset_id, value_column}`` where the
+    number lives in ``datasets[dataset_id][0][value_column]``.
+    """
+    if item.get("value") is not None:
+        return item.get("value")
+    dataset_key = item.get("dataset_id") or item.get("dataset") or item.get("source")
+    column = (
+        item.get("value_column")
+        or item.get("value_key")
+        or item.get("column")
+        or item.get("field")
+    )
+    if dataset_key and column:
+        records = datasets.get(str(dataset_key)) or []
+        if records and isinstance(records[0], dict):
+            return records[0].get(str(column))
+    return None
+
+
+def _format_kpi_value(item: dict[str, Any], datasets: dict[str, list[dict[str, Any]]]) -> str:
+    """Format a KPI value, honoring a light ``format`` hint (e.g. ``$#,###.00``)."""
+    raw = _resolve_kpi_value(item, datasets)
+    text = _format_value(raw)
+    if not text:
+        return ""
+    fmt = str(item.get("format") or "")
+    if "$" in fmt and not text.startswith("$"):
+        return f"${text}"
+    if "%" in fmt and not text.endswith("%"):
+        return f"{text}%"
+    return text
 
 
 def _column_text(value: Any) -> str:
@@ -483,6 +549,8 @@ def _render_chart_svg(
     if not points:
         return '<div class="ob-empty">No chart data available.</div>'
     normalized = chart_type.lower()
+    if normalized in {"bar_horizontal", "horizontal_bar", "hbar", "column"}:
+        normalized = "bar"
     if normalized == "line":
         return _render_line_svg(points, area=False)
     if normalized == "area":
@@ -652,7 +720,7 @@ def _short_label(value: str, limit: int = 12) -> str:
 
 _DASHBOARD_CSS = """
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
   --ob-bg: #ffffff;
   --ob-text: #1a1a1a;
   --ob-text-secondary: rgba(26, 26, 26, 0.66);
@@ -660,6 +728,29 @@ _DASHBOARD_CSS = """
   --ob-panel: #ffffff;
   --ob-muted: rgba(0, 0, 0, 0.035);
   --ob-accent: #1f63c6;
+}
+/* Dark palette mirrors the @openbench/chat-ui app tokens. Applies when the OS
+   prefers dark (standalone / public /d/{id} page) or when the host sets an
+   explicit data-theme on the document (in-app preview). */
+:root[data-theme="dark"] {
+  --ob-bg: #191919;
+  --ob-text: #e3e2de;
+  --ob-text-secondary: #9b9a97;
+  --ob-border: rgba(255, 255, 255, 0.09);
+  --ob-panel: #202020;
+  --ob-muted: rgba(255, 255, 255, 0.045);
+  --ob-accent: #4f9bff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ob-bg: #191919;
+    --ob-text: #e3e2de;
+    --ob-text-secondary: #9b9a97;
+    --ob-border: rgba(255, 255, 255, 0.09);
+    --ob-panel: #202020;
+    --ob-muted: rgba(255, 255, 255, 0.045);
+    --ob-accent: #4f9bff;
+  }
 }
 * { box-sizing: border-box; }
 body {

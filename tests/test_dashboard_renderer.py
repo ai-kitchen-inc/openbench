@@ -217,6 +217,70 @@ class TestDashboardGeneratorMetadata(unittest.TestCase):
         self.assertIn("1,250,000", html)
         self.assertNotIn("[object Object]", html)
 
+    def test_dataset_backed_kpis_and_widget_sections_render(self):
+        """The LLM dialect: KPI values in a dataset + panels under ``widgets``."""
+        view_model = {
+            "title": "Coffee Sales Performance Dashboard",
+            "datasets": {
+                "kpis": [
+                    {
+                        "total_revenue": 115431.58,
+                        "total_transactions": 3636,
+                        "avg_transaction_value": 31.7468591859186,
+                    }
+                ],
+                "weekday_revenue": [
+                    {"Weekday": "Mon", "revenue": 17925.1},
+                    {"Weekday": "Tue", "revenue": 18637.38},
+                ],
+            },
+            "kpis": [
+                {
+                    "label": "Total Revenue",
+                    "dataset_id": "kpis",
+                    "value_column": "total_revenue",
+                    "format": "$#,###.00",
+                },
+                {
+                    "label": "Total Transactions",
+                    "dataset_id": "kpis",
+                    "value_column": "total_transactions",
+                    "format": "#,###",
+                },
+            ],
+            "sections": [
+                {
+                    "title": "Sales Trends",
+                    "widgets": [
+                        {
+                            "title": "Revenue by Weekday",
+                            "chart_type": "bar",
+                            "dataset_id": "weekday_revenue",
+                            "x_axis": "Weekday",
+                            "y_axis": "revenue",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = Path(tmp) / "coffee.html"
+            DashboardGenerator().generate(view_model, output_path=str(output_path))
+            html = output_path.read_text(encoding="utf-8")
+
+        # KPI values resolve from the dataset column + currency format applied.
+        self.assertIn("$115,431.58", html)
+        self.assertIn("3,636", html)
+        # The widget section renders a chart panel (not dropped).
+        self.assertIn("Revenue by Weekday", html)
+        self.assertIn("ob-panel--chart", html)
+        self.assertIn("<svg", html)
+        self.assertNotIn("No chart data available.", html)
+        # Theme-aware CSS is present for light/dark parity.
+        self.assertIn("prefers-color-scheme: dark", html)
+        self.assertIn('data-theme="dark"', html)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -104,6 +104,40 @@ describe("ObDashboardFrame", () => {
     expect(container.querySelector("iframe")).toBeNull();
   });
 
+  it("resolves dataset-backed KPI values with format hints", () => {
+    const viewModel = {
+      title: "Coffee Sales Performance Dashboard",
+      datasets: {
+        kpis: [{ total_revenue: 115431.58, total_transactions: 3636 }],
+      },
+      kpis: [
+        {
+          label: "Total Revenue",
+          dataset_id: "kpis",
+          value_column: "total_revenue",
+          format: "$#,###.00",
+        },
+        {
+          label: "Total Transactions",
+          dataset_id: "kpis",
+          value_column: "total_transactions",
+          format: "#,###",
+        },
+      ],
+      sections: [],
+    };
+
+    render(
+      <ObDashboardFrame
+        component={{ id: "dashboard", component: "ObDashboardFrame", viewModel }}
+        surface={surface()}
+      />,
+    );
+
+    expect(screen.getByText("$115,431.58")).toBeDefined();
+    expect(screen.getByText("3,636")).toBeDefined();
+  });
+
   it("renders chart panels from dashboard ViewModel aliases", () => {
     const viewModel = {
       title: "Coffee Dashboard",
