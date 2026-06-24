@@ -229,9 +229,10 @@ class TestDashboardGeneratorMetadata(unittest.TestCase):
                         "avg_transaction_value": 31.7468591859186,
                     }
                 ],
+                # Measure first, label second — exercises x/y axis inference.
                 "weekday_revenue": [
-                    {"Weekday": "Mon", "revenue": 17925.1},
-                    {"Weekday": "Tue", "revenue": 18637.38},
+                    {"revenue": 17925.1, "Weekday": "Mon"},
+                    {"revenue": 18637.38, "Weekday": "Tue"},
                 ],
             },
             "kpis": [

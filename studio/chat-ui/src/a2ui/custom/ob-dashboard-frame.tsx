@@ -175,16 +175,44 @@ function formatDashboardValue(value: unknown): string {
   return String(value);
 }
 
-function firstKey(records: DashboardRecord[]): string {
-  return records[0] ? (Object.keys(records[0])[0] ?? "name") : "name";
+function isNumberLike(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "string") {
+    const text = value.replace(/,/g, "").trim();
+    return text !== "" && Number.isFinite(Number(text));
+  }
+  return false;
+}
+
+function firstNonNull(records: DashboardRecord[], key: string): unknown {
+  for (const row of records) {
+    if (row[key] != null) return row[key];
+  }
+  return undefined;
+}
+
+/** First non-numeric column — the natural x-axis / label. */
+function firstCategoryKey(records: DashboardRecord[]): string {
+  const row = records[0];
+  if (!row) return "name";
+  const keys = Object.keys(row);
+  for (const key of keys) {
+    const value = firstNonNull(records, key);
+    if (value != null && !isNumberLike(value)) return key;
+  }
+  return keys[0] ?? "name";
 }
 
 function firstNumericKey(records: DashboardRecord[], fallback: string): string {
-  const row = records[0];
-  if (!row) return fallback;
-  return (
-    Object.keys(row).find((key) => key !== fallback && typeof row[key] === "number") ?? fallback
-  );
+  let firstNumeric: string | null = null;
+  for (const row of records) {
+    for (const key of Object.keys(row)) {
+      if (!isNumberLike(row[key])) continue;
+      if (firstNumeric === null) firstNumeric = key;
+      if (key !== fallback) return key;
+    }
+  }
+  return firstNumeric ?? fallback;
 }
 
 function tableCellValue(row: DashboardRecord, column: TableColumn): unknown {
@@ -660,7 +688,7 @@ function ChartPanel({
   const description = stringValue(panel.description);
   const xKey = stringValue(
     panel.x ?? panel.x_key ?? panel.xKey ?? panel.x_axis ?? panel.xAxis ?? panel.xField,
-    firstKey(data),
+    firstCategoryKey(data),
   );
   const series = stringList(
     panel.series ??

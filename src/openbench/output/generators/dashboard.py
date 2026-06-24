@@ -298,7 +298,7 @@ class DashboardGenerator(OutputGenerator):
             or item.get("x_axis")
             or item.get("xAxis")
             or item.get("xField")
-            or _first_key(records)
+            or _first_category_key(records)
         )
         y_key = str(
             item.get("y")
@@ -495,20 +495,42 @@ def _first_key(records: list[dict[str, Any]]) -> str:
     return str(next(iter(records[0].keys()), "name"))
 
 
+def _first_category_key(records: list[dict[str, Any]]) -> str:
+    """First non-numeric column — the natural x-axis / label.
+
+    Widgets often omit ``x_axis``; picking the first *category* column (rather
+    than the first column) keeps a leading numeric measure from being used as
+    the x-axis.
+    """
+    if not records:
+        return "name"
+    keys = list(records[0].keys())
+    for key in keys:
+        value = _first_non_null(records, key)
+        if value is not None and _number(value) is None:
+            return str(key)
+    return str(keys[0]) if keys else "name"
+
+
+def _first_non_null(records: list[dict[str, Any]], key: str) -> Any:
+    for row in records:
+        value = row.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def _first_numeric_key(records: list[dict[str, Any]], *, fallback: str = "") -> str:
+    first_numeric: str | None = None
     for row in records:
         for key, value in row.items():
-            if key == fallback:
+            if _number(value) is None:
                 continue
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if first_numeric is None:
+                first_numeric = str(key)
+            if str(key) != fallback:
                 return str(key)
-            if isinstance(value, str):
-                try:
-                    float(value)
-                    return str(key)
-                except ValueError:
-                    continue
-    return "value"
+    return first_numeric or "value"
 
 
 def _number(value: Any) -> float | None:
