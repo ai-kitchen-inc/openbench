@@ -210,6 +210,20 @@ export interface ChatConfig {
    * whatever the transport threw. Use to surface a failure toast.
    */
   onUploadError?: (file: File, error: unknown) => void;
+  /**
+   * Optional host-provided actions for dashboard artifacts. When supplied,
+   * the dashboard renderer shows Publish / Export buttons that call these.
+   * The host wires them to its own authenticated API client, keeping the
+   * SDK decoupled from any specific backend.
+   */
+  dashboardActions?: DashboardActions;
+}
+
+export interface DashboardActions {
+  /** Persist the ViewModel and return a public, shareable URL. */
+  publish?: (viewModel: unknown) => Promise<{ url: string }>;
+  /** Convert the ViewModel to a Grafana dashboard JSON model. */
+  exportGrafana?: (viewModel: unknown) => Promise<unknown>;
 }
 
 export interface AttachmentUploadOptions {

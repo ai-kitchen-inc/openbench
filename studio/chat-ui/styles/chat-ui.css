@@ -1671,6 +1671,93 @@ video.chat-attachment-preview__media {
   background: var(--ob-hover-bg, rgba(55, 53, 47, 0.04));
 }
 
+.ob-dashboard-frame__header-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ob-dashboard-frame__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.ob-dashboard-frame__action-row {
+  display: flex;
+  gap: 8px;
+}
+
+.ob-dashboard-frame__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
+  border-radius: var(--ob-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.ob-dashboard-frame__action:hover:not(:disabled) {
+  background: var(--ob-hover-bg, rgba(55, 53, 47, 0.04));
+}
+
+.ob-dashboard-frame__action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ob-dashboard-frame__share-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 320px;
+  padding: 6px 8px;
+  border: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
+  border-radius: var(--ob-radius-sm, 6px);
+  background: var(--ob-hover-bg, rgba(55, 53, 47, 0.04));
+}
+
+.ob-dashboard-frame__share-link a {
+  overflow: hidden;
+  color: var(--ob-link-color, #2383e2);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ob-dashboard-frame__copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
+  border-radius: var(--ob-radius-sm, 6px);
+  background: var(--ob-bg, #ffffff);
+  color: inherit;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.ob-dashboard-frame__copy:hover {
+  background: var(--ob-hover-bg, rgba(55, 53, 47, 0.04));
+}
+
+.ob-dashboard-frame__action-error {
+  color: var(--ob-error-color, #e03e3e);
+  font-size: 0.6875rem;
+}
+
 .ob-dashboard-frame__iframe {
   width: 100%;
   border: 0;

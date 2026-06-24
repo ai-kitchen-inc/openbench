@@ -22,8 +22,10 @@ from general_chat.extractor import DoclingContentExtractor
 from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.server.auth import auth_enabled, require_firebase_user
+from general_chat.server.grafana import view_model_to_grafana
 from general_chat.server.handler import GeneralChatHandler
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
+from general_chat.server.publish_store import PublishStore
 from general_chat.sources import (
     DEFAULT_DISCOVERY_LIMIT,
     SearchDiscoveryAdapter,
@@ -123,6 +125,7 @@ _EXT_MIME_MAP = {
 _AUTH_PROTECTED_PREFIXES = (
     "/awp",
     "/chat",
+    "/dashboard",
     "/downloads",
     "/image-search",
     "/mcp",
@@ -296,6 +299,7 @@ def create_app() -> FastAPI:
     db_path = os.getenv("GENERAL_CHAT_MEMORY_DB", "general_chat_memory.db")
 
     storage = _build_storage_backend(storage_root)
+    publish_store = PublishStore(storage_root)
     file_store = LocalFileStore(upload_dir=upload_dir)
     extractor = DoclingContentExtractor()
     source_parser = SourceParserRegistry(document_extractor=extractor)
@@ -1225,6 +1229,33 @@ def create_app() -> FastAPI:
         source_store.clear(session_id)
         handler.delete(session_id)
         return {"ok": True, "sessionId": session_id}
+
+    @app.post("/dashboard/export/grafana")
+    async def export_dashboard_grafana(request: Request) -> dict:
+        body = await request.json()
+        view_model = body.get("viewModel") or body.get("view_model")
+        if not isinstance(view_model, dict) or not view_model:
+            raise HTTPException(status_code=400, detail="Missing viewModel")
+        return view_model_to_grafana(view_model)
+
+    @app.post("/dashboard/publish")
+    async def publish_dashboard(request: Request) -> dict:
+        body = await request.json()
+        view_model = body.get("viewModel") or body.get("view_model")
+        if not isinstance(view_model, dict) or not view_model:
+            raise HTTPException(status_code=400, detail="Missing viewModel")
+        dashboard_id = publish_store.save(view_model)
+        url = str(request.base_url).rstrip("/") + f"/d/{dashboard_id}"
+        return {"id": dashboard_id, "url": url}
+
+    # PUBLIC — no auth (see _AUTH_PROTECTED_PREFIXES). Registered before the SPA
+    # catch-all so the explicit route wins. This is the shareable dashboard link.
+    @app.get("/d/{dashboard_id}")
+    async def view_published_dashboard(dashboard_id: str):
+        html_path = publish_store.load_html_path(dashboard_id)
+        if html_path is None:
+            raise HTTPException(status_code=404, detail="Dashboard not found")
+        return FileResponse(html_path, media_type="text/html")
 
     app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
     app.mount("/downloads", StaticFiles(directory=download_dir), name="downloads")

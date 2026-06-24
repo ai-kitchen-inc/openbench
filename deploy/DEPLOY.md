@@ -38,6 +38,14 @@ Auth boundary: Firebase admits any Google account; **authorization** is decided
 server-side. `GENERAL_CHAT_ALLOWED_EMAILS` / `GENERAL_CHAT_ALLOWED_DOMAINS` gate
 access (403 for non-listed). The SPA shows an "Access not authorized" screen on 403.
 
+Public dashboard share links: `POST /dashboard/publish` (auth) persists a dashboard
+under `$GENERAL_CHAT_STORAGE_ROOT/published/` (on the persistent `/app-data/openbench`
+volume) and returns a `GET /d/{id}` URL. **`/d/{id}` is intentionally unauthenticated**
+— it is the only public route besides `/health`, so anyone with the link can view that
+single dashboard's self-contained HTML. No nginx/Hosting change is needed: `location /`
+already proxies it to the API, and the link points at the VM directly. `/dashboard/*`
+(publish + Grafana export) is auth-gated like the rest of the API.
+
 File support (EPUB / audio / image / video): the API image installs the `epub`
 and `media` extras plus the system libs `libcairo2` (SVG rasterization) and
 `libheif1` (HEIC) — see [`Dockerfile.general-chat`](../Dockerfile.general-chat).

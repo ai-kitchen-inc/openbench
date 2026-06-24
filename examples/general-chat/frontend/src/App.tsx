@@ -1312,6 +1312,26 @@ function ChatShell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
       onUploadError: (file: { name: string }, error: unknown) => {
         toast.show(`Upload failed for ${file.name}: ${readErrorMessage(error)}`, "error");
       },
+      dashboardActions: {
+        publish: async (viewModel: unknown) => {
+          const response = await apiFetch(apiPath("/dashboard/publish"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ viewModel }),
+          });
+          if (!response.ok) throw new Error(`Publish failed: ${response.status}`);
+          return (await response.json()) as { url: string };
+        },
+        exportGrafana: async (viewModel: unknown) => {
+          const response = await apiFetch(apiPath("/dashboard/export/grafana"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ viewModel }),
+          });
+          if (!response.ok) throw new Error(`Export failed: ${response.status}`);
+          return await response.json();
+        },
+      },
     }),
     [getAuthToken, toast],
   );

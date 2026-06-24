@@ -21,6 +21,7 @@ import type {
   Attachment,
   ChatConfig,
   ChatMessage,
+  DashboardActions,
   TransportStatus,
 } from "../types";
 
@@ -69,6 +70,9 @@ export interface UseChatReturn {
   // A2UI surfaces (kept for backward compat — per-message surfaces are in message.surfaces)
   surfaces: A2UISurface[];
   sendAction: (action: A2UIAction) => Promise<void>;
+
+  // Host-provided dashboard actions (publish / export), if configured.
+  dashboardActions?: DashboardActions;
 
   // UI
   sidebarOpen: boolean;
@@ -372,6 +376,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
     renameSession,
     surfaces: [], // Deprecated at hook level — use message.surfaces instead
     sendAction,
+    dashboardActions: config.dashboardActions,
     sidebarOpen,
     setSidebarOpen,
   };
