@@ -1660,15 +1660,22 @@ video.chat-attachment-preview__media {
   padding: 6px 10px;
   border: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
   border-radius: var(--ob-radius-sm, 6px);
+  background: transparent;
   color: inherit;
   font-size: 0.75rem;
   font-weight: 500;
   text-decoration: none;
+  cursor: pointer;
   transition: background 150ms ease, border-color 150ms ease;
 }
 
 .ob-dashboard-frame__open:hover {
   background: var(--ob-hover-bg, rgba(55, 53, 47, 0.04));
+}
+
+.ob-dashboard-frame__open:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .ob-dashboard-frame__header-actions {
