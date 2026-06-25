@@ -2,7 +2,7 @@
  * ObDashboardFrame - OpenBench native dashboard renderer.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useChatContextOptional } from "../../components/ChatProvider";
 import { formatFileSize } from "../../core/utils";
 import type { A2UIComponent, A2UIComponentRenderer, A2UISurface } from "../../types";
@@ -315,6 +315,24 @@ function DownloadIcon() {
   );
 }
 
+function ChevronDownIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
 function FileTextIcon() {
   return (
     <svg
@@ -385,8 +403,29 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  // Close the export menu on outside click / Escape.
+  useEffect(() => {
+    if (!exportOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!exportRef.current?.contains(event.target as Node)) setExportOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setExportOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [exportOpen]);
 
   if (!actions || (!actions.publish && !actions.exportGrafana && !actions.exportPdf)) return null;
+
+  const canExport = Boolean(actions.exportGrafana || actions.exportPdf);
 
   async function handlePublish() {
     if (!actions?.publish) return;
@@ -405,6 +444,7 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
 
   async function handleExport() {
     if (!actions?.exportGrafana) return;
+    setExportOpen(false);
     setBusy("export");
     setError(null);
     try {
@@ -419,6 +459,7 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
 
   async function handlePdf() {
     if (!actions?.exportPdf) return;
+    setExportOpen(false);
     setBusy("pdf");
     setError(null);
     try {
@@ -455,27 +496,47 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
             {busy === "publish" ? "Publishing…" : "Publish"}
           </button>
         )}
-        {actions.exportGrafana && (
-          <button
-            type="button"
-            className="ob-dashboard-frame__action"
-            onClick={handleExport}
-            disabled={busy !== null}
-          >
-            <DownloadIcon />
-            {busy === "export" ? "Exporting…" : "Export"}
-          </button>
-        )}
-        {actions.exportPdf && (
-          <button
-            type="button"
-            className="ob-dashboard-frame__action"
-            onClick={handlePdf}
-            disabled={busy !== null}
-          >
-            <FileTextIcon />
-            {busy === "pdf" ? "Exporting…" : "PDF"}
-          </button>
+        {canExport && (
+          <div className="ob-dashboard-frame__export" ref={exportRef}>
+            <button
+              type="button"
+              className="ob-dashboard-frame__action"
+              onClick={() => setExportOpen((open) => !open)}
+              disabled={busy !== null}
+              aria-haspopup="menu"
+              aria-expanded={exportOpen}
+            >
+              <DownloadIcon />
+              {busy === "export" || busy === "pdf" ? "Exporting…" : "Export"}
+              <ChevronDownIcon />
+            </button>
+            {exportOpen && (
+              <div className="ob-dashboard-frame__export-menu" role="menu">
+                {actions.exportGrafana && (
+                  <button
+                    type="button"
+                    className="ob-dashboard-frame__export-item"
+                    role="menuitem"
+                    onClick={handleExport}
+                  >
+                    <DownloadIcon />
+                    Grafana JSON
+                  </button>
+                )}
+                {actions.exportPdf && (
+                  <button
+                    type="button"
+                    className="ob-dashboard-frame__export-item"
+                    role="menuitem"
+                    onClick={handlePdf}
+                  >
+                    <FileTextIcon />
+                    PDF
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
       {publishedUrl && (

@@ -1721,6 +1721,46 @@ video.chat-attachment-preview__media {
   cursor: default;
 }
 
+.ob-dashboard-frame__export {
+  position: relative;
+}
+
+.ob-dashboard-frame__export-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  min-width: 160px;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
+  border-radius: var(--ob-radius-sm, 6px);
+  background: var(--ob-surface);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.ob-dashboard-frame__export-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--ob-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.ob-dashboard-frame__export-item:hover {
+  background: var(--ob-hover-bg, rgba(55, 53, 47, 0.04));
+}
+
 .ob-dashboard-frame__share-link {
   display: flex;
   align-items: center;
