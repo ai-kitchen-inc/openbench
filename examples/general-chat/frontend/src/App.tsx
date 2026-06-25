@@ -1331,6 +1331,15 @@ function ChatShell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           if (!response.ok) throw new Error(`Export failed: ${response.status}`);
           return await response.json();
         },
+        exportPdf: async (viewModel: unknown) => {
+          const response = await apiFetch(apiPath("/dashboard/export/pdf"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ viewModel }),
+          });
+          if (!response.ok) throw new Error(`PDF export failed: ${response.status}`);
+          return await response.blob();
+        },
         loadHtml: async (url: string) => {
           const response = await apiFetch(apiPath(url));
           if (!response.ok) throw new Error(`Load failed: ${response.status}`);

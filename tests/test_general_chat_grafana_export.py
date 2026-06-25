@@ -8,7 +8,7 @@ import unittest
 from contextlib import ExitStack
 from os import environ
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 from openbench.integrations.firebase_auth import FirebaseUser
@@ -243,6 +243,33 @@ class TestDashboardRoutes(unittest.TestCase):
         self.assertEqual(viewed.status_code, 200)
         self.assertIn("text/html", viewed.headers["content-type"])
         self.assertIn("Sales Dashboard", viewed.text)
+
+    def test_export_pdf_requires_auth(self):
+        client = self._client()
+        response = client.post("/dashboard/export/pdf", json={"viewModel": _VIEW_MODEL})
+        self.assertEqual(response.status_code, 401)
+
+    def test_export_pdf_rejects_empty(self):
+        client = self._client()
+        response = client.post("/dashboard/export/pdf", json={}, headers=self._auth)
+        self.assertEqual(response.status_code, 400)
+
+    def test_export_pdf_returns_pdf(self):
+        client = self._client()
+        # Render is mocked so the test never launches Chromium.
+        with patch(
+            "general_chat.server.app.render_dashboard_pdf",
+            new=AsyncMock(return_value=b"%PDF-1.4 fake"),
+        ):
+            response = client.post(
+                "/dashboard/export/pdf",
+                json={"viewModel": _VIEW_MODEL},
+                headers=self._auth,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/pdf")
+        self.assertIn("sales-dashboard.pdf", response.headers["content-disposition"])
+        self.assertEqual(response.content, b"%PDF-1.4 fake")
 
     def test_unknown_dashboard_id_is_404(self):
         client = self._client()

@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +23,7 @@ from general_chat.extractor import DoclingContentExtractor
 from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.server.auth import auth_enabled, require_firebase_user
+from general_chat.server.dashboard_pdf import render_dashboard_pdf
 from general_chat.server.grafana import view_model_to_grafana
 from general_chat.server.handler import GeneralChatHandler
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
@@ -135,6 +137,12 @@ _AUTH_PROTECTED_PREFIXES = (
     "/toolhive",
     "/uploads",
 )
+
+
+def _slugify_dashboard_title(title: str) -> str:
+    """Filesystem-safe slug for a downloaded dashboard filename."""
+    cleaned = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return cleaned[:48] or "dashboard"
 
 
 def _requires_auth_path(path: str) -> bool:
@@ -1237,6 +1245,24 @@ def create_app() -> FastAPI:
         if not isinstance(view_model, dict) or not view_model:
             raise HTTPException(status_code=400, detail="Missing viewModel")
         return view_model_to_grafana(view_model)
+
+    @app.post("/dashboard/export/pdf")
+    async def export_dashboard_pdf(request: Request) -> Response:
+        body = await request.json()
+        view_model = body.get("viewModel") or body.get("view_model")
+        if not isinstance(view_model, dict) or not view_model:
+            raise HTTPException(status_code=400, detail="Missing viewModel")
+        try:
+            pdf_bytes = await render_dashboard_pdf(view_model)
+        except Exception as exc:  # pragma: no cover - depends on Chromium runtime
+            logger.exception("dashboard PDF export failed")
+            raise HTTPException(status_code=500, detail="PDF export failed") from exc
+        slug = _slugify_dashboard_title(str(view_model.get("title") or "dashboard"))
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{slug}.pdf"'},
+        )
 
     @app.post("/dashboard/publish")
     async def publish_dashboard(request: Request) -> dict:

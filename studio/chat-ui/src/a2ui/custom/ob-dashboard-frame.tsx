@@ -315,6 +315,28 @@ function DownloadIcon() {
   );
 }
 
+function FileTextIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+      <path d="M10 9H8" />
+    </svg>
+  );
+}
+
 function CopyIcon() {
   return (
     <svg
@@ -342,8 +364,7 @@ function slugify(value: string): string {
   return cleaned.slice(0, 48) || "dashboard";
 }
 
-function downloadJson(filename: string, data: unknown): void {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -354,14 +375,18 @@ function downloadJson(filename: string, data: unknown): void {
   URL.revokeObjectURL(url);
 }
 
+function downloadJson(filename: string, data: unknown): void {
+  downloadBlob(filename, new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+}
+
 function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string }) {
   const actions = useChatContextOptional()?.dashboardActions;
-  const [busy, setBusy] = useState<"publish" | "export" | null>(null);
+  const [busy, setBusy] = useState<"publish" | "export" | "pdf" | null>(null);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!actions || (!actions.publish && !actions.exportGrafana)) return null;
+  if (!actions || (!actions.publish && !actions.exportGrafana && !actions.exportPdf)) return null;
 
   async function handlePublish() {
     if (!actions?.publish) return;
@@ -387,6 +412,20 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
       downloadJson(`${slugify(title)}.grafana.json`, model);
     } catch {
       setError("Export failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handlePdf() {
+    if (!actions?.exportPdf) return;
+    setBusy("pdf");
+    setError(null);
+    try {
+      const blob = await actions.exportPdf(viewModel);
+      downloadBlob(`${slugify(title)}.pdf`, blob);
+    } catch {
+      setError("PDF export failed");
     } finally {
       setBusy(null);
     }
@@ -425,6 +464,17 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
           >
             <DownloadIcon />
             {busy === "export" ? "Exporting…" : "Export"}
+          </button>
+        )}
+        {actions.exportPdf && (
+          <button
+            type="button"
+            className="ob-dashboard-frame__action"
+            onClick={handlePdf}
+            disabled={busy !== null}
+          >
+            <FileTextIcon />
+            {busy === "pdf" ? "Exporting…" : "PDF"}
           </button>
         )}
       </div>
