@@ -271,6 +271,26 @@ class TestDashboardRoutes(unittest.TestCase):
         self.assertIn("sales-dashboard.pdf", response.headers["content-disposition"])
         self.assertEqual(response.content, b"%PDF-1.4 fake")
 
+    def test_export_pdf_tolerates_duplicated_body(self):
+        # Reproduces the Starlette BaseHTTPMiddleware + keep-alive quirk where a
+        # second copy of the body is appended; the endpoint must parse the first
+        # JSON value and ignore the trailing duplicate instead of 500-ing.
+        client = self._client()
+        import json as _json
+
+        one = _json.dumps({"viewModel": _VIEW_MODEL})
+        with patch(
+            "general_chat.server.app.render_dashboard_pdf",
+            new=AsyncMock(return_value=b"%PDF-1.4 fake"),
+        ):
+            response = client.post(
+                "/dashboard/export/pdf",
+                content=(one + one).encode("utf-8"),
+                headers={**self._auth, "Content-Type": "application/json"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"%PDF-1.4 fake")
+
     def test_unknown_dashboard_id_is_404(self):
         client = self._client()
         self.assertEqual(client.get("/d/abcdef012345").status_code, 404)

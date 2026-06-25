@@ -7,6 +7,7 @@ when GENERAL_CHAT_FIREBASE_PROJECT_ID is configured.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -143,6 +144,28 @@ def _slugify_dashboard_title(title: str) -> str:
     """Filesystem-safe slug for a downloaded dashboard filename."""
     cleaned = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return cleaned[:48] or "dashboard"
+
+
+async def _read_dashboard_view_model(request: Request) -> dict | None:
+    """Read the dashboard ViewModel from a request body.
+
+    Decodes only the first JSON value and ignores any trailing bytes. This
+    tolerates a duplicated/concatenated body — a known Starlette
+    ``BaseHTTPMiddleware`` + keep-alive quirk where a second copy of the body
+    can be appended on a connection reused after a binary response (the PDF
+    export), which otherwise makes ``request.json()`` raise "Extra data".
+    """
+    raw = (await request.body()).decode("utf-8", "replace").strip()
+    if not raw:
+        return None
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    view_model = payload.get("viewModel") or payload.get("view_model")
+    return view_model if isinstance(view_model, dict) and view_model else None
 
 
 def _requires_auth_path(path: str) -> bool:
@@ -1240,17 +1263,15 @@ def create_app() -> FastAPI:
 
     @app.post("/dashboard/export/grafana")
     async def export_dashboard_grafana(request: Request) -> dict:
-        body = await request.json()
-        view_model = body.get("viewModel") or body.get("view_model")
-        if not isinstance(view_model, dict) or not view_model:
+        view_model = await _read_dashboard_view_model(request)
+        if view_model is None:
             raise HTTPException(status_code=400, detail="Missing viewModel")
         return view_model_to_grafana(view_model)
 
     @app.post("/dashboard/export/pdf")
     async def export_dashboard_pdf(request: Request) -> Response:
-        body = await request.json()
-        view_model = body.get("viewModel") or body.get("view_model")
-        if not isinstance(view_model, dict) or not view_model:
+        view_model = await _read_dashboard_view_model(request)
+        if view_model is None:
             raise HTTPException(status_code=400, detail="Missing viewModel")
         try:
             pdf_bytes = await render_dashboard_pdf(view_model)
@@ -1266,9 +1287,8 @@ def create_app() -> FastAPI:
 
     @app.post("/dashboard/publish")
     async def publish_dashboard(request: Request) -> dict:
-        body = await request.json()
-        view_model = body.get("viewModel") or body.get("view_model")
-        if not isinstance(view_model, dict) or not view_model:
+        view_model = await _read_dashboard_view_model(request)
+        if view_model is None:
             raise HTTPException(status_code=400, detail="Missing viewModel")
         dashboard_id = publish_store.save(view_model)
         url = str(request.base_url).rstrip("/") + f"/d/{dashboard_id}"
