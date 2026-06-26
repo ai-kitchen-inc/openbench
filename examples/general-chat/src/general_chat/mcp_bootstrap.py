@@ -17,6 +17,7 @@ BUNDLED_MCP_CONFIGS = (
     "image-search-docker.yaml",
     "sam-segmentation-docker.yaml",
     "docker-mcp-gateway.yaml",
+    "dashboard-generator-stdio.yaml",
 )
 
 
