@@ -8,6 +8,7 @@ DataSourceRegistry, AgentRegistry, etc.
 
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,15 @@ from openbench.core.registry import PluginRegistry
 
 if TYPE_CHECKING:
     from openbench.chat.a2ui.schema import A2UIComponent
+
+
+def gen_id(prefix: str) -> str:
+    """Generate a short unique component ID with the given prefix.
+
+    Shared by every ContentRenderer so A2UI component IDs are produced
+    consistently (``"<prefix>-<8 hex chars>"``).
+    """
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
 class ContentRenderer(ABC):

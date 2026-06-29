@@ -6,18 +6,15 @@ Converts dashboard artifact metadata into A2UI ObDashboardFrame components.
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 logger = logging.getLogger(__name__)
 
 
-@ContentRendererRegistry.register(
-    "dashboard", "default", description="Dashboard artifact renderer"
-)
+@ContentRendererRegistry.register("dashboard", "default", description="Dashboard artifact renderer")
 class DashboardRenderer(ContentRenderer):
     """Renders dashboard artifact metadata to ObDashboardFrame components.
 
@@ -84,11 +81,7 @@ class DashboardRenderer(ContentRenderer):
             bool(content.get("dashboardUrl") or content.get("url")),
             content.get("title"),
         )
-        if (
-            not has_dashboard_url
-            and not has_view_model
-            and not has_native_props
-        ):
+        if not has_dashboard_url and not has_view_model and not has_native_props:
             return []
 
         props: dict[str, Any] = {
@@ -136,13 +129,8 @@ class DashboardRenderer(ContentRenderer):
 
         return [
             A2UIComponent(
-                id=_gen_id("dashboard"),
+                id=gen_id("dashboard"),
                 component="ObDashboardFrame",
                 properties=props,
             )
         ]
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"

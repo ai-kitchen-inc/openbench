@@ -7,11 +7,10 @@ Renders content inside a centered overlay panel.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 
 @ContentRendererRegistry.register("modal", "default", description="Modal overlay renderer")
@@ -50,7 +49,7 @@ class ModalRenderer(ContentRenderer):
         components: list[A2UIComponent] = []
 
         # Child: ObMarkdown with modal body content
-        child_id = _gen_id("modal-body")
+        child_id = gen_id("modal-body")
         child = A2UIComponent(
             id=child_id,
             component="ObMarkdown",
@@ -58,7 +57,7 @@ class ModalRenderer(ContentRenderer):
         )
 
         # Modal component
-        modal_id = _gen_id("modal")
+        modal_id = gen_id("modal")
         modal_props: dict[str, Any] = {
             "open": True,
             "children": [child_id],
@@ -70,8 +69,3 @@ class ModalRenderer(ContentRenderer):
         components.append(child)
 
         return components
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"

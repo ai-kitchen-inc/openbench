@@ -8,11 +8,10 @@ Handles semantic variants (h1-h5, body, caption) via markdown heading detection.
 from __future__ import annotations
 
 import re
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 
 @ContentRendererRegistry.register("text", "default", description="Text and markdown renderer")
@@ -73,7 +72,7 @@ class TextRenderer(ContentRenderer):
         """Render complex markdown as ObMarkdown component."""
         return [
             A2UIComponent(
-                id=_gen_id("md"),
+                id=gen_id("md"),
                 component="ObMarkdown",
                 properties={"content": text},
             )
@@ -119,12 +118,7 @@ class TextRenderer(ContentRenderer):
     def _make_text_component(self, text: str, variant: str) -> A2UIComponent:
         """Create a Text A2UI component."""
         return A2UIComponent(
-            id=_gen_id("txt"),
+            id=gen_id("txt"),
             component="Text",
             properties={"text": text, "variant": variant},
         )
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"

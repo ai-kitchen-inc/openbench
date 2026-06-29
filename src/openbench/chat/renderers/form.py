@@ -8,11 +8,10 @@ with data binding and validation checks.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 # Maps form field types to A2UI component types
 FIELD_TYPE_MAP = {
@@ -102,7 +101,7 @@ class FormRenderer(ContentRenderer):
 
         # Form title
         if title:
-            title_id = _gen_id("form-title")
+            title_id = gen_id("form-title")
             components.append(
                 A2UIComponent(
                     id=title_id,
@@ -113,7 +112,7 @@ class FormRenderer(ContentRenderer):
             col_child_ids.append(title_id)
 
             # Divider after title
-            divider_id = _gen_id("form-divider")
+            divider_id = gen_id("form-divider")
             components.append(
                 A2UIComponent(
                     id=divider_id,
@@ -131,7 +130,7 @@ class FormRenderer(ContentRenderer):
                 col_child_ids.append(comp.id)
 
         # Submit button (full-width)
-        btn_id = _gen_id("btn")
+        btn_id = gen_id("btn")
         context: dict[str, Any] = {}
         for field_def in fields:
             name = field_def["name"]
@@ -156,7 +155,7 @@ class FormRenderer(ContentRenderer):
         col_child_ids.append(btn_id)
 
         # Wrap in Column
-        col_id = _gen_id("form-col")
+        col_id = gen_id("form-col")
         components.append(
             A2UIComponent(
                 id=col_id,
@@ -166,7 +165,7 @@ class FormRenderer(ContentRenderer):
         )
 
         # Wrap in Card
-        card_id = _gen_id("form-card")
+        card_id = gen_id("form-card")
         components.append(
             A2UIComponent(
                 id=card_id,
@@ -185,7 +184,7 @@ class FormRenderer(ContentRenderer):
         component_type = FIELD_TYPE_MAP.get(field_type, "TextField")
         data_path = f"/form/{name}"
 
-        comp_id = _gen_id(f"field-{name}")
+        comp_id = gen_id(f"field-{name}")
         props: dict[str, Any] = {"label": label}
 
         # Required indicator as separate prop (frontend renders red *)
@@ -249,7 +248,7 @@ class FormRenderer(ContentRenderer):
         # Description/help text
         description = field_def.get("description")
         if description:
-            desc_id = _gen_id(f"desc-{name}")
+            desc_id = gen_id(f"desc-{name}")
             result.append(
                 A2UIComponent(
                     id=desc_id,
@@ -318,8 +317,3 @@ class FormRenderer(ContentRenderer):
             )
 
         return checks
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"
