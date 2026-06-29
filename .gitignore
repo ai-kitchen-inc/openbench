@@ -142,6 +142,17 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+# ruff linter cache
+.ruff_cache/
+
+# Local scratch / scratch upload artifacts
+.tmp/
+
+# Local agent / tooling metadata
+.agents/
+.codex/
+.code-review-graph/
+
 # ==========================================
 # Node.js
 # ==========================================
