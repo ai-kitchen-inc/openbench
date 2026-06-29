@@ -3,7 +3,7 @@ mcp:
     allow_remote_servers: false
     allowed_servers:
       - dashboard_generator
-    max_timeout_seconds: 120
+    max_timeout_seconds: 30
 
   servers:
     dashboard_generator:
@@ -25,5 +25,5 @@ mcp:
       namespace: dashboard_generator
       allowed: true
       discovery_timeout_seconds: 20
-      timeout_seconds: 120
+      timeout_seconds: 30
       retries: 0

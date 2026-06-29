@@ -1683,7 +1683,9 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(config.provider, "gemini")
         self.assertEqual(config.plugin_type, "chat")
         self.assertEqual(config.credentials, {"api_key": "test-key"})
-        self.assertEqual(config.settings, {"model": "test-model"})
+        self.assertEqual(
+            config.settings, {"model": "test-model", "max_output_tokens": 32768}
+        )
         self.assertTrue(config.is_default)
 
     def test_configure_general_chat_vlm_provider_does_not_persist_provider_state(self):

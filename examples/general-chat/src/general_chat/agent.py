@@ -14,9 +14,9 @@ from openbench.chat import render_queue as shared_render_queue
 from openbench.core.abstractions import Tool
 from openbench.core.providers import ProviderConfig, ProviderType, get_provider_service
 from openbench.intelligence import BaseAgent, Persona
-from openbench.mcp.permissions import MCPPermissionSession, PermissionProvider
 from openbench.intelligence.base import Message, MessageRole
 from openbench.intelligence.skill_registry import SkillRegistry
+from openbench.mcp.permissions import MCPPermissionSession, PermissionProvider
 
 _DEFAULT_MCP_APPROVED_TOOLS = (
     "openbench.filter_records",
@@ -844,6 +844,10 @@ def reload_external_mcp_tools(
 
 def _configure_general_chat_provider(api_key: str, model: str) -> None:
     """Configure the demo LLM provider without writing user-level provider state."""
+    # Gemini 3 reasoning tokens count against the output budget; the SDK default
+    # of 8192 lets a large prompt + thinking trip MAX_TOKENS with no answer text
+    # (then the agent burns empty-response retries). Give it real headroom.
+    max_output_tokens = _env_int("GENERAL_CHAT_MAX_OUTPUT_TOKENS", 32768)
     get_provider_service().configure(
         ProviderConfig(
             name=_PROVIDER_NAME,
@@ -851,7 +855,7 @@ def _configure_general_chat_provider(api_key: str, model: str) -> None:
             provider="gemini",
             plugin_type="chat",
             credentials={"api_key": api_key},
-            settings={"model": model},
+            settings={"model": model, "max_output_tokens": max_output_tokens},
             is_default=True,
         ),
         save=False,
@@ -996,6 +1000,10 @@ def create_agent(
     external_mcp_summary: dict[str, Any] = {"enabled": False, "tools": []}
     external_mcp_tools: list[Any] = []
 
+    # Cap the conversation history sent each turn so the prompt (and latency)
+    # stays bounded as sessions grow. Set GENERAL_CHAT_HISTORY_TOKEN_BUDGET=0 to
+    # send the full history (old behavior).
+    _history_budget = _env_int("GENERAL_CHAT_HISTORY_TOKEN_BUDGET", 16000)
     agent = BaseAgent(
         goal=(
             "Help users by answering questions, reasoning over optional context, "
@@ -1014,6 +1022,7 @@ def create_agent(
         temperature=temperature,
         persona=persona,
         tools=mcp_tools or None,
+        history_token_budget=_history_budget if _history_budget > 0 else None,
     )
     if _env_flag("GENERAL_CHAT_DASHBOARD_SKILL_ENABLED", default=True):
         _load_dashboard_skill(agent)
