@@ -213,8 +213,7 @@ openbench/
 ├── tests/                       # Test suite
 ├── examples/                    # Example workflows
 ├── docs/                        # Documentation
-├── pyproject.toml               # Python project configuration
-└── requirements.txt             # Dependencies
+└── pyproject.toml               # Python project configuration + dependency extras
 ```
 
 ## Core Abstractions
