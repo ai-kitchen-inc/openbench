@@ -11,13 +11,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
 from fastapi.testclient import TestClient
+
 from openbench.chat.files import StoredFile
 from openbench.chat.session import Attachment
 
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
+
+
+pytestmark = pytest.mark.integration
 
 
 class FakeGCSFileStore:
@@ -101,7 +106,9 @@ class TestGeneralChatAttachmentPaths(unittest.TestCase):
                     patch("general_chat.server.app.create_agent", return_value=agent)
                 )
                 stack.enter_context(
-                    patch("general_chat.server.app._build_storage_backend", return_value=fake_storage)
+                    patch(
+                        "general_chat.server.app._build_storage_backend", return_value=fake_storage
+                    )
                 )
                 from general_chat.server.app import create_app
 
@@ -141,7 +148,9 @@ class TestGeneralChatAttachmentPaths(unittest.TestCase):
 
         self.assertEqual(len(enriched), 1)
         self.assertEqual(enriched[0].path, "/general-chat/uploads/file-image/cats.png")
-        self.assertIn("image_path=\"/general-chat/uploads/file-image/cats.png\"", enriched[0].extracted_text)
+        self.assertIn(
+            'image_path="/general-chat/uploads/file-image/cats.png"', enriched[0].extracted_text
+        )
 
 
 if __name__ == "__main__":

@@ -12,8 +12,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+
 from openbench.chat.files import StoredFile
 
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
@@ -21,6 +23,8 @@ if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
 from general_chat.server.app import _read_upload_limited  # noqa: E402
+
+pytestmark = pytest.mark.integration
 
 
 class ChunkedUpload:
@@ -52,9 +56,7 @@ class FakeGCSFileStore:
             mime_type=mime_type,
             size_bytes=len(content),
             stored_at="2026-06-11T00:00:00+00:00",
-            web_view_link=(
-                f"gs://test-bucket/uploads/default/session-1/file-small/{filename}"
-            ),
+            web_view_link=(f"gs://test-bucket/uploads/default/session-1/file-small/{filename}"),
         )
         return self.last_stored
 
@@ -124,7 +126,9 @@ class TestGeneralChatGCPUploadAPI(unittest.TestCase):
                     patch("general_chat.server.app.create_agent", return_value=agent)
                 )
                 stack.enter_context(
-                    patch("general_chat.server.app._build_storage_backend", return_value=fake_storage)
+                    patch(
+                        "general_chat.server.app._build_storage_backend", return_value=fake_storage
+                    )
                 )
                 parser = stack.enter_context(
                     patch(
@@ -146,7 +150,9 @@ class TestGeneralChatGCPUploadAPI(unittest.TestCase):
                 self.assertEqual(payload["status"], "processing")
                 self.assertEqual(payload["metadata"]["fileId"], "file-small")
                 self.assertEqual(payload["metadata"]["parseStatus"], "queued")
-                self.assertEqual(fake_file_store.store_calls, [("notes.txt", b"hello", "text/plain")])
+                self.assertEqual(
+                    fake_file_store.store_calls, [("notes.txt", b"hello", "text/plain")]
+                )
                 parser.assert_not_called()
 
                 status_response = client.get("/chat/uploads/file-small?sessionId=session-1")
@@ -185,7 +191,9 @@ class TestGeneralChatGCPUploadAPI(unittest.TestCase):
                     patch("general_chat.server.app.create_agent", return_value=agent)
                 )
                 stack.enter_context(
-                    patch("general_chat.server.app._build_storage_backend", return_value=fake_storage)
+                    patch(
+                        "general_chat.server.app._build_storage_backend", return_value=fake_storage
+                    )
                 )
                 stack.enter_context(
                     patch(

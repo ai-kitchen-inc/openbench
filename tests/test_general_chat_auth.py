@@ -10,12 +10,17 @@ from os import environ
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
 from fastapi.testclient import TestClient
+
 from openbench.integrations.firebase_auth import FirebaseUser, InvalidTokenError
 
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
+
+
+pytestmark = pytest.mark.integration
 
 
 class TestGeneralChatFirebaseAuth(unittest.TestCase):
@@ -114,9 +119,7 @@ class TestGeneralChatFirebaseAuth(unittest.TestCase):
 
         for path in ("/openapi.json", "/docs", "/redoc"):
             response = client.get(path)
-            self.assertNotEqual(
-                response.status_code, 200, f"{path} should not be served"
-            )
+            self.assertNotEqual(response.status_code, 200, f"{path} should not be served")
 
     def test_uploads_static_mount_is_protected(self):
         client, verifier = self._client()

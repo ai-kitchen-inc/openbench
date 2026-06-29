@@ -10,7 +10,9 @@ from os import environ
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
 from fastapi.testclient import TestClient
+
 from openbench.integrations.firebase_auth import FirebaseUser
 
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
@@ -57,6 +59,9 @@ _VIEW_MODEL = {
 }
 
 
+pytestmark = pytest.mark.integration
+
+
 class TestGrafanaConverter(unittest.TestCase):
     def setUp(self) -> None:
         self.model = view_model_to_grafana(_VIEW_MODEL)
@@ -90,9 +95,7 @@ class TestGrafanaConverter(unittest.TestCase):
         self.assertEqual(csv.splitlines()[0], "region,revenue")
         self.assertIn("EU,1200", csv)
         self.assertEqual(bar["targets"][0]["scenarioId"], "csv_content")
-        self.assertEqual(
-            bar["targets"][0]["datasource"]["type"], "grafana-testdata-datasource"
-        )
+        self.assertEqual(bar["targets"][0]["datasource"]["type"], "grafana-testdata-datasource")
 
     def test_chart_type_mapping(self):
         cases = {

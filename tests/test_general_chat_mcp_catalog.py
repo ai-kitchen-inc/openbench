@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import asyncio
 import json
 import queue
@@ -41,6 +43,9 @@ from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.server.handler import GeneralChatHandler
+
+
+pytestmark = pytest.mark.integration
 
 
 class FakeCredentialEncryption:
@@ -663,106 +668,110 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             self.assertNotIn("oci", json.dumps(payload).lower())
 
     def test_import_docker_literal_env_values_are_encrypted_and_resolved(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with (
-                patch.dict(environ, {}, clear=True),
-                patch(
-                    "general_chat.mcp_registry.get_credential_encryption",
-                    return_value=FakeCredentialEncryption(),
-                ),
-            ):
-                store = MCPServerRegistryStore(tmpdir)
-                payload = store.import_config_json(GRAFANA_CONFIG)
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch.dict(environ, {}, clear=True),
+            patch(
+                "general_chat.mcp_registry.get_credential_encryption",
+                return_value=FakeCredentialEncryption(),
+            ),
+        ):
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_config_json(GRAFANA_CONFIG)
 
-                registry_text = (Path(tmpdir) / "mcp_registry" / "servers.json").read_text(
-                    encoding="utf-8"
-                )
-                secrets_text = (Path(tmpdir) / "mcp_registry" / "secrets.json").read_text(
-                    encoding="utf-8"
-                )
-                self.assertNotIn("http://localhost:3000", registry_text)
-                self.assertNotIn("grafana-token", registry_text)
-                self.assertNotIn("http://localhost:3000", secrets_text)
-                self.assertNotIn("grafana-token", secrets_text)
+            registry_text = (Path(tmpdir) / "mcp_registry" / "servers.json").read_text(
+                encoding="utf-8"
+            )
+            secrets_text = (Path(tmpdir) / "mcp_registry" / "secrets.json").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn("http://localhost:3000", registry_text)
+            self.assertNotIn("grafana-token", registry_text)
+            self.assertNotIn("http://localhost:3000", secrets_text)
+            self.assertNotIn("grafana-token", secrets_text)
 
-                server = _external_servers(payload)[0]
-                self.assertEqual(
-                    {secret["secretKey"]: secret["status"] for secret in server["secrets"]},
-                    {"GRAFANA_API_KEY": "configured", "GRAFANA_URL": "configured"},
-                )
+            server = _external_servers(payload)[0]
+            self.assertEqual(
+                {secret["secretKey"]: secret["status"] for secret in server["secrets"]},
+                {"GRAFANA_API_KEY": "configured", "GRAFANA_URL": "configured"},
+            )
 
-                runtime = MCPServerRegistryStore(tmpdir).build_enabled_client_config()
-                self.assertEqual(runtime.servers["grafana"].env["GRAFANA_URL"], "http://localhost:3000")
-                self.assertEqual(runtime.servers["grafana"].env["GRAFANA_API_KEY"], "grafana-token")
+            runtime = MCPServerRegistryStore(tmpdir).build_enabled_client_config()
+            self.assertEqual(runtime.servers["grafana"].env["GRAFANA_URL"], "http://localhost:3000")
+            self.assertEqual(runtime.servers["grafana"].env["GRAFANA_API_KEY"], "grafana-token")
 
     def test_manual_docker_env_rows_are_encrypted_and_override_json_env(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch(
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch(
                 "general_chat.mcp_registry.get_credential_encryption",
                 return_value=FakeCredentialEncryption(),
-            ):
-                store = MCPServerRegistryStore(tmpdir)
-                payload = store.import_config_json(
-                    GRAFANA_CONFIG,
-                    secret_values={
-                        "GRAFANA_API_KEY": "manual-token",
-                        "EXTRA_FLAG": "extra-secret-value",
-                    },
-                )
+            ),
+        ):
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_config_json(
+                GRAFANA_CONFIG,
+                secret_values={
+                    "GRAFANA_API_KEY": "manual-token",
+                    "EXTRA_FLAG": "extra-secret-value",
+                },
+            )
 
-                registry_text = (Path(tmpdir) / "mcp_registry" / "servers.json").read_text(
-                    encoding="utf-8"
-                )
-                self.assertNotIn("manual-token", registry_text)
-                self.assertNotIn("grafana-token", registry_text)
-                self.assertNotIn("extra-secret-value", registry_text)
+            registry_text = (Path(tmpdir) / "mcp_registry" / "servers.json").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn("manual-token", registry_text)
+            self.assertNotIn("grafana-token", registry_text)
+            self.assertNotIn("extra-secret-value", registry_text)
 
-                server = _external_servers(payload)[0]
-                self.assertEqual(
-                    {secret["secretKey"]: secret["status"] for secret in server["secrets"]},
-                    {
-                        "EXTRA_FLAG": "configured",
-                        "GRAFANA_API_KEY": "configured",
-                        "GRAFANA_URL": "configured",
-                    },
-                )
-                runtime = store.build_enabled_client_config()
-                self.assertEqual(runtime.servers["grafana"].env["GRAFANA_API_KEY"], "manual-token")
-                self.assertEqual(runtime.servers["grafana"].env["EXTRA_FLAG"], "extra-secret-value")
+            server = _external_servers(payload)[0]
+            self.assertEqual(
+                {secret["secretKey"]: secret["status"] for secret in server["secrets"]},
+                {
+                    "EXTRA_FLAG": "configured",
+                    "GRAFANA_API_KEY": "configured",
+                    "GRAFANA_URL": "configured",
+                },
+            )
+            runtime = store.build_enabled_client_config()
+            self.assertEqual(runtime.servers["grafana"].env["GRAFANA_API_KEY"], "manual-token")
+            self.assertEqual(runtime.servers["grafana"].env["EXTRA_FLAG"], "extra-secret-value")
 
     def test_import_secret_placeholder_stores_typed_value_encrypted_and_resolves_runtime_env(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch(
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch(
                 "general_chat.mcp_registry.get_credential_encryption",
                 return_value=FakeCredentialEncryption(),
-            ):
-                store = MCPServerRegistryStore(tmpdir)
-                payload = store.import_config_json(
-                    PLAYWRIGHT_SECRET_REF_CONFIG,
-                    secret_values={"PLAYWRIGHT_TOKEN": "typed-token"},
-                )
+            ),
+        ):
+            store = MCPServerRegistryStore(tmpdir)
+            payload = store.import_config_json(
+                PLAYWRIGHT_SECRET_REF_CONFIG,
+                secret_values={"PLAYWRIGHT_TOKEN": "typed-token"},
+            )
 
-                registry_text = (Path(tmpdir) / "mcp_registry" / "servers.json").read_text(
-                    encoding="utf-8"
-                )
-                secrets_text = (Path(tmpdir) / "mcp_registry" / "secrets.json").read_text(
-                    encoding="utf-8"
-                )
-                self.assertNotIn("secret-token", registry_text)
-                self.assertNotIn("typed-token", registry_text)
-                self.assertNotIn("typed-token", secrets_text)
-                self.assertIn("enc:v1:", secrets_text)
+            registry_text = (Path(tmpdir) / "mcp_registry" / "servers.json").read_text(
+                encoding="utf-8"
+            )
+            secrets_text = (Path(tmpdir) / "mcp_registry" / "secrets.json").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn("secret-token", registry_text)
+            self.assertNotIn("typed-token", registry_text)
+            self.assertNotIn("typed-token", secrets_text)
+            self.assertIn("enc:v1:", secrets_text)
 
-                server = _external_servers(payload)[0]
-                self.assertEqual(server["secrets"][0]["source"], "managed")
-                self.assertEqual(server["secrets"][0]["secretKey"], "PLAYWRIGHT_TOKEN")
-                self.assertTrue(server["secrets"][0]["configured"])
+            server = _external_servers(payload)[0]
+            self.assertEqual(server["secrets"][0]["source"], "managed")
+            self.assertEqual(server["secrets"][0]["secretKey"], "PLAYWRIGHT_TOKEN")
+            self.assertTrue(server["secrets"][0]["configured"])
 
-                runtime = store.build_enabled_client_config()
-                self.assertEqual(runtime.servers["playwright"].env["PLAYWRIGHT_TOKEN"], "typed-token")
+            runtime = store.build_enabled_client_config()
+            self.assertEqual(runtime.servers["playwright"].env["PLAYWRIGHT_TOKEN"], "typed-token")
 
-                store.remove_server(server["id"])
-                self.assertFalse(store.secret_store.has(server["id"], "PLAYWRIGHT_TOKEN"))
+            store.remove_server(server["id"])
+            self.assertFalse(store.secret_store.has(server["id"], "PLAYWRIGHT_TOKEN"))
 
     def test_import_secret_placeholder_reports_missing_secret(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -799,7 +808,9 @@ class TestMCPServerRegistryStore(unittest.TestCase):
                     store.import_config_json(PLAYWRIGHT_LITERAL_ENV_CONFIG)
 
                 with self.assertRaisesRegex(MCPRegistryError, "requires credential encryption"):
-                    store.import_config_json(PLAYWRIGHT_CONFIG, secret_values={"PLAYWRIGHT_TOKEN": "typed-token"})
+                    store.import_config_json(
+                        PLAYWRIGHT_CONFIG, secret_values={"PLAYWRIGHT_TOKEN": "typed-token"}
+                    )
 
                 registry_path = Path(tmpdir) / "mcp_registry" / "servers.json"
                 if registry_path.exists():
@@ -840,7 +851,9 @@ class TestMCPServerRegistryStore(unittest.TestCase):
 
             disabled = store.set_server_enabled(server["id"], False)
             self.assertFalse(disabled.enabled)
-            self.assertEqual(MCPServerRegistryStore(tmpdir).get_server(server["id"]).status, "disabled")
+            self.assertEqual(
+                MCPServerRegistryStore(tmpdir).get_server(server["id"]).status, "disabled"
+            )
 
             enabled = store.set_server_enabled(server["id"], True)
             self.assertTrue(enabled.enabled)
@@ -862,14 +875,18 @@ class TestMCPServerRegistryStore(unittest.TestCase):
                 self.assertTrue(FakeMCPClient.instances[-1].closed)
 
                 updated = store.set_tool_enabled(server["id"], "browser_click", False)
-                self.assertFalse(next(tool for tool in updated.tools if tool.name == "browser_click").enabled)
+                self.assertFalse(
+                    next(tool for tool in updated.tools if tool.name == "browser_click").enabled
+                )
 
                 adapters, summary = store.load_enabled_tool_adapters()
 
             names = {adapter.namespaced_name for adapter in adapters}
             self.assertIn("playwright.browser_snapshot", names)
             self.assertNotIn("playwright.browser_click", names)
-            playwright_summary = next(item for item in summary["tools"] if item["server"] == "playwright")
+            playwright_summary = next(
+                item for item in summary["tools"] if item["server"] == "playwright"
+            )
             self.assertEqual(playwright_summary["name"], "playwright.browser_snapshot")
             loaded_server = FakeMCPClient.instances[-1].config.servers["playwright"]
             self.assertEqual(loaded_server.cwd, "examples/general-chat")
@@ -945,7 +962,9 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             with patch("general_chat.mcp_registry.MCPClient", FakeMCPClient):
                 adapters, summary = store.load_enabled_tool_adapters()
 
-            self.assertNotIn("playwright.browser_snapshot", {adapter.namespaced_name for adapter in adapters})
+            self.assertNotIn(
+                "playwright.browser_snapshot", {adapter.namespaced_name for adapter in adapters}
+            )
             self.assertTrue(all(item["server"] != "playwright" for item in summary["tools"]))
             self.assertEqual(FakeMCPClient.instances, [])
 
@@ -1001,7 +1020,11 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             )
             self.assertEqual(external_names, ["alpha.status", "beta.status"])
             self.assertEqual(
-                sorted(item["adapter_name"] for item in summary["tools"] if item["server"] in {"alpha", "beta"}),
+                sorted(
+                    item["adapter_name"]
+                    for item in summary["tools"]
+                    if item["server"] in {"alpha", "beta"}
+                ),
                 ["alpha_status", "beta_status"],
             )
 
@@ -1175,7 +1198,9 @@ class TestMCPServerRegistryStore(unittest.TestCase):
                     for item in summary["errors"]
                 )
             )
-            self.assertNotIn("playwright.browser_snapshot", [adapter.namespaced_name for adapter in adapters])
+            self.assertNotIn(
+                "playwright.browser_snapshot", [adapter.namespaced_name for adapter in adapters]
+            )
 
     def test_streamable_http_discovery_failure_remains_enabled_with_clean_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1233,7 +1258,9 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             self.assertTrue(discovered.enabled)
             self.assertIn("Connection closed", discovered.error or "")
             self.assertIn("test_mcp_server.py --mode docker", discovered.diagnostics["hint"])
-            image_error = next(item for item in summary["errors"] if item["server"] == "image_search")
+            image_error = next(
+                item for item in summary["errors"] if item["server"] == "image_search"
+            )
             self.assertIn("openbench/image-search-mcp:cpu", image_error["hint"])
 
     def test_enabled_tools_with_invalid_schema_report_invalid_diagnostic(self):
@@ -1327,7 +1354,9 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             from general_chat.server.app import create_app
 
             client = TestClient(create_app())
-            invalid = client.post("/mcp/catalogs/import", json={"url": "https://example.com/catalog.json"})
+            invalid = client.post(
+                "/mcp/catalogs/import", json={"url": "https://example.com/catalog.json"}
+            )
             self.assertEqual(invalid.status_code, 400)
             self.assertIn("mcpServers", invalid.json()["detail"])
 
@@ -1381,13 +1410,19 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
                 json={"enabled": False},
             )
             self.assertEqual(tool_toggle.status_code, 200)
-            tool = next(item for item in tool_toggle.json()["server"]["tools"] if item["name"] == "browser_click")
+            tool = next(
+                item
+                for item in tool_toggle.json()["server"]["tools"]
+                if item["name"] == "browser_click"
+            )
             self.assertFalse(tool["enabled"])
 
             removed = client.delete(f"/mcp/catalogs/servers/{server['id']}")
             self.assertEqual(removed.status_code, 200)
             remaining = client.get("/mcp/catalogs").json()["servers"]
-            self.assertEqual([item["name"] for item in remaining], ["toolhive-doc-mcp", "openbench"])
+            self.assertEqual(
+                [item["name"] for item in remaining], ["toolhive-doc-mcp", "openbench"]
+            )
 
     def test_import_toolhive_git_workload_reload_discovers_streamable_http_tools(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1415,7 +1450,9 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             agent.tools = FakeToolExecutor()
             stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
             stack.enter_context(
-                patch("general_chat.server.app.ToolHiveService", return_value=FakeGitToolHiveService())
+                patch(
+                    "general_chat.server.app.ToolHiveService", return_value=FakeGitToolHiveService()
+                )
             )
             stack.enter_context(patch("general_chat.mcp_registry.MCPClient", FakeGitMCPClient))
 
@@ -1466,7 +1503,9 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             agent.tools = FakeToolExecutor()
             stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
             stack.enter_context(
-                patch("general_chat.server.app.ToolHiveService", return_value=FakeGitToolHiveService())
+                patch(
+                    "general_chat.server.app.ToolHiveService", return_value=FakeGitToolHiveService()
+                )
             )
             stack.enter_context(patch("general_chat.mcp_registry.MCPClient", FakeGitMCPClient))
 
@@ -1537,10 +1576,7 @@ class TestMCPServerRegistryEndpoints(unittest.TestCase):
             self.assertEqual(result.output, "Git status is available.")
             self.assertEqual(result.metadata["tools_used"], ["git_git_status"])
             self.assertEqual(FakeMCPClient.calls, [("git.git_status", {"repo": "."})])
-            first_tool_names = {
-                item["function"]["name"]
-                for item in llm.prompts[0]["tools"]
-            }
+            first_tool_names = {item["function"]["name"] for item in llm.prompts[0]["tools"]}
             self.assertIn("git_git_status", first_tool_names)
 
     def test_runtime_registration_failure_reports_actionable_error(self):
