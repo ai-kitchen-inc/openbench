@@ -523,17 +523,22 @@ EXTRACT_METADATA_SCHEMA = _schema(
 
 AGGREGATE_DATA_SCHEMA = _schema(
     "aggregate_data",
-    "Run a read-only SQLite SELECT/WITH query against a CSV/XLSX file loaded "
-    "as table `data`. Use this after extract_metadata.",
+    "Run read-only SQLite SELECT/WITH queries against a CSV/XLSX file loaded as "
+    "table `data`, in a single call. Use this after extract_metadata. Pass ALL the "
+    "aggregations you need at once as a list of queries — one batched call returns "
+    "every dataset; do NOT call this tool once per metric.",
     {
         "path": {"type": "string"},
         "sheet": {"type": "string", "description": "Optional Excel sheet name"},
         "query": {
-            "type": "string",
+            "type": "array",
+            "items": {"type": "string"},
             "description": (
-                "Read-only SQLite SQL. Example: "
-                "SELECT region, SUM(revenue) AS revenue FROM data "
-                "GROUP BY region ORDER BY revenue DESC LIMIT 10"
+                "List of read-only SQLite SQL queries — one per chart/metric you need. "
+                "Send them all in one call. Example: ["
+                '"SELECT region, SUM(revenue) AS revenue FROM data GROUP BY region '
+                'ORDER BY revenue DESC LIMIT 10", '
+                '"SELECT product, COUNT(*) AS orders FROM data GROUP BY product"]'
             ),
         },
         "dataset_id": {"type": "string", "description": "Optional output dataset id"},

@@ -356,6 +356,8 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         self.assertIn("query", aggregate_parameters["properties"])
         self.assertNotIn("operations", aggregate_parameters["properties"])
         self.assertEqual(aggregate_parameters["required"], ["path", "query"])
+        # query advertises a list so the model batches all aggregations in one call.
+        self.assertEqual(aggregate_parameters["properties"]["query"]["type"], "array")
 
     def test_extract_metadata_profiles_csv_columns(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -390,6 +392,24 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         self.assertEqual(result["datasets"][0]["id"], "revenue_by_region")
         records = {row["region"]: row["revenue"] for row in result["datasets"][0]["records"]}
         self.assertEqual(records, {"EU": 150, "US": 150})
+
+    def test_aggregate_data_batch_returns_one_dataset_per_query(self):
+        """A list of queries runs in one call and returns one dataset each."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_csv(tmp)
+            result = self.tools["aggregate_data"](
+                path=path,
+                query=[
+                    'SELECT "region", SUM("revenue") AS revenue FROM data GROUP BY "region"',
+                    'SELECT "segment", COUNT(*) AS orders FROM data GROUP BY "segment"',
+                ],
+            )
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(len(result["datasets"]), 2)
+        self.assertEqual(
+            {ds["id"] for ds in result["datasets"]}, {"dataset_1", "dataset_2"}
+        )
 
     def test_aggregate_data_rejects_destructive_sql(self):
         with tempfile.TemporaryDirectory() as tmp:
