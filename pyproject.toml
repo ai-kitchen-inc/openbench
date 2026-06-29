@@ -281,6 +281,11 @@ disable_error_code = ["assignment"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
+markers = [
+    "integration: end-to-end tests that exercise the full FastAPI/agent stack (slower)",
+    "slow: tests that take a noticeable amount of wall-clock time",
+    "unit: fast, isolated unit tests (the default; marker is optional)",
+]
 
 [tool.coverage.run]
 branch = true
@@ -293,6 +298,10 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+# Floor set just below the measured ~74% line coverage. Ratchet upward as
+# coverage improves; keep it under the real number so unrelated PRs don't
+# fail CI on noise.
+fail_under = 70
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
