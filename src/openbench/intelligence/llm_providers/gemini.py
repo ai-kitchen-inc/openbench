@@ -1,48 +1,28 @@
-"""Concrete LLM provider implementations.
+"""Google Gemini LLM provider (google-genai SDK).
 
-Provides the missing concrete LLMProvider that BaseAgent needs to run
-its reasoning loop via ProviderService.resolve() → LLMProviderRegistry.create().
-
-Currently implemented:
-- GeminiLLMProvider: Google Gemini models via google-genai SDK
-
-Usage:
-    # Auto-registered on import — just configure a provider:
-    from openbench.core.providers import configure_provider, ProviderType
-
-    configure_provider(
-        name="gemini",
-        provider_type=ProviderType.LLM,
-        provider="gemini",
-        plugin_type="chat",
-        credentials={"api_key": "your-key"},
-        is_default=True,
-    )
-
-    # Then BaseAgent resolves it automatically:
-    agent = BaseAgent(goal="Analyze data", model="gemini-2.5-flash")
-    result = agent.execute(context)
+Split out of the former flat ``llm_providers.py``: tool-call conversion and
+response extraction live in sibling mixins; the pricing table lives in
+``costs.py``. Registered with LLMProviderRegistry from the package __init__.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 import re
 import time
-from collections.abc import Mapping
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 from openbench.core.abstractions import LLMProvider, LLMResponse
 from openbench.core.constants import DEFAULT_MAX_RETRIES
+from openbench.intelligence.llm_providers._responses import _GeminiResponseMixin
+from openbench.intelligence.llm_providers._tools import _GeminiToolConversionMixin
+from openbench.intelligence.llm_providers.costs import _GEMINI_COSTS
 from openbench.intelligence.memory_validator import validate_tool_call_pairs
-from openbench.mcp.schema import normalize_provider_json_schema
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -57,15 +37,7 @@ def _memory_validator_enabled() -> bool:
     return flag in ("1", "true", "yes", "on")
 
 
-# Cost per 1M tokens in USD (converted to per-1K for compatibility with config.py)
-_GEMINI_COSTS: dict[str, dict[str, float]] = {
-    "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
-    "gemini-2.5-pro": {"input": 1.25, "output": 5.00},
-    "gemini-3-flash-preview": {"input": 0.10, "output": 0.40},
-}
-
-
-class GeminiLLMProvider(LLMProvider):
+class GeminiLLMProvider(_GeminiToolConversionMixin, _GeminiResponseMixin, LLMProvider):
     """Concrete Gemini LLM provider using google-genai SDK.
 
     Bridges the gap between BaseAgent's reasoning loop and Google's Gemini API.
@@ -80,8 +52,9 @@ class GeminiLLMProvider(LLMProvider):
         api_key: Google API key. Falls back to GOOGLE_API_KEY env var.
         model: Default model ID (default: "gemini-2.5-flash").
         temperature: Default generation temperature (default: 0.7).
-        max_output_tokens: Default max output tokens (default: 8192).
-    """
+        max_output_tokens: Default max output tokens (default: 8192)."""
+
+    _INLINE_MEDIA_LIMIT = 18 * 1024 * 1024
 
     def __init__(
         self,
@@ -99,10 +72,6 @@ class GeminiLLMProvider(LLMProvider):
         # Cache of Files-API uploads keyed by (path, size, mtime) so re-asking
         # about the same large video/audio doesn't re-upload every turn.
         self._files_cache: dict[tuple, Any] = {}
-
-    # Files <= this size are sent inline as bytes; larger payloads go through
-    # the Gemini Files API. Gemini's inline request cap is ~20 MB; stay under it.
-    _INLINE_MEDIA_LIMIT = 18 * 1024 * 1024
 
     @property
     def provider_name(self) -> str:
@@ -370,352 +339,6 @@ class GeminiLLMProvider(LLMProvider):
 
         self._files_cache[key] = uploaded
         return uploaded
-
-    @staticmethod
-    def _normalize_tool_arg_value(value: Any) -> Any:
-        """Convert SDK/proto/Pydantic values into stable JSON-like values."""
-        if hasattr(value, "model_dump"):
-            try:
-                value = value.model_dump(by_alias=True, exclude_none=True)
-            except TypeError:
-                value = value.model_dump()
-            except Exception:
-                pass
-        elif hasattr(value, "dict") and not isinstance(value, dict):
-            try:
-                value = value.dict()
-            except Exception:
-                pass
-
-        if isinstance(value, Mapping):
-            return {
-                str(key): GeminiLLMProvider._normalize_tool_arg_value(item)
-                for key, item in value.items()
-            }
-        if isinstance(value, (list, tuple)):
-            return [GeminiLLMProvider._normalize_tool_arg_value(item) for item in value]
-        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-            return None
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            return value
-
-        try:
-            return json.loads(json.dumps(value, default=str, allow_nan=False))
-        except (TypeError, ValueError):
-            return str(value)
-
-    @classmethod
-    def _normalize_tool_args(cls, args: Any) -> dict[str, Any]:
-        """Return a stable dict for Gemini/OpenAI-style tool arguments."""
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except (json.JSONDecodeError, TypeError):
-                return {"raw": args}
-
-        if hasattr(args, "model_dump"):
-            try:
-                args = args.model_dump(by_alias=True, exclude_none=True)
-            except TypeError:
-                args = args.model_dump()
-            except Exception:
-                pass
-
-        if not isinstance(args, Mapping) and hasattr(args, "items"):
-            try:
-                args = dict(args.items())
-            except Exception:
-                pass
-
-        if not isinstance(args, Mapping):
-            return {}
-
-        normalized = cls._normalize_tool_arg_value(args)
-        return normalized if isinstance(normalized, dict) else {}
-
-    @classmethod
-    def _normalized_tool_call_signature(cls, tool_call: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        """Return ``(name, args)`` for either flat or OpenAI-style tool calls."""
-        if "function" in tool_call:
-            func = tool_call.get("function") or {}
-            name = str(func.get("name") or "")
-            args = func.get("arguments", {})
-        else:
-            name = str(tool_call.get("name") or "")
-            args = tool_call.get("arguments", {})
-        return name, cls._normalize_tool_args(args)
-
-    @staticmethod
-    def _tool_call_id(tool_call: dict[str, Any]) -> str | None:
-        """Return the persisted OpenAI-style tool call id, when available."""
-        tc_id = tool_call.get("id")
-        return tc_id if isinstance(tc_id, str) and tc_id else None
-
-    @classmethod
-    def _raw_content_matches_tool_calls(
-        cls,
-        raw_content: Any,
-        tool_calls: list[dict[str, Any]] | None,
-    ) -> bool:
-        """Return True when raw Gemini content can be safely replayed.
-
-        For assistant tool-call turns, Gemini requires the replayed model
-        content to contain exactly the function calls that the following
-        function_response turns answer. A partial raw streaming chunk is worse
-        than no raw content, so only raw content with matching count, name, and
-        args is safe to replay.
-        """
-        parts = getattr(raw_content, "parts", None) or []
-        raw_calls: list[tuple[str, dict[str, Any]]] = []
-        for part in parts:
-            fc = getattr(part, "function_call", None)
-            if not fc:
-                continue
-            raw_calls.append(
-                (
-                    str(getattr(fc, "name", "") or ""),
-                    cls._normalize_tool_args(getattr(fc, "args", {}) or {}),
-                )
-            )
-
-        expected = [
-            cls._normalized_tool_call_signature(tc)
-            for tc in (tool_calls or [])
-            if isinstance(tc, dict)
-        ]
-        if expected:
-            return raw_calls == expected
-        return not raw_calls
-
-    @classmethod
-    def _merge_tool_call_raw_content(
-        cls,
-        chunks: list[Any],
-        tool_calls: list[dict[str, Any]],
-    ) -> Any | None:
-        """Build replayable Gemini model content from streamed tool-call chunks.
-
-        Gemini may split several function_call parts across stream chunks.
-        Replaying only the first chunk drops later calls; rebuilding from the
-        generic tool_calls drops Gemini's thought_signature metadata. Instead,
-        keep the original SDK Part objects and merge just the function_call
-        parts into one model Content for the next request in the same agent
-        turn.
-        """
-        if not chunks:
-            return None
-
-        merged_parts: list[Any] = []
-        for chunk in chunks:
-            candidates = getattr(chunk, "candidates", None) or []
-            if not candidates:
-                continue
-            content = getattr(candidates[0], "content", None)
-            for part in getattr(content, "parts", None) or []:
-                if getattr(part, "function_call", None):
-                    merged_parts.append(part)
-
-        if not merged_parts:
-            return None
-
-        from google.genai import types
-
-        try:
-            raw_content = types.Content(role="model", parts=merged_parts)
-        except Exception:
-            # Tests may use lightweight mocks instead of SDK Part objects.
-            raw_content = SimpleNamespace(role="model", parts=merged_parts)
-
-        if cls._raw_content_matches_tool_calls(raw_content, tool_calls):
-            return raw_content
-        return None
-
-    def _convert_tools(self, tools: list[dict[str, Any]]) -> list:
-        """Convert OpenAI-style tool schemas to Gemini FunctionDeclarations.
-
-        BaseAgent tools.get_schemas() returns:
-            [{"type": "function", "function": {"name": ..., "description": ..., "parameters": ...}}]
-
-        Gemini expects:
-            [types.Tool(function_declarations=[types.FunctionDeclaration(...)])]
-
-        Args:
-            tools: OpenAI-format tool schema list.
-
-        Returns:
-            List with a single types.Tool containing all FunctionDeclarations.
-        """
-        from google.genai import types
-
-        declarations = []
-        for tool in tools:
-            func = tool.get("function", tool)
-            name = str(func.get("name") or "")
-            try:
-                declarations.append(
-                    types.FunctionDeclaration(
-                        name=name,
-                        description=func.get("description", ""),
-                        parameters=normalize_provider_json_schema(func.get("parameters")),
-                    )
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Skipping tool %s because its schema is not accepted by Gemini: %s",
-                    name or "<unnamed>",
-                    exc,
-                )
-
-        if not declarations:
-            return []
-
-        return [types.Tool(function_declarations=declarations)]
-
-    @staticmethod
-    def _extract_text_from_parts(response: Any) -> str:
-        """Extract only answer text from response parts.
-
-        Filters out:
-        - function_call parts (tool invocations)
-        - thought parts (Gemini 3+ thinking/reasoning content)
-
-        Avoids the Gemini SDK warning "there are non-text parts in the
-        response" that fires when accessing .text on chunks that contain
-        both text and function_call parts.
-
-        Args:
-            response: Gemini API response or stream chunk.
-
-        Returns:
-            Concatenated text from all answer-text parts (excludes thoughts).
-        """
-        if not hasattr(response, "candidates") or not response.candidates:
-            return ""
-
-        candidate = response.candidates[0]
-        if not hasattr(candidate, "content") or not candidate.content:
-            return ""
-
-        parts = candidate.content.parts
-        if not parts:
-            return ""
-
-        text_parts = [
-            part.text
-            for part in parts
-            if (
-                hasattr(part, "text")
-                and part.text
-                and not (hasattr(part, "function_call") and part.function_call)
-                and not getattr(part, "thought", False)
-            )
-        ]
-
-        return "".join(text_parts)
-
-    def _extract_tool_calls(self, response, id_offset: int = 0) -> list[dict[str, Any]]:
-        """Extract tool calls from a Gemini response or stream chunk.
-
-        Converts Gemini's function_calls to the dict format that
-        BaseAgent._parse_tool_calls() expects.
-
-        Args:
-            response: Gemini API response or stream chunk.
-            id_offset: Starting index for generated ``call_<n>`` ids.
-                Used when accumulating tool calls across stream chunks
-                so each call gets a unique id.
-
-        Returns:
-            List of tool call dicts with id, name, arguments.
-        """
-        tool_calls: list[dict[str, Any]] = []
-        if not hasattr(response, "candidates") or not response.candidates:
-            return tool_calls
-
-        candidate = response.candidates[0]
-        if not hasattr(candidate, "content") or not candidate.content:
-            return tool_calls
-
-        for i, part in enumerate(candidate.content.parts):
-            if hasattr(part, "function_call") and part.function_call:
-                fc = part.function_call
-                tool_calls.append(
-                    {
-                        "id": f"call_{id_offset + i}",
-                        "name": fc.name,
-                        "arguments": self._normalize_tool_args(fc.args if fc.args else {}),
-                    }
-                )
-
-        return tool_calls
-
-    @staticmethod
-    def _describe_response_parts(response: Any) -> dict[str, Any]:
-        """Summarize what parts a Gemini response/chunk actually contains.
-
-        Used by the "no text output" diagnostic path so we can tell
-        *why* a response looked empty — was it filtered thoughts, a
-        safety block, a truncated generation, or something else?
-
-        Returns a dict with:
-            - finish_reason: str | None
-            - block_reason: str | None   (from prompt_feedback)
-            - part_types: dict[str, int] counts of text / function_call /
-                          thought / inline_data / executable_code / other
-            - has_thought_signature: bool
-        """
-        out: dict[str, Any] = {
-            "finish_reason": None,
-            "block_reason": None,
-            "part_types": {
-                "text": 0,
-                "function_call": 0,
-                "thought": 0,
-                "inline_data": 0,
-                "executable_code": 0,
-                "other": 0,
-            },
-            "has_thought_signature": False,
-        }
-
-        # Prompt-level block (safety, recitation, etc.)
-        feedback = getattr(response, "prompt_feedback", None)
-        if feedback is not None:
-            br = getattr(feedback, "block_reason", None)
-            if br:
-                out["block_reason"] = str(br)
-
-        if not hasattr(response, "candidates") or not response.candidates:
-            return out
-
-        candidate = response.candidates[0]
-
-        fr = getattr(candidate, "finish_reason", None)
-        if fr is not None:
-            out["finish_reason"] = str(fr)
-
-        content = getattr(candidate, "content", None)
-        if content is None:
-            return out
-
-        parts = getattr(content, "parts", None) or []
-        for part in parts:
-            if getattr(part, "thought", False):
-                out["part_types"]["thought"] += 1
-            elif getattr(part, "function_call", None):
-                out["part_types"]["function_call"] += 1
-            elif getattr(part, "text", None):
-                out["part_types"]["text"] += 1
-            elif getattr(part, "inline_data", None):
-                out["part_types"]["inline_data"] += 1
-            elif getattr(part, "executable_code", None):
-                out["part_types"]["executable_code"] += 1
-            else:
-                out["part_types"]["other"] += 1
-            if getattr(part, "thought_signature", None):
-                out["has_thought_signature"] = True
-
-        return out
 
     def _estimate_cost(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
         """Estimate cost in USD based on token usage.
@@ -1053,48 +676,3 @@ class GeminiLLMProvider(LLMProvider):
                     "empty_response_diagnostics": part_summary,
                 },
             )
-
-
-# ============================================================================
-# TODO: OpenAI LLM Provider
-# ============================================================================
-# OpenAILLMProvider — planned but not yet implemented.
-#
-# Will provide:
-# - Native OpenAI message format (no conversion needed)
-# - Tool schema pass-through (BaseAgent already uses OpenAI format)
-# - Tool call response parsing
-# - Token usage tracking and cost estimation
-#
-# Models: gpt-4o, gpt-4o-mini, gpt-4.1, gpt-4.1-mini, gpt-4.1-nano, o3-mini
-# SDK: pip install openai
-# Env: OPENAI_API_KEY
-
-
-# ============================================================================
-# TODO: Anthropic LLM Provider
-# ============================================================================
-# AnthropicLLMProvider — planned but not yet implemented.
-#
-# Will provide:
-# - Message format conversion (OpenAI-style → Anthropic format)
-# - Tool schema conversion (OpenAI function format → Anthropic tool format)
-# - Tool call response parsing
-# - Token usage tracking and cost estimation
-#
-# Models: claude-sonnet-4-5, claude-haiku-4-5, claude-opus-4-6
-# SDK: pip install anthropic
-# Env: ANTHROPIC_API_KEY
-
-
-# ============================================================================
-# Registration
-# ============================================================================
-
-from openbench.core.registry import LLMProviderRegistry  # noqa: E402
-
-LLMProviderRegistry.register(
-    "chat",
-    "gemini",
-    description="Google Gemini LLM provider via google-genai SDK",
-)(GeminiLLMProvider)
