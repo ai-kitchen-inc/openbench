@@ -37,6 +37,10 @@ class GeneralChatMCPPermissionCoordinator:
         self._builder = A2UIMessageBuilder()
         self._pending: dict[str, PendingMCPPermission] = {}
         self._lock = threading.Lock()
+        # session_id -> set of tool names the user chose to "Always allow".
+        # Keyed by tool name (not arguments) so every later call of that tool
+        # skips the prompt, even though its arguments differ each time.
+        self._always_allowed: dict[str, set[str]] = {}
 
     def request_permission(
         self,
@@ -46,6 +50,12 @@ class GeneralChatMCPPermissionCoordinator:
         queue: Any,
         loop: Any,
     ) -> str | None:
+        # Session-scoped "Always allow": once approved, skip the prompt for
+        # every subsequent call of the same tool in this session.
+        with self._lock:
+            if request.tool_name in self._always_allowed.get(session_id, set()):
+                return "yes"
+
         request_id = f"mcp-perm-{uuid.uuid4().hex[:12]}"
         surface_id = f"s-{request_id}"
         pending = PendingMCPPermission(
@@ -86,17 +96,23 @@ class GeneralChatMCPPermissionCoordinator:
                 pending.surface_id,
                 "This MCP permission request belongs to a different chat session.",
             )
-        if decision not in {"allow", "deny"}:
+        if decision not in {"allow", "deny", "allow_session"}:
             return self._error_update(
                 pending.surface_id,
-                "Choose Allow or Deny to resolve this MCP permission request.",
+                "Choose Allow, Deny, or Always allow to resolve this MCP permission request.",
             )
 
-        pending.response = "yes" if decision == "allow" else "no"
+        if decision == "allow_session":
+            with self._lock:
+                self._always_allowed.setdefault(pending.session_id, set()).add(
+                    pending.request.tool_name
+                )
+
+        pending.response = "no" if decision == "deny" else "yes"
         pending.event.set()
         return self._build_update(
             pending,
-            status="approved" if decision == "allow" else "denied",
+            status="denied" if decision == "deny" else "approved",
         )
 
     def _finish_pending(self, request_id: str, response: str | None) -> None:
@@ -218,6 +234,23 @@ class GeneralChatMCPPermissionCoordinator:
                         },
                     ),
                     A2UIComponent(
+                        id="mcp-permission-allow-session",
+                        component="Button",
+                        properties={
+                            "label": "Always allow",
+                            "variant": "secondary",
+                            "action": {
+                                "event": {
+                                    "name": "mcp_permission_decision",
+                                    "context": {
+                                        "requestId": pending.request_id,
+                                        "decision": "allow_session",
+                                    },
+                                }
+                            },
+                        },
+                    ),
+                    A2UIComponent(
                         id="mcp-permission-deny",
                         component="Button",
                         properties={
@@ -240,6 +273,7 @@ class GeneralChatMCPPermissionCoordinator:
                         properties={
                             "children": [
                                 "mcp-permission-allow",
+                                "mcp-permission-allow-session",
                                 "mcp-permission-deny",
                             ],
                             "gap": "8px",
