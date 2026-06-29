@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -32,7 +31,6 @@ from openbench.core.abstractions import (
     LLMProvider,
     LLMResponse,
     MediaContent,
-    Query,
     Tool,
 )
 from openbench.core.config import get_config, get_default_model
@@ -40,53 +38,27 @@ from openbench.core.providers import ProviderType, get_provider_service
 
 # Backward-compat re-exports: these primitives moved into focused modules but
 # are still imported from ``openbench.intelligence.base`` across the codebase.
+from openbench.intelligence.agent_config import (
+    AgentConfig,  # noqa: F401  # re-exported for openbench.intelligence.__init__
+    ProgressEvent,
+    _emit_progress,
+)
 from openbench.intelligence.agent_memory import AgentMemory
+from openbench.intelligence.agent_rag import _AgentRAGMixin
 from openbench.intelligence.messages import Message, MessageRole
-from openbench.intelligence.query_rewriter import QueryRewriter
+from openbench.intelligence.query_rewriter import (
+    QueryRewriter,  # noqa: TC001  # runtime re-export for openbench.intelligence.__init__
+)
 from openbench.intelligence.tool_executor import (
     ToolExecutor,
-    _sanitize_for_json,
+    _sanitize_for_json,  # noqa: F401  # re-exported for callers importing from base
     _tool_result_to_json,
 )
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class AgentConfig:
-    """Configuration for an agent."""
-
-    model: str = field(default_factory=get_default_model)
-    temperature: float = 0.7
-    max_tokens: int | None = None
-    max_iterations: int = 10
-    system_prompt: str | None = None
-    stop_sequences: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ProgressEvent:
-    """Progress update from agent execution.
-
-    Emitted via ``on_progress`` callback during BaseAgent.execute() to report
-    sub-phases (planning, tool use, analysis) for real-time UI indicators.
-    """
-
-    phase: str
-    detail: str = ""
-
-
-def _emit_progress(
-    on_progress: Callable[[ProgressEvent], None] | None,
-    phase: str,
-    detail: str = "",
-) -> None:
-    """Safely emit a progress event if callback is provided."""
-    if on_progress:
-        on_progress(ProgressEvent(phase=phase, detail=detail))
-
-
-class BaseAgent(Agent):
+class BaseAgent(_AgentRAGMixin, Agent):
     """
     Framework-agnostic base agent implementation.
 
@@ -435,133 +407,6 @@ Provide clear, actionable responses."""
         if not recent:
             return ""
         return "\n".join(reversed(recent))
-
-    def _get_query_rewriter(self) -> QueryRewriter | None:
-        """Get query rewriter, lazily initialized."""
-        if not self._query_rewriter_enabled:
-            return None
-        if self._query_rewriter is None:
-            self._query_rewriter = QueryRewriter(self._get_llm(), self.model)
-        return self._query_rewriter
-
-    def _rag_tool_retrieve(self, query: str) -> str:
-        """Tool function for multi-hop RAG retrieval.
-
-        Called by the agent's reasoning loop via the ``retrieve_knowledge`` tool.
-
-        Args:
-            query: Search query for the knowledge base.
-
-        Returns:
-            Formatted string with retrieved chunks, or a "not found" message.
-        """
-        if not self.store:
-            return "No knowledge base configured."
-
-        results = self._retrieve_context(query)
-        if not results:
-            return "No relevant documents found for this query."
-
-        parts = []
-        for i, item in enumerate(results, 1):
-            parts.append(f"[Source {i}] (relevance: {item['score']:.2f})\n{item['content']}")
-        return "\n\n---\n\n".join(parts)
-
-    def _retrieve_context(self, query_text: str) -> list[dict[str, Any]]:
-        """Retrieve relevant context from store for RAG.
-
-        Supports query rewriting: when enabled, the query is rewritten into
-        1-3 optimized queries and results are deduplicated.
-
-        Args:
-            query_text: Text to search for relevant context.
-
-        Returns:
-            List of retrieved items with content and metadata.
-        """
-        if not self.store:
-            return []
-
-        try:
-            rewriter = self._get_query_rewriter()
-            queries = rewriter.rewrite(query_text) if rewriter else [query_text]
-
-            # Retrieve for each query, deduplicate by content hash
-            all_retrieved: list[dict[str, Any]] = []
-            seen_ids: set[str] = set()
-
-            for q in queries:
-                results = self.store.search(Query(text=q, limit=self.retrieval_top_k))
-
-                for item, score in zip(results.items, results.scores, strict=True):
-                    if score < self.retrieval_threshold:
-                        continue
-                    item_id = item.get("id", item.get("content", "")[:100])
-                    if item_id in seen_ids:
-                        continue
-                    seen_ids.add(item_id)
-                    all_retrieved.append(
-                        {
-                            "content": item.get("content", ""),
-                            "score": score,
-                            "metadata": item.get("metadata", {}),
-                        }
-                    )
-
-            # Sort by score descending, cap at top_k
-            all_retrieved.sort(key=lambda x: x["score"], reverse=True)
-            return all_retrieved[: self.retrieval_top_k]
-
-        except Exception as e:
-            logger.warning(f"Failed to retrieve context from store: {e}")
-            return []
-
-    def _augment_context_with_rag(
-        self, context: ExecutionContext, retrieved: list[dict[str, Any]]
-    ) -> ExecutionContext:
-        """Augment execution context with retrieved RAG context.
-
-        Args:
-            context: Original execution context.
-            retrieved: Retrieved items from store.
-
-        Returns:
-            Augmented execution context.
-        """
-        if not retrieved:
-            return context
-
-        # Build RAG context string
-        rag_context_parts = []
-        for i, item in enumerate(retrieved, 1):
-            rag_context_parts.append(
-                f"[Source {i}] (relevance: {item['score']:.2f})\n{item['content']}"
-            )
-
-        rag_context = "\n\n---\n\n".join(rag_context_parts)
-
-        # Augment context data
-        augmented_data = context.data or {}
-        if isinstance(augmented_data, dict):
-            augmented_data = {
-                **augmented_data,
-                "_rag_context": rag_context,
-                "_rag_sources": len(retrieved),
-            }
-        else:
-            augmented_data = {
-                "original_data": augmented_data,
-                "_rag_context": rag_context,
-                "_rag_sources": len(retrieved),
-            }
-
-        return ExecutionContext(
-            goal=context.goal,
-            data=augmented_data,
-            tools=context.tools,
-            memory=context.memory,
-            constraints=context.constraints,
-        )
 
     def _parse_tool_calls(self, response: Any) -> list[dict[str, Any]]:
         """Parse tool calls from LLM response."""
