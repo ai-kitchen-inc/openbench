@@ -22,7 +22,7 @@ except PackageNotFoundError:  # package not installed (e.g. running from source 
 @click.pass_context
 def cli(ctx):
     """
-    🔥 OpenBench - The Open Source Agentic AI Workbench
+    OpenBench - The Open Source Agentic AI Workbench
 
     Build. Orchestrate. Export. Scale.
     """
