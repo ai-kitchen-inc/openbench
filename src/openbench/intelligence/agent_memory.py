@@ -8,6 +8,7 @@ still re-exports it for backward compatibility.
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -42,9 +43,22 @@ class AgentMemory:
         """
         yield
 
+    @staticmethod
+    def _message_tokens(message: Message) -> int:
+        """Rough token estimate for one message (~4 chars per token).
+
+        Counts the text ``content`` plus serialized ``tool_calls`` — tool-call
+        arguments are real prompt tokens, so ignoring them (as the original
+        content-only estimate did) badly undercounts tool-heavy turns.
+        """
+        chars = len(message.content)
+        if message.tool_calls:
+            chars += len(json.dumps(message.tool_calls, default=str))
+        return chars // 4
+
     def _estimate_tokens(self) -> int:
-        """Rough token estimate: ~4 chars per token."""
-        return sum(len(m.content) // 4 for m in self.messages)
+        """Rough token estimate across all messages (~4 chars per token)."""
+        return sum(self._message_tokens(m) for m in self.messages)
 
     def _trim_oldest(self, keep_count: int) -> None:
         """Trim oldest messages, preserving system message."""
@@ -107,9 +121,48 @@ class AgentMemory:
         """Add tool result message."""
         self.add(MessageRole.TOOL, result, name=name, tool_call_id=tool_call_id)
 
-    def get_messages(self) -> list[dict[str, Any]]:
-        """Get messages in LLM-compatible format."""
-        return [m.to_dict() for m in self.messages]
+    def get_messages(self, token_budget: int | None = None) -> list[dict[str, Any]]:
+        """Get messages in LLM-compatible format.
+
+        Args:
+            token_budget: Optional soft cap on prompt tokens. When ``None``
+                (default) the full history is returned unchanged — no behavior
+                change for callers that don't opt in. When set, return a
+                pairing-safe sliding window: leading system message(s) plus the
+                most recent messages that fit the budget.
+
+        The window is **read-only** — it does not mutate the stored buffer, so
+        persistence and the execute-loop rollback are unaffected. It never
+        starts on an orphan ``tool`` result (whose matching ``tool_calls``
+        assistant turn fell outside the window), which Gemini rejects: because
+        the kept messages are a contiguous suffix, every ``tool`` result still
+        follows its call, and any ``tool`` messages left dangling at the front
+        are trimmed.
+        """
+        if token_budget is None:
+            return [m.to_dict() for m in self.messages]
+
+        system = [m for m in self.messages if m.role == MessageRole.SYSTEM]
+        rest = [m for m in self.messages if m.role != MessageRole.SYSTEM]
+
+        used = sum(self._message_tokens(m) for m in system)
+        window: list[Message] = []
+        # Walk newest -> oldest; always keep the most recent message so the
+        # current turn is never dropped, then keep older turns until the budget
+        # is exhausted.
+        for message in reversed(rest):
+            cost = self._message_tokens(message)
+            if window and used + cost > token_budget:
+                break
+            window.append(message)
+            used += cost
+        window.reverse()
+
+        # Drop leading orphan tool results (their assistant call fell outside).
+        while window and window[0].role == MessageRole.TOOL:
+            window.pop(0)
+
+        return [m.to_dict() for m in (*system, *window)]
 
     def clear(self) -> None:
         """Clear all messages except system."""

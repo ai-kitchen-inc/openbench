@@ -97,6 +97,7 @@ class BaseAgent(_AgentRAGMixin, Agent):
         scratchpad: Any = None,
         output_store: Any = None,
         output_url_base: str | None = None,
+        history_token_budget: int | None = None,
     ):
         """
         Initialize agent.
@@ -143,6 +144,12 @@ class BaseAgent(_AgentRAGMixin, Agent):
                 memory. When provided, it is injected into any loaded skill
                 whose ``tools.py`` declares a ``bind(scratchpad=...)``
                 function — e.g. the bundled ``memory-scratchpad`` skill.
+            history_token_budget: Optional soft cap (in estimated tokens) on the
+                conversation history sent to the LLM each turn. ``None`` (default)
+                sends the full history. When set, only the system prompt plus the
+                most recent messages that fit the budget are sent — keeping the
+                prompt bounded (and latency/cost flat) on long sessions at the
+                cost of dropping older context.
         """
         self.goal = goal
         self.model = model or get_default_model()
@@ -152,6 +159,10 @@ class BaseAgent(_AgentRAGMixin, Agent):
         self.enable_planning = enable_planning
         self.parallel_tool_execution = parallel_tool_execution
         self._scratchpad = scratchpad
+        # Optional soft cap on prompt tokens. None = send full history (default).
+        # When set, BaseAgent sends only a pairing-safe recent window so the
+        # prompt stays bounded as the conversation grows.
+        self._history_token_budget = history_token_budget
 
         # RAG configuration
         self.store = store
@@ -561,7 +572,7 @@ Provide clear, actionable responses."""
                         _emit_progress(on_progress, "Analyzing results")
 
                     gen_kwargs: dict[str, Any] = {
-                        "prompt": self.memory.get_messages(),
+                        "prompt": self.memory.get_messages(token_budget=self._history_token_budget),
                         "model": self.model,
                         "tools": self.tools.get_schemas() or None,
                         "temperature": self.temperature,
@@ -620,29 +631,47 @@ Provide clear, actionable responses."""
                         # No tool calls. If the model also produced no text this
                         # is a Gemini 3 "Confidence Dropout" — the model spent
                         # thinking tokens but didn't commit to an answer. Retry
-                        # instead of accepting a blank result, up to a cap.
-                        if not response.text.strip() and _empty_retries < _MAX_EMPTY_RETRIES:
-                            _empty_retries += 1
-                            diagnostics = response.metadata.get("empty_response_diagnostics")
-                            logger.warning(
-                                "Empty response on iteration %d (retry %d/%d, diagnostics=%s). "
-                                "Retrying — NOT adding empty turn to memory.",
-                                iterations,
-                                _empty_retries,
-                                _MAX_EMPTY_RETRIES,
-                                diagnostics,
-                            )
-                            # Do NOT add the empty response to memory — that would
-                            # poison the conversation with a blank assistant turn and
-                            # Gemini might follow the pattern. Just retry.
-                            continue
+                        # instead of accepting a blank result, up to a cap — BUT
+                        # only for a genuine transient dropout. A MAX_TOKENS
+                        # finish is deterministic (the prompt + reasoning simply
+                        # exceeded the output budget); retrying the identical
+                        # request just burns another full call and dropouts again,
+                        # so don't retry that case.
+                        if not response.text.strip():
+                            diagnostics = response.metadata.get("empty_response_diagnostics") or {}
+                            finish_reason = str(diagnostics.get("finish_reason") or "")
+                            is_max_tokens = "MAX_TOKENS" in finish_reason
 
-                        # Non-empty text OR max retries exhausted — we're done.
-                        if not response.text.strip() and _empty_retries >= _MAX_EMPTY_RETRIES:
-                            logger.warning(
-                                "Empty response persists after %d retries. Accepting empty result.",
-                                _MAX_EMPTY_RETRIES,
-                            )
+                            if not is_max_tokens and _empty_retries < _MAX_EMPTY_RETRIES:
+                                _empty_retries += 1
+                                logger.warning(
+                                    "Empty response on iteration %d (retry %d/%d, diagnostics=%s). "
+                                    "Retrying — NOT adding empty turn to memory.",
+                                    iterations,
+                                    _empty_retries,
+                                    _MAX_EMPTY_RETRIES,
+                                    diagnostics,
+                                )
+                                # Do NOT add the empty response to memory — that
+                                # would poison the conversation with a blank
+                                # assistant turn and Gemini might follow the
+                                # pattern. Just retry.
+                                continue
+
+                            if is_max_tokens:
+                                logger.warning(
+                                    "Empty response on iteration %d hit MAX_TOKENS "
+                                    "(prompt too large for the output budget) — not "
+                                    "retrying; raise max_output_tokens or trim history. "
+                                    "diagnostics=%s",
+                                    iterations,
+                                    diagnostics,
+                                )
+                            else:
+                                logger.warning(
+                                    "Empty response persists after %d retries. Accepting empty result.",
+                                    _MAX_EMPTY_RETRIES,
+                                )
                         self.memory.add_assistant(response.text, raw_content=raw_content)
                         break
 
@@ -801,7 +830,7 @@ class SimpleAgent(BaseAgent):
         try:
             llm = self._get_llm()
             gen_kwargs: dict[str, Any] = {
-                "prompt": self.memory.get_messages(),
+                "prompt": self.memory.get_messages(token_budget=self._history_token_budget),
                 "model": self.model,
                 "temperature": self.temperature,
             }

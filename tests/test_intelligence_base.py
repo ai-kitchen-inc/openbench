@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import unittest
 import time
+import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -27,6 +27,9 @@ from openbench.intelligence.base import (
     _sanitize_for_json,
     _tool_result_to_json,
 )
+
+# Mirrors the local cap in BaseAgent.execute (kept in sync by the retry tests).
+_MAX_EMPTY_RETRIES = 2
 
 
 class TestMessageRole(unittest.TestCase):
@@ -343,6 +346,64 @@ class FailingAfterToolLLMProvider(LLMProvider):
         response = LLMResponse(text="", model=model, tokens_used=10, cost=0.0)
         response.tool_calls = [{"name": "mock_tool", "arguments": {}}]
         return response
+
+
+class EmptyResponseLLMProvider(LLMProvider):
+    """Returns empty text with a configurable empty-response finish_reason.
+
+    Used to test that the agent's empty-response retry is skipped for a
+    deterministic MAX_TOKENS dropout but kept for a transient one.
+    """
+
+    def __init__(self, finish_reason: str):
+        self.finish_reason = finish_reason
+        self.call_count = 0
+
+    @property
+    def provider_name(self) -> str:
+        return "mock-empty"
+
+    def generate(self, prompt: Any, model: str, **params) -> LLMResponse:
+        self.call_count += 1
+        return LLMResponse(
+            text="",
+            model=model,
+            tokens_used=10,
+            cost=0.0,
+            metadata={"empty_response_diagnostics": {"finish_reason": self.finish_reason}},
+        )
+
+
+class TestBaseAgentEmptyResponseRetry(unittest.TestCase):
+    """Empty-response retry must be MAX_TOKENS-aware (no wasted retries)."""
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_max_tokens_empty_response_is_not_retried(self, mock_get_service):
+        """A MAX_TOKENS dropout is deterministic — retrying just burns calls."""
+        provider = EmptyResponseLLMProvider("FinishReason.MAX_TOKENS")
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = provider
+        mock_get_service.return_value = mock_service
+
+        agent = BaseAgent(goal="Test goal")
+        result = agent.execute(ExecutionContext(goal="hi"))
+
+        self.assertEqual(provider.call_count, 1)  # one call, no retries
+        self.assertEqual(result.output, "")
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_transient_empty_response_is_retried(self, mock_get_service):
+        """A non-MAX_TOKENS empty turn (Confidence Dropout) still retries."""
+        provider = EmptyResponseLLMProvider("FinishReason.STOP")
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = provider
+        mock_get_service.return_value = mock_service
+
+        agent = BaseAgent(goal="Test goal")
+        agent.execute(ExecutionContext(goal="hi"))
+
+        # initial call + the retries
+        self.assertEqual(provider.call_count, 1 + _MAX_EMPTY_RETRIES)
 
 
 class TestBaseAgent(unittest.TestCase):
