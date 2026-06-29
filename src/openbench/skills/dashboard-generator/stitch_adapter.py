@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any
 from .adapter_base import BaseAdapter, DashboardRenderResult
 from .default_adapter import DefaultGeneratorAdapter
+
+logger = logging.getLogger(__name__)
 
 _PROJECT_RE = re.compile(r"projects/([A-Za-z0-9_-]+)")
 _SCREEN_RE = re.compile(r"screens/([A-Za-z0-9_-]+)")
@@ -167,13 +170,13 @@ class StitchAdapter(BaseAdapter):
 
         html_download_url = _extract_html_download_url(resolved_payload)
         if not html_text and html_download_url:
-            print("DEBUG: Downloading Stitch HTML:", html_download_url)
+            logger.debug("Downloading Stitch HTML: %s", html_download_url)
             html_text = self._download_html(html_download_url)
             if "<html" not in html_text.lower():
                 raise ValueError("Downloaded Stitch file is not an HTML document.")
 
         if html_text:
-            print("DEBUG: STITCH HTML USED TRUE")
+            logger.debug("Stitch-provided HTML used for dashboard output")
             self.output_path.parent.mkdir(parents=True, exist_ok=True)
             self.output_path.write_text(html_text, encoding="utf-8")
         else:
