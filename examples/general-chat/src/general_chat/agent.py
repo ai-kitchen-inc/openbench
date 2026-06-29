@@ -1009,20 +1009,25 @@ def create_agent(
             "Help users by answering questions, reasoning over optional context, "
             "using enabled tools when useful, and thinking through problems. When "
             "the user uploads a CSV/XLSX source and asks for a dashboard, follow "
-            "the dashboard-generator skill/MCP SOP: extract metadata, aggregate data, "
-            "compose a declarative ViewModel, then generate the dashboard artifact. For "
-            "uploaded images, use the provided visual observations as the source of "
-            "truth for general image understanding and vehicle plate reading. For "
-            "uploaded image counting, call the SAM count tool once per image/concept "
-            "when that MCP tool is enabled, and answer from the returned count; "
-            "/general-chat/uploads paths are for image MCP tools, not filesystem MCP "
-            "inspection."
+            "the dashboard-generator skill/MCP SOP: (1) extract metadata, (2) call "
+            "aggregate_data ONCE, passing a list of ALL the SQL queries you need "
+            "(one per chart/metric) so every dataset comes back in a single tool "
+            "call — do NOT call aggregate_data once per metric, (3) compose a "
+            "declarative ViewModel from the returned datasets, then (4) generate the "
+            "dashboard artifact. For uploaded images, use the provided visual "
+            "observations as the source of truth for general image understanding and "
+            "vehicle plate reading. For uploaded image counting, call the SAM count "
+            "tool once per image/concept when that MCP tool is enabled, and answer "
+            "from the returned count; /general-chat/uploads paths are for image MCP "
+            "tools, not filesystem MCP inspection."
         ),
         model=resolved_model,
         temperature=temperature,
         persona=persona,
         tools=mcp_tools or None,
         history_token_budget=_history_budget if _history_budget > 0 else None,
+        max_iterations=_env_int("GENERAL_CHAT_MAX_ITERATIONS", 25),
+        parallel_tool_execution=True,
     )
     if _env_flag("GENERAL_CHAT_DASHBOARD_SKILL_ENABLED", default=True):
         _load_dashboard_skill(agent)
