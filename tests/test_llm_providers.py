@@ -18,7 +18,7 @@ class TestGeminiLLMProviderInit(unittest.TestCase):
         self.assertEqual(provider.api_key, "test-key")
         self.assertEqual(provider.model, "gemini-2.5-flash")
         self.assertEqual(provider.temperature, 0.7)
-        self.assertEqual(provider.max_output_tokens, 8192)
+        self.assertEqual(provider.max_output_tokens, 32768)
 
     def test_custom_init(self):
         """Test initialization with custom values."""

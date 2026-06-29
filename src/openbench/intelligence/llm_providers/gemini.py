@@ -52,7 +52,13 @@ class GeminiLLMProvider(_GeminiToolConversionMixin, _GeminiResponseMixin, LLMPro
         api_key: Google API key. Falls back to GOOGLE_API_KEY env var.
         model: Default model ID (default: "gemini-2.5-flash").
         temperature: Default generation temperature (default: 0.7).
-        max_output_tokens: Default max output tokens (default: 8192)."""
+        max_output_tokens: Default max output tokens (default: 32768).
+
+            Gemini 2.5/3 reasoning ("thinking") tokens count against this budget,
+            so a tight cap with a large prompt can end a turn at MAX_TOKENS before
+            any answer text is produced. 32768 leaves room for thinking plus the
+            answer; the model still stops when done, so normal replies are not
+            made longer."""
 
     _INLINE_MEDIA_LIMIT = 18 * 1024 * 1024
 
@@ -61,7 +67,7 @@ class GeminiLLMProvider(_GeminiToolConversionMixin, _GeminiResponseMixin, LLMPro
         api_key: str | None = None,
         model: str = "gemini-2.5-flash",
         temperature: float = 0.7,
-        max_output_tokens: int = 8192,
+        max_output_tokens: int = 32768,
         **kwargs,
     ):
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
