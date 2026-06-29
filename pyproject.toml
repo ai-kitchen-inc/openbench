@@ -274,7 +274,7 @@ disable_error_code = ["arg-type", "union-attr", "misc"]
 [[tool.mypy.overrides]]
 module = [
     "openbench.core.providers",
-    "openbench.chat.transport.agui",
+    "openbench.chat.transport.agui.*",
 ]
 disable_error_code = ["assignment"]
 
