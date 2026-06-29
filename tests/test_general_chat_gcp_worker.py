@@ -44,8 +44,21 @@ class FakeGCSFileStore:
     def verify_uploaded_object(self, file_id: str):
         return self.stored if file_id == self.stored.id else None
 
+    def get_by_object(self, object_name: str):
+        # Mirrors GCSFileStore.get_by_object: resolve a StoredFile by exact
+        # object name (the worker addresses blobs straight from the finalize
+        # event instead of scanning list_blobs).
+        if object_name and object_name in self.stored.web_view_link:
+            return self.stored
+        return None
+
     def get_local_path(self, file_id: str):
         return self.stored.path if file_id == self.stored.id else None
+
+    def get_local_path_for_object(self, object_name: str, file_id: str):
+        if file_id == self.stored.id and object_name in self.stored.web_view_link:
+            return self.stored.path
+        return None
 
     def object_name_for_derived(self, **_kwargs):
         return "derived/default/thread-1/file-abc123/extracted.md"

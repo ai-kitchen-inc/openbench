@@ -83,6 +83,10 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
         part = MagicMock()
         part.function_call = fc
         raw_content = MagicMock()
+        # Replayed assistant raw_content comes back from Gemini already tagged
+        # as the model turn; the provider appends it verbatim, so the mock must
+        # carry a real role string (not an auto-generated MagicMock attribute).
+        raw_content.role = "model"
         raw_content.parts = [part]
         return raw_content
 
