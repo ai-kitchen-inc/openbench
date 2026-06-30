@@ -106,6 +106,12 @@ class GoogleCloudStorageBackend:
     @classmethod
     def from_env(cls, *, user_id: str = "default", session_id: str = "default"):
         bucket_name = os.environ["GENERAL_CHAT_GCP_BUCKET"]
+        # When no Postgres is configured, sessions/memory fall back to a local
+        # backend. Root it at the persistent storage volume
+        # (GENERAL_CHAT_STORAGE_ROOT, e.g. the mounted /app-data/openbench) so
+        # chat history survives container restarts instead of landing in an
+        # ephemeral tempdir. Falls back to the tempdir default when unset.
+        local_root = os.environ.get("GENERAL_CHAT_STORAGE_ROOT") or None
         return cls(
             bucket_name=bucket_name,
             database_url=os.environ.get("GENERAL_CHAT_DATABASE_URL"),
@@ -115,6 +121,7 @@ class GoogleCloudStorageBackend:
             outputs_prefix=os.environ.get("GENERAL_CHAT_GCP_OUTPUTS_PREFIX", "outputs"),
             derived_prefix=os.environ.get("GENERAL_CHAT_GCP_DERIVED_PREFIX", "derived"),
             cache_root=os.environ.get("GENERAL_CHAT_GCP_CACHE_ROOT"),
+            local_root=local_root,
         )
 
     def __repr__(self) -> str:
