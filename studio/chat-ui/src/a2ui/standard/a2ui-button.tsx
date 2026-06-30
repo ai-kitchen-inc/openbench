@@ -26,7 +26,11 @@ function validateSurface(surface: {
   dataModel: Record<string, unknown>;
 }): string[] {
   const allErrors: string[] = [];
-  for (const comp of surface.components.values()) {
+  // Historical sessions persist a bare {surfaceId} without a components Map.
+  // Guard so a click on such a surface never crashes (mirrors SurfaceRenderer).
+  const components = surface?.components;
+  if (!components || typeof components.values !== "function") return allErrors;
+  for (const comp of components.values()) {
     const checks = comp.checks as unknown[];
     if (!Array.isArray(checks) || checks.length === 0) continue;
 
