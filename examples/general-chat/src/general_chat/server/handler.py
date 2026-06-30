@@ -602,6 +602,7 @@ class GeneralChatHandler(AGUIHandler):
         def provider(request):
             return self._mcp_permission_coordinator.request_permission(
                 session_id=session_id,
+                run_id=run_id,
                 request=request,
                 queue=queue,
                 loop=loop,

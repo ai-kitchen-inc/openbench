@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import threading
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,10 +20,17 @@ from openbench.mcp.permissions import MCPPermissionRequest
 class PendingMCPPermission:
     request_id: str
     session_id: str
+    run_id: str
     surface_id: str
     request: MCPPermissionRequest
     event: threading.Event
+    queue: Any = None
+    loop: Any = None
     response: str | None = None
+
+
+# Max number of run ids to remember as "allow all" before evicting the oldest.
+_ALLOW_ALL_RUNS_CAP = 1000
 
 
 class GeneralChatMCPPermissionCoordinator:
@@ -37,23 +45,25 @@ class GeneralChatMCPPermissionCoordinator:
         self._builder = A2UIMessageBuilder()
         self._pending: dict[str, PendingMCPPermission] = {}
         self._lock = threading.Lock()
-        # session_id -> set of tool names the user chose to "Always allow".
-        # Keyed by tool name (not arguments) so every later call of that tool
-        # skips the prompt, even though its arguments differ each time.
-        self._always_allowed: dict[str, set[str]] = {}
+        # run_id -> True for runs where the user clicked "Always allow".
+        # Scope is one user message (run): clicking it approves every tool call
+        # in that run, and the next message prompts again. Bounded so a
+        # long-lived process does not leak run ids forever.
+        self._allow_all_runs: OrderedDict[str, bool] = OrderedDict()
 
     def request_permission(
         self,
         *,
         session_id: str,
+        run_id: str,
         request: MCPPermissionRequest,
         queue: Any,
         loop: Any,
     ) -> str | None:
-        # Session-scoped "Always allow": once approved, skip the prompt for
-        # every subsequent call of the same tool in this session.
+        # Run-scoped "Always allow": once approved for this run (one user
+        # message), skip the prompt for every subsequent tool call in the run.
         with self._lock:
-            if request.tool_name in self._always_allowed.get(session_id, set()):
+            if run_id and run_id in self._allow_all_runs:
                 return "yes"
 
         request_id = f"mcp-perm-{uuid.uuid4().hex[:12]}"
@@ -61,9 +71,12 @@ class GeneralChatMCPPermissionCoordinator:
         pending = PendingMCPPermission(
             request_id=request_id,
             session_id=session_id,
+            run_id=run_id,
             surface_id=surface_id,
             request=request,
             event=threading.Event(),
+            queue=queue,
+            loop=loop,
         )
         with self._lock:
             self._pending[request_id] = pending
@@ -103,10 +116,27 @@ class GeneralChatMCPPermissionCoordinator:
             )
 
         if decision == "allow_session":
+            # "Always allow" = approve every tool call in this run (one user
+            # message). Record the run, then release any sibling prompts already
+            # blocked on their events (parallel tool calls in the same run).
             with self._lock:
-                self._always_allowed.setdefault(pending.session_id, set()).add(
-                    pending.request.tool_name
-                )
+                if pending.run_id:
+                    self._allow_all_runs[pending.run_id] = True
+                    self._allow_all_runs.move_to_end(pending.run_id)
+                    while len(self._allow_all_runs) > _ALLOW_ALL_RUNS_CAP:
+                        self._allow_all_runs.popitem(last=False)
+                    siblings = [
+                        other
+                        for other in self._pending.values()
+                        if other.run_id == pending.run_id and other.request_id != request_id
+                    ]
+                else:
+                    siblings = []
+            for other in siblings:
+                other.response = "yes"
+                other.event.set()
+                if other.queue is not None and other.loop is not None:
+                    self._emit(other.queue, other.loop, self._build_update(other, status="approved"))
 
         pending.response = "no" if decision == "deny" else "yes"
         pending.event.set()
@@ -186,7 +216,11 @@ class GeneralChatMCPPermissionCoordinator:
         request = pending.request
         title = "MCP tool permission"
         status_text = {
-            "pending": "Waiting for your approval before the tool runs.",
+            "pending": (
+                "Waiting for your approval before the tool runs. "
+                "“Always allow” approves every tool for this message; "
+                "the next message will ask again."
+            ),
             "approved": "Approved. The tool is running now.",
             "denied": "Denied. The tool was not run.",
             "timeout": "Timed out. The tool was not run.",
