@@ -235,6 +235,23 @@ def _build_storage_backend(storage_root: str, *, session_id: str = "default"):
     )
 
 
+def _build_attachment_archiver():
+    """Build the forever-archive uploader, or ``None`` when the feature is off.
+
+    Gated on GENERAL_CHAT_ARCHIVE_BUCKET (a dedicated standalone bucket),
+    independent of the primary storage backend.
+    """
+    if not os.getenv("GENERAL_CHAT_ARCHIVE_BUCKET"):
+        return None
+    try:
+        from openbench.integrations.gcp import AttachmentArchiver
+
+        return AttachmentArchiver.from_env()
+    except Exception:
+        logger.warning("Attachment archiver init failed; archiving disabled", exc_info=True)
+        return None
+
+
 async def _read_upload_limited(file: UploadFile, max_bytes: int) -> bytes:
     chunks: list[bytes] = []
     total = 0
@@ -332,6 +349,7 @@ def create_app() -> FastAPI:
     storage = _build_storage_backend(storage_root)
     publish_store = PublishStore(storage_root)
     file_store = LocalFileStore(upload_dir=upload_dir)
+    archiver = _build_attachment_archiver()
     extractor = DoclingContentExtractor()
     source_parser = SourceParserRegistry(document_extractor=extractor)
     source_store = build_source_store(storage_root)
@@ -356,6 +374,21 @@ def create_app() -> FastAPI:
         if not _gcp_enabled():
             return file_store
         return _storage_for_session(session_id).file_store()
+
+    def _archive_attachment(filename: str, content: bytes, mime_type: str, session_id: str) -> None:
+        """Best-effort copy of an upload into the forever-archive (never raises)."""
+        if archiver is None:
+            return
+        try:
+            archiver.archive(
+                filename,
+                content,
+                mime_type,
+                user_id=os.getenv("GENERAL_CHAT_GCP_USER_ID", "default"),
+                session_id=session_id,
+            )
+        except Exception:
+            logger.warning("Attachment archive failed for %r", filename, exc_info=True)
 
     def _mcp_upload_path(stored) -> str:
         destination = Path(upload_dir) / stored.id / Path(stored.name).name
@@ -866,6 +899,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=f"Unsupported attachment type: {mime_type}")
         target_session_id = session_id or "default"
         content = await _read_upload_limited(file, multipart_upload_max_bytes)
+        _archive_attachment(filename, content, mime_type, target_session_id)
         stored = _file_store_for_session(target_session_id).store(filename, content, mime_type)
         attachment = _attachment_from_stored_file(stored)
         print(
@@ -938,6 +972,7 @@ def create_app() -> FastAPI:
             )
 
         content = await _read_upload_limited(file, multipart_upload_max_bytes)
+        _archive_attachment(filename, content, mime_type, target_session_id)
         user_file_store = _file_store_for_session(target_session_id)
         stored = user_file_store.store(filename, content, mime_type)
         if _gcp_enabled():
