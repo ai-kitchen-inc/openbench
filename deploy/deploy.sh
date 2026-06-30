@@ -55,6 +55,7 @@ VM_PUBLIC_IP="${VM_PUBLIC_IP:-35.188.138.52}"
 HOSTING_URL="${HOSTING_URL:-https://sss-poc1-corporate.web.app}"
 
 FRONTEND_DIR="${FRONTEND_DIR:-examples/general-chat/frontend}"
+CHATUI_DIR="${CHATUI_DIR:-studio/chat-ui}"
 FIREBASE_DIR="${FIREBASE_DIR:-examples/general-chat}"
 NGINX_CONF="${NGINX_CONF:-deploy/nginx-openbench-api.conf}"
 NGINX_SITE_PATH="${NGINX_SITE_PATH:-/etc/nginx/sites-available/openbench-api}"
@@ -130,6 +131,13 @@ cmd_backend() {
 
 # --- frontend ----------------------------------------------------------------
 cmd_frontend() {
+  log "Building workspace SDK ($CHATUI_DIR) so the SPA bundles the latest chat-ui"
+  "$PNPM" -C "$CHATUI_DIR" build || die "chat-ui build failed"
+  # pnpm caches file: deps as a store copy keyed by path, not content, so a
+  # changed dist is NOT picked up without a forced reinstall.
+  "$PNPM" -C "$FRONTEND_DIR" install --force || die "frontend dep refresh failed"
+  ok "rebuilt $CHATUI_DIR/dist and refreshed the SPA dep"
+
   log "Building SPA ($FRONTEND_DIR) → VITE_BACKEND_URL=$VITE_BACKEND_URL"
   "$PNPM" -C "$FRONTEND_DIR" build || die "frontend build failed"
   ok "built $FRONTEND_DIR/dist"
