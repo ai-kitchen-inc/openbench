@@ -16,6 +16,7 @@
 #   nginx          Sync compose + nginx reverse-proxy config to the VM, reload nginx
 #   add-user EMAIL    Add an email to the backend allowlist and restart the API
 #   remove-user EMAIL Remove an email from the backend allowlist and restart the API
+#   seed-mcp-db FILE  Load a .sql file into the db_server MCP's SQLite database
 #   verify         Probe the live deployment (health/auth/hardening/network)
 #   all            backend → frontend → verify
 #   help           Print this help + the resource inventory
@@ -44,6 +45,10 @@ PROJECT_ID="${PROJECT_ID:-sss-poc1-corporate}"
 REGION="${REGION:-us-central1}"
 IMAGE="${IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/general-chat:latest}"
 CLOUDBUILD_CONFIG="${CLOUDBUILD_CONFIG:-cloudbuild.general-chat.yaml}"
+
+# db_server MCP: VM host dir for the SQLite file + the sqlite3 image used to seed it.
+MCP_DB_DATA_PATH_VM="${MCP_DB_DATA_PATH_VM:-/app-data/mcp-db}"
+SQLITE_IMAGE="${SQLITE_IMAGE:-nouchka/sqlite3}"
 
 VM_NAME="${VM_NAME:-openbench-general-chat}"
 VM_ZONE="${VM_ZONE:-us-central1-a}"
@@ -198,6 +203,24 @@ cmd_remove_user() {
   ok "allowlist updated (API restarting if changed)"
 }
 
+# --- seed-mcp-db -------------------------------------------------------------
+# Load data into the db_server MCP's SQLite file. The server is read-only (the
+# chat agent can only query), so data is added here: copy a local .sql to the VM
+# and apply it to the shared volume via a throwaway sqlite3 container (no VM deps).
+cmd_seed_mcp_db() {
+  local file="${1:-}"
+  [ -n "$file" ] || die "usage: deploy.sh seed-mcp-db FILE.sql"
+  [ -f "$file" ] || die "no such file: $file"
+  log "Seeding db_server SQLite on the VM from $file"
+  "$GCLOUD" compute scp "$file" "$VM_NAME:/tmp/mcp-db-seed.sql" --zone "$VM_ZONE" \
+    || die "scp of seed file failed"
+  vm_ssh "sudo mkdir -p $MCP_DB_DATA_PATH_VM && \
+    sudo docker run --rm -i -v $MCP_DB_DATA_PATH_VM:/data $SQLITE_IMAGE /data/default.db < /tmp/mcp-db-seed.sql && \
+    rm -f /tmp/mcp-db-seed.sql && echo SEEDED" \
+    || die "seed failed"
+  ok "SQLite seeded — db_server picks it up on its next tool call"
+}
+
 # --- verify ------------------------------------------------------------------
 cmd_verify() {
   log "Verifying live deployment"
@@ -241,8 +264,9 @@ case "${1:-help}" in
   nginx)    cmd_nginx ;;
   add-user) shift; cmd_add_user "${1:-}" ;;
   remove-user) shift; cmd_remove_user "${1:-}" ;;
+  seed-mcp-db) shift; cmd_seed_mcp_db "${1:-}" ;;
   verify)   cmd_verify ;;
   all)      cmd_backend; cmd_frontend; cmd_verify ;;
   help|-h|--help) cmd_help ;;
-  *) die "unknown command '$1' (try: backend|frontend|nginx|add-user|remove-user|verify|all|help)" ;;
+  *) die "unknown command '$1' (try: backend|frontend|nginx|add-user|remove-user|seed-mcp-db|verify|all|help)" ;;
 esac

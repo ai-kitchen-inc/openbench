@@ -18,6 +18,7 @@ BUNDLED_MCP_CONFIGS = (
     "sam-segmentation-docker.yaml",
     "docker-mcp-gateway.yaml",
     "dashboard-generator-stdio.yaml",
+    "db-server-docker.yaml",
 )
 
 

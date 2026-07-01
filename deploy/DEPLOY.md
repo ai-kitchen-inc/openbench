@@ -92,6 +92,8 @@ Or individually:
 | `deploy/deploy.sh frontend` | `pnpm build` the SPA with the right `VITE_*`, `firebase deploy --only hosting`. |
 | `deploy/deploy.sh nginx` | scp `docker-compose.gce.yml` + nginx conf to the VM, `nginx -t` + reload. Run only when those files change. |
 | `deploy/deploy.sh add-user EMAIL` | Append `EMAIL` to the allowlist on the VM and restart the API (idempotent). |
+| `deploy/deploy.sh remove-user EMAIL` | Remove `EMAIL` from the allowlist on the VM and restart the API (idempotent). |
+| `deploy/deploy.sh seed-mcp-db FILE.sql` | Load a `.sql` file into the `db_server` MCP's SQLite database on the VM. |
 | `deploy/deploy.sh verify` | Probe health/auth/hardening/network on the live deployment. |
 
 All identifiers are defaults in `deploy.sh`; override any via env or a gitignored
@@ -143,6 +145,32 @@ and restart the API container. They are idempotent — `add-user` is a no-op if
 the email is already present, `remove-user` a no-op if it is absent.
 The Firebase Console Users page only **views/disables** accounts — it does not
 grant app access (the allowlist does).
+
+## MCP DB server (db_server, SQLite)
+
+The `db_server` MCP ([souhardyak/mcp-db-server](https://github.com/Souhar-dya/mcp-db-server))
+lets the chat agent explore a SQLite database (`list_tables` / `describe` / `query`). It is
+bundled and seeded on startup like the other docker MCP servers — the API spawns it via the
+mounted docker socket with a `-v ${MCP_DB_DATA_PATH}:/data` volume so the DB file persists at
+`/app-data/mcp-db/default.db` on the VM across the `--rm` containers.
+
+The server is **read-only** — the agent can only run `SELECT`s, never writes. Add or replace
+data out-of-band with a `.sql` file:
+
+```bash
+# Edit deploy/mcp-db/seed.example.sql (or write your own CREATE TABLE + INSERTs), then:
+bash deploy/deploy.sh seed-mcp-db deploy/mcp-db/seed.example.sql
+```
+
+`seed-mcp-db` scp's the file to the VM and applies it via a throwaway `nouchka/sqlite3`
+container against the same volume — re-runnable, apply as many files as you like. First-time
+setup: pre-pull both images so the initial calls aren't slow, then roll out:
+
+```bash
+sudo docker pull souhardyak/mcp-db-server:1.3.1
+sudo docker pull nouchka/sqlite3
+bash deploy/deploy.sh backend
+```
 
 ## Verify
 
