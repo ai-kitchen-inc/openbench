@@ -138,10 +138,9 @@ export function useChat(config: ChatConfig): UseChatReturn {
   }, [transport, streamManager, store]);
 
   // Hydrate sessions from the backend on mount.
-  // If the server returns any sessions, merge them into the store and
-  // skip auto-creating a new one. If the backend has no session store
-  // (empty list or 404), fall back to the original "create one if
-  // empty" behavior so the app works without persistence.
+  // Server sessions populate the sidebar as history, but the app always
+  // opens on a fresh session so the first message starts a new chat tab
+  // instead of appending to the most recent persisted session.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -156,7 +155,9 @@ export function useChat(config: ChatConfig): UseChatReturn {
           updatedAt: s.updatedAt,
         }));
         store.getState().hydrateSessions(placeholders);
-      } else if (store.getState().sessions.length === 0) {
+      }
+      // Always ensure a fresh active session to type into.
+      if (store.getState().activeSessionId == null) {
         store.getState().createSession();
       }
     })();

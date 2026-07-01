@@ -697,10 +697,12 @@ describe("ChatStore", () => {
       updatedAt: "2026-04-16T10:05:00Z",
     };
 
-    it("populates empty store and selects first as active", () => {
+    it("populates the sidebar without auto-selecting an active session", () => {
       state().hydrateSessions([s1, s2]);
       expect(state().sessions.map((s) => s.id)).toEqual(["srv-1", "srv-2"]);
-      expect(state().activeSessionId).toBe("srv-1");
+      // History hydration must NOT hijack the active session — the app opens
+      // on a fresh session so the first message starts a new chat.
+      expect(state().activeSessionId).toBeNull();
     });
 
     it("preserves local-only sessions alongside server sessions", () => {
@@ -758,7 +760,7 @@ describe("ChatStore", () => {
         updatedAt: "2026-04-17T10:00:00Z",
       };
       state().hydrateSessions([s]);
-      // srv-1 is active after hydration
+      state().switchSession("srv-1"); // make srv-1 the active view
       state().hydrateSessionMessages("srv-1", [msg]);
       expect(state().messages).toHaveLength(1);
     });
@@ -779,6 +781,7 @@ describe("ChatStore", () => {
         updatedAt: "2026-04-16T10:00:00Z",
       };
       state().hydrateSessions([s1hyd, s2hyd]);
+      state().switchSession("srv-1"); // make srv-1 the active view
       state().hydrateSessionMessages("srv-2", [msg]);
       expect(state().messages).toHaveLength(0); // srv-1 is active, unaffected
     });
