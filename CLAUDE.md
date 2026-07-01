@@ -31,7 +31,8 @@ resource inventory. All deploy actions go through [deploy/deploy.sh](deploy/depl
 bash deploy/deploy.sh all            # build image + roll out VM + deploy SPA + verify
 bash deploy/deploy.sh backend        # API image → Cloud Build → VM
 bash deploy/deploy.sh frontend       # SPA → Firebase Hosting
-bash deploy/deploy.sh add-user EMAIL # grant a Google account access (allowlist)
+bash deploy/deploy.sh add-user EMAIL    # grant a Google account access (allowlist)
+bash deploy/deploy.sh remove-user EMAIL # revoke a Google account's access (allowlist)
 bash deploy/deploy.sh verify         # probe the live deployment
 ```
 

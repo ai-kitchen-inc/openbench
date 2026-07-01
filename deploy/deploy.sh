@@ -14,7 +14,8 @@
 #   backend        Build the API image (Cloud Build) and roll it out on the VM
 #   frontend       Build the SPA and deploy it to Firebase Hosting
 #   nginx          Sync compose + nginx reverse-proxy config to the VM, reload nginx
-#   add-user EMAIL Add an email to the backend allowlist and restart the API
+#   add-user EMAIL    Add an email to the backend allowlist and restart the API
+#   remove-user EMAIL Remove an email from the backend allowlist and restart the API
 #   verify         Probe the live deployment (health/auth/hardening/network)
 #   all            backend → frontend → verify
 #   help           Print this help + the resource inventory
@@ -177,6 +178,26 @@ cmd_add_user() {
   ok "allowlist updated (API restarting if changed)"
 }
 
+# --- remove-user -------------------------------------------------------------
+cmd_remove_user() {
+  local email="${1:-}"
+  [ -n "$email" ] || die "usage: deploy.sh remove-user EMAIL"
+  log "Removing $email from GENERAL_CHAT_ALLOWED_EMAILS on the VM"
+  # Idempotent: rewrite only if present; back up .env.gcp first. Splits the
+  # list on commas and drops the matching entry (any position, no dangling
+  # commas) via a case-insensitive whole-line awk filter.
+  vm_ssh "cd $VM_DEPLOY_DIR && cp .env.gcp .env.gcp.bak-\$(date +%s) && \
+    cur=\$(grep '^GENERAL_CHAT_ALLOWED_EMAILS=' .env.gcp | cut -d= -f2-) && \
+    if echo \",\$cur,\" | grep -qi \",$email,\"; then \
+      new=\$(echo \"\$cur\" | tr ',' '\n' | awk -v e=\"$email\" 'tolower(\$0)!=tolower(e)' | paste -sd, -); \
+      sed -i \"s|^GENERAL_CHAT_ALLOWED_EMAILS=.*|GENERAL_CHAT_ALLOWED_EMAILS=\$new|\" .env.gcp && \
+      sudo docker-compose --env-file .env.gcp -f $COMPOSE_FILE up -d openbench-api && echo REMOVED; \
+    else echo NOT_PRESENT; fi && \
+    grep '^GENERAL_CHAT_ALLOWED_EMAILS=' .env.gcp" \
+    || die "remove-user failed"
+  ok "allowlist updated (API restarting if changed)"
+}
+
 # --- verify ------------------------------------------------------------------
 cmd_verify() {
   log "Verifying live deployment"
@@ -219,8 +240,9 @@ case "${1:-help}" in
   frontend) cmd_frontend ;;
   nginx)    cmd_nginx ;;
   add-user) shift; cmd_add_user "${1:-}" ;;
+  remove-user) shift; cmd_remove_user "${1:-}" ;;
   verify)   cmd_verify ;;
   all)      cmd_backend; cmd_frontend; cmd_verify ;;
   help|-h|--help) cmd_help ;;
-  *) die "unknown command '$1' (try: backend|frontend|nginx|add-user|verify|all|help)" ;;
+  *) die "unknown command '$1' (try: backend|frontend|nginx|add-user|remove-user|verify|all|help)" ;;
 esac

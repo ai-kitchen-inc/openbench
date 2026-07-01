@@ -136,9 +136,11 @@ curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
 
 ```bash
 bash deploy/deploy.sh add-user someone@gmail.com
+bash deploy/deploy.sh remove-user someone@gmail.com
 ```
-Removal: edit `GENERAL_CHAT_ALLOWED_EMAILS` in the VM `.env.gcp` and
-`sudo docker-compose --env-file .env.gcp -f docker-compose.gce.yml up -d openbench-api`.
+Both edit `GENERAL_CHAT_ALLOWED_EMAILS` in the VM `.env.gcp` (backed up first)
+and restart the API container. They are idempotent — `add-user` is a no-op if
+the email is already present, `remove-user` a no-op if it is absent.
 The Firebase Console Users page only **views/disables** accounts — it does not
 grant app access (the allowlist does).
 
