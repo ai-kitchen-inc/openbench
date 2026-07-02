@@ -29,6 +29,7 @@ import { filterServers, type RegistryFilters, type SortMode, type StatusFilter }
 import type {
   MCPDiscoveredTool,
   MCPRegistryPayload,
+  MCPSecretMetadata,
   RegisteredMCPServer,
   ToolHiveRegistryServer,
   ToolHiveStatus,
@@ -37,7 +38,7 @@ import type {
 
 const EXAMPLE_CONFIG = `{
   "mcpServers": {
-    "playwright": {
+    "custom_docker": {
       "command": "docker",
       "args": [
         "run",
@@ -60,6 +61,23 @@ const TOOLHIVE_DOC_SERVER = "toolhive-doc-mcp";
 function readErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+type SecretRow = {
+  id: string;
+  key: string;
+  value: string;
+};
+
+function buildSecretPayload(rows: SecretRow[]): Record<string, string> | undefined {
+  const payload: Record<string, string> = {};
+  for (const row of rows) {
+    const key = row.key.trim();
+    const value = row.value.trim();
+    if (!key || !value) continue;
+    payload[key] = value;
+  }
+  return Object.keys(payload).length ? payload : undefined;
 }
 
 function toolHiveModeLabel(status: ToolHiveStatus | null): string {
@@ -132,13 +150,18 @@ function ImportDialog({
   const [config, setConfig] = useState(EXAMPLE_CONFIG);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const nextSecretId = useRef(2);
+  const [secretRows, setSecretRows] = useState<SecretRow[]>([{ id: "secret-1", key: "", value: "" }]);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setIsSubmitting(true);
     setError("");
     try {
-      const payload = await importMCPConfig({ config });
+      const payload = await importMCPConfig({
+        config,
+        secrets: buildSecretPayload(secretRows),
+      });
       onImported(payload);
       onClose();
     } catch (error) {
@@ -165,6 +188,68 @@ function ImportDialog({
         <div className="mcp-warning">
           Validation checks the JSON shape only. OpenBench starts command-based MCP servers only when you load tools or use chat.
         </div>
+        <div className="mcp-config-list">
+          <h3>Docker env</h3>
+          <div className="mcp-warning">
+            Docker env values entered here or pasted in JSON <code>env</code> are encrypted before saving and only injected at runtime. Use <code>{'${ENV_VAR}'}</code> to read from your local environment instead.
+          </div>
+          <div className="mcp-config-list">
+            {secretRows.map((row) => (
+              <div key={row.id} className="mcp-detail-grid mcp-detail-grid--forms">
+                <label className="mcp-field">
+                  <span>Key</span>
+                  <input
+                    value={row.key}
+                    placeholder="GRAFANA_API_KEY"
+                    onChange={(event) =>
+                      setSecretRows((current) =>
+                        current.map((item) =>
+                          item.id === row.id ? { ...item, key: event.target.value } : item,
+                        ),
+                      )
+                    }
+                  />
+                </label>
+                <label className="mcp-field">
+                  <span>Value</span>
+                  <input
+                    type="password"
+                    value={row.value}
+                    autoComplete="off"
+                    placeholder="Docker env value"
+                    onChange={(event) =>
+                      setSecretRows((current) =>
+                        current.map((item) =>
+                          item.id === row.id ? { ...item, value: event.target.value } : item,
+                        ),
+                      )
+                    }
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="mcp-btn"
+                  onClick={() =>
+                    setSecretRows((current) => current.filter((item) => item.id !== row.id))
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="mcp-btn"
+            onClick={() => {
+              const id = `secret-${nextSecretId.current}`;
+              nextSecretId.current += 1;
+              setSecretRows((current) => [...current, { id, key: "", value: "" }]);
+            }}
+          >
+            Add env
+          </button>
+        </div>
         {error && (
           <div className="mcp-state mcp-state--error" role="alert">
             {error}
@@ -186,8 +271,12 @@ function ImportDialog({
 function statusClass(server: RegisteredMCPServer): string {
   if (!server.enabled) return "";
   if (server.status === "failed" || server.status === "unavailable") return " mcp-pill--error";
-  if (server.status === "running" || server.status === "enabled") return " mcp-pill--success";
+  if (server.status === "running" || server.status === "enabled" || server.status === "registered") return " mcp-pill--success";
   return "";
+}
+
+function providerLabel(server: RegisteredMCPServer): string {
+  return server.providerKind ?? server.provider_kind ?? server.sourceType ?? server.source_type ?? server.source ?? "manual";
 }
 
 function parameterSummary(schema: Record<string, unknown>): string {
@@ -205,6 +294,10 @@ function parameterSummary(schema: Record<string, unknown>): string {
 
 function ConfigPreview({ config }: { config: Record<string, unknown> }) {
   return <pre className="mcp-config-preview">{JSON.stringify(config, null, 2)}</pre>;
+}
+
+function serverSecrets(server: RegisteredMCPServer): MCPSecretMetadata[] {
+  return server.secretMetadata ?? server.secret_metadata ?? server.secrets ?? [];
 }
 
 function buildUrlConfig(name: string, url: string): string {
@@ -285,7 +378,7 @@ function ToolHiveSection({
     try {
       const payload = await importRunningToolHiveWorkloads([name]);
       onImported(payload);
-      toast.show(payload.reload?.error ? `Imported, but reload reported: ${payload.reload.error}` : "ToolHive server imported", payload.reload?.error ? "error" : "success");
+      toast.show("ToolHive server imported", "success");
     } catch (error) {
       toast.show(`Could not add ToolHive server: ${readErrorMessage(error)}`, "error");
     } finally {
@@ -568,6 +661,9 @@ function ToolList({
           <div>
             <strong>{tool.name}</strong>
             <p>{tool.description || "No description provided."}</p>
+            {tool.loaded && (
+              <code>{tool.registeredToolName ?? tool.registered_tool_name ?? tool.namespacedName}</code>
+            )}
             <code>{parameterSummary(tool.inputSchema ?? tool.input_schema ?? {})}</code>
           </div>
         </div>
@@ -593,6 +689,7 @@ function ServerCard({
     <article className="mcp-card">
       <button type="button" className="mcp-card__main" onClick={() => onOpen(server)}>
         <div className="mcp-card__meta">
+          <span className="mcp-pill">{providerLabel(server)}</span>
           <span className="mcp-pill">{server.transport}</span>
           <span className={`mcp-pill${statusClass(server)}`}>{server.enabled ? server.status : "disabled"}</span>
         </div>
@@ -619,9 +716,11 @@ function ServerCard({
         <button type="button" className="mcp-btn" onClick={() => onOpen(server)}>
           Details
         </button>
-        <button type="button" className="mcp-btn" onClick={() => onRemove(server)}>
-          Remove
-        </button>
+        {!(server.isManaged ?? server.is_managed) && (
+          <button type="button" className="mcp-btn" onClick={() => onRemove(server)}>
+            Remove
+          </button>
+        )}
       </div>
     </article>
   );
@@ -646,6 +745,10 @@ function DetailsDialog({
         <div className="mcp-detail-grid">
           <span>Transport</span>
           <strong>{server.transport}</strong>
+          <span>Provider</span>
+          <strong>{providerLabel(server)}</strong>
+          <span>Namespace</span>
+          <strong>{server.serverNamespace ?? server.server_namespace ?? server.name}</strong>
           <span>Status</span>
           <strong>{server.enabled ? server.status : "disabled"}</strong>
           <span>Tools</span>
@@ -662,6 +765,28 @@ function DetailsDialog({
           <h3>Server configuration</h3>
           <ConfigPreview config={server.config ?? server.displayConfig} />
         </div>
+        {serverSecrets(server).length > 0 && (
+          <div className="mcp-config-list">
+            <h3>Managed env</h3>
+            <div className="mcp-tool-list">
+              {serverSecrets(server).map((secret) => {
+                const key = secret.secretKey ?? secret.secret_key ?? secret.envKey ?? secret.env_key ?? secret.key;
+                return (
+                  <div key={key} className="mcp-tool-row">
+                    <span className={`mcp-pill${secret.missing ? " mcp-pill--error" : " mcp-pill--success"}`}>
+                      {secret.status}
+                    </span>
+                    <div>
+                      <strong>{key}</strong>
+                      <p>{secret.source === "managed" ? "Encrypted and injected at runtime" : "Local environment fallback"}</p>
+                      <code>{secret.configured ? "***REDACTED***" : "missing"}</code>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div className="mcp-config-list">
           <h3>Tools</h3>
           <ToolList server={server} onToggleTool={onToggleTool} />
@@ -728,7 +853,7 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
     try {
       const result = await discoverServer(server.id);
       replaceServer(result.server);
-      toast.show(result.reload?.error ? `Tools loaded, but chat reload reported: ${result.reload.error}` : "MCP tools loaded", result.reload?.error ? "error" : "success");
+      toast.show(result.reload?.error ? `Chat runtime registration failed: ${result.reload.error}` : "MCP tools loaded", result.reload?.error ? "error" : "success");
     } catch (error) {
       toast.show(`Tool discovery failed: ${readErrorMessage(error)}`, "error");
       await load();
@@ -749,7 +874,7 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
     try {
       const result = await toggleTool(server.id, tool.name, { enabled: !tool.enabled });
       replaceServer(result.server);
-      toast.show(result.reload?.error ? `Tool saved, but chat reload reported: ${result.reload.error}` : "MCP tool updated", result.reload?.error ? "error" : "success");
+      toast.show(result.reload?.error ? `Chat runtime registration failed: ${result.reload.error}` : "MCP tool updated", result.reload?.error ? "error" : "success");
     } catch (error) {
       toast.show(`Could not update tool: ${readErrorMessage(error)}`, "error");
     }

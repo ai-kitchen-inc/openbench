@@ -28,6 +28,9 @@ from openbench.intelligence.base import (
     _tool_result_to_json,
 )
 
+# Mirrors the local cap in BaseAgent.execute (kept in sync by the retry tests).
+_MAX_EMPTY_RETRIES = 2
+
 
 class TestMessageRole(unittest.TestCase):
     """Test MessageRole enum."""
@@ -326,6 +329,83 @@ class MockLLMProvider(LLMProvider):
         )
 
 
+class FailingAfterToolLLMProvider(LLMProvider):
+    """Returns one tool call, then fails when the agent asks for final text."""
+
+    @property
+    def provider_name(self) -> str:
+        return "mock-failing"
+
+    def __init__(self):
+        self.call_count = 0
+
+    def generate(self, prompt: Any, model: str, **params) -> LLMResponse:
+        self.call_count += 1
+        if self.call_count > 1:
+            raise RuntimeError("400 INVALID_ARGUMENT")
+        response = LLMResponse(text="", model=model, tokens_used=10, cost=0.0)
+        response.tool_calls = [{"name": "mock_tool", "arguments": {}}]
+        return response
+
+
+class EmptyResponseLLMProvider(LLMProvider):
+    """Returns empty text with a configurable empty-response finish_reason.
+
+    Used to test that the agent's empty-response retry is skipped for a
+    deterministic MAX_TOKENS dropout but kept for a transient one.
+    """
+
+    def __init__(self, finish_reason: str):
+        self.finish_reason = finish_reason
+        self.call_count = 0
+
+    @property
+    def provider_name(self) -> str:
+        return "mock-empty"
+
+    def generate(self, prompt: Any, model: str, **params) -> LLMResponse:
+        self.call_count += 1
+        return LLMResponse(
+            text="",
+            model=model,
+            tokens_used=10,
+            cost=0.0,
+            metadata={"empty_response_diagnostics": {"finish_reason": self.finish_reason}},
+        )
+
+
+class TestBaseAgentEmptyResponseRetry(unittest.TestCase):
+    """Empty-response retry must be MAX_TOKENS-aware (no wasted retries)."""
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_max_tokens_empty_response_is_not_retried(self, mock_get_service):
+        """A MAX_TOKENS dropout is deterministic — retrying just burns calls."""
+        provider = EmptyResponseLLMProvider("FinishReason.MAX_TOKENS")
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = provider
+        mock_get_service.return_value = mock_service
+
+        agent = BaseAgent(goal="Test goal")
+        result = agent.execute(ExecutionContext(goal="hi"))
+
+        self.assertEqual(provider.call_count, 1)  # one call, no retries
+        self.assertEqual(result.output, "")
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_transient_empty_response_is_retried(self, mock_get_service):
+        """A non-MAX_TOKENS empty turn (Confidence Dropout) still retries."""
+        provider = EmptyResponseLLMProvider("FinishReason.STOP")
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = provider
+        mock_get_service.return_value = mock_service
+
+        agent = BaseAgent(goal="Test goal")
+        agent.execute(ExecutionContext(goal="hi"))
+
+        # initial call + the retries
+        self.assertEqual(provider.call_count, 1 + _MAX_EMPTY_RETRIES)
+
+
 class TestBaseAgent(unittest.TestCase):
     """Test BaseAgent."""
 
@@ -387,6 +467,21 @@ class TestBaseAgent(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.output, "Test response")
         self.assertGreater(result.tokens_used, 0)
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_execute_rolls_back_tool_turn_when_followup_llm_call_fails(self, mock_get_service):
+        """A 400 after a tool result must not leave function responses in memory."""
+        mock_provider = FailingAfterToolLLMProvider()
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = mock_provider
+        mock_get_service.return_value = mock_service
+
+        agent = BaseAgent(goal="Test goal", tools=[MockTool()])
+        result = agent.execute(ExecutionContext(goal="Use the tool"))
+
+        self.assertEqual(result.status, "failed")
+        roles = [message.role for message in agent.memory.messages]
+        self.assertEqual(roles, [MessageRole.SYSTEM, MessageRole.USER])
 
     def test_estimate_cost(self):
         """Test cost estimation."""

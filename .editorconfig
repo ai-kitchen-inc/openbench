@@ -1,0 +1,28 @@
+# EditorConfig — https://editorconfig.org
+# Mirrors the ruff/black configuration in pyproject.toml.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+max_line_length = 100
+
+[*.py]
+indent_size = 4
+
+[*.{ts,tsx,js,jsx,json,css}]
+indent_size = 2
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.md]
+# Preserve trailing whitespace (used for hard line breaks in Markdown).
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab

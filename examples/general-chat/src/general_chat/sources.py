@@ -13,12 +13,13 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
-from openbench.chat.files import StoredFile
-
 from general_chat.extractor import DoclingContentExtractor
+
+if TYPE_CHECKING:
+    from openbench.chat.files import StoredFile
 
 logger = logging.getLogger(__name__)
 
@@ -31,31 +32,109 @@ TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
 DOCUMENT_MIME_TYPES = {
     "application/pdf",
+    "application/epub+zip",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "application/vnd.ms-powerpoint",
 }
-DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt"}
+DOCUMENT_EXTENSIONS = {".pdf", ".epub", ".docx", ".doc", ".pptx", ".ppt"}
 
 EXCEL_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.ms-excel",
 }
 EXCEL_EXTENSIONS = {".xlsx", ".xls"}
+CSV_MIME_TYPES = {"text/csv", "application/csv"}
+CSV_EXTENSIONS = {".csv"}
+SPREADSHEET_MIME_TYPES = EXCEL_MIME_TYPES | CSV_MIME_TYPES
+SPREADSHEET_EXTENSIONS = EXCEL_EXTENSIONS | CSV_EXTENSIONS
 
 TEXT_MIME_TYPES = {"application/json"}
-TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json"}
+TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".json"}
 
-IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+AUDIO_MIME_TYPES = {
+    "audio/mpeg",
+    "audio/wav",
+    "audio/mp4",
+    "audio/ogg",
+    "audio/aac",
+    "audio/flac",
+}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac"}
+
+VIDEO_MIME_TYPES = {"video/mp4", "video/webm", "video/quicktime", "video/x-msvideo"}
+VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".avi"}
+
+IMAGE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/heic",
+    "image/heif",
+    "image/tiff",
+    "image/bmp",
+    "image/svg+xml",
+}
+IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".heic",
+    ".heif",
+    ".tiff",
+    ".tif",
+    ".bmp",
+    ".svg",
+}
 IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT = "/general-chat/uploads"
+UPLOAD_METADATA_KEYS = {
+    "imageSearchPath",
+    "samSegmentationPath",
+    "imageSearchPreviewUrl",
+    "localFilePath",
+}
+_UPLOAD_FILE_ID_PATTERN = re.compile(r"(?:^|/)(file-[A-Za-z0-9_-]+)(?:/|$)")
 
-ALLOWED_EXTENSIONS = DOCUMENT_EXTENSIONS | EXCEL_EXTENSIONS | TEXT_EXTENSIONS | IMAGE_EXTENSIONS
+ALLOWED_EXTENSIONS = (
+    DOCUMENT_EXTENSIONS
+    | SPREADSHEET_EXTENSIONS
+    | TEXT_EXTENSIONS
+    | IMAGE_EXTENSIONS
+    | AUDIO_EXTENSIONS
+    | VIDEO_EXTENSIONS
+)
 
 DUCKDUCKGO_SEARCH_URL = "https://html.duckduckgo.com/html/"
 DUCKDUCKGO_RESULT_ANCHOR = "result__a"
 DUCKDUCKGO_RESULT_SNIPPET = "result__snippet"
+
+
+def _without_nul(value: str) -> str:
+    return value.replace("\x00", "\uFFFD")
+
+
+def _sanitize_json_value(value: Any) -> Any:
+    """Remove NUL characters that PostgreSQL JSONB cannot store."""
+    if isinstance(value, str):
+        return _without_nul(value)
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            _without_nul(str(key)): _sanitize_json_value(item)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _source_record_payload(record: SourceRecord) -> dict[str, Any]:
+    return _sanitize_json_value(asdict(record))
 
 
 @dataclass
@@ -151,12 +230,20 @@ class SourceRecord:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SourceRecord":
+    def from_dict(cls, data: dict[str, Any]) -> SourceRecord:
         normalized = dict(data)
-        normalized["mime_type"] = normalized.pop("mimeType", normalized.get("mime_type", ""))
-        normalized["session_id"] = normalized.pop("sessionId", normalized.get("session_id", ""))
-        normalized["size_bytes"] = normalized.pop("sizeBytes", normalized.get("size_bytes", 0))
-        normalized["created_at"] = normalized.pop("createdAt", normalized.get("created_at", ""))
+        normalized["mime_type"] = normalized.pop(
+            "mimeType", normalized.get("mime_type", "")
+        )
+        normalized["session_id"] = normalized.pop(
+            "sessionId", normalized.get("session_id", "")
+        )
+        normalized["size_bytes"] = normalized.pop(
+            "sizeBytes", normalized.get("size_bytes", 0)
+        )
+        normalized["created_at"] = normalized.pop(
+            "createdAt", normalized.get("created_at", "")
+        )
         normalized.pop("extractedText", None)
         return cls(**normalized)
 
@@ -174,7 +261,7 @@ class SourceRecord:
         status: str = "ready",
         error: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> "SourceRecord":
+    ) -> SourceRecord:
         return cls(
             id=f"source-{uuid.uuid4().hex[:10]}",
             session_id=session_id,
@@ -186,8 +273,8 @@ class SourceRecord:
             size_bytes=size_bytes,
             created_at=datetime.now(timezone.utc).isoformat(),
             url=url,
-            text=text,
-            metadata=metadata,
+            text=_without_nul(text),
+            metadata=_sanitize_json_value(metadata),
         )
 
 
@@ -215,11 +302,24 @@ class SourceStore:
         self.save(record.session_id, records)
         return record
 
+    def upsert(self, record: SourceRecord) -> SourceRecord:
+        records = self.list(record.session_id)
+        replaced = False
+        for i, existing in enumerate(records):
+            if existing.id == record.id:
+                records[i] = record
+                replaced = True
+                break
+        if not replaced:
+            records.append(record)
+        self.save(record.session_id, records)
+        return record
+
     def save(self, session_id: str, records: list[SourceRecord]) -> None:
         path = self._path(session_id)
         payload = {
             "sessionId": session_id,
-            "sources": [asdict(record) for record in records],
+            "sources": [_source_record_payload(record) for record in records],
         }
         path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False),
@@ -238,6 +338,21 @@ class SourceStore:
         path = self._path(session_id)
         if path.exists():
             path.unlink()
+
+    def find_by_upload_file_id(
+        self,
+        file_id: str,
+        *,
+        session_id: str | None = None,
+    ) -> SourceRecord | None:
+        records = self.list(session_id) if session_id else self._list_all()
+        for record in records:
+            if file_id in upload_file_ids_for_source(record):
+                return record
+            metadata = record.metadata or {}
+            if metadata.get("fileId") == file_id:
+                return record
+        return None
 
     def search(self, session_id: str, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
         needle = query.strip().lower()
@@ -265,8 +380,255 @@ class SourceStore:
         return results
 
     def _path(self, session_id: str) -> Path:
-        safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in session_id)
+        safe = "".join(
+            ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in session_id
+        )
         return self.root / f"{safe}.json"
+
+    def _list_all(self) -> list[SourceRecord]:
+        records: list[SourceRecord] = []
+        for path in self.root.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            records.extend(SourceRecord.from_dict(item) for item in data.get("sources", []))
+        return records
+
+
+class PostgresSourceStore:
+    """PostgreSQL-backed per-session source store for GCE deployments."""
+
+    def __init__(
+        self,
+        database_url: str | None = None,
+        *,
+        conn: Any | None = None,
+        table_name: str = "openbench_sources",
+    ):
+        if conn is None and not database_url:
+            raise ValueError("Either database_url= or conn= must be provided.")
+        self.database_url = database_url
+        self._conn = conn
+        self.table_name = table_name
+        self._init_db()
+
+    def list(self, session_id: str) -> list[SourceRecord]:
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT data FROM {self.table_name}
+                WHERE session_id = %s
+                ORDER BY created_at
+                """,
+                (session_id,),
+            )
+            rows = cur.fetchall()
+        return [self._record_from_data(row[0]) for row in rows]
+
+    def add(self, record: SourceRecord) -> SourceRecord:
+        return self.upsert(record)
+
+    def upsert(self, record: SourceRecord) -> SourceRecord:
+        payload = json.dumps(_source_record_payload(record), ensure_ascii=False)
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    INSERT INTO {self.table_name}
+                        (session_id, source_id, status, file_id, created_at, updated_at, data)
+                    VALUES (%s, %s, %s, %s, %s, now(), %s::jsonb)
+                    ON CONFLICT(session_id, source_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        file_id = EXCLUDED.file_id,
+                        updated_at = now(),
+                        data = EXCLUDED.data
+                    """,
+                    (
+                        record.session_id,
+                        record.id,
+                        record.status,
+                        self._file_id_for(record),
+                        record.created_at,
+                        payload,
+                    ),
+                )
+            conn.commit()
+        return record
+
+    def save(self, session_id: str, records: list[SourceRecord]) -> None:
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {self.table_name} WHERE session_id = %s",
+                    (session_id,),
+                )
+                for record in records:
+                    payload = json.dumps(_source_record_payload(record), ensure_ascii=False)
+                    cur.execute(
+                        f"""
+                        INSERT INTO {self.table_name}
+                            (session_id, source_id, status, file_id, created_at, updated_at, data)
+                        VALUES (%s, %s, %s, %s, %s, now(), %s::jsonb)
+                        """,
+                        (
+                            record.session_id,
+                            record.id,
+                            record.status,
+                            self._file_id_for(record),
+                            record.created_at,
+                            payload,
+                        ),
+                    )
+            conn.commit()
+
+    def delete(self, session_id: str, source_id: str) -> bool:
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    DELETE FROM {self.table_name}
+                    WHERE session_id = %s AND source_id = %s
+                    """,
+                    (session_id, source_id),
+                )
+                rowcount = cur.rowcount
+            conn.commit()
+        return bool(rowcount)
+
+    def clear(self, session_id: str) -> None:
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {self.table_name} WHERE session_id = %s",
+                    (session_id,),
+                )
+            conn.commit()
+
+    def search(self, session_id: str, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        needle = query.strip().lower()
+        if not needle:
+            return []
+        results: list[dict[str, Any]] = []
+        for record in self.list(session_id):
+            if record.status != "ready":
+                continue
+            haystack = record.text.lower()
+            idx = haystack.find(needle)
+            if idx < 0 and needle not in record.name.lower():
+                continue
+            results.append(
+                {
+                    "sourceId": record.id,
+                    "name": record.name,
+                    "kind": record.kind,
+                    "snippet": _snippet(record.text, max(idx, 0), len(needle)),
+                }
+            )
+            if len(results) >= limit:
+                break
+        return results
+
+    def find_by_upload_file_id(
+        self,
+        file_id: str,
+        *,
+        session_id: str | None = None,
+    ) -> SourceRecord | None:
+        with self._connection() as conn, conn.cursor() as cur:
+            if session_id:
+                cur.execute(
+                    f"""
+                    SELECT data FROM {self.table_name}
+                    WHERE session_id = %s AND file_id = %s
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (session_id, file_id),
+                )
+            else:
+                cur.execute(
+                    f"""
+                    SELECT data FROM {self.table_name}
+                    WHERE file_id = %s
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (file_id,),
+                )
+            row = cur.fetchone()
+        return self._record_from_data(row[0]) if row else None
+
+    def _init_db(self) -> None:
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.table_name} (
+                        session_id TEXT NOT NULL,
+                        source_id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        file_id TEXT,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        data JSONB NOT NULL,
+                        PRIMARY KEY (session_id, source_id)
+                    )
+                    """
+                )
+                cur.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_file "
+                    f"ON {self.table_name} (file_id)"
+                )
+                cur.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_session "
+                    f"ON {self.table_name} (session_id, updated_at DESC)"
+                )
+            conn.commit()
+
+    def _connection(self):
+        if self._conn is not None:
+            return _ExternalConnection(self._conn)
+        try:
+            import psycopg
+        except ImportError as exc:
+            raise ImportError(
+                "PostgresSourceStore requires psycopg. Install openbench[gcp]."
+            ) from exc
+        return psycopg.connect(self.database_url)
+
+    @staticmethod
+    def _file_id_for(record: SourceRecord) -> str | None:
+        metadata = record.metadata or {}
+        file_id = metadata.get("fileId")
+        if isinstance(file_id, str):
+            return file_id
+        ids = upload_file_ids_for_source(record)
+        return next(iter(ids), None)
+
+    @staticmethod
+    def _record_from_data(data: Any) -> SourceRecord:
+        if isinstance(data, str):
+            data = json.loads(data)
+        return SourceRecord.from_dict(data)
+
+
+class _ExternalConnection:
+    def __init__(self, conn: Any):
+        self.conn = conn
+
+    def __enter__(self):
+        return self.conn
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+def build_source_store(root: str | Path):
+    database_url = os.getenv("GENERAL_CHAT_DATABASE_URL")
+    if database_url:
+        return PostgresSourceStore(database_url)
+    return SourceStore(root)
 
 
 class SourceParserRegistry:
@@ -283,10 +645,25 @@ class SourceParserRegistry:
                 stored_file.name,
             )
             return ParsedSourceContent(text=text)
-        if stored_file.mime_type in EXCEL_MIME_TYPES or ext in EXCEL_EXTENSIONS:
-            return ParsedSourceContent(text=self._parse_excel(stored_file))
+        if (
+            stored_file.mime_type in SPREADSHEET_MIME_TYPES
+            or ext in SPREADSHEET_EXTENSIONS
+        ):
+            return self._parse_spreadsheet(stored_file)
         if stored_file.mime_type in IMAGE_MIME_TYPES or ext in IMAGE_EXTENSIONS:
             return self._parse_image(stored_file)
+        if (
+            stored_file.mime_type.startswith("audio/")
+            or stored_file.mime_type in AUDIO_MIME_TYPES
+            or ext in AUDIO_EXTENSIONS
+        ):
+            return ParsedSourceContent(text=self._parse_audio(stored_file))
+        if (
+            stored_file.mime_type.startswith("video/")
+            or stored_file.mime_type in VIDEO_MIME_TYPES
+            or ext in VIDEO_EXTENSIONS
+        ):
+            return ParsedSourceContent(text=self._parse_video(stored_file))
         if (
             stored_file.mime_type.startswith("text/")
             or stored_file.mime_type in TEXT_MIME_TYPES
@@ -343,11 +720,46 @@ class SourceParserRegistry:
         except UnicodeDecodeError:
             return path.read_text(encoding="latin-1")
 
+    def _parse_spreadsheet(self, stored_file: StoredFile) -> ParsedSourceContent:
+        return ParsedSourceContent(
+            text="",
+            metadata={
+                "spreadsheetContextMode": "metadata-first",
+                "spreadsheetContextNote": (
+                    "Raw spreadsheet rows are intentionally omitted from chat "
+                    "context. Use dashboard-generator tools to inspect metadata "
+                    "and aggregate data from the local file path."
+                ),
+            },
+        )
+
+    def _parse_csv(self, stored_file: StoredFile) -> str:
+        try:
+            import pandas as pd
+        except ImportError as exc:
+            raise ValueError("Install pandas for CSV source support.") from exc
+
+        try:
+            df = pd.read_csv(stored_file.path, encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            df = pd.read_csv(stored_file.path, encoding="latin-1")
+        except Exception as exc:
+            raise ValueError(f"CSV extraction failed: {exc}") from exc
+
+        parts = [f"### CSV: {stored_file.name} ({len(df)} rows)"]
+        if df.empty:
+            parts.append("(empty CSV)")
+        else:
+            parts.append(df.head(50).to_markdown(index=False))
+        return "\n\n".join(parts).strip()
+
     def _parse_excel(self, stored_file: StoredFile) -> str:
         try:
             import pandas as pd
         except ImportError as exc:
-            raise ValueError("Install pandas and openpyxl for Excel source support.") from exc
+            raise ValueError(
+                "Install pandas and openpyxl for Excel source support."
+            ) from exc
 
         try:
             sheets = pd.read_excel(stored_file.path, sheet_name=None)
@@ -362,6 +774,34 @@ class SourceParserRegistry:
             else:
                 parts.append(df.to_markdown(index=False))
         return "\n\n".join(parts).strip()
+
+    def _parse_audio(self, stored_file: StoredFile) -> str:
+        from openbench.intelligence.transcription import get_transcriber
+
+        try:
+            transcript = get_transcriber().transcribe(
+                stored_file.path, mime_type=stored_file.mime_type
+            )
+        except Exception as exc:
+            raise ValueError(f"Audio transcription failed: {exc}") from exc
+        if not transcript.strip():
+            raise ValueError(f"No speech could be transcribed from {stored_file.name}.")
+        return transcript
+
+    def _parse_video(self, stored_file: StoredFile) -> str:
+        from openbench.intelligence.transcription import get_transcriber
+        from openbench.utils.media import extract_audio_track
+
+        audio_path = extract_audio_track(stored_file.path)
+        if not audio_path:
+            raise ValueError(f"No audio track to transcribe in {stored_file.name}.")
+        try:
+            transcript = get_transcriber().transcribe(audio_path, mime_type="audio/wav")
+        except Exception as exc:
+            raise ValueError(f"Video transcription failed: {exc}") from exc
+        if not transcript.strip():
+            raise ValueError(f"No speech could be transcribed from {stored_file.name}.")
+        return f"# Transcript of {stored_file.name}\n\n{transcript}"
 
     def _parse_image(self, stored_file: StoredFile) -> ParsedSourceContent:
         image_data = self.document_extractor.extract_image(stored_file)
@@ -388,7 +828,9 @@ class BaseSearchDiscoveryProvider:
 
     provider_name = "base"
 
-    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
+    def search(
+        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
+    ) -> SearchProviderResponse:
         raise NotImplementedError
 
 
@@ -514,7 +956,9 @@ class DuckDuckGoSearchDiscoveryProvider(BaseSearchDiscoveryProvider):
     def __init__(self, transport: SearchHTTPTransport | None = None):
         self._transport = transport or SearchHTTPTransport()
 
-    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
+    def search(
+        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
+    ) -> SearchProviderResponse:
         import requests
 
         try:
@@ -592,7 +1036,9 @@ class TavilySearchDiscoveryProvider(BaseSearchDiscoveryProvider):
         self._transport = transport or SearchHTTPTransport()
         self._api_key = api_key or os.getenv("TAVILY_API_KEY", "").strip()
 
-    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
+    def search(
+        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
+    ) -> SearchProviderResponse:
         import requests
 
         if not self._api_key:
@@ -722,7 +1168,9 @@ class GroundedSearchDiscoveryProvider(BaseSearchDiscoveryProvider):
 
     provider_name = "grounded"
 
-    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
+    def search(
+        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
+    ) -> SearchProviderResponse:
         try:
             from openbench.data.sources.grounded_search import GroundedSearchSource
 
@@ -777,10 +1225,10 @@ class SearchDiscoveryAdapter:
 
     def __init__(self, provider_name: str | None = None):
         requested = (
-            (provider_name or os.getenv("GENERAL_CHAT_DISCOVERY_PROVIDER") or "tavily")
-            .strip()
-            .lower()
-        )
+            provider_name
+            or os.getenv("GENERAL_CHAT_DISCOVERY_PROVIDER")
+            or "tavily"
+        ).strip().lower()
         self.provider_name = requested
         self._cache: dict[str, list[SearchDiscoveryResult]] = {}
         self._providers = self._build_provider_chain(requested)
@@ -924,9 +1372,7 @@ class _DuckDuckGoResultsParser(HTMLParser):
                 self._current_link = {"url": href, "title": ""}
                 self._current_snippet_parts = []
                 self._in_anchor = True
-        elif (
-            tag in {"a", "span"} and DUCKDUCKGO_RESULT_SNIPPET in class_name and self._current_link
-        ):
+        elif tag in {"a", "span"} and DUCKDUCKGO_RESULT_SNIPPET in class_name and self._current_link:
             self._in_snippet = True
 
     def handle_endtag(self, tag: str) -> None:
@@ -1007,7 +1453,114 @@ def image_search_metadata(
     result["imageSearchPath"] = image_path
     result["samSegmentationPath"] = image_path
     result["imageSearchPreviewUrl"] = f"/uploads/{stored_file.id}/{stored_file.name}"
+    result["localFilePath"] = str(Path(stored_file.path).resolve())
     return result
+
+
+def dashboard_source_metadata(
+    stored_file: StoredFile,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return metadata that lets dashboard tools read an uploaded spreadsheet."""
+    result = dict(metadata or {})
+    result["localFilePath"] = str(Path(stored_file.path).resolve())
+    result["dashboardSource"] = True
+    result["dashboardSourceFormat"] = Path(stored_file.name).suffix.lower().lstrip(".")
+    return result
+
+
+def dashboard_source_text(stored_file: StoredFile, *, parsed_text: str) -> str:
+    """Build source text with explicit dashboard tool instructions."""
+    metadata = dashboard_source_metadata(stored_file)
+    parts = [
+        f"Spreadsheet source: {stored_file.name}",
+        f"Dashboard source path: {metadata['localFilePath']}",
+        "",
+        (
+            "For dashboard requests, call extract_metadata with "
+            f"path=\"{metadata['localFilePath']}\" first. Then write read-only "
+            "SQLite SQL against table `data`, call aggregate_data with the SQL "
+            "query, build a declarative dashboard ViewModel, and call "
+            "generate_dashboard."
+        ),
+        "",
+        "Raw spreadsheet rows are not included in the chat prompt.",
+    ]
+    return "\n".join(parts).strip()
+
+
+def upload_file_ids_for_source(record: SourceRecord) -> set[str]:
+    """Return local upload file ids referenced by a source record."""
+    values: list[str] = []
+    if record.url:
+        values.append(record.url)
+    metadata = record.metadata or {}
+    for key in UPLOAD_METADATA_KEYS:
+        value = metadata.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    ids: set[str] = set()
+    for value in values:
+        ids.update(_upload_file_ids_from_value(value))
+    return ids
+
+
+def mark_source_upload_deleted(
+    record: SourceRecord,
+    *,
+    deleted_at: str | None = None,
+) -> SourceRecord:
+    """Scrub stale upload references after the physical upload is deleted."""
+    if deleted_at is None:
+        deleted_at = datetime.now(timezone.utc).isoformat()
+
+    metadata = dict(record.metadata or {})
+    for key in UPLOAD_METADATA_KEYS:
+        metadata.pop(key, None)
+    metadata["uploadDeleted"] = True
+    metadata["uploadDeletedAt"] = deleted_at
+    record.metadata = metadata
+
+    if record.url and _upload_file_ids_from_value(record.url):
+        record.url = None
+    record.text = _scrub_deleted_upload_text(record.text)
+    return record
+
+
+def _upload_file_ids_from_value(value: str) -> set[str]:
+    return {match.group(1) for match in _UPLOAD_FILE_ID_PATTERN.finditer(value)}
+
+
+def _scrub_deleted_upload_text(text: str) -> str:
+    if not text:
+        return text
+    kept: list[str] = []
+    removed = False
+    for line in text.splitlines():
+        if _line_advertises_deleted_upload(line):
+            removed = True
+            continue
+        kept.append(line)
+    cleaned = "\n".join(kept).strip()
+    if removed:
+        note = "[Upload file deleted after use; re-upload it to run image MCP tools again.]"
+        cleaned = f"{cleaned}\n\n{note}".strip() if cleaned else note
+    return cleaned
+
+
+def _line_advertises_deleted_upload(line: str) -> bool:
+    lowered = line.lower()
+    return any(
+        needle in lowered
+        for needle in (
+            "/uploads/",
+            "/general-chat/uploads/",
+            "mcp path:",
+            "image_search.search_similar_images",
+            "sam_segmentation.count_objects_with_sam3",
+            "image_path=",
+        )
+    )
 
 
 def image_search_text(
@@ -1021,6 +1574,7 @@ def image_search_text(
     parts = [
         f"Image source: {stored_file.name}",
         f"Browser URL: {metadata['imageSearchPreviewUrl']}",
+        f"Local VLM path: {metadata['localFilePath']}",
         f"image_search MCP path: {metadata['imageSearchPath']}",
         f"sam_segmentation MCP path: {metadata['samSegmentationPath']}",
         "",
@@ -1032,8 +1586,18 @@ def image_search_text(
             "To count objects matching a text concept in this uploaded image, call "
             "sam_segmentation.count_objects_with_sam3 with "
             f"image_path=\"{metadata['samSegmentationPath']}\" and concept set to "
-            'the noun phrase requested by the user, such as "dog", "person", '
-            '"red apple", or "yellow school bus".'
+            "the noun phrase requested by the user, such as \"dog\", \"person\", "
+            "\"red apple\", or \"yellow school bus\". Call it once and answer from "
+            "the returned count when successful."
+        ),
+        (
+            "Do not use filesystem MCP tools for this /general-chat/uploads path; "
+            "it is mounted for image MCP containers and is outside the filesystem "
+            "MCP sandbox."
+        ),
+        (
+            "The browser preview URL is not a filesystem path. Image MCP tools can "
+            "only read the /general-chat/uploads path above."
         ),
     ]
     if parsed_text.strip():
@@ -1078,6 +1642,9 @@ def source_record_from_file(
         if kind == "image":
             metadata = image_search_metadata(stored_file, metadata)
             text = image_search_text(stored_file, parsed_text=parsed.text)
+        if kind == "spreadsheet":
+            metadata = dashboard_source_metadata(stored_file, metadata)
+            text = dashboard_source_text(stored_file, parsed_text=parsed.text)
         return SourceRecord.create(
             session_id=session_id,
             name=stored_file.name,
@@ -1177,7 +1744,7 @@ def kind_for_file(filename: str, mime_type: str) -> str:
     ext = Path(filename).suffix.lower()
     if mime_type in DOCUMENT_MIME_TYPES or ext in DOCUMENT_EXTENSIONS:
         return ext.lstrip(".") or "document"
-    if mime_type in EXCEL_MIME_TYPES or ext in EXCEL_EXTENSIONS:
+    if mime_type in SPREADSHEET_MIME_TYPES or ext in SPREADSHEET_EXTENSIONS:
         return "spreadsheet"
     if mime_type in IMAGE_MIME_TYPES or ext in IMAGE_EXTENSIONS:
         return "image"
@@ -1286,7 +1853,7 @@ def _unwrap_duckduckgo_href(href: str) -> str:
         return ""
     parsed = urlparse(href)
     query = parse_qs(parsed.query)
-    if "uddg" in query and query["uddg"]:
+    if query.get("uddg"):
         return query["uddg"][0]
     return href
 

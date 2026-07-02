@@ -43,6 +43,10 @@ from openbench.intelligence.layer import AgentFactory
 # LLM providers
 from openbench.intelligence.llm_providers import GeminiLLMProvider
 
+# VLM providers and vision agent
+from openbench.intelligence.vlm_providers import GeminiVLMProvider, GemmaVLMProvider
+from openbench.intelligence.vision import VisionAgent, extract_image_inputs
+
 # Memory (persistent conversation memory)
 from openbench.intelligence.memory import (
     LocalSQLiteMemoryStore,
@@ -86,6 +90,12 @@ __all__ = [
     "MessageRole",
     # LLM providers
     "GeminiLLMProvider",
+    # VLM providers
+    "GeminiVLMProvider",
+    "GemmaVLMProvider",
+    # Vision agents
+    "VisionAgent",
+    "extract_image_inputs",
     # Persona Layer
     "Persona",
     # Skill Layer

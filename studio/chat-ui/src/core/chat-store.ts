@@ -394,8 +394,9 @@ export function createChatStore() {
         const serverIds = new Set(incoming.map((s) => s.id));
         const localOnly = state.sessions.filter((s) => !serverIds.has(s.id));
         const merged = [...incoming, ...localOnly];
-        // Pick most-recent server session as active if none selected
-        const activeId = state.activeSessionId ?? incoming[0]?.id ?? null;
+        // Populate the sidebar with history but do NOT auto-activate an old
+        // session — the app opens on a fresh session (see use-chat mount).
+        const activeId = state.activeSessionId ?? null;
         const active = merged.find((s) => s.id === activeId);
         return {
           sessions: merged,

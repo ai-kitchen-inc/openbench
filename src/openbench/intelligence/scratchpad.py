@@ -12,11 +12,6 @@ with any text editor. This is distinct from:
 Scratchpad content is intended to live in a format that is meaningful
 to both agent and human. Markdown is the conventional default.
 
-Pillar placement (see ``docs/MENTAL_MODEL.md``): ``ScratchpadStore`` is
-**plumbing under the Agentic pillar**, exposed to the LLM through the
-``memory-scratchpad`` SDK skill. The store itself is infrastructure;
-the *playbook* for when to use it is the skill (a Skill-pillar concern).
-
 Example:
     >>> from openbench.intelligence.scratchpads.local_md import LocalMarkdownScratchpad
     >>> pad = LocalMarkdownScratchpad("~/.openbench/memory/")

@@ -19,9 +19,21 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
     <div className="chat-attachment-preview">
       {attachments.map((att) => (
         <div key={att.id} className="chat-attachment-preview__item">
-          <div className="chat-attachment-preview__icon">
-            <AttachmentIcon type={att.type} />
-          </div>
+          {att.type === "image" && att.url ? (
+            <img
+              className="chat-attachment-preview__thumb"
+              src={att.url}
+              alt={att.name}
+            />
+          ) : att.type === "audio" && att.url ? (
+            <audio className="chat-attachment-preview__media" src={att.url} controls />
+          ) : att.type === "video" && att.url ? (
+            <video className="chat-attachment-preview__media" src={att.url} controls />
+          ) : (
+            <div className="chat-attachment-preview__icon">
+              <AttachmentIcon type={att.type} />
+            </div>
+          )}
           <div className="chat-attachment-preview__info">
             <span className="chat-attachment-preview__name">{att.name}</span>
             {att.sizeBytes != null && (

@@ -7,11 +7,6 @@ Firestore, in-memory for tests, a custom REST service — you implement
 yourself. This tutorial walks through that process end-to-end using a
 `PostgresMemoryStore` as the running example.
 
-> Storage backends are **plumbing under the Agentic pillar** (see
-> [MENTAL_MODEL.md](MENTAL_MODEL.md)). Reach for a Protocol-based
-> implementation as shown here, not an MCP server — hot-path latency
-> and transactional semantics belong in-process.
-
 ---
 
 ## When to implement a custom backend

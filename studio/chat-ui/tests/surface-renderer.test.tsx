@@ -56,6 +56,24 @@ describe("SurfaceRenderer", () => {
       expect(screen.getByText("Hello World")).toBeDefined();
     });
 
+    it("renders legacy nested component properties", () => {
+      const surface = makeSurface([
+        {
+          id: "root",
+          component: "Column",
+          properties: { children: ["text1"] },
+        },
+        {
+          id: "text1",
+          component: "Text",
+          properties: { text: "Nested properties" },
+        },
+      ]);
+
+      render(<SurfaceRenderer surface={surface} />);
+      expect(screen.getByText("Nested properties")).toBeDefined();
+    });
+
     it("renders nested tree", () => {
       const surface = makeSurface([
         { id: "root", component: "Column", children: ["card1"] },

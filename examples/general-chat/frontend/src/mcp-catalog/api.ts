@@ -8,6 +8,7 @@ import type {
   ToolHiveStatus,
   ToolHiveWorkload,
 } from "./types";
+import { apiFetch, apiPath } from "../api";
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
@@ -33,12 +34,12 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 }
 
 export async function listServers(): Promise<MCPRegistryPayload> {
-  return parseJsonResponse<MCPRegistryPayload>(await fetch("/mcp/catalogs"));
+  return parseJsonResponse<MCPRegistryPayload>(await apiFetch(apiPath("/mcp/catalogs")));
 }
 
 export async function importMCPConfig(payload: ImportMCPConfigPayload): Promise<MCPRegistryPayload> {
   return parseJsonResponse<MCPRegistryPayload>(
-    await fetch("/mcp/catalogs/import", {
+    await apiFetch(apiPath("/mcp/catalogs/import"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -48,7 +49,7 @@ export async function importMCPConfig(payload: ImportMCPConfigPayload): Promise<
 
 export async function getServer(serverId: string): Promise<RegisteredMCPServer> {
   return parseJsonResponse<RegisteredMCPServer>(
-    await fetch(`/mcp/catalogs/servers/${encodeURIComponent(serverId)}`),
+    await apiFetch(apiPath(`/mcp/catalogs/servers/${encodeURIComponent(serverId)}`)),
   );
 }
 
@@ -56,7 +57,7 @@ export async function discoverServer(
   serverId: string,
 ): Promise<{ server: RegisteredMCPServer; reload?: { error?: string | null } }> {
   return parseJsonResponse<{ server: RegisteredMCPServer; reload?: { error?: string | null } }>(
-    await fetch(`/mcp/catalogs/servers/${encodeURIComponent(serverId)}/discover`, {
+    await apiFetch(apiPath(`/mcp/catalogs/servers/${encodeURIComponent(serverId)}/discover`), {
       method: "POST",
     }),
   );
@@ -64,7 +65,7 @@ export async function discoverServer(
 
 export async function removeServer(serverId: string): Promise<{ ok: boolean }> {
   return parseJsonResponse<{ ok: boolean }>(
-    await fetch(`/mcp/catalogs/servers/${encodeURIComponent(serverId)}`, {
+    await apiFetch(apiPath(`/mcp/catalogs/servers/${encodeURIComponent(serverId)}`), {
       method: "DELETE",
     }),
   );
@@ -75,7 +76,7 @@ export async function toggleServer(
   payload: ToggleServerPayload,
 ): Promise<{ server: RegisteredMCPServer; reload?: { error?: string | null } }> {
   return parseJsonResponse<{ server: RegisteredMCPServer; reload?: { error?: string | null } }>(
-    await fetch(`/mcp/catalogs/servers/${encodeURIComponent(serverId)}/enable`, {
+    await apiFetch(apiPath(`/mcp/catalogs/servers/${encodeURIComponent(serverId)}/enable`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -89,8 +90,10 @@ export async function toggleTool(
   payload: ToggleToolPayload,
 ): Promise<{ server: RegisteredMCPServer; reload?: { error?: string | null } }> {
   return parseJsonResponse<{ server: RegisteredMCPServer; reload?: { error?: string | null } }>(
-    await fetch(
-      `/mcp/catalogs/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolName)}/enable`,
+    await apiFetch(
+      apiPath(
+        `/mcp/catalogs/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolName)}/enable`,
+      ),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -101,16 +104,18 @@ export async function toggleTool(
 }
 
 export async function getToolHiveStatus(): Promise<ToolHiveStatus> {
-  return parseJsonResponse<ToolHiveStatus>(await fetch("/toolhive/status"));
+  return parseJsonResponse<ToolHiveStatus>(await apiFetch(apiPath("/toolhive/status")));
 }
 
 export async function listToolHiveWorkloads(): Promise<{ workloads: ToolHiveWorkload[] }> {
-  return parseJsonResponse<{ workloads: ToolHiveWorkload[] }>(await fetch("/toolhive/workloads"));
+  return parseJsonResponse<{ workloads: ToolHiveWorkload[] }>(
+    await apiFetch(apiPath("/toolhive/workloads")),
+  );
 }
 
 export async function listToolHiveRegistryServers(): Promise<{ servers: ToolHiveRegistryServer[] }> {
   return parseJsonResponse<{ servers: ToolHiveRegistryServer[] }>(
-    await fetch("/toolhive/registry/servers"),
+    await apiFetch(apiPath("/toolhive/registry/servers")),
   );
 }
 
@@ -120,7 +125,7 @@ export async function startToolHiveWorkload(payload: {
   allowRemote?: boolean;
 }): Promise<{ workload: ToolHiveWorkload }> {
   return parseJsonResponse<{ workload: ToolHiveWorkload }>(
-    await fetch("/toolhive/workloads", {
+    await apiFetch(apiPath("/toolhive/workloads"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -130,19 +135,25 @@ export async function startToolHiveWorkload(payload: {
 
 export async function stopToolHiveWorkload(name: string): Promise<{ ok: boolean }> {
   return parseJsonResponse<{ ok: boolean }>(
-    await fetch(`/toolhive/workloads/${encodeURIComponent(name)}/stop`, { method: "POST" }),
+    await apiFetch(apiPath(`/toolhive/workloads/${encodeURIComponent(name)}/stop`), {
+      method: "POST",
+    }),
   );
 }
 
 export async function restartToolHiveWorkload(name: string): Promise<{ ok: boolean }> {
   return parseJsonResponse<{ ok: boolean }>(
-    await fetch(`/toolhive/workloads/${encodeURIComponent(name)}/restart`, { method: "POST" }),
+    await apiFetch(apiPath(`/toolhive/workloads/${encodeURIComponent(name)}/restart`), {
+      method: "POST",
+    }),
   );
 }
 
 export async function deleteToolHiveWorkload(name: string): Promise<{ ok: boolean }> {
   return parseJsonResponse<{ ok: boolean }>(
-    await fetch(`/toolhive/workloads/${encodeURIComponent(name)}`, { method: "DELETE" }),
+    await apiFetch(apiPath(`/toolhive/workloads/${encodeURIComponent(name)}`), {
+      method: "DELETE",
+    }),
   );
 }
 
@@ -150,7 +161,7 @@ export async function importRunningToolHiveWorkloads(
   names: string[],
 ): Promise<MCPRegistryPayload & { reload?: { error?: string | null } }> {
   return parseJsonResponse<MCPRegistryPayload & { reload?: { error?: string | null } }>(
-    await fetch("/mcp/catalogs/toolhive/import-running", {
+    await apiFetch(apiPath("/mcp/catalogs/toolhive/import-running"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ names }),

@@ -10,13 +10,59 @@ All core abstractions are Chainable, enabling L1 component-level composition.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
+from openbench.core.constants import DEFAULT_EMBED_BATCH_SIZE
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 from openbench.core.chainable import Chainable
+
+
+@dataclass
+class MediaContent:
+    """Provider-agnostic media attachment for a chat message.
+
+    Carries a *reference* to the bytes (local ``path`` or remote ``uri``)
+    plus the MIME type, so any :class:`LLMProvider` can translate it into
+    its own SDK shape — a Gemini ``Part``, an OpenAI ``image_url`` block, etc.
+
+    Raw bytes are intentionally not stored here: providers read them from
+    ``path`` at send time. That keeps a message JSON-serializable for
+    persistent memory and avoids holding large payloads in conversation
+    history.
+    """
+
+    type: str  # "image" | "audio" | "video"
+    mime_type: str
+    path: str | None = None
+    uri: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain JSON-safe dict."""
+        result: dict[str, Any] = {"type": self.type, "mime_type": self.mime_type}
+        if self.path:
+            result["path"] = self.path
+        if self.uri:
+            result["uri"] = self.uri
+        if self.metadata:
+            result["metadata"] = self.metadata
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MediaContent:
+        """Reconstruct from a plain dict (inverse of :meth:`to_dict`)."""
+        return cls(
+            type=data["type"],
+            mime_type=data["mime_type"],
+            path=data.get("path"),
+            uri=data.get("uri"),
+            metadata=data.get("metadata", {}),
+        )
 
 # ============================================================================
 # Data Layer Abstractions
@@ -447,6 +493,81 @@ class LLMProvider(ABC):
         yield self.generate(prompt, model, **params)
 
 
+class TranscriptionProvider(ABC):
+    """Abstract interface for speech-to-text (audio transcription) providers.
+
+    Implementation-agnostic: could be Gemini native audio, Whisper, an
+    OpenAI-compatible audio endpoint, or a cloud STT service. The audio
+    extractor depends only on this interface, so swapping the backend is a
+    matter of registering a different provider — no extractor changes.
+    """
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        """Provider name ('gemini', 'openai', 'whisper', ...)."""
+
+    @abstractmethod
+    def transcribe(self, audio: str | bytes, model: str = "", **params) -> str:
+        """Transcribe audio to text.
+
+        Args:
+            audio: Local file path (str) or raw audio bytes.
+            model: Model identifier (uses the provider default if empty).
+            **params: Provider-specific options. ``mime_type`` is required
+                when ``audio`` is bytes.
+
+        Returns:
+            The transcript text.
+        """
+
+
+class VLMProvider(ABC):
+    """
+    Abstract interface for vision-language model providers.
+
+    VLM providers accept text plus one or more image references. Image values
+    are intentionally provider-agnostic: implementations may accept local file
+    paths, HTTP URLs, data URLs, or attachment-like dictionaries.
+    """
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        """Provider name ('gemini', 'gemma', 'ollama', etc.)."""
+
+    @abstractmethod
+    def generate(
+        self,
+        prompt: str,
+        images: list[Any],
+        model: str,
+        **params,
+    ) -> LLMResponse:
+        """
+        Generate a response from text plus image inputs.
+
+        Args:
+            prompt: Text prompt for the visual task.
+            images: Image references (paths, URLs, data URLs, or dicts).
+            model: Model identifier.
+            **params: Model-specific parameters.
+
+        Returns:
+            LLMResponse with generated text.
+        """
+
+    def generate_stream(
+        self,
+        prompt: str,
+        images: list[Any],
+        model: str,
+        **params,
+    ) -> Iterator[LLMResponse]:
+        """Stream VLM response chunks. Default: single blocking response."""
+        yield self.generate(prompt, images, model, **params)
+
+
 class EmbeddingProvider(ABC):
     """
     Abstract interface for embedding providers.
@@ -495,7 +616,7 @@ class EmbeddingProvider(ABC):
 
     @abstractmethod
     def embed_batch(
-        self, texts: list[str], model: str | None = None, batch_size: int = 100
+        self, texts: list[str], model: str | None = None, batch_size: int = DEFAULT_EMBED_BATCH_SIZE
     ) -> list[list[float]]:
         """
         Generate embeddings for multiple texts.

@@ -1,0 +1,15 @@
+mcp:
+  server:
+    name: openbench-example-mcp
+    include_sdk_tools: false
+    skills:
+      - mcp/template/standalone-fastmcp/openbench-skill
+    transport: stdio
+    policy:
+      allowed_servers:
+        - openbench-example-mcp
+      require_approval_for_risks:
+        - write
+        - artifact_write
+        - external_network
+        - destructive

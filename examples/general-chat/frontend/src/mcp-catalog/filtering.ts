@@ -16,7 +16,8 @@ export function filterServers(
   const query = filters.query.trim().toLowerCase();
   const result = servers.filter((server) => {
     const toolText = server.tools.map((tool) => `${tool.name} ${tool.description}`).join(" ");
-    const haystack = [server.name, server.title, server.transport, server.status, toolText]
+    const provider = server.providerKind ?? server.provider_kind ?? server.sourceType ?? server.source_type ?? server.source ?? "";
+    const haystack = [server.name, server.title, provider, server.transport, server.status, toolText]
       .join(" ")
       .toLowerCase();
     if (query && !haystack.includes(query)) return false;

@@ -1,4 +1,4 @@
-# General Chat MCP Tutorial
+﻿# General Chat MCP Tutorial
 
 This tutorial verifies MCP in three layers:
 
@@ -164,7 +164,11 @@ comfortable with file writes to the configured downloads directory.
 
 ## 8. Register Standard MCP JSON
 
-Open the MCP Servers panel in the UI and paste standard MCP client JSON:
+Open the MCP Servers panel in the UI and paste standard MCP client JSON. For
+Docker MCP servers, `env` values are safe whether they come from pasted JSON or
+from the **Docker env** key/value fields. Literal values are encrypted before
+`servers.json` is saved, redacted in the UI, and injected only when OpenBench
+starts the MCP server.
 
 ```json
 {
@@ -193,20 +197,116 @@ You can also register from the API:
 $body = @{
   config = '{
     "mcpServers": {
-      "playwright": {
+      "grafana": {
         "command": "docker",
-        "args": ["run", "-i", "--rm", "mcp/playwright"]
+        "args": [
+          "run",
+          "-i",
+          "--rm",
+          "-e",
+          "GRAFANA_URL",
+          "-e",
+          "GRAFANA_API_KEY",
+          "mcp/grafana",
+          "--transport=stdio"
+        ],
+        "env": {
+          "GRAFANA_URL": "http://localhost:3000",
+          "GRAFANA_API_KEY": "<your service account token>"
+        }
       }
     }
   }'
-} | ConvertTo-Json
+} | ConvertTo-Json -Depth 6
 Invoke-RestMethod http://localhost:8005/mcp/catalogs/import -Method Post -ContentType "application/json" -Body $body
+```
+
+In the UI, the equivalent is to leave `env` out of the JSON and add Docker env
+rows such as `GRAFANA_URL=http://localhost:3000` and
+`GRAFANA_API_KEY=<token>`. Manual rows are applied to Docker servers and
+override same-name JSON env values. Advanced configs may still reference a
+reusable managed value with `${secret:KEY}` and provide that key in the Docker
+env table.
+
+To avoid storing a value in OpenBench at all, reference your local environment
+and start General Chat with the variable set:
+
+```powershell
+$env:GRAFANA_API_KEY="your_service_account_token"
+openbench demo run general-chat
 ```
 
 After loading tools, ask a prompt that explicitly uses the enabled server tools.
 Disabled servers and disabled tools are not registered with the chat agent.
 
-## 9. ToolHive MCP Servers
+## 9. Run All Bundled MCP Integrations Together
+
+Use the all-MCP launcher when you want one General Chat session that can use
+SAM segmentation and ToolHive tools at the same time:
+
+```powershell
+openbench demo run general-chat --all-mcp
+# or
+openbench demo run general-chat-all --all-mcp
+```
+
+This path keeps General Chat in registry mode. It seeds the registry with:
+
+- internal OpenBench tools
+- filesystem MCP
+- generic API MCP
+- image-search MCP
+- SAM 3 segmentation MCP
+- Docker MCP Gateway
+- currently running ToolHive workloads
+
+It does not start ToolHive workloads automatically. Start ToolHive servers in
+ToolHive UI or with `thv run ...` first, then launch General Chat with
+`--all-mcp`.
+
+All-MCP runs use a separate `.openbench/all-mcp` registry root. The regular
+General Chat registry remains unchanged, and stale saved servers from normal
+registry sessions are not loaded into `general-chat-all`.
+
+Check the merged tool surface:
+
+```powershell
+Invoke-RestMethod http://localhost:8005/mcp/tools
+```
+
+Expected `namespaced_tool_names` include:
+
+```text
+openbench.filter_records
+filesystem.read_file
+generic_api.fetch_generic_api_data
+image_search.list_index_stats
+image_search.search_similar_images
+sam_segmentation.count_objects_with_sam3
+```
+
+Docker MCP Gateway tools and ToolHive tools appear when those local services are
+available and expose tools. Missing Docker, missing `npx`, missing SAM weights,
+an unbuilt image-search index, or unavailable ToolHive are reported in startup
+warnings and registry diagnostics instead of being silently skipped.
+Optional MCP failures do not block other servers from loading; successful tools
+remain available in the same session.
+
+Prepare optional dependencies before a full local smoke test:
+
+```powershell
+hf auth login
+docker compose -f mcp\generic-api-mcp\docker-compose.yml --profile cpu build
+docker compose -f mcp\image-search-mcp\docker-compose.yml --profile cpu build
+docker compose -f mcp\sam-segmentation-mcp\docker-compose.yml --profile cpu build
+docker mcp profile create --name openbench
+thv serve
+thv run toolhive-doc-mcp
+```
+
+Use the focused launchers below when you want to debug only one MCP server.
+
+## 10. ToolHive MCP Servers
 
 General Chat can connect to MCP servers launched or proxied by ToolHive. The
 recommended flow is to manage server install, configuration, secrets, and logs in
@@ -297,21 +397,30 @@ $env:TOOLHIVE_HOST="172.17.0.1"                 # common Docker Engine bridge
 ToolHive's local API has no built-in auth. Keep `thv serve` bound to a trusted
 local interface unless you add external authentication and authorization.
 
-## 10. Image Search MCP Server
+## 11. Image Search MCP Server
 
 General Chat can also use the Dockerized DINOv3 CIFAR-10 image-search MCP
-server from `examples/image-search-mcp`.
+server from `mcp/image-search-mcp`.
 
 From the repository root, build the image:
 
 ```powershell
-docker compose -f examples\image-search-mcp\docker-compose.yml --profile cpu build
+docker compose -f mcp\image-search-mcp\docker-compose.yml --profile cpu build
 ```
 
 Confirm the standalone MCP server works:
 
 ```powershell
-python examples\image-search-mcp\scripts\test_mcp_server.py --mode docker
+python mcp\image-search-mcp\scripts\test_mcp_server.py --mode docker
+```
+
+If General Chat reports `Failed to discover MCP server 'image_search':
+Connection closed`, the container exited before MCP handshake. First inspect the
+image, then run the smoke command above to surface Docker-side stderr:
+
+```powershell
+docker image inspect openbench/image-search-mcp:cpu
+python mcp\image-search-mcp\scripts\test_mcp_server.py --mode docker
 ```
 
 Start General Chat with the image-search MCP config:
@@ -356,27 +465,27 @@ If the image-search model fails with a gated Hugging Face error, run
 `%USERPROFILE%\.cache\huggingface\token` exists. The launcher mounts that cache
 read-only into the Docker container.
 
-## 11. SAM 3 Concept Counting MCP Server
+## 12. SAM 3 Concept Counting MCP Server
 
 General Chat can also use the Dockerized Ultralytics SAM 3 concept counting MCP
-server from `examples/sam-segmentation-mcp`. It counts objects matching a text
+server from `mcp/sam-segmentation-mcp`. It counts objects matching a text
 concept such as `dog`, `person`, `red apple`, or `yellow school bus`.
 
 Ultralytics does not auto-download `sam3.pt`, and the official weights are gated
 on Hugging Face. After receiving access, either place `sam3.pt` at
-`examples/sam-segmentation-mcp/weights/sam3.pt` or set `HF_TOKEN` so Docker
+`mcp/sam-segmentation-mcp/weights/sam3.pt` or set `HF_TOKEN` so Docker
 Compose can download the weights during build. From the repository root, build
 the image:
 
 ```powershell
 $env:HF_TOKEN="hf_..."   # optional if weights/sam3.pt already exists
-docker compose -f examples\sam-segmentation-mcp\docker-compose.yml --profile cpu build
+docker compose -f mcp\sam-segmentation-mcp\docker-compose.yml --profile cpu build
 ```
 
 If you already ran `hf auth login`, you can use the helper script instead:
 
 ```powershell
-examples\sam-segmentation-mcp\scripts\build_with_sam3.ps1
+mcp\sam-segmentation-mcp\scripts\build_with_sam3.ps1
 ```
 
 The compose build defaults `SAM3_PREINSTALL=required`, so it fails early if the
@@ -386,7 +495,7 @@ weights cannot be copied or downloaded. General Chat uses the baked-in model at
 Confirm discovery:
 
 ```powershell
-python examples\sam-segmentation-mcp\scripts\test_mcp_server.py --mode docker --discovery-only
+python mcp\sam-segmentation-mcp\scripts\test_mcp_server.py --mode docker --discovery-only
 ```
 
 Start General Chat with the SAM 3 counting MCP config:
@@ -408,6 +517,14 @@ Expected `namespaced_tool_names` includes:
 sam_segmentation.count_objects_with_sam3
 ```
 
+Uploaded image paths under `/general-chat/uploads/...` are mounted into the
+image MCP containers. Do not use filesystem MCP tools on those paths unless you
+also mount uploads into the filesystem sandbox.
+
+After a successful `sam_segmentation.count_objects_with_sam3` call, answer from
+the returned `count`. `service_info` is a diagnostic tool for failures, not a
+follow-up to a successful count.
+
 Upload a `.png`, `.jpg`, `.jpeg`, or `.webp` image in the Sources panel, then
 ask:
 
@@ -418,6 +535,9 @@ How many dogs are in this image? Use the SAM 3 counting tool.
 ## Troubleshooting
 
 - `/mcp/tools` says disabled: set `GENERAL_CHAT_MCP_ENABLED=1` and restart.
+- For the all-MCP launcher, `/mcp/tools` should report registry mode; check
+  `/mcp/catalogs` for per-server diagnostics when a Docker, filesystem,
+  ToolHive, generic API, image-search, or SAM server is unavailable.
 - `/mcp/tools` has zero tools: load tools in the MCP Servers panel and make
   sure the target server and tools are enabled.
 - Dedicated Docker scripts fail while discovering stale ToolHive or manual MCP

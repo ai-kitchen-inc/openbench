@@ -8,10 +8,6 @@ attachments). Distinct from ``MemoryStore`` which stores LLM-level
 A default SQLite-backed implementation lives in
 ``openbench.chat.stores.sqlite``.
 
-Pillar placement (see ``docs/MENTAL_MODEL.md``): ``SessionStore`` is
-**plumbing under the Agentic pillar**. Always-on persistence the agent
-does not reason about — stays Protocol-based ABC, not MCP.
-
 Example:
     >>> from openbench.chat.stores.sqlite import SQLiteSessionStore
     >>> store = SQLiteSessionStore(".openbench/sessions.db")

@@ -6,12 +6,67 @@ import os
 import tempfile
 import unittest
 
+from openbench.intelligence.agent_memory import AgentMemory
 from openbench.intelligence.base import Message, MessageRole
 from openbench.intelligence.memory import (
     MemoryStore,
     PersistentMemory,
     SQLiteMemoryStore,
 )
+
+
+class TestAgentMemoryWindow(unittest.TestCase):
+    """Pairing-safe history token window in AgentMemory.get_messages()."""
+
+    def test_budget_none_returns_full_history(self):
+        m = AgentMemory()
+        m.add_system("sys")
+        for i in range(4):
+            m.add_user(f"u{i}")
+            m.add_assistant(f"a{i}")
+        self.assertEqual(m.get_messages(token_budget=None), m.get_messages())
+
+    def test_window_keeps_system_and_drops_oldest(self):
+        m = AgentMemory()
+        m.add_system("system prompt")
+        m.add_user("oldest " + "x" * 4000)  # ~1000 tokens, should be dropped
+        m.add_user("recent question")
+        m.add_assistant("recent answer")
+
+        windowed = m.get_messages(token_budget=100)
+        self.assertEqual(windowed[0]["role"], "system")
+        self.assertLess(len(windowed), len(m.get_messages()))
+        # The big oldest message is gone; the recent turn survives.
+        contents = [msg["content"] for msg in windowed]
+        self.assertNotIn("oldest " + "x" * 4000, contents)
+        self.assertIn("recent answer", contents)
+
+    def test_window_never_starts_with_orphan_tool_result(self):
+        m = AgentMemory()
+        m.add_system("sys")
+        m.add_user("old question")
+        # A large assistant tool-call turn that the budget will exclude...
+        m.add_assistant("", tool_calls=[{"id": "c0", "name": "calc", "arguments": {"q": "x" * 1200}}])
+        m.add_tool_result("c0", "calc", "result data")  # ...leaving this as an orphan
+        m.add_user("recent question")
+        m.add_assistant("recent answer")
+
+        windowed = m.get_messages(token_budget=50)
+        # System stays first; the first non-system message must NOT be an orphan
+        # tool result (Gemini rejects a function_response without its call).
+        self.assertEqual(windowed[0]["role"], "system")
+        self.assertNotEqual(windowed[1]["role"], "tool")
+        # The dangling tool result was trimmed; the recent turn is intact.
+        self.assertEqual(windowed[-1]["content"], "recent answer")
+
+    def test_window_returns_dicts_compatible_with_full(self):
+        m = AgentMemory()
+        m.add_system("sys")
+        m.add_user("hello")
+        m.add_assistant("hi")
+        windowed = m.get_messages(token_budget=10_000)
+        # Generous budget -> same as full history.
+        self.assertEqual(windowed, m.get_messages())
 
 
 class TestSQLiteMemoryStore(unittest.TestCase):

@@ -13,11 +13,12 @@
 
 **Build. Orchestrate. Export. Scale.**
 
+[![CI](https://github.com/ai-kitchen-inc/openbench/actions/workflows/ci.yml/badge.svg)](https://github.com/ai-kitchen-inc/openbench/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![GitHub Stars](https://img.shields.io/github/stars/ai-kitchen-inc/openbench?style=social)](https://github.com/ai-kitchen-inc/openbench)
 
-[Documentation](docs/README.md) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [Examples](#-use-cases) • [Contributing](CONTRIBUTING.md)
+[Documentation](docs/README.md) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [Examples](#-use-cases) • [Support](SUPPORT.md) • [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -29,7 +30,7 @@ OpenBench is the **open source workbench for the agentic AI era**. It's not just
 
 Think of it as your **AI-native operating system** for knowledge work:
 
-- **Ingest anything**: PDFs, APIs, web search—if it contains information, OpenBench can work with it
+- **Ingest anything**: PDFs, APIs, web search, images—if it contains information, OpenBench can work with it
 - **Agent-powered workflows**: Author sophisticated agentic flows that actually get work done
 - **Export everywhere**: Turn insights into presentations, reports, markdown, or raw data
 
@@ -92,9 +93,8 @@ result = workflow.run()
 | Phase | Status |
 |-------|--------|
 | **Phase 1: Core Abstractions** | ✅ Complete - Interfaces, plugin registry, DAG workflows, state management |
-| **Phase 2: Infrastructure** | ✅ Complete - Provider Service, Config, Agent interface, L2 layers, 2,000+ tests |
-| **Phase 3: Providers** | 🚧 In Progress - LLM (Gemini ✅, OpenAI 🚧, Anthropic 📋), Vector (Pinecone ✅, ChromaDB 📋), Output (PDF ✅, PPTX ✅, Markdown ✅) |
-| **Phase 4: Pillars** | ✅ Complete - MCP client/server, Agent Skills (SDK + project), pluggable storage backends (Drive, SQLite) |
+| **Phase 2: Infrastructure** | ✅ Complete - Provider Service, Config, Agent interface, L2 layers, 759 tests |
+| **Phase 3: Providers** | 🚧 In Progress - LLM (Gemini ✅, OpenAI 🚧, Anthropic 📋), VLM (Gemini/Gemma ✅), Vector (Pinecone ✅, ChromaDB 📋), Output (PDF ✅, PPTX ✅, Markdown ✅) |
 
 ```bash
 pip install -e ".[all]" && python examples/workflows/reports/sustainability_report.py
@@ -208,19 +208,16 @@ Research data + Brand guidelines → Multi-agent workflow → Blog + Video + Soc
 
 ## Tech Stack
 
-Python, Click, Pydantic, Google GenAI, LangChain, CrewAI, AG2, Pinecone, ReportLab, python-pptx, MCP (Model Context Protocol).
+Python, Click, Pydantic, Google GenAI, LangChain, CrewAI, AG2, Pinecone, ReportLab, python-pptx.
 
 ## Features
 
 - **Privacy-First**: Self-hosted, zero lock-in, credential encryption
 - **LLM Providers**: Google Gemini ✅ | OpenAI 🚧 | Anthropic 📋 | Local models 📋
-- **MCP Native**: Connect external MCP servers and expose OpenBench tools over MCP (ToolHive, stdio, streamable HTTP)
-- **Agent Skills**: Bundled SDK skills + project skills (data, visualization, excel, query, Drive, memory, PDF, web search)
-- **Pluggable Storage**: Swappable storage backends (Google Drive, SQLite) behind a `StorageBackend` ABC
 - **Enterprise Ready**: Centralized config, encryption, audit ready
 - **Extensible**: Plugin registry with decorators and auto-discovery
 - **Composable**: DAG workflows with `|` and `&` operators
-- **Well-Tested**: 2,000+ Python tests + 296 TypeScript tests
+- **Well-Tested**: 759 tests
 
 ## 🗺️ Roadmap
 
@@ -265,8 +262,8 @@ ruff check src/ tests/       # Lint
 ruff check --fix src/ tests/  # Lint + auto-fix
 ruff format src/ tests/       # Format
 
-# Setup pre-commit hooks (runs ruff automatically on git commit)
-pre-commit install
+# Setup git hooks (lefthook runs ruff + biome automatically on git commit)
+npx lefthook install
 
 # Run tests
 python -m unittest discover tests -v
@@ -286,9 +283,26 @@ pnpm vitest               # Run tests
 npx @biomejs/biome check src/  # Lint
 ```
 
+## Troubleshooting
+
+| Symptom | Fix |
+| ------- | --- |
+| `ModuleNotFoundError` for an optional dep (pinecone, fastapi, pandas, ...) | Install the matching extra, e.g. `pip install -e ".[vector]"`, `".[chat]"`, `".[data]"`, or `".[all]"`. |
+| `openbench: command not found` | Reinstall in editable mode: `pip install -e .` and ensure the env's `bin`/`Scripts` is on `PATH`. |
+| LLM calls fail with auth errors | Export the provider key (e.g. `GOOGLE_API_KEY`); OpenBench reads credentials from environment variables. |
+| Frontend build fails | Use **pnpm** (not npm) in `studio/chat-ui`: `pnpm install && pnpm build`. |
+
+Still stuck? See [SUPPORT.md](SUPPORT.md) or ask in
+[Discussions](https://github.com/ai-kitchen-inc/openbench/discussions).
+
 ## Contributing
 
 [Report bugs](https://github.com/ai-kitchen-inc/openbench/issues) | [Request features](https://github.com/ai-kitchen-inc/openbench/discussions) | [Submit PRs](CONTRIBUTING.md) | [Join Discord](https://discord.com/users/openbench.ai)
+
+New here? Read [CONTRIBUTING.md](CONTRIBUTING.md) and our
+[Code of Conduct](CODE_OF_CONDUCT.md). See also
+[GOVERNANCE.md](GOVERNANCE.md), [SECURITY.md](SECURITY.md), and the
+[CHANGELOG.md](CHANGELOG.md).
 
 ## 📄 License
 

@@ -7,11 +7,10 @@ Supports: image, video, audio media types.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 VALID_MEDIA_TYPES = ("image", "video", "audio")
 
@@ -66,7 +65,7 @@ class MediaRenderer(ContentRenderer):
         if title:
             components.append(
                 A2UIComponent(
-                    id=_gen_id("media-title"),
+                    id=gen_id("media-title"),
                     component="Text",
                     properties={"text": title, "variant": "h4"},
                 )
@@ -106,15 +105,10 @@ class MediaRenderer(ContentRenderer):
 
         components.append(
             A2UIComponent(
-                id=_gen_id(media_type),
+                id=gen_id(media_type),
                 component=component_name,
                 properties=props,
             )
         )
 
         return components
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"

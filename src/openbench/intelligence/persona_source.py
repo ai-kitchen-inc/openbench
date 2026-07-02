@@ -12,12 +12,6 @@ any backend — filesystem, Google Doc, HTTP URL, Notion page — can
 implement it without inheriting unrelated behavior. New backends land
 as separate classes without changing :class:`Persona` itself.
 
-Pillar placement (see ``docs/MENTAL_MODEL.md``): ``PersonaSource`` is
-**plumbing under the Agentic pillar**. ``Persona`` itself is part of
-the Agentic pillar (agent identity); ``PersonaSource`` is just where
-the persona's markdown content is read from. Read-only, off the
-hot-path — but the same "Protocol-based ABC, not MCP" rule applies.
-
 Example:
     >>> from openbench.intelligence.persona_source import InlinePersonaSource
     >>> from openbench.intelligence.persona import Persona

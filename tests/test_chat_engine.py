@@ -42,6 +42,24 @@ class MockAgent(Agent):
         return 0.001
 
 
+class FailedMockAgent(Agent):
+    """Mock agent that returns a failed ExecutionResult."""
+
+    @property
+    def agent_type(self) -> str:
+        return "mock-failed"
+
+    def execute(self, context: ExecutionContext) -> ExecutionResult:
+        return ExecutionResult(
+            output=None,
+            status="failed",
+            metadata={"error": "400 INVALID_ARGUMENT"},
+        )
+
+    def estimate_cost(self, context: ExecutionContext) -> float:
+        return 0.0
+
+
 class MockFrameworkAdapter(FrameworkAdapter):
     """Mock framework adapter for testing."""
 
@@ -645,6 +663,54 @@ class TestChatEngineRenderItems(unittest.TestCase):
         components = result["messages"][1]["updateComponents"]["components"]
         component_types = [c["component"] for c in components]
         self.assertIn("ObFileCard", component_types)
+
+    def test_invoke_with_dashboard_view_model_render_item(self):
+        """Dashboard ViewModel items should render without requiring an HTML URL."""
+        dashboard_item = {
+            "type": "dashboard",
+            "title": "Sales Dashboard",
+            "viewModel": {
+                "title": "Sales Dashboard",
+                "datasets": {"sales": [{"region": "EU", "revenue": 10}]},
+                "kpis": [{"label": "Revenue", "value": 10}],
+                "sections": [{"title": "Revenue", "items": []}],
+            },
+        }
+        engine = ChatEngine(
+            agent=MockAgent("Dashboard ready:"),
+            render_items_fn=lambda: [dashboard_item],
+        )
+        result = engine.invoke("Show dashboard")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        dashboards = [c for c in components if c["component"] == "ObDashboardFrame"]
+        self.assertEqual(len(dashboards), 1)
+        self.assertEqual(dashboards[0]["viewModel"]["title"], "Sales Dashboard")
+        self.assertNotIn("dashboardUrl", dashboards[0])
+
+    def test_failed_agent_still_renders_dashboard_render_item(self):
+        """A late LLM failure should not hide a dashboard already queued by a tool."""
+        dashboard_item = {
+            "type": "dashboard",
+            "title": "Sales Dashboard",
+            "viewModel": {
+                "title": "Sales Dashboard",
+                "datasets": {"sales": [{"region": "EU", "revenue": 10}]},
+                "kpis": [{"label": "Revenue", "value": 10}],
+                "sections": [{"title": "Revenue", "items": []}],
+            },
+        }
+        engine = ChatEngine(
+            agent=FailedMockAgent(),
+            render_items_fn=lambda: [dashboard_item],
+        )
+
+        result = engine.invoke("Show dashboard")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        component_types = [c["component"] for c in components]
+        self.assertIn("ObCallout", component_types)
+        self.assertIn("ObDashboardFrame", component_types)
 
     def test_invoke_no_render_items_regression(self):
         """Engine with render_items_fn returning empty list should render normally."""

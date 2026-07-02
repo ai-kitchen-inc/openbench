@@ -1,0 +1,29 @@
+# CODEOWNERS — automated review routing
+#
+# Each line maps a path pattern to one or more owners. When a pull request
+# touches a matching path, the listed owners are requested for review.
+# Later matches take precedence over earlier ones.
+#
+# See https://docs.github.com/articles/about-code-owners
+# Owners are listed in MAINTAINERS.md. Replace @ai-kitchen-inc/maintainers
+# with a real GitHub team or individual usernames once they exist.
+
+# Default owners for everything in the repo
+*                           @ai-kitchen-inc/maintainers
+
+# Python SDK subsystems
+/src/openbench/core/        @ai-kitchen-inc/maintainers
+/src/openbench/data/        @ai-kitchen-inc/maintainers
+/src/openbench/intelligence/ @ai-kitchen-inc/maintainers
+/src/openbench/chat/        @ai-kitchen-inc/maintainers
+/src/openbench/adapters/    @ai-kitchen-inc/maintainers
+/src/openbench/output/      @ai-kitchen-inc/maintainers
+/src/openbench/cli/         @ai-kitchen-inc/maintainers
+
+# Frontend SDK
+/studio/chat-ui/            @ai-kitchen-inc/maintainers
+
+# Build, CI, and governance
+/pyproject.toml             @ai-kitchen-inc/maintainers
+/.github/                   @ai-kitchen-inc/maintainers
+/docs/                      @ai-kitchen-inc/maintainers

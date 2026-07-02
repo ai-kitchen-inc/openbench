@@ -149,9 +149,7 @@ class OpenBenchMCPServer:
         structured = sanitize_json_value(result)
         return {
             "content": [{"type": "text", "text": tool_result_to_text(structured)}],
-            "structuredContent": (
-                structured if isinstance(structured, dict) else {"result": structured}
-            ),
+            "structuredContent": structured if isinstance(structured, dict) else {"result": structured},
             "isError": is_error,
         }
 

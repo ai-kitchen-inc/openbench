@@ -22,6 +22,15 @@ from openbench.mcp.errors import (
     MCPToolNotFoundError,
     MCPTransportError,
 )
+from openbench.mcp.permissions import (
+    MCPPermissionContext,
+    MCPPermissionDecision,
+    MCPPermissionRequest,
+    MCPPermissionSession,
+    PermissionProvider,
+    parse_permission_response,
+    use_mcp_permission_context,
+)
 from openbench.mcp.policy import MCPPolicyEngine, RiskLevel
 from openbench.mcp.server import OpenBenchMCPServer
 from openbench.mcp.standard_config import MCPConfigImportError, parse_standard_mcp_json
@@ -45,6 +54,10 @@ __all__ = [
     "MCPPolicyConfig",
     "MCPPolicyDeniedError",
     "MCPPolicyEngine",
+    "MCPPermissionDecision",
+    "MCPPermissionContext",
+    "MCPPermissionRequest",
+    "MCPPermissionSession",
     "MCPServerConfig",
     "MCPServerConnectionConfig",
     "MCPToolAdapter",
@@ -52,8 +65,11 @@ __all__ = [
     "MCPToolNotFoundError",
     "MCPTransportError",
     "OpenBenchMCPServer",
+    "PermissionProvider",
     "RiskLevel",
     "load_mcp_tools",
+    "parse_permission_response",
+    "use_mcp_permission_context",
     "MCPConfigImportError",
     "parse_standard_mcp_json",
     "ToolHiveError",

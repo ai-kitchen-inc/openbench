@@ -1,0 +1,15 @@
+mcp:
+  server:
+    name: openbench-dashboard-generator
+    include_sdk_tools: false
+    skills:
+      - mcp/dashboard-generator-mcp/openbench-skill
+    transport: stdio
+    policy:
+      allowed_servers:
+        - openbench-dashboard-generator
+      require_approval_for_risks:
+        - write
+        - artifact_write
+        - external_network
+        - destructive

@@ -7,11 +7,6 @@ Provides:
 
 Used by BaseAgent when ``memory_store`` is provided to persist conversations
 across sessions.
-
-Pillar placement (see ``docs/MENTAL_MODEL.md``): ``MemoryStore`` is
-**plumbing under the Agentic pillar**, not a pillar of its own.
-Hot-path per-turn persistence with transactional semantics — stays
-Protocol-based ABC, not MCP.
 """
 
 from __future__ import annotations
@@ -187,8 +182,7 @@ class SQLiteMemoryStore(MemoryStore):
         """
         conn = sqlite3.connect(self.db_path)
         try:
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL,
@@ -200,8 +194,7 @@ class SQLiteMemoryStore(MemoryStore):
                     timestamp TEXT NOT NULL,
                     metadata TEXT
                 )
-                """
-            )
+                """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session ON messages(session_id)")
 
             # Phase 1 additive schema upgrade — idempotent ALTER TABLE.

@@ -2,6 +2,8 @@
 OpenBench CLI - Main entry point
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 import click
 from rich.console import Console
 
@@ -9,13 +11,18 @@ from openbench.cli import commands
 
 console = Console()
 
+try:
+    __version__ = version("openbench")
+except PackageNotFoundError:  # package not installed (e.g. running from source tree)
+    from openbench._version import __version__
+
 
 @click.group()
-@click.version_option(version="0.1.0", prog_name="openbench")
+@click.version_option(version=__version__, prog_name="openbench")
 @click.pass_context
 def cli(ctx):
     """
-    🔥 OpenBench - The Open Source Agentic AI Workbench
+    OpenBench - The Open Source Agentic AI Workbench
 
     Build. Orchestrate. Export. Scale.
     """

@@ -9,19 +9,13 @@ Provides:
 - StoredFile: Metadata for a stored file. Carries an optional
   ``backend_ref`` so Drive-backed stores can round-trip file ids without
   leaking backend specifics into the attachment protocol.
-
-Pillar placement (see ``docs/MENTAL_MODEL.md``): ``FileStore`` is
-**plumbing under the Agentic pillar** — the substrate that holds user
-uploads and agent outputs. The agent never picks where files live; the
-backend is configured at deploy time. Cloud-backed stores
-(``GoogleDriveFileStore``) download-on-demand to a temp path so callers
-keep depending only on ``get_local_path``.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import shutil
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -124,6 +118,10 @@ class FileStore(Protocol):
         """
         ...
 
+    def delete(self, file_id: str) -> bool:
+        """Delete a previously-stored file and return True if removed."""
+        ...
+
 
 class LocalFileStore:
     """Disk-based file storage for chat uploads.
@@ -200,6 +198,23 @@ class LocalFileStore:
         stored = self.get(file_id)
         return stored.path if stored is not None else None
 
+    def delete(self, file_id: str) -> bool:
+        """Delete the upload directory for a stored file id."""
+        if not file_id:
+            return False
+
+        root = self.upload_dir.resolve()
+        target = (self.upload_dir / file_id).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return False
+        if target == root or not target.exists() or not target.is_dir():
+            return False
+
+        shutil.rmtree(target)
+        return True
+
 
 # Backward-compat alias — the old ``FileStore`` concrete class is now the
 # :class:`LocalFileStore` implementation. Callers still importing
@@ -227,6 +242,7 @@ class FileContentExtractor:
 
     Supports:
     - application/pdf: Uses PDFSource for extraction
+    - application/epub+zip: Uses EPUBSource for extraction
     - Excel (.xlsx/.xls): Converts sheets to markdown tables (first 10 rows)
     - text/* and text-like (JSON, XML, YAML, JS, TS): Direct file read
     - image/*: Returns metadata description
@@ -243,12 +259,22 @@ class FileContentExtractor:
             Extracted text content.
         """
         mime = stored_file.mime_type
+        ext = os.path.splitext(stored_file.name)[1].lower()
 
         if mime == "application/pdf":
             return self._extract_pdf(stored_file)
 
+        if mime == "application/epub+zip" or ext == ".epub":
+            return self._extract_epub(stored_file)
+
         if mime in _EXCEL_MIMES:
             return self._extract_excel(stored_file)
+
+        if mime.startswith("audio/"):
+            return self._extract_audio(stored_file)
+
+        if mime.startswith("video/"):
+            return self._extract_video(stored_file)
 
         if mime.startswith("text/") or mime in _TEXT_LIKE_MIMES:
             return self._extract_text(stored_file)
@@ -269,6 +295,55 @@ class FileContentExtractor:
         except Exception as e:
             logger.warning(f"PDF extraction failed for {stored_file.name}: {e}")
             return f"[PDF: {stored_file.name}] (extraction failed: {e})"
+
+    def _extract_epub(self, stored_file: StoredFile) -> str:
+        """Extract text from an EPUB using EPUBSource."""
+        try:
+            from openbench.data.sources.epub import EPUBSource
+
+            source = EPUBSource(path=stored_file.path)
+            raw_data = source.extract()
+            return raw_data.content
+        except Exception as e:
+            logger.warning(f"EPUB extraction failed for {stored_file.name}: {e}")
+            return f"[EPUB: {stored_file.name}] (extraction failed: {e})"
+
+    def _extract_audio(self, stored_file: StoredFile) -> str:
+        """Transcribe audio to text via the resolved TranscriptionProvider."""
+        try:
+            from openbench.intelligence.transcription import get_transcriber
+
+            transcript = get_transcriber().transcribe(
+                stored_file.path, mime_type=stored_file.mime_type
+            )
+            if transcript.strip():
+                return transcript
+            return f"[Audio: {stored_file.name}] (no speech detected)"
+        except Exception as e:
+            logger.warning(f"Audio transcription failed for {stored_file.name}: {e}")
+            return f"[Audio: {stored_file.name}] (transcription failed: {e})"
+
+    def _extract_video(self, stored_file: StoredFile) -> str:
+        """Build a searchable text track for a video.
+
+        Visual understanding comes from the native multimodal channel; this
+        text track transcribes the video's audio so the content is searchable
+        and survives on models that can't ingest video.
+        """
+        try:
+            from openbench.intelligence.transcription import get_transcriber
+            from openbench.utils.media import extract_audio_track
+
+            audio_path = extract_audio_track(stored_file.path)
+            if not audio_path:
+                return f"[Video: {stored_file.name}] (no audio track to transcribe)"
+            transcript = get_transcriber().transcribe(audio_path, mime_type="audio/wav")
+            if transcript.strip():
+                return f"# Transcript of {stored_file.name}\n\n{transcript}"
+            return f"[Video: {stored_file.name}] (no speech detected)"
+        except Exception as e:
+            logger.warning(f"Video processing failed for {stored_file.name}: {e}")
+            return f"[Video: {stored_file.name}] (processing failed: {e})"
 
     def _extract_text(self, stored_file: StoredFile) -> str:
         """Read text file directly."""
@@ -308,6 +383,7 @@ def _guess_mime_type(filename: str) -> str:
     ext = os.path.splitext(filename)[1].lower()
     mime_map = {
         ".pdf": "application/pdf",
+        ".epub": "application/epub+zip",
         ".txt": "text/plain",
         ".md": "text/markdown",
         ".csv": "text/csv",
@@ -317,11 +393,22 @@ def _guess_mime_type(filename: str) -> str:
         ".jpeg": "image/jpeg",
         ".gif": "image/gif",
         ".svg": "image/svg+xml",
+        ".heic": "image/heic",
+        ".heif": "image/heif",
+        ".tiff": "image/tiff",
+        ".tif": "image/tiff",
+        ".bmp": "image/bmp",
         ".mp3": "audio/mpeg",
         ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".ogg": "audio/ogg",
+        ".aac": "audio/aac",
+        ".flac": "audio/flac",
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".xls": "application/vnd.ms-excel",
         ".mp4": "video/mp4",
         ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
     }
     return mime_map.get(ext, "application/octet-stream")
