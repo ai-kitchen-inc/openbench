@@ -45,6 +45,41 @@ mcp = fastmcp.FastMCP("Database Server")
 db_manager: DatabaseManager = None
 nl_converter: NLToSQLConverter = None
 
+# --- OpenBench fork config ---------------------------------------------------
+# Writes (INSERT/UPDATE/DELETE/DDL/materialize) are gated behind MCP_ALLOW_WRITES
+# so the default posture stays read-only. Row cap is env-configurable via
+# MCP_MAX_ROWS (upstream hard-coded 20/50).
+_WRITES_DISABLED_MSG = (
+    "ERROR: write operations are disabled. Set MCP_ALLOW_WRITES=1 to enable "
+    "materialize/create/insert/update/delete/unsafe-SQL tools."
+)
+
+
+def _writes_enabled() -> bool:
+    return os.getenv("MCP_ALLOW_WRITES", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _max_rows() -> int:
+    try:
+        return max(1, int(os.getenv("MCP_MAX_ROWS", "1000")))
+    except (TypeError, ValueError):
+        return 1000
+
+
+def _sanitize_identifier(name: str) -> str:
+    """Allow only a safe SQL identifier (letters, digits, underscore); reject the
+    rest to keep table names injection-free for materialize_query."""
+    import re as _re
+
+    cleaned = (name or "").strip()
+    if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", cleaned):
+        raise ValueError(
+            f"invalid table name {name!r}: use letters, digits, underscore; "
+            "must start with a letter or underscore"
+        )
+    return cleaned
+
+
 @mcp.tool()
 async def query_database(query: str) -> str:
     """
@@ -68,7 +103,7 @@ async def query_database(query: str) -> str:
         sql_query = nl_converter.convert_to_sql(query, table_schemas)
         
         # Execute the query
-        results = await db_manager.execute_safe_query(sql_query)
+        results = await db_manager.execute_safe_query(sql_query, limit=_max_rows())
         
         # Format the response
         response = f"SQL Query: {sql_query}\n\n"
@@ -81,12 +116,13 @@ async def query_database(query: str) -> str:
                 response += " | ".join(headers) + "\n"
                 response += " | ".join(["-" * len(h) for h in headers]) + "\n"
                 
-                for row in results[:20]:  # Limit to first 20 rows
+                cap = _max_rows()
+                for row in results[:cap]:
                     values = [str(row.get(h, "")) for h in headers]
                     response += " | ".join(values) + "\n"
-                
-                if len(results) > 20:
-                    response += f"\n... and {len(results) - 20} more rows"
+
+                if len(results) > cap:
+                    response += f"\n... and {len(results) - cap} more rows"
             else:
                 response += str(results)
         else:
@@ -163,7 +199,7 @@ async def execute_sql(sql_query: str) -> str:
                 return f"Error: {keyword.upper()} operations are not allowed for safety reasons."
         
         # Execute the query
-        results = await db_manager.execute_safe_query(sql_query)
+        results = await db_manager.execute_safe_query(sql_query, limit=_max_rows())
         
         # Format the response
         response = f"SQL Query: {sql_query}\n\n"
@@ -176,12 +212,13 @@ async def execute_sql(sql_query: str) -> str:
                 response += " | ".join(headers) + "\n"
                 response += " | ".join(["-" * len(h) for h in headers]) + "\n"
                 
-                for row in results[:20]:  # Limit to first 20 rows
+                cap = _max_rows()
+                for row in results[:cap]:
                     values = [str(row.get(h, "")) for h in headers]
                     response += " | ".join(values) + "\n"
-                
-                if len(results) > 20:
-                    response += f"\n... and {len(results) - 20} more rows"
+
+                if len(results) > cap:
+                    response += f"\n... and {len(results) - cap} more rows"
             else:
                 response += str(results)
         else:
@@ -351,6 +388,8 @@ async def execute_unsafe_sql(sql_query: str) -> str:
     Returns:
         The query results or success message for modification operations
     """
+    if not _writes_enabled():
+        return _WRITES_DISABLED_MSG
     try:
         results = await db_manager.execute_unsafe_query(sql_query)
         
@@ -389,6 +428,8 @@ async def create_table(table_name: str, columns_definition: str) -> str:
     Returns:
         Success message or error details
     """
+    if not _writes_enabled():
+        return _WRITES_DISABLED_MSG
     try:
         create_query = f"CREATE TABLE {table_name} ({columns_definition})"
         results = await db_manager.execute_unsafe_query(create_query)
@@ -410,6 +451,8 @@ async def insert_data(table_name: str, columns: str, values: str) -> str:
     Returns:
         Success message with number of rows affected
     """
+    if not _writes_enabled():
+        return _WRITES_DISABLED_MSG
     try:
         insert_query = f"INSERT INTO {table_name} ({columns}) VALUES ({values})"
         results = await db_manager.execute_unsafe_query(insert_query)
@@ -432,6 +475,8 @@ async def delete_data(table_name: str, where_condition: str = "") -> str:
     Returns:
         Success message with number of rows deleted
     """
+    if not _writes_enabled():
+        return _WRITES_DISABLED_MSG
     try:
         if where_condition.strip():
             delete_query = f"DELETE FROM {table_name} WHERE {where_condition}"
@@ -458,6 +503,8 @@ async def update_data(table_name: str, set_clause: str, where_condition: str = "
     Returns:
         Success message with number of rows updated
     """
+    if not _writes_enabled():
+        return _WRITES_DISABLED_MSG
     try:
         if where_condition.strip():
             update_query = f"UPDATE {table_name} SET {set_clause} WHERE {where_condition}"
@@ -470,6 +517,49 @@ async def update_data(table_name: str, set_clause: str, where_condition: str = "
         
     except Exception as e:
         return f"ERROR: Error updating data: {str(e)}"
+
+@mcp.tool()
+async def materialize_query(select_query: str, table_name: str) -> str:
+    """
+    Persist the result of a SELECT as a real table so BI tools (e.g. Superset)
+    can chart it live. Creates <schema>.<table_name> via CREATE TABLE AS SELECT,
+    replacing any existing table of that name. Requires MCP_ALLOW_WRITES=1.
+
+    Args:
+        select_query: A SELECT statement producing the dataset to persist.
+        table_name: Destination table name (letters/digits/underscore only).
+
+    Returns:
+        Success message with the fully-qualified table name and row count.
+    """
+    if not _writes_enabled():
+        return _WRITES_DISABLED_MSG
+    try:
+        name = _sanitize_identifier(table_name)
+    except ValueError as e:
+        return f"ERROR: {e}"
+
+    stripped = (select_query or "").strip().rstrip(";")
+    if not stripped.lower().lstrip("(").startswith("select"):
+        return "ERROR: materialize_query only accepts a SELECT statement."
+
+    schema = os.getenv("MCP_MART_SCHEMA", "mart")
+    fq = f"{schema}.{name}"
+    try:
+        # Best-effort: ensure the target schema exists (no-op if already there).
+        try:
+            await db_manager.execute_unsafe_query(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        except Exception:
+            pass
+        await db_manager.execute_unsafe_query(f"DROP TABLE IF EXISTS {fq}")
+        await db_manager.execute_unsafe_query(f"CREATE TABLE {fq} AS {stripped}")
+        count_rows = await db_manager.execute_safe_query(
+            f"SELECT COUNT(*) AS n FROM {fq}", limit=1
+        )
+        n = count_rows[0].get("n") if count_rows else "?"
+        return f"Materialized {n} row(s) into '{fq}'. Point Superset at this table."
+    except Exception as e:
+        return f"ERROR: Error materializing query: {str(e)}"
 
 @mcp.resource("database://tables")
 async def get_database_tables() -> str:
