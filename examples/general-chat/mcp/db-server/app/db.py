@@ -545,11 +545,18 @@ class DatabaseManager:
         
         return True
     
-    async def execute_safe_query(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
+    async def execute_safe_query(self, query: str, limit: int = None) -> List[Dict[str, Any]]:
         """Execute a query with safety checks"""
         # Safety checks
         if not self._is_query_safe(query):
             raise ValueError("Query contains unsafe operations. Only SELECT queries are allowed.")
+
+        # Row cap: explicit arg wins, else MCP_MAX_ROWS env (default 1000).
+        if limit is None:
+            try:
+                limit = max(1, int(os.getenv("MCP_MAX_ROWS", "1000")))
+            except (TypeError, ValueError):
+                limit = 1000
 
         if self.database_type == "mongodb":
             return await self._execute_safe_mongo_query(query, limit=limit)
