@@ -90,10 +90,12 @@ Or individually:
 |---------|------|
 | `deploy/deploy.sh backend` | Cloud Build the image (async + poll), `docker pull` + `docker-compose up -d` on the VM, wait for `/health`. |
 | `deploy/deploy.sh frontend` | `pnpm build` the SPA with the right `VITE_*`, `firebase deploy --only hosting`. |
+| `deploy/deploy.sh mcp-image` | Cloud Build the forked `db_server` MCP image (`mcp-db-server:1.3.1-ob1`) and `docker pull` it on the VM. |
 | `deploy/deploy.sh nginx` | scp `docker-compose.gce.yml` + nginx conf to the VM, `nginx -t` + reload. Run only when those files change. |
 | `deploy/deploy.sh add-user EMAIL` | Append `EMAIL` to the allowlist on the VM and restart the API (idempotent). |
 | `deploy/deploy.sh remove-user EMAIL` | Remove `EMAIL` from the allowlist on the VM and restart the API (idempotent). |
-| `deploy/deploy.sh seed-mcp-db FILE.sql` | Load a `.sql` file into the `db_server` MCP's SQLite database on the VM. |
+| `deploy/deploy.sh init-appdb` | Create the `appdata` DB + `mart` schema + `mcp_app` role on Cloud SQL (idempotent). |
+| `deploy/deploy.sh seed-mcp-db FILE.sql` | Load a `.sql` file into the `appdata` Postgres DB (the `db_server` data). |
 | `deploy/deploy.sh verify` | Probe health/auth/hardening/network on the live deployment. |
 
 All identifiers are defaults in `deploy.sh`; override any via env or a gitignored
@@ -110,7 +112,11 @@ web config (`VITE_FIREBASE_*`) is baked into `deploy.sh` (it ships in the JS bun
 | Var | Purpose |
 |-----|---------|
 | `GOOGLE_API_KEY` | Gemini API key |
-| `GENERAL_CHAT_DATABASE_URL` | Cloud SQL Postgres URL (with password) |
+| `GENERAL_CHAT_DATABASE_URL` | Cloud SQL Postgres URL for chat memory (with password) |
+| `CLOUD_SQL_INSTANCE` | Cloud SQL connection name `project:region:instance` for the proxy |
+| `MCP_DB_DATABASE_URL` | `db_server` MCP → `appdata` via proxy (`mcp_app` role) |
+| `APPDATA_ADMIN_URL` | admin URL used by `init-appdb` / `seed-mcp-db` (DDL + seeding) |
+| `MCP_ALLOW_WRITES` / `MCP_MAX_ROWS` | enable agent write/materialize; read-query row cap |
 | `GENERAL_CHAT_FIREBASE_PROJECT_ID` | enables auth; must be `sss-poc1-corporate` |
 | `GENERAL_CHAT_ALLOWED_EMAILS` | comma-separated allowlist (use `add-user`) |
 | `GENERAL_CHAT_ALLOWED_DOMAINS` | optional domain allowlist |
@@ -146,31 +152,57 @@ the email is already present, `remove-user` a no-op if it is absent.
 The Firebase Console Users page only **views/disables** accounts — it does not
 grant app access (the allowlist does).
 
-## MCP DB server (db_server, SQLite)
+## MCP DB server (db_server → Cloud SQL Postgres)
 
-The `db_server` MCP ([souhardyak/mcp-db-server](https://github.com/Souhar-dya/mcp-db-server))
-lets the chat agent explore a SQLite database (`list_tables` / `describe` / `query`). It is
-bundled and seeded on startup like the other docker MCP servers — the API spawns it via the
-mounted docker socket with a `-v ${MCP_DB_DATA_PATH}:/data` volume so the DB file persists at
-`/app-data/mcp-db/default.db` on the VM across the `--rm` containers.
+The `db_server` MCP is a vendored fork of
+[souhardyak/mcp-db-server](https://github.com/Souhar-dya/mcp-db-server) at
+[`examples/general-chat/mcp/db-server/`](../examples/general-chat/mcp/db-server/),
+built to `mcp-db-server:1.3.1-ob1` in Artifact Registry. The API spawns it via the
+mounted docker socket, joined to the shared **`openbench-appnet`** network, and it
+reaches Cloud SQL through the **`cloud-sql-proxy`** sidecar (`cloud-sql-proxy:5432`).
 
-The server is **read-only** — the agent can only run `SELECT`s, never writes. Add or replace
-data out-of-band with a `.sql` file:
+Data lives in the **`appdata`** database on the existing Cloud SQL instance
+(separate from the `openbench` chat-memory DB):
+- `public.*` — seeded business tables the agent reads.
+- `mart.*` — tables the agent **materializes** (`materialize_query` → `CREATE TABLE
+  mart.<name> AS SELECT …`) so Superset can chart computed datasets live.
+
+The `mcp_app` role is scoped to `appdata` only (SELECT on `public`, full control of
+`mart`). Writes are gated by `MCP_ALLOW_WRITES`; read queries are capped by
+`MCP_MAX_ROWS`.
+
+**Prerequisite:** the VM service account needs **`roles/cloudsql.client`** so the
+proxy can connect.
+
+### First-time setup
 
 ```bash
-# Edit deploy/mcp-db/seed.example.sql (or write your own CREATE TABLE + INSERTs), then:
-bash deploy/deploy.sh seed-mcp-db deploy/mcp-db/seed.example.sql
+bash deploy/deploy.sh mcp-image        # build + pull the forked image on the VM
+bash deploy/deploy.sh nginx            # push compose (adds cloud-sql-proxy + appnet)
+bash deploy/deploy.sh backend          # roll out (starts the proxy + api on appnet)
+bash deploy/deploy.sh init-appdb       # create appdata + mart + mcp_app
+bash deploy/deploy.sh seed-mcp-db deploy/appdb/init.sql
 ```
 
-`seed-mcp-db` scp's the file to the VM and applies it via a throwaway `nouchka/sqlite3`
-container against the same volume — re-runnable, apply as many files as you like. First-time
-setup: pre-pull both images so the initial calls aren't slow, then roll out:
+### Adding data (`.sql`)
 
 ```bash
-sudo docker pull souhardyak/mcp-db-server:1.3.1
-sudo docker pull nouchka/sqlite3
-bash deploy/deploy.sh backend
+# Edit deploy/appdb/seed.example.sql (or your own INSERTs), then:
+bash deploy/deploy.sh seed-mcp-db deploy/appdb/seed.example.sql
 ```
+`seed-mcp-db` scp's the file and applies it with a throwaway `postgres:16` psql
+container on `openbench-appnet` using `APPDATA_ADMIN_URL` — re-runnable.
+
+### Adding data (DBeaver, manual)
+
+Connect DBeaver through a **local** cloud-sql-proxy (nothing is exposed publicly):
+
+```bash
+# on your laptop, authenticated with a GCP account that has roles/cloudsql.client
+cloud-sql-proxy PROJECT:REGION:INSTANCE --port 5432
+# DBeaver → new Postgres connection → host 127.0.0.1, port 5432, database appdata
+```
+Edits made in DBeaver are visible to the agent immediately (it queries live).
 
 ## Verify
 
