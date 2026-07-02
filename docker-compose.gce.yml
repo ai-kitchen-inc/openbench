@@ -21,9 +21,9 @@ services:
       SAM_SEGMENTATION_MCP_DEBUG_PATH: ${SAM_SEGMENTATION_MCP_DEBUG_PATH:-/app-data/uploads/_sam_debug}
       OPENBENCH_MCP_DOCKER_PROFILE: ${OPENBENCH_MCP_DOCKER_PROFILE:-openbench}
       DOCKER_MCP_IN_CONTAINER: ${DOCKER_MCP_IN_CONTAINER:-1}
-      # db_server MCP → Cloud SQL Postgres (appdata) via the cloud-sql-proxy
-      # sidecar on the shared openbench-appnet network. The API interpolates these
-      # into mcp/db-server-docker.yaml when it spawns the db_server container.
+      # db_server MCP → Cloud SQL Postgres (appdata) over the instance's public IP
+      # (same path as GENERAL_CHAT_DATABASE_URL). The API interpolates these into
+      # mcp/db-server-docker.yaml when it spawns the db_server container.
       MCP_DB_DATABASE_URL: ${MCP_DB_DATABASE_URL}
       MCP_ALLOW_WRITES: ${MCP_ALLOW_WRITES:-1}
       MCP_MAX_ROWS: ${MCP_MAX_ROWS:-1000}
@@ -53,8 +53,6 @@ services:
       - /app-data/huggingface:/general-chat/huggingface
       - /app-data/docker-config:/root/.docker
       - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - appnet
 
   openbench-worker:
     image: ${OPENBENCH_IMAGE:-openbench-general-chat:latest}
@@ -85,22 +83,3 @@ services:
       - /app-data/downloads:/general-chat/downloads
       - /app-data/image-search:/general-chat/image-search
       - /app-data/huggingface:/general-chat/huggingface
-    networks:
-      - appnet
-
-  # cloud-sql-proxy: gives every service on openbench-appnet a local Postgres
-  # endpoint (cloud-sql-proxy:5432) authenticated by the VM service account
-  # (needs roles/cloudsql.client). Not published to the host — private to the net.
-  cloud-sql-proxy:
-    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
-    restart: unless-stopped
-    command:
-      - "--address=0.0.0.0"
-      - "--port=5432"
-      - "${CLOUD_SQL_INSTANCE}"
-    networks:
-      - appnet
-
-networks:
-  appnet:
-    name: openbench-appnet

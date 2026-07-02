@@ -113,8 +113,7 @@ web config (`VITE_FIREBASE_*`) is baked into `deploy.sh` (it ships in the JS bun
 |-----|---------|
 | `GOOGLE_API_KEY` | Gemini API key |
 | `GENERAL_CHAT_DATABASE_URL` | Cloud SQL Postgres URL for chat memory (with password) |
-| `CLOUD_SQL_INSTANCE` | Cloud SQL connection name `project:region:instance` for the proxy |
-| `MCP_DB_DATABASE_URL` | `db_server` MCP → `appdata` via proxy (`mcp_app` role) |
+| `MCP_DB_DATABASE_URL` | `db_server` MCP → `appdata` over the Cloud SQL public IP (`mcp_app` role) |
 | `APPDATA_ADMIN_URL` | admin URL used by `init-appdb` / `seed-mcp-db` (DDL + seeding) |
 | `MCP_ALLOW_WRITES` / `MCP_MAX_ROWS` | enable agent write/materialize; read-query row cap |
 | `GENERAL_CHAT_FIREBASE_PROJECT_ID` | enables auth; must be `sss-poc1-corporate` |
@@ -158,8 +157,8 @@ The `db_server` MCP is a vendored fork of
 [souhardyak/mcp-db-server](https://github.com/Souhar-dya/mcp-db-server) at
 [`examples/general-chat/mcp/db-server/`](../examples/general-chat/mcp/db-server/),
 built to `mcp-db-server:1.3.1-ob1` in Artifact Registry. The API spawns it via the
-mounted docker socket, joined to the shared **`openbench-appnet`** network, and it
-reaches Cloud SQL through the **`cloud-sql-proxy`** sidecar (`cloud-sql-proxy:5432`).
+mounted docker socket; it reaches Cloud SQL over the instance's **public IP**
+(`MCP_DB_DATABASE_URL`) — the same path `GENERAL_CHAT_DATABASE_URL` already uses.
 
 Data lives in the **`appdata`** database on the existing Cloud SQL instance
 (separate from the `openbench` chat-memory DB):
@@ -171,15 +170,17 @@ The `mcp_app` role is scoped to `appdata` only (SELECT on `public`, full control
 `mart`). Writes are gated by `MCP_ALLOW_WRITES`; read queries are capped by
 `MCP_MAX_ROWS`.
 
-**Prerequisite:** the VM service account needs **`roles/cloudsql.client`** so the
-proxy can connect.
+**Prerequisite:** the VM's public egress IP must be an **authorized network** on
+the Cloud SQL instance (already true — chat memory uses the same public-IP path).
 
 ### First-time setup
 
 ```bash
 bash deploy/deploy.sh mcp-image        # build + pull the forked image on the VM
-bash deploy/deploy.sh nginx            # push compose (adds cloud-sql-proxy + appnet)
-bash deploy/deploy.sh backend          # roll out (starts the proxy + api on appnet)
+# set MCP_DB_DATABASE_URL / APPDATA_ADMIN_URL / MCP_ALLOW_WRITES / MCP_MAX_ROWS
+# in the VM .env.gcp (point at the Cloud SQL public IP; mcp_app password)
+bash deploy/deploy.sh nginx            # push the updated compose (new API env)
+bash deploy/deploy.sh backend          # rebuild API image + roll out
 bash deploy/deploy.sh init-appdb       # create appdata + mart + mcp_app
 bash deploy/deploy.sh seed-mcp-db deploy/appdb/init.sql
 ```
@@ -191,7 +192,7 @@ bash deploy/deploy.sh seed-mcp-db deploy/appdb/init.sql
 bash deploy/deploy.sh seed-mcp-db deploy/appdb/seed.example.sql
 ```
 `seed-mcp-db` scp's the file and applies it with a throwaway `postgres:16` psql
-container on `openbench-appnet` using `APPDATA_ADMIN_URL` — re-runnable.
+container using `APPDATA_ADMIN_URL` (Cloud SQL public IP) — re-runnable.
 
 ### Adding data (DBeaver, manual)
 

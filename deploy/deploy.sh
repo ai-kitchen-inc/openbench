@@ -49,9 +49,9 @@ IMAGE="${IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/general-
 CLOUDBUILD_CONFIG="${CLOUDBUILD_CONFIG:-cloudbuild.general-chat.yaml}"
 
 # db_server MCP data lives in Cloud SQL (appdata). init/seed run psql from a
-# throwaway container joined to the shared docker network.
+# throwaway container that reaches Cloud SQL over its public IP (same path the
+# app already uses), so no special docker network is needed.
 PSQL_IMAGE="${PSQL_IMAGE:-postgres:16}"
-APPNET="${APPNET:-openbench-appnet}"
 
 # db_server MCP forked image (Postgres + materialize): source dir + Cloud Build.
 MCP_IMAGE="${MCP_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/mcp-db-server:1.3.1-ob1}"
@@ -250,7 +250,7 @@ cmd_init_appdb() {
     [ -n \"\$admin\" ] || { echo 'APPDATA_ADMIN_URL missing in .env.gcp'; exit 1; }; \
     maint=\"\${admin%/*}/postgres\"; \
     pw=\$(printf '%s' \"\$mcpurl\" | sed -E 's#.*://[^:]+:([^@]+)@.*#\1#'); \
-    sudo docker run --rm -i --network $APPNET $PSQL_IMAGE \
+    sudo docker run --rm -i $PSQL_IMAGE \
       psql \"\$maint\" -v ON_ERROR_STOP=1 -v mcp_password=\"\$pw\" -f - < /tmp/appdb-roles.sql && \
     rm -f /tmp/appdb-roles.sql && echo INITED" \
     || die "init-appdb failed"
@@ -271,7 +271,7 @@ cmd_seed_mcp_db() {
     || die "scp of seed file failed"
   vm_ssh "admin=\$(grep '^APPDATA_ADMIN_URL=' $VM_DEPLOY_DIR/.env.gcp | cut -d= -f2-); \
     [ -n \"\$admin\" ] || { echo 'APPDATA_ADMIN_URL missing in .env.gcp'; exit 1; }; \
-    sudo docker run --rm -i --network $APPNET $PSQL_IMAGE \
+    sudo docker run --rm -i $PSQL_IMAGE \
       psql \"\$admin\" -v ON_ERROR_STOP=1 -f - < /tmp/appdb-seed.sql && \
     rm -f /tmp/appdb-seed.sql && echo SEEDED" \
     || die "seed failed"

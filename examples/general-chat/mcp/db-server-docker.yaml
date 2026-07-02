@@ -13,8 +13,6 @@ mcp:
         - run
         - "--rm"
         - "-i"
-        - "--network"
-        - "openbench-appnet"
         - "-e"
         - DATABASE_URL=${MCP_DB_DATABASE_URL}
         - "-e"

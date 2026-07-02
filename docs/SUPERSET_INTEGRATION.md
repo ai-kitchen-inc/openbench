@@ -32,8 +32,8 @@ This design follows the existing Grafana-export pattern rather than inventing
 new core abstractions.
 
 ### Locked decisions
-- **Data path:** Superset connects **live** to Cloud SQL Postgres (`appdata`) via
-  the same `cloud-sql-proxy` sidecar the `db_server` MCP uses. Charts run real SQL
+- **Data path:** Superset connects **live** to Cloud SQL Postgres (`appdata`) over
+  the instance public IP (same path the `db_server` MCP uses). Charts run real SQL
   against `public.*` (seeded) and `mart.*` (agent-materialized) tables.
 - **Superset metadata DB:** a **bundled Postgres container** on the VM,
   dedicated to Superset (separate from `appdata`).
