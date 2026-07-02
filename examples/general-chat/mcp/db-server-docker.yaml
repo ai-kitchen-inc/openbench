@@ -13,11 +13,15 @@ mcp:
         - run
         - "--rm"
         - "-i"
-        - "-v"
-        - "${MCP_DB_DATA_PATH}:/data"
+        - "--network"
+        - "openbench-appnet"
         - "-e"
-        - DATABASE_URL=sqlite+aiosqlite:////data/default.db
-        - souhardyak/mcp-db-server:1.3.1
+        - DATABASE_URL=${MCP_DB_DATABASE_URL}
+        - "-e"
+        - MCP_ALLOW_WRITES=${MCP_ALLOW_WRITES}
+        - "-e"
+        - MCP_MAX_ROWS=${MCP_MAX_ROWS}
+        - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/mcp-db-server:1.3.1-ob1
       namespace: db_server
       allowed: true
       discovery_timeout_seconds: 15

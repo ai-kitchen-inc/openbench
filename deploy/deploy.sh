@@ -50,6 +50,11 @@ CLOUDBUILD_CONFIG="${CLOUDBUILD_CONFIG:-cloudbuild.general-chat.yaml}"
 MCP_DB_DATA_PATH_VM="${MCP_DB_DATA_PATH_VM:-/app-data/mcp-db}"
 SQLITE_IMAGE="${SQLITE_IMAGE:-nouchka/sqlite3}"
 
+# db_server MCP forked image (Postgres + materialize): source dir + Cloud Build.
+MCP_IMAGE="${MCP_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/mcp-db-server:1.3.1-ob1}"
+MCP_CLOUDBUILD_CONFIG="${MCP_CLOUDBUILD_CONFIG:-cloudbuild.mcp-db-server.yaml}"
+MCP_IMAGE_DIR="${MCP_IMAGE_DIR:-examples/general-chat/mcp/db-server}"
+
 VM_NAME="${VM_NAME:-openbench-general-chat}"
 VM_ZONE="${VM_ZONE:-us-central1-a}"
 VM_DEPLOY_DIR="${VM_DEPLOY_DIR:-/home/Admin/openbench-deploy}"
@@ -133,6 +138,32 @@ cmd_backend() {
     printf '  ... booting\n'; sleep 5
   done
   ok "API healthy at $API_URL/health"
+}
+
+# --- mcp-image ---------------------------------------------------------------
+# Build the forked db_server MCP image (Postgres + materialize) via Cloud Build
+# and pull it on the VM so the API can spawn it with `docker run`.
+cmd_mcp_image() {
+  log "Building db_server MCP image via Cloud Build ($MCP_IMAGE)"
+  local build_id
+  build_id="$("$GCLOUD" builds submit --async --config "$MCP_CLOUDBUILD_CONFIG" "$MCP_IMAGE_DIR" \
+    --format='value(id)')" || die "Cloud Build submit failed"
+  [ -n "$build_id" ] || die "Could not capture Cloud Build id"
+  ok "submitted build $build_id — polling"
+
+  local status=""
+  while :; do
+    status="$("$GCLOUD" builds describe "$build_id" --format='value(status)' 2>/dev/null || echo '')"
+    case "$status" in
+      SUCCESS) ok "build $build_id SUCCESS"; break ;;
+      FAILURE|TIMEOUT|CANCELLED|EXPIRED) die "build $build_id ended: $status" ;;
+      *) printf '  ... %s\n' "${status:-pending}"; sleep 15 ;;
+    esac
+  done
+
+  log "Pulling MCP image on the VM ($VM_NAME)"
+  vm_ssh "sudo docker pull $MCP_IMAGE" || die "VM pull of $MCP_IMAGE failed"
+  ok "db_server MCP image ready on the VM"
 }
 
 # --- frontend ----------------------------------------------------------------
@@ -261,6 +292,7 @@ EOF
 case "${1:-help}" in
   backend)  cmd_backend ;;
   frontend) cmd_frontend ;;
+  mcp-image) cmd_mcp_image ;;
   nginx)    cmd_nginx ;;
   add-user) shift; cmd_add_user "${1:-}" ;;
   remove-user) shift; cmd_remove_user "${1:-}" ;;
@@ -268,5 +300,5 @@ case "${1:-help}" in
   verify)   cmd_verify ;;
   all)      cmd_backend; cmd_frontend; cmd_verify ;;
   help|-h|--help) cmd_help ;;
-  *) die "unknown command '$1' (try: backend|frontend|nginx|add-user|remove-user|seed-mcp-db|verify|all|help)" ;;
+  *) die "unknown command '$1' (try: backend|frontend|mcp-image|nginx|add-user|remove-user|init-appdb|seed-mcp-db|verify|all|help)" ;;
 esac
