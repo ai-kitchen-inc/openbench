@@ -3,7 +3,8 @@
 Tool functions in SDK skills (e.g. ``export-excel``, ``data-visualization``)
 and project skills (e.g. ``xql``) push A2UI-shaped dicts into this queue
 so ``ChatEngine`` can turn them into rich components (``ObFileCard``,
-``ObChart``, ``ObTable``, etc.) via its ``render_items_fn`` hook.
+``ObChart``, ``ObDashboardFrame``, ``ObTable``, etc.) via its
+``render_items_fn`` hook.
 
 Why it exists
 -------------
@@ -73,8 +74,8 @@ def push(item: dict[str, Any]) -> None:
     """Append one A2UI-shaped dict to the queue.
 
     The item must match one of the registered ``ContentRenderer`` detect
-    contracts (chart, file, form, list, table, code, media, callout, etc.)
-    or it will be ignored by ``ChatEngine``.
+    contracts (chart, dashboard, file, form, list, table, code, media,
+    callout, etc.) or it will be ignored by ``ChatEngine``.
     """
     if not isinstance(item, dict):
         raise TypeError(f"push() requires a dict render item, got {type(item).__name__}")

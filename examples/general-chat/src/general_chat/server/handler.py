@@ -13,11 +13,16 @@ from typing import TYPE_CHECKING, Any
 
 from openbench.chat.session import Attachment
 from openbench.chat.transport import AGUIHandler
-from openbench.core.abstractions import LLMProvider, LLMResponse
+from openbench.core.abstractions import ExecutionContext, LLMProvider, LLMResponse
 from openbench.intelligence.base import AgentMemory, BaseAgent, Message, MessageRole
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
+from openbench.mcp.permissions import MCPPermissionContext
+
+from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from general_chat.sources import SourceRecord
 
 
@@ -25,6 +30,20 @@ _SOURCE_CONTEXT_ID = "general-chat-source-context"
 _REDACTED_ATTACHMENT_CONTEXT = (
     "Context data: [previous General Chat source attachment content redacted]"
 )
+_IMAGE_MCP_FILE_PATH_RE = re.compile(r"/general-chat/uploads/file-[^/\"'\s]+/[^\r\n\"']+")
+_VISION_ATTACHMENT_ID = "general-chat-vision-observation"
+_VEHICLE_PLATE_TERMS = (
+    "plat",
+    "plate",
+    "nomor kendaraan",
+    "license plate",
+    "number plate",
+    "vehicle plate",
+)
+
+
+def _example_root() -> Path:
+    return Path(__file__).resolve().parents[3]
 
 
 def _debug_prompt_dir() -> Path | None:
@@ -84,9 +103,7 @@ class _DebugLLMProvider(LLMProvider):
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
 
-    def generate(
-        self, prompt: str | list[dict[str, Any]], model: str = "", **params
-    ) -> LLMResponse:
+    def generate(self, prompt: str | list[dict[str, Any]], model: str = "", **params) -> LLMResponse:
         _dump_prompt(
             prompt,
             model=model,
@@ -152,6 +169,11 @@ def _image_attachment_mcp_path(attachment: Attachment) -> str | None:
     """Return the container path image MCP tools can read for a chat upload."""
     if attachment.type != "image" and not attachment.mime_type.startswith("image/"):
         return None
+    if attachment.path and _IMAGE_MCP_FILE_PATH_RE.fullmatch(attachment.path):
+        return attachment.path
+    existing_match = _IMAGE_MCP_FILE_PATH_RE.search(attachment.extracted_text or "")
+    if existing_match:
+        return existing_match.group(0)
     if not attachment.url.startswith("/uploads/"):
         return None
     from general_chat.sources import image_search_metadata
@@ -168,12 +190,155 @@ def _image_attachment_mcp_path(attachment: Attachment) -> str | None:
     return image_search_metadata(stored)["samSegmentationPath"]
 
 
+def _local_upload_path_from_attachment(attachment: Attachment) -> str | None:
+    """Resolve a local upload path from a browser-facing /uploads URL."""
+    if not attachment.url.startswith("/uploads/"):
+        return None
+    parts = attachment.url.strip("/").split("/", 2)
+    if len(parts) != 3 or parts[0] != "uploads":
+        return None
+    upload_root = Path(
+        os.getenv("GENERAL_CHAT_UPLOAD_DIR", str(_example_root() / "uploads"))
+    ).resolve()
+    candidate = (upload_root / parts[1] / Path(parts[2]).name).resolve()
+    try:
+        candidate.relative_to(upload_root)
+    except ValueError:
+        return None
+    return str(candidate) if candidate.is_file() else None
+
+
+def _is_image_attachment(attachment: Attachment) -> bool:
+    return attachment.type == "image" or attachment.mime_type.startswith("image/")
+
+
+def _attachment_to_vision_item(attachment: Attachment) -> dict[str, Any] | None:
+    if not _is_image_attachment(attachment):
+        return None
+
+    local_path = _local_upload_path_from_attachment(attachment)
+    path = local_path or attachment.path
+    if not path:
+        return None
+    if path.startswith("/general-chat/uploads/") and local_path is None:
+        return None
+
+    return {
+        "id": attachment.id,
+        "name": attachment.name,
+        "type": "image",
+        "mime_type": attachment.mime_type,
+        "path": path,
+        "url": attachment.url,
+    }
+
+
+def _is_vehicle_plate_request(content: str) -> bool:
+    lowered = content.lower()
+    return any(term in lowered for term in _VEHICLE_PLATE_TERMS)
+
+
+def _build_visual_observation_attachment(
+    *,
+    content: str,
+    image_items: list[dict[str, Any]],
+    output: str,
+    metadata: dict[str, Any],
+) -> Attachment:
+    names = ", ".join(str(item.get("name") or "image") for item in image_items)
+    provider = metadata.get("provider") or "unknown"
+    model = metadata.get("model") or "unknown"
+    text = (
+        "Visual observation from the configured OpenBench VLM.\n\n"
+        f"User request: {content}\n"
+        f"Images: {names}\n"
+        f"VLM: {provider} / {model}\n\n"
+        f"{output.strip()}"
+    ).strip()
+    return Attachment(
+        id=_VISION_ATTACHMENT_ID,
+        type="file",
+        name="visual-observations.md",
+        url="",
+        mime_type="text/markdown",
+        extracted_text=text,
+    )
+
+
+def _augment_with_visual_observations(
+    *,
+    agent: Any,
+    content: str,
+    attachments: list[Attachment],
+) -> list[Attachment]:
+    vision_agent = getattr(agent, "_vision_agent", None)
+    if vision_agent is None:
+        return attachments
+
+    image_items = [
+        item for item in (_attachment_to_vision_item(attachment) for attachment in attachments) if item
+    ]
+    if not image_items:
+        return attachments
+
+    model = str(
+        getattr(vision_agent, "model", "")
+        or getattr(agent, "_vlm_summary", {}).get("model")
+        or "unknown"
+    )
+    for item in image_items:
+        print(f"[vision] running source={item.get('name') or 'image'} model={model}")
+
+    plate_request = _is_vehicle_plate_request(content)
+    if plate_request:
+        for item in image_items:
+            print(
+                "[vehicle-plate-reading] invoked "
+                f"source={item.get('name') or 'image'} model={model}"
+            )
+
+    goal = (
+        "Analyze the uploaded image(s) for the user's request. "
+        f"User request: {content}"
+    )
+    if plate_request:
+        goal = (
+            "Use the vehicle-plate-reading skill to read any visible vehicle "
+            f"license plate. User request: {content}"
+        )
+
+    result = vision_agent.execute(
+        ExecutionContext(
+            goal=goal,
+            data={"attachments": image_items},
+        )
+    )
+    if result.status != "completed" or not result.output:
+        error = result.metadata.get("error") if result.metadata else None
+        if not error:
+            return attachments
+        output = f"Visual analysis unavailable: {error}"
+    else:
+        output = str(result.output)
+    print(f"[vision] result chars={len(output)}")
+
+    return [
+        *attachments,
+        _build_visual_observation_attachment(
+            content=content,
+            image_items=image_items,
+            output=output,
+            metadata=result.metadata,
+        ),
+    ]
+
+
 def _enrich_draft_attachments(attachments: list[Attachment] | None) -> list[Attachment]:
     """Preserve draft attachments and add MCP-readable context for images."""
     if not attachments:
         return []
 
-    from general_chat.sources import image_search_metadata, image_search_text
+    from general_chat.sources import image_search_text
     from openbench.chat.files import StoredFile
 
     enriched: list[Attachment] = []
@@ -191,11 +356,10 @@ def _enrich_draft_attachments(attachments: list[Attachment] | None) -> list[Atta
             size_bytes=attachment.size_bytes or 0,
             stored_at="",
         )
-        metadata = image_search_metadata(stored)
         existing_text = (attachment.extracted_text or "").strip()
         if (
             existing_text
-            and metadata["samSegmentationPath"] in existing_text
+            and image_path in existing_text
             and "sam_segmentation.count_objects_with_sam3" in existing_text
         ):
             extracted_text = existing_text
@@ -211,7 +375,7 @@ def _enrich_draft_attachments(attachments: list[Attachment] | None) -> list[Atta
                 mime_type=attachment.mime_type,
                 size_bytes=attachment.size_bytes,
                 extracted_text=extracted_text,
-                path=metadata["samSegmentationPath"],
+                path=image_path,
             )
         )
     return enriched
@@ -226,13 +390,42 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
         metadata = record.metadata or {}
         image_search_path = metadata.get("imageSearchPath")
         sam_segmentation_path = metadata.get("samSegmentationPath")
+        dashboard_source_path = metadata.get("localFilePath")
         extra_lines = ""
         image_tool_path = image_search_path if isinstance(image_search_path, str) else None
         sam_tool_path = sam_segmentation_path if isinstance(sam_segmentation_path, str) else None
+        dashboard_tool_path = (
+            dashboard_source_path if isinstance(dashboard_source_path, str) else None
+        )
         if record.kind == "image" and image_tool_path:
             extra_lines = f"Image search path: {image_tool_path}\n\n"
         if record.kind == "image" and sam_tool_path:
             extra_lines += f"SAM 3 concept counting path: {sam_tool_path}\n\n"
+        if record.kind == "spreadsheet" and dashboard_tool_path:
+            extra_lines += (
+                f"Dashboard source path: {dashboard_tool_path}\n"
+                "For dashboard requests, call extract_metadata with this path first.\n\n"
+            )
+            extracted_text = (
+                f"Source name: {record.name}\n"
+                f"Source type: {record.kind}\n"
+                f"Source URL: {record.url or '(none)'}\n\n"
+                f"{extra_lines}"
+                "Optional context extracted from this user-added source.\n\n"
+                f"## {record.name}\n\n"
+                "Spreadsheet raw rows are intentionally omitted from the chat prompt. "
+                "Use extract_metadata, aggregate_data, and generate_dashboard for "
+                "dashboard requests."
+            )
+        else:
+            extracted_text = (
+                f"Source name: {record.name}\n"
+                f"Source type: {record.kind}\n"
+                f"Source URL: {record.url or '(none)'}\n\n"
+                f"{extra_lines}"
+                "Optional context extracted from this user-added source.\n\n"
+                f"## {record.name}\n\n{record.text}"
+            )
         attachments.append(
             Attachment(
                 id=record.id,
@@ -241,15 +434,8 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
                 url=record.url or "",
                 mime_type=record.mime_type or "text/plain",
                 size_bytes=record.size_bytes,
-                path=sam_tool_path or image_tool_path,
-                extracted_text=(
-                    f"Source name: {record.name}\n"
-                    f"Source type: {record.kind}\n"
-                    f"Source URL: {record.url or '(none)'}\n\n"
-                    f"{extra_lines}"
-                    "Optional context extracted from this user-added source.\n\n"
-                    f"## {record.name}\n\n{record.text}"
-                ),
+                path=dashboard_tool_path or sam_tool_path or image_tool_path,
+                extracted_text=extracted_text,
             )
         )
     return attachments
@@ -281,7 +467,14 @@ def _redact_stale_source_context(messages: list[Message]) -> tuple[list[Message]
 
 
 def sanitize_messages(messages: list[Message]) -> list[Message]:
-    """Remove invalid conversation-turn sequences that break Gemini's API."""
+    """Remove invalid conversation-turn sequences that break Gemini's API.
+
+    A completed tool exchange is not enough by itself: if a request fails after
+    tool results are appended but before the model produces a final assistant
+    turn, the next user message leaves a stale function_response in history.
+    Gemini can reject that replay with ``400 INVALID_ARGUMENT``. Keep tool
+    exchanges only when another assistant turn follows and consumes them.
+    """
     if not messages:
         return messages
 
@@ -321,7 +514,9 @@ def sanitize_messages(messages: list[Message]) -> list[Message]:
             while j < n and messages[j].role == MessageRole.TOOL and len(responses) < num_expected:
                 responses.append(messages[j])
                 j += 1
-            if len(responses) == num_expected:
+            has_followup_assistant = j < n and messages[j].role == MessageRole.ASSISTANT
+            has_replayable_raw_content = m.raw_content is not None
+            if len(responses) == num_expected and has_followup_assistant and has_replayable_raw_content:
                 out.append(m)
                 out.extend(responses)
                 i = j
@@ -346,14 +541,27 @@ class GeneralChatHandler(AGUIHandler):
         self,
         engine,
         db_path: str = "general_chat_memory.db",
+        memory_store: Any | None = None,
         doc_context: str | None = None,
         source_records: list[SourceRecord] | None = None,
+        on_stream_complete: Callable[[list[SourceRecord]], None] | None = None,
+        mcp_permission_coordinator: GeneralChatMCPPermissionCoordinator | None = None,
     ):
         super().__init__(engine)
-        self._memory_store = SQLiteMemoryStore(db_path=db_path)
+        self._memory_store = memory_store or SQLiteMemoryStore(db_path=db_path)
         self._local = threading.local()
         self._doc_context = doc_context
         self._source_records = source_records or []
+        self._on_stream_complete = on_stream_complete
+        self._mcp_permission_coordinator = mcp_permission_coordinator
+
+    async def _event_stream(self, body: dict[str, Any], accept: str) -> Any:
+        try:
+            async for item in super()._event_stream(body, accept):
+                yield item
+        finally:
+            if self._on_stream_complete and self._source_records:
+                self._on_stream_complete(self._source_records)
 
     def _extract_content(self, body):
         content, draft_attachments = super()._extract_content(body)
@@ -364,6 +572,12 @@ class GeneralChatHandler(AGUIHandler):
         if self._doc_context:
             source_attachments = _source_context_attachments(self._doc_context)
             attachments = [*attachments, *source_attachments]
+        if attachments:
+            attachments = _augment_with_visual_observations(
+                agent=self.engine.agent,
+                content=content,
+                attachments=attachments,
+            )
         return content, attachments or None
 
     def _get_or_create_session(self, session_id):
@@ -372,6 +586,29 @@ class GeneralChatHandler(AGUIHandler):
 
     def _on_session_resolved(self, session_id):
         self._local.session_id = session_id
+
+    def _create_permission_context(
+        self,
+        *,
+        session_id: str,
+        thread_id: str,
+        run_id: str,
+        queue,
+        loop,
+    ):
+        if self._mcp_permission_coordinator is None:
+            return None
+
+        def provider(request):
+            return self._mcp_permission_coordinator.request_permission(
+                session_id=session_id,
+                run_id=run_id,
+                request=request,
+                queue=queue,
+                loop=loop,
+            )
+
+        return MCPPermissionContext(provider)
 
     def _create_request_agent(self):
         agent = self.engine.agent
@@ -405,10 +642,7 @@ class GeneralChatHandler(AGUIHandler):
         else:
             agent_copy.memory = AgentMemory()
 
-        if (
-            not agent_copy.memory.messages
-            or agent_copy.memory.messages[0].role != MessageRole.SYSTEM
-        ):
+        if not agent_copy.memory.messages or agent_copy.memory.messages[0].role != MessageRole.SYSTEM:
             agent_copy.memory.add_system(agent._system_prompt)
 
         agent_copy._llm = agent._llm

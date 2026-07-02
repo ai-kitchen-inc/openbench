@@ -1,33 +1,47 @@
 """FastAPI application for General Chat.
 
 A simplified chat server with optional file, URL, text, and image context,
-plus a general-purpose Gemini agent. No authentication required.
+plus a general-purpose Gemini agent. Firebase authentication is enforced
+when GENERAL_CHAT_FIREBASE_PROJECT_ID is configured.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
+import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
 from general_chat.extractor import DoclingContentExtractor
+from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
+from general_chat.server.auth import auth_enabled, require_firebase_user
+from general_chat.server.dashboard_pdf import render_dashboard_pdf
+from general_chat.server.grafana import view_model_to_grafana
 from general_chat.server.handler import GeneralChatHandler
+from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
+from general_chat.server.publish_store import PublishStore
 from general_chat.sources import (
     DEFAULT_DISCOVERY_LIMIT,
     SearchDiscoveryAdapter,
     SourceParserRegistry,
-    SourceStore,
+    SourceRecord,
+    build_source_store,
+    image_search_text,
+    mark_source_upload_deleted,
     max_source_bytes_from_env,
     source_record_from_file,
     source_record_from_text,
     source_record_from_url,
+    upload_file_ids_for_source,
 )
 from openbench import LocalStorageBackend
 from openbench.chat import ChatEngine
@@ -41,6 +55,7 @@ logger = logging.getLogger(__name__)
 
 _ALLOWED_MIME_TYPES = {
     "application/pdf",
+    "application/epub+zip",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -54,12 +69,29 @@ _ALLOWED_MIME_TYPES = {
     "image/png",
     "image/jpeg",
     "image/webp",
+    "image/gif",
+    "image/heic",
+    "image/heif",
+    "image/tiff",
+    "image/bmp",
+    "image/svg+xml",
+    "audio/mpeg",
+    "audio/wav",
+    "audio/mp4",
+    "audio/ogg",
+    "audio/aac",
+    "audio/flac",
+    "video/mp4",
+    "video/webm",
+    "video/quicktime",
+    "video/x-msvideo",
     "application/octet-stream",  # browser fallback
 }
 
 # Extension-to-MIME override when the browser sends application/octet-stream
 _EXT_MIME_MAP = {
     ".pdf": "application/pdf",
+    ".epub": "application/epub+zip",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".doc": "application/msword",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -74,7 +106,72 @@ _EXT_MIME_MAP = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".tiff": "image/tiff",
+    ".tif": "image/tiff",
+    ".bmp": "image/bmp",
+    ".svg": "image/svg+xml",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".avi": "video/x-msvideo",
 }
+
+_AUTH_PROTECTED_PREFIXES = (
+    "/awp",
+    "/chat",
+    "/dashboard",
+    "/downloads",
+    "/image-search",
+    "/mcp",
+    "/persona",
+    "/sessions",
+    "/skills",
+    "/toolhive",
+    "/uploads",
+)
+
+
+def _slugify_dashboard_title(title: str) -> str:
+    """Filesystem-safe slug for a downloaded dashboard filename."""
+    cleaned = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return cleaned[:48] or "dashboard"
+
+
+async def _read_dashboard_view_model(request: Request) -> dict | None:
+    """Read the dashboard ViewModel from a request body.
+
+    Decodes only the first JSON value and ignores any trailing bytes. This
+    tolerates a duplicated/concatenated body — a known Starlette
+    ``BaseHTTPMiddleware`` + keep-alive quirk where a second copy of the body
+    can be appended on a connection reused after a binary response (the PDF
+    export), which otherwise makes ``request.json()`` raise "Extra data".
+    """
+    raw = (await request.body()).decode("utf-8", "replace").strip()
+    if not raw:
+        return None
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    view_model = payload.get("viewModel") or payload.get("view_model")
+    return view_model if isinstance(view_model, dict) and view_model else None
+
+
+def _requires_auth_path(path: str) -> bool:
+    return path in _AUTH_PROTECTED_PREFIXES or any(
+        path.startswith(f"{prefix}/") for prefix in _AUTH_PROTECTED_PREFIXES
+    )
 
 
 def _resolve_mime(filename: str, content_type: str) -> str:
@@ -91,6 +188,127 @@ def _resolve_request_session_id(body: dict) -> str | None:
     return forwarded.get("sessionId") or body.get("threadId")
 
 
+def _gcp_enabled() -> bool:
+    return bool(os.getenv("GENERAL_CHAT_GCP_BUCKET"))
+
+
+def cors_allowed_origins() -> list[str]:
+    """Return the CORS allowlist.
+
+    Set GENERAL_CHAT_ALLOWED_ORIGINS to a comma-separated list of origins
+    (e.g. the Firebase Hosting URLs) to scope cross-origin access in
+    production. Defaults to ``["*"]`` when unset so local/dev and tests keep
+    working. Requests still require a valid Firebase token regardless of CORS.
+    """
+    raw = os.getenv("GENERAL_CHAT_ALLOWED_ORIGINS", "").strip()
+    if not raw:
+        return ["*"]
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    return origins or ["*"]
+
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def _build_storage_backend(storage_root: str, *, session_id: str = "default"):
+    if not _gcp_enabled():
+        return LocalStorageBackend(storage_root)
+    from openbench.integrations.gcp import GoogleCloudStorageBackend
+
+    return GoogleCloudStorageBackend.from_env(
+        user_id=os.getenv("GENERAL_CHAT_GCP_USER_ID", "default"),
+        session_id=session_id,
+    )
+
+
+def _build_attachment_archiver():
+    """Build the forever-archive uploader, or ``None`` when the feature is off.
+
+    Gated on GENERAL_CHAT_ARCHIVE_BUCKET (a dedicated standalone bucket),
+    independent of the primary storage backend.
+    """
+    if not os.getenv("GENERAL_CHAT_ARCHIVE_BUCKET"):
+        return None
+    try:
+        from openbench.integrations.gcp import AttachmentArchiver
+
+        return AttachmentArchiver.from_env()
+    except Exception:
+        logger.warning("Attachment archiver init failed; archiving disabled", exc_info=True)
+        return None
+
+
+async def _read_upload_limited(file: UploadFile, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=(
+                    f"Multipart upload exceeds {max_bytes} bytes. "
+                    "Use /chat/uploads/initiate for direct Cloud Storage uploads."
+                ),
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _is_gcs_source(record: SourceRecord) -> bool:
+    metadata = record.metadata or {}
+    return bool(metadata.get("gcsObject") or metadata.get("gcsBucket"))
+
+
+def _queued_gcs_upload_record(
+    *,
+    session_id: str,
+    stored,
+    status_label: str = "queued",
+) -> SourceRecord:
+    metadata = {
+        "fileId": stored.id,
+        "gcsUri": stored.web_view_link,
+        "uploadStatus": "uploaded",
+        "parseStatus": status_label,
+    }
+    if stored.web_view_link and stored.web_view_link.startswith("gs://"):
+        without_scheme = stored.web_view_link[len("gs://") :]
+        bucket, _, object_name = without_scheme.partition("/")
+        if bucket:
+            metadata["gcsBucket"] = bucket
+        if object_name:
+            metadata["gcsObject"] = object_name
+    return SourceRecord.create(
+        session_id=session_id,
+        name=stored.name,
+        kind="file",
+        mime_type=stored.mime_type,
+        size_bytes=stored.size_bytes,
+        url=stored.web_view_link,
+        text="",
+        status="processing",
+        metadata=metadata,
+    )
+
+
 def create_app() -> FastAPI:
     example_root = get_persona_dir().parent
 
@@ -99,13 +317,11 @@ def create_app() -> FastAPI:
     os.makedirs(upload_dir, exist_ok=True)
 
     default_download_dir = example_root / "downloads"
-    download_dir = str(
-        Path(os.getenv("GENERAL_CHAT_DOWNLOAD_DIR", str(default_download_dir))).resolve()
-    )
+    download_dir = str(Path(os.getenv("GENERAL_CHAT_DOWNLOAD_DIR", str(default_download_dir))).resolve())
     os.makedirs(download_dir, exist_ok=True)
 
     default_image_search_preview_dir = (
-        example_root.parent / "image-search-mcp" / "data" / "previews"
+        example_root.parents[1] / "mcp" / "image-search-mcp" / "data" / "previews"
     )
     image_search_preview_dir = str(
         Path(
@@ -118,9 +334,7 @@ def create_app() -> FastAPI:
     os.makedirs(image_search_preview_dir, exist_ok=True)
 
     default_storage_root = example_root / ".openbench"
-    storage_root = str(
-        Path(os.getenv("GENERAL_CHAT_STORAGE_ROOT", str(default_storage_root))).resolve()
-    )
+    storage_root = str(Path(os.getenv("GENERAL_CHAT_STORAGE_ROOT", str(default_storage_root))).resolve())
     os.environ["GENERAL_CHAT_MCP_REGISTRY_ROOT"] = storage_root
 
     default_profile_dir = example_root / "profiles"
@@ -132,16 +346,174 @@ def create_app() -> FastAPI:
 
     db_path = os.getenv("GENERAL_CHAT_MEMORY_DB", "general_chat_memory.db")
 
-    storage = LocalStorageBackend(storage_root)
+    storage = _build_storage_backend(storage_root)
+    publish_store = PublishStore(storage_root)
     file_store = LocalFileStore(upload_dir=upload_dir)
+    archiver = _build_attachment_archiver()
     extractor = DoclingContentExtractor()
     source_parser = SourceParserRegistry(document_extractor=extractor)
-    source_store = SourceStore(storage_root)
+    source_store = build_source_store(storage_root)
     mcp_registry_store = MCPServerRegistryStore(storage_root)
     toolhive_service = ToolHiveService()
+    mcp_permission_coordinator = GeneralChatMCPPermissionCoordinator()
     discovery_adapter = SearchDiscoveryAdapter()
     max_source_bytes = max_source_bytes_from_env()
+    multipart_upload_max_bytes = _env_int(
+        "GENERAL_CHAT_MULTIPART_UPLOAD_MAX_BYTES",
+        25 * 1024 * 1024,
+    )
     agent = create_agent()
+    chat_memory_store = storage.memory_store() if os.getenv("GENERAL_CHAT_DATABASE_URL") else None
+
+    def _storage_for_session(session_id: str):
+        if not _gcp_enabled():
+            return storage
+        return _build_storage_backend(storage_root, session_id=session_id)
+
+    def _file_store_for_session(session_id: str):
+        if not _gcp_enabled():
+            return file_store
+        return _storage_for_session(session_id).file_store()
+
+    def _archive_attachment(filename: str, content: bytes, mime_type: str, session_id: str) -> None:
+        """Best-effort copy of an upload into the forever-archive (never raises)."""
+        if archiver is None:
+            return
+        try:
+            archiver.archive(
+                filename,
+                content,
+                mime_type,
+                user_id=os.getenv("GENERAL_CHAT_GCP_USER_ID", "default"),
+                session_id=session_id,
+            )
+        except Exception:
+            logger.warning("Attachment archive failed for %r", filename, exc_info=True)
+
+    def _mcp_upload_path(stored) -> str:
+        destination = Path(upload_dir) / stored.id / Path(stored.name).name
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source = Path(stored.path)
+            if source.exists() and source.resolve() != destination.resolve():
+                shutil.copyfile(source, destination)
+        except Exception:
+            logger.warning(
+                "Failed to mirror chat attachment for MCP file_id=%s",
+                getattr(stored, "id", ""),
+                exc_info=True,
+            )
+        return f"/general-chat/uploads/{stored.id}/{Path(stored.name).name}"
+
+    def _attachment_from_stored_file(stored):
+        attachment = stored.to_attachment(base_url="/uploads")
+        if attachment.type == "image":
+            mcp_path = _mcp_upload_path(stored)
+            stored.path = mcp_path
+            attachment.path = mcp_path
+            attachment.extracted_text = image_search_text(stored)
+        return attachment
+
+    def _enabled_tool_count(server) -> int:
+        return sum(1 for tool in getattr(server, "tools", []) if getattr(tool, "enabled", True))
+
+    def _reload_external_mcp_tools_or_raise(
+        *,
+        server_ids: set[str] | None = None,
+        require_chat_tools: bool = False,
+        discovered_tool_count: int = 0,
+        enabled_tool_count: int = 0,
+    ) -> dict:
+        reload_summary = reload_external_mcp_tools(agent, server_ids=server_ids)
+        diagnostics = reload_summary.get("diagnostics")
+        diagnostic_text = ""
+        if isinstance(diagnostics, list) and diagnostics:
+            parts = []
+            for item in diagnostics:
+                if not isinstance(item, dict):
+                    continue
+                provider = item.get("provider") or "mcp"
+                server = item.get("server") or "server"
+                error = item.get("connection_error") or item.get("error")
+                discovered = item.get("tools_discovered", 0)
+                registered = item.get("tools_registered", 0)
+                parts.append(
+                    f"{provider}/{server}: discovered={discovered}, registered={registered}"
+                    + (f", error={error}" if error else "")
+                )
+            if parts:
+                diagnostic_text = " Provider diagnostics: " + " | ".join(parts)
+        logger.info(
+            "mcp.api.reload discovered=%d enabled=%d available=%s error=%s",
+            discovered_tool_count,
+            enabled_tool_count,
+            reload_summary.get("available_to_chat"),
+            reload_summary.get("error"),
+        )
+        if reload_summary.get("error"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "MCP tools were discovered, but could not be loaded into chat: "
+                    f"{reload_summary['error']}{diagnostic_text}"
+                ),
+            )
+        if require_chat_tools and not reload_summary.get("available_to_chat"):
+            if discovered_tool_count > 0 and enabled_tool_count == 0:
+                detail = (
+                    "MCP tools were discovered, but no enabled tools are available to chat. "
+                    "Enable at least one discovered tool and load tools again."
+                )
+            else:
+                detail = (
+                    "Enabled MCP tools were found, but none were registered with chat. "
+                    "Load tools again, and check the MCP server logs if this repeats."
+                    f"{diagnostic_text}"
+                )
+            raise HTTPException(
+                status_code=400,
+                detail=detail,
+            )
+        return reload_summary
+
+    def _delete_upload_files_for_records(records: list) -> None:
+        for record in records:
+            if _is_gcs_source(record):
+                continue
+            for file_id in upload_file_ids_for_source(record):
+                try:
+                    file_store.delete(file_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to delete upload file %s for source %s",
+                        file_id,
+                        getattr(record, "id", ""),
+                        exc_info=True,
+                    )
+
+    def _cleanup_source_uploads_after_use(records: list) -> None:
+        records_with_uploads = [
+            record
+            for record in records
+            if upload_file_ids_for_source(record)
+            and not _is_gcs_source(record)
+            and getattr(record, "kind", "") not in {"spreadsheet", "image"}
+        ]
+        if not records_with_uploads:
+            return
+
+        _delete_upload_files_for_records(records_with_uploads)
+        source_ids = {record.id for record in records_with_uploads}
+        session_ids = {record.session_id for record in records_with_uploads}
+        for session_id in session_ids:
+            current = source_store.list(session_id)
+            changed = False
+            for record in current:
+                if record.id in source_ids and upload_file_ids_for_source(record):
+                    mark_source_upload_deleted(record)
+                    changed = True
+            if changed:
+                source_store.save(session_id, current)
 
     def render_items_fn() -> list[dict]:
         items = shared_render_queue.get_items()
@@ -174,21 +546,61 @@ def create_app() -> FastAPI:
         session_store.save(session)
         return session
 
-    app = FastAPI(title="General Chat")
+    # Disable the interactive docs / schema endpoints in deployed environments:
+    # they are not behind the auth middleware and would disclose the API surface.
+    app = FastAPI(title="General Chat", docs_url=None, redoc_url=None, openapi_url=None)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_allowed_origins(),
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def firebase_auth_middleware(request: Request, call_next):
+        if (
+            auth_enabled()
+            and request.method.upper() != "OPTIONS"
+            and _requires_auth_path(request.url.path)
+        ):
+            try:
+                await require_firebase_user(request)
+            except HTTPException as exc:
+                return JSONResponse(
+                    {"detail": exc.detail},
+                    status_code=exc.status_code,
+                    headers=exc.headers,
+                )
+        return await call_next(request)
+
     @app.on_event("startup")
     async def startup() -> None:
+        if _env_flag("GENERAL_CHAT_SEED_ALL_MCP", default=False):
+            seed_summary = seed_all_mcp_registry(storage_root)
+            if seed_summary["errors"]:
+                print(f"  MCP seed errors: {seed_summary['errors']}")
+            else:
+                print(f"  MCP seeded     : {', '.join(seed_summary['seeded']) or '(none)'}")
+            reload_external_mcp_tools(agent)
         persona = agent._persona
         summary = persona.summary() if persona else {}
         print("\n  General Chat")
         print(f"  Model          : {agent.model}")
+        vlm_summary = getattr(agent, "_vlm_summary", {})
+        if isinstance(vlm_summary, dict) and vlm_summary.get("enabled"):
+            print(
+                "[vision] enabled=True "
+                f"model={vlm_summary.get('model')} "
+                f"base_url={vlm_summary.get('base_url') or 'google-genai'}"
+            )
+            print(
+                "  Vision model   : "
+                f"{vlm_summary.get('provider')} / {vlm_summary.get('model')}"
+            )
+        else:
+            print("[vision] enabled=False model=(none) base_url=(none)")
+            print("  Vision model   : disabled")
         print(f"  Persona source : {summary.get('source', '(none)')}")
         if persona:
             print(f"  Persona total  : {summary['total_chars']:>5} chars")
@@ -201,12 +613,19 @@ def create_app() -> FastAPI:
             )
         print(f"  Memory DB      : {db_path}")
         print(f"  Storage root   : {storage_root}")
+        print(f"  Storage backend: {type(storage).__name__}")
         print(f"  Upload dir     : {upload_dir}")
         print(f"  Download dir   : {download_dir}")
         print(f"  Image previews : {image_search_preview_dir}")
         print(f"  Source max     : {max_source_bytes} bytes")
+        print(f"  Multipart max  : {multipart_upload_max_bytes} bytes")
+        print(f"  Firebase auth  : {'enabled' if auth_enabled() else 'disabled'}")
+        if _gcp_enabled():
+            print(f"  GCS bucket     : {os.getenv('GENERAL_CHAT_GCP_BUCKET')}")
         print("  AG-UI          : POST /awp")
         print("  Upload         : POST /chat/upload")
+        print("  Attachments    : POST /chat/attachments/upload")
+        print("  Direct upload  : POST /chat/uploads/initiate")
         print("  Sessions API   : GET/DELETE /sessions[/{id}]\n")
 
     @app.get("/health")
@@ -293,7 +712,8 @@ def create_app() -> FastAPI:
                 raw_config = json.dumps(body)
             else:
                 raise MCPRegistryError("Paste a JSON object containing mcpServers.")
-            return mcp_registry_store.import_config_json(raw_config)
+            secrets = body.get("secrets") if isinstance(body.get("secrets"), dict) else None
+            return mcp_registry_store.import_config_json(raw_config, secret_values=secrets)
         except MCPRegistryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -307,8 +727,7 @@ def create_app() -> FastAPI:
                 requested = {str(name) for name in names}
                 workloads = [workload for workload in workloads if workload.name in requested]
             payload = mcp_registry_store.import_toolhive_workloads(workloads)
-            reload_summary = reload_external_mcp_tools(agent)
-            return {**payload, "reload": reload_summary}
+            return payload
         except ToolHiveError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except MCPRegistryError as exc:
@@ -321,9 +740,7 @@ def create_app() -> FastAPI:
     @app.get("/toolhive/workloads")
     async def toolhive_workloads() -> dict:
         try:
-            return {
-                "workloads": [workload.to_dict() for workload in toolhive_service.list_workloads()]
-            }
+            return {"workloads": [workload.to_dict() for workload in toolhive_service.list_workloads()]}
         except ToolHiveError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -376,7 +793,12 @@ def create_app() -> FastAPI:
     async def refresh_mcp_server(server_id: str) -> dict:
         try:
             server = mcp_registry_store.discover_server(server_id)
-            reload_summary = reload_external_mcp_tools(agent)
+            reload_summary = _reload_external_mcp_tools_or_raise(
+                server_ids={server_id},
+                require_chat_tools=bool(server.tools),
+                discovered_tool_count=len(server.tools),
+                enabled_tool_count=_enabled_tool_count(server),
+            )
             return {"server": server.to_dict(detail=True), "reload": reload_summary}
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="MCP server not found") from exc
@@ -385,8 +807,11 @@ def create_app() -> FastAPI:
 
     @app.delete("/mcp/catalogs/{server_id}")
     async def remove_mcp_server(server_id: str) -> dict:
-        mcp_registry_store.remove_server(server_id)
-        reload_summary = reload_external_mcp_tools(agent)
+        try:
+            mcp_registry_store.remove_server(server_id)
+        except MCPRegistryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        reload_summary = reload_external_mcp_tools(agent, server_ids={server_id})
         return {"ok": True, "serverId": server_id, "reload": reload_summary}
 
     @app.get("/mcp/catalogs/servers/{server_id}")
@@ -399,16 +824,22 @@ def create_app() -> FastAPI:
     @app.post("/mcp/catalogs/servers/{server_id}/enable")
     async def enable_mcp_server(server_id: str, request: Request) -> dict:
         body = await request.json()
+        enabled_requested = bool(body.get("enabled", True))
         try:
             server = mcp_registry_store.set_server_enabled(
                 server_id,
-                bool(body.get("enabled", True)),
+                enabled_requested,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="MCP server not found") from exc
         except MCPRegistryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        reload_summary = reload_external_mcp_tools(agent)
+        reload_summary = _reload_external_mcp_tools_or_raise(
+            server_ids={server_id},
+            require_chat_tools=enabled_requested and _enabled_tool_count(server) > 0,
+            discovered_tool_count=len(server.tools),
+            enabled_tool_count=_enabled_tool_count(server),
+        )
         return {
             "server": server.to_dict(detail=True),
             "reload": reload_summary,
@@ -420,7 +851,12 @@ def create_app() -> FastAPI:
             server = mcp_registry_store.discover_server(server_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="MCP server not found") from exc
-        reload_summary = reload_external_mcp_tools(agent)
+        reload_summary = _reload_external_mcp_tools_or_raise(
+            server_ids={server_id},
+            require_chat_tools=bool(server.tools),
+            discovered_tool_count=len(server.tools),
+            enabled_tool_count=_enabled_tool_count(server),
+        )
         return {"server": server.to_dict(detail=True), "reload": reload_summary}
 
     @app.post("/mcp/catalogs/servers/{server_id}/tools/{tool_name}/enable")
@@ -434,14 +870,87 @@ def create_app() -> FastAPI:
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="MCP server or tool not found") from exc
-        reload_summary = reload_external_mcp_tools(agent)
+        reload_summary = _reload_external_mcp_tools_or_raise(
+            server_ids={server_id},
+            require_chat_tools=_enabled_tool_count(server) > 0,
+            discovered_tool_count=len(server.tools),
+            enabled_tool_count=_enabled_tool_count(server),
+        )
         return {"server": server.to_dict(detail=True), "reload": reload_summary}
 
     @app.delete("/mcp/catalogs/servers/{server_id}")
     async def remove_mcp_server_by_id(server_id: str) -> dict:
-        mcp_registry_store.remove_server(server_id)
-        reload_summary = reload_external_mcp_tools(agent)
+        try:
+            mcp_registry_store.remove_server(server_id)
+        except MCPRegistryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        reload_summary = reload_external_mcp_tools(agent, server_ids={server_id})
         return {"ok": True, "serverId": server_id, "reload": reload_summary}
+
+    @app.post("/chat/attachments/upload")
+    async def upload_chat_attachment(
+        file: UploadFile = File(...),
+        session_id: str | None = Form(default=None, alias="sessionId"),
+    ) -> dict:
+        """Store a transient chat composer attachment for the next message."""
+        filename = file.filename or "unnamed"
+        mime_type = _resolve_mime(filename, file.content_type or "")
+        if mime_type not in _ALLOWED_MIME_TYPES:
+            raise HTTPException(status_code=400, detail=f"Unsupported attachment type: {mime_type}")
+        target_session_id = session_id or "default"
+        content = await _read_upload_limited(file, multipart_upload_max_bytes)
+        _archive_attachment(filename, content, mime_type, target_session_id)
+        stored = _file_store_for_session(target_session_id).store(filename, content, mime_type)
+        attachment = _attachment_from_stored_file(stored)
+        print(
+            f"  [chat-attachment-upload] id={stored.id} session={target_session_id!r} "
+            f"name={stored.name!r} mime={mime_type} size={stored.size_bytes}B "
+            f"path={attachment.path or '(none)'}"
+        )
+        return attachment.to_dict()
+
+    @app.post("/chat/transcribe")
+    async def transcribe_audio(
+        file: UploadFile = File(...),
+        session_id: str | None = Form(default=None, alias="sessionId"),
+    ) -> dict:
+        """Transcribe a recorded audio blob to text (mic voice input).
+
+        The browser records ``audio/webm;codecs=opus``, which Gemini does not
+        accept, so we transcode to WAV via ffmpeg before transcribing. If ffmpeg
+        is unavailable, fall back to the raw bytes.
+        """
+        import contextlib
+        import os
+        import tempfile
+
+        content = await _read_upload_limited(file, multipart_upload_max_bytes)
+        mime_type = file.content_type or "audio/webm"
+
+        from openbench.intelligence.transcription import get_transcriber
+        from openbench.utils.media import transcode_audio_to_wav
+
+        tmp_path: str | None = None
+        wav_path: str | None = None
+        try:
+            suffix = os.path.splitext(file.filename or "")[1] or ".webm"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+            wav_path = transcode_audio_to_wav(tmp_path)
+            transcriber = get_transcriber()
+            if wav_path:
+                transcript = transcriber.transcribe(wav_path, mime_type="audio/wav")
+            else:
+                transcript = transcriber.transcribe(content, mime_type=mime_type)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
+        finally:
+            for path in (tmp_path, wav_path):
+                if path and os.path.exists(path):
+                    with contextlib.suppress(OSError):
+                        os.unlink(path)
+        return {"transcript": transcript.strip()}
 
     @app.post("/chat/upload")
     async def upload_file(
@@ -449,12 +958,37 @@ def create_app() -> FastAPI:
         session_id: str | None = Form(default=None, alias="sessionId"),
     ):
         """Store an uploaded source file and persist extracted text for a session."""
-        content = await file.read()
         filename = file.filename or "unnamed"
         mime_type = _resolve_mime(filename, file.content_type or "")
         target_session_id = session_id or "default"
+        declared_size = getattr(file, "size", None)
+        if isinstance(declared_size, int) and declared_size > multipart_upload_max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=(
+                    f"Multipart upload exceeds {multipart_upload_max_bytes} bytes. "
+                    "Use /chat/uploads/initiate for direct Cloud Storage uploads."
+                ),
+            )
 
-        stored = file_store.store(filename, content, mime_type)
+        content = await _read_upload_limited(file, multipart_upload_max_bytes)
+        _archive_attachment(filename, content, mime_type, target_session_id)
+        user_file_store = _file_store_for_session(target_session_id)
+        stored = user_file_store.store(filename, content, mime_type)
+        if _gcp_enabled():
+            record = _queued_gcs_upload_record(session_id=target_session_id, stored=stored)
+            source_store.upsert(record)
+            print(
+                f"  [source-upload-queued] id={record.id} session={target_session_id!r} "
+                f"name={stored.name!r} mime={mime_type} size={stored.size_bytes}B "
+                f"file_id={stored.id}"
+            )
+            return {
+                **record.to_dict(include_text=False),
+                "url": record.url,
+                "type": record.kind,
+            }
+
         record = source_record_from_file(
             session_id=target_session_id,
             stored_file=stored,
@@ -479,6 +1013,137 @@ def create_app() -> FastAPI:
         result["url"] = record.url or attachment.url
         result["type"] = attachment.type
         return result
+
+    @app.post("/chat/uploads/initiate")
+    async def initiate_large_upload(request: Request) -> dict:
+        """Create a direct-to-GCS resumable upload target for large files."""
+        if not _gcp_enabled():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Direct Cloud Storage uploads require GENERAL_CHAT_GCP_BUCKET.",
+            )
+        body = await request.json()
+        filename = str(body.get("filename") or body.get("name") or "unnamed")
+        session_id = str(body.get("sessionId") or "default")
+        declared_size = body.get("sizeBytes", body.get("size"))
+        size_bytes = int(declared_size) if declared_size is not None else None
+        mime_type = _resolve_mime(filename, str(body.get("mimeType") or body.get("type") or ""))
+        user_file_store = _file_store_for_session(session_id)
+        upload = user_file_store.create_resumable_upload_session(
+            filename=filename,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            session_id=session_id,
+            origin=request.headers.get("origin"),
+        )
+        record = SourceRecord.create(
+            session_id=session_id,
+            name=Path(filename).name or "unnamed",
+            kind="file",
+            mime_type=mime_type,
+            size_bytes=size_bytes or 0,
+            url=f"gs://{upload.bucket}/{upload.object_name}",
+            text="",
+            status="processing",
+            metadata={
+                "fileId": upload.file_id,
+                "gcsBucket": upload.bucket,
+                "gcsObject": upload.object_name,
+                "uploadStatus": "reserved",
+                "parseStatus": "waiting_for_upload",
+            },
+        )
+        source_store.upsert(record)
+        return {
+            **upload.to_dict(),
+            "source": record.to_dict(include_text=False),
+            "status": "reserved",
+        }
+
+    @app.post("/chat/uploads/complete")
+    async def complete_large_upload(request: Request) -> dict:
+        """Verify a direct GCS upload and mark its source as queued."""
+        if not _gcp_enabled():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Direct Cloud Storage uploads require GENERAL_CHAT_GCP_BUCKET.",
+            )
+        body = await request.json()
+        file_id = str(body.get("fileId") or "")
+        session_id = str(body.get("sessionId") or "default")
+        if not file_id:
+            raise HTTPException(status_code=400, detail="fileId is required.")
+        user_file_store = _file_store_for_session(session_id)
+        stored = user_file_store.verify_uploaded_object(file_id)
+        if stored is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Uploaded object was not found in Cloud Storage.",
+            )
+        record = source_store.find_by_upload_file_id(file_id, session_id=session_id)
+        if record is None:
+            record = SourceRecord.create(
+                session_id=session_id,
+                name=stored.name,
+                kind="file",
+                mime_type=stored.mime_type,
+                size_bytes=stored.size_bytes,
+                url=stored.web_view_link,
+                text="",
+                status="processing",
+                metadata={"fileId": file_id},
+            )
+        metadata = dict(record.metadata or {})
+        parse_status = str(metadata.get("parseStatus") or "")
+        if record.status in {"ready", "failed"} or parse_status in {"ready", "failed"}:
+            metadata.update(
+                {
+                    "fileId": file_id,
+                    "uploadStatus": "uploaded",
+                    "gcsUri": stored.web_view_link or record.url or "",
+                }
+            )
+            record.metadata = metadata
+            source_store.upsert(record)
+            return {
+                "status": metadata.get("parseStatus") or record.status,
+                "fileId": file_id,
+                "source": record.to_dict(include_text=False),
+            }
+        metadata.update(
+            {
+                "fileId": file_id,
+                "uploadStatus": "uploaded",
+                "parseStatus": "queued",
+                "gcsUri": stored.web_view_link or record.url or "",
+            }
+        )
+        record.metadata = metadata
+        record.size_bytes = stored.size_bytes
+        record.mime_type = stored.mime_type
+        record.status = "processing"
+        source_store.upsert(record)
+        return {
+            "status": "queued",
+            "fileId": file_id,
+            "source": record.to_dict(include_text=False),
+        }
+
+    @app.get("/chat/uploads/{file_id}")
+    async def get_large_upload(
+        file_id: str,
+        sessionId: str | None = None,
+        includeText: bool = False,
+    ) -> dict:
+        record = source_store.find_by_upload_file_id(file_id, session_id=sessionId)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Upload not found.")
+        file_id_value = str((record.metadata or {}).get("fileId") or file_id)
+        return {
+            "status": (record.metadata or {}).get("parseStatus") or record.status,
+            "fileId": file_id_value,
+            "source": record.to_dict(include_text=includeText),
+        }
 
     @app.get("/chat/sources/discover")
     async def discover_sources(q: str = "", limit: int = DEFAULT_DISCOVERY_LIMIT) -> dict:
@@ -555,6 +1220,11 @@ def create_app() -> FastAPI:
 
     @app.delete("/chat/sources/{thread_id}/{source_id}")
     async def delete_source(thread_id: str, source_id: str) -> dict:
+        records = source_store.list(thread_id)
+        target = next((record for record in records if record.id == source_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+        _delete_upload_files_for_records([target])
         deleted = source_store.delete(thread_id, source_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Source not found")
@@ -563,6 +1233,7 @@ def create_app() -> FastAPI:
     @app.delete("/chat/sources/{thread_id}")
     async def clear_sources(thread_id: str) -> dict:
         """Remove all stored sources for a session."""
+        _delete_upload_files_for_records(source_store.list(thread_id))
         source_store.clear(thread_id)
         return {"ok": True}
 
@@ -577,7 +1248,10 @@ def create_app() -> FastAPI:
         handler = GeneralChatHandler(
             engine=engine,
             db_path=db_path,
+            memory_store=chat_memory_store,
             source_records=source_records,
+            on_stream_complete=_cleanup_source_uploads_after_use,
+            mcp_permission_coordinator=mcp_permission_coordinator,
         )
         return await handler.handle(request)
 
@@ -588,11 +1262,17 @@ def create_app() -> FastAPI:
         session = _resolve_session(session_id)
         engine = _build_engine(session)
         handler = AGUIActionHandler(engine=engine)
+
+        @handler.on("mcp_permission_decision")
+        def handle_mcp_permission(action):
+            return mcp_permission_coordinator.resolve_action(action)
+
         return await handler.handle(request)
 
     @app.get("/chat/actions")
     async def list_actions() -> dict:
         handler = AGUIActionHandler(engine=None)
+        handler.register("mcp_permission_decision", lambda action: [])
         return {"actions": handler.get_registered_actions()}
 
     @app.get("/sessions")
@@ -611,8 +1291,52 @@ def create_app() -> FastAPI:
     @app.delete("/sessions/{session_id}")
     async def delete_session(session_id: str) -> dict:
         handler = AGUISessionHandler(session_store=storage.session_store())
+        _delete_upload_files_for_records(source_store.list(session_id))
+        source_store.clear(session_id)
         handler.delete(session_id)
         return {"ok": True, "sessionId": session_id}
+
+    @app.post("/dashboard/export/grafana")
+    async def export_dashboard_grafana(request: Request) -> dict:
+        view_model = await _read_dashboard_view_model(request)
+        if view_model is None:
+            raise HTTPException(status_code=400, detail="Missing viewModel")
+        return view_model_to_grafana(view_model)
+
+    @app.post("/dashboard/export/pdf")
+    async def export_dashboard_pdf(request: Request) -> Response:
+        view_model = await _read_dashboard_view_model(request)
+        if view_model is None:
+            raise HTTPException(status_code=400, detail="Missing viewModel")
+        try:
+            pdf_bytes = await render_dashboard_pdf(view_model)
+        except Exception as exc:  # pragma: no cover - depends on Chromium runtime
+            logger.exception("dashboard PDF export failed")
+            raise HTTPException(status_code=500, detail="PDF export failed") from exc
+        slug = _slugify_dashboard_title(str(view_model.get("title") or "dashboard"))
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{slug}.pdf"'},
+        )
+
+    @app.post("/dashboard/publish")
+    async def publish_dashboard(request: Request) -> dict:
+        view_model = await _read_dashboard_view_model(request)
+        if view_model is None:
+            raise HTTPException(status_code=400, detail="Missing viewModel")
+        dashboard_id = publish_store.save(view_model)
+        url = str(request.base_url).rstrip("/") + f"/d/{dashboard_id}"
+        return {"id": dashboard_id, "url": url}
+
+    # PUBLIC — no auth (see _AUTH_PROTECTED_PREFIXES). Registered before the SPA
+    # catch-all so the explicit route wins. This is the shareable dashboard link.
+    @app.get("/d/{dashboard_id}")
+    async def view_published_dashboard(dashboard_id: str):
+        html_path = publish_store.load_html_path(dashboard_id)
+        if html_path is None:
+            raise HTTPException(status_code=404, detail="Dashboard not found")
+        return FileResponse(html_path, media_type="text/html")
 
     app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
     app.mount("/downloads", StaticFiles(directory=download_dir), name="downloads")

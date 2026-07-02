@@ -1,15 +1,6 @@
 """Storage backend protocol that bundles session, scratchpad, and
 (eventually) persona storage behind a single factory.
 
-In the four-pillar mental model (see ``docs/MENTAL_MODEL.md``), the
-storage layer is **plumbing under the Agentic pillar** — not a pillar
-itself. The agent never decides to use it; it always does. Users never
-reason about which backend is mounted; they just expect their
-conversation and files to be there next time. That framing is why the
-storage layer stays as Protocol-based ABCs rather than being exposed as
-MCP servers: hot-path latency, transactional semantics, and per-request
-auth fan-out are not things MCP handles well.
-
 Three ABCs live elsewhere and can be used independently:
 
 - :class:`~openbench.chat.session_store.SessionStore`

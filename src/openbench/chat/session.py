@@ -19,6 +19,14 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _parse_dt(value: Any) -> datetime:
+    """Parse an ISO timestamp, falling back to now() on missing/invalid input."""
+    try:
+        return datetime.fromisoformat(value) if value else datetime.now(timezone.utc)
+    except (TypeError, ValueError):
+        return datetime.now(timezone.utc)
+
+
 class MessageRole(Enum):
     """Role in chat conversation."""
 
@@ -54,6 +62,8 @@ class Attachment:
             result["sizeBytes"] = self.size_bytes
         if self.extracted_text is not None:
             result["extractedText"] = self.extracted_text
+        if self.path is not None:
+            result["path"] = self.path
         return result
 
     @classmethod
@@ -101,19 +111,45 @@ class ChatMessage:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ChatMessage:
-        """Deserialize from dict."""
-        attachments = None
-        if "attachments" in data:
-            attachments = [Attachment.from_dict(a) for a in data["attachments"]]
+        """Deserialize from dict, tolerating partial corruption.
+
+        Missing/invalid optional fields are defaulted rather than raised so a
+        single malformed message never fails the whole history load. Bad
+        individual attachments are dropped. Raises ``ValueError`` only when the
+        message has no usable role.
+        """
+        raw_role = data.get("role")
+        try:
+            role = MessageRole(raw_role)
+        except ValueError as exc:
+            raise ValueError(f"unknown message role: {raw_role!r}") from exc
+
+        attachments: list[Attachment] | None = None
+        if data.get("attachments"):
+            parsed: list[Attachment] = []
+            for a in data["attachments"]:
+                try:
+                    parsed.append(Attachment.from_dict(a))
+                except Exception as att_exc:  # drop bad attachment, keep message
+                    logger.warning("Dropping malformed attachment: %s", att_exc)
+            attachments = parsed or None
+
+        raw_ts = data.get("timestamp")
+        try:
+            timestamp = (
+                datetime.fromisoformat(raw_ts) if raw_ts else datetime.now(timezone.utc)
+            )
+        except (TypeError, ValueError):
+            timestamp = datetime.now(timezone.utc)
 
         return cls(
-            id=data["id"],
-            role=MessageRole(data["role"]),
-            content=data["content"],
+            id=data.get("id") or str(uuid.uuid4()),
+            role=role,
+            content=data.get("content") or "",
             surfaces=data.get("surfaces"),
             attachments=attachments,
-            timestamp=datetime.fromisoformat(data["timestamp"]),
-            metadata=data.get("metadata", {}),
+            timestamp=timestamp,
+            metadata=data.get("metadata") or {},
         )
 
 
@@ -205,14 +241,32 @@ class ChatSession:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ChatSession:
-        """Deserialize from dict."""
+        """Deserialize from dict, tolerating partial corruption.
+
+        Skips individual messages that fail to parse (logging a warning) so the
+        session still loads with whatever is valid, and defaults missing
+        top-level fields instead of raising — a corrupt row should degrade, not
+        500 the history endpoint.
+        """
         session = cls(
-            session_id=data["sessionId"],
+            session_id=data.get("sessionId") or str(uuid.uuid4()),
             title=data.get("title", "New Chat"),
         )
-        session.messages = [ChatMessage.from_dict(m) for m in data.get("messages", [])]
-        session.created_at = datetime.fromisoformat(data["createdAt"])
-        session.updated_at = datetime.fromisoformat(data["updatedAt"])
+
+        messages: list[ChatMessage] = []
+        for raw in data.get("messages", []):
+            try:
+                messages.append(ChatMessage.from_dict(raw))
+            except Exception as exc:  # skip the bad message, keep the rest
+                logger.warning(
+                    "Skipping malformed message in session %s: %s",
+                    session.session_id,
+                    exc,
+                )
+        session.messages = messages
+
+        session.created_at = _parse_dt(data.get("createdAt"))
+        session.updated_at = _parse_dt(data.get("updatedAt"))
         return session
 
     def __len__(self) -> int:

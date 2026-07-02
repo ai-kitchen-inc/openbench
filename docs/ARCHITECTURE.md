@@ -1,10 +1,5 @@
 # OpenBench Architecture
 
-> This page describes the **runtime model** (L1 components, L2 layers, the
-> three-layer pipeline). For the **capability-routing mental model**
-> (MCP / Skill / Agentic / Output pillars and where each kind of feature
-> belongs), see [MENTAL_MODEL.md](MENTAL_MODEL.md).
-
 ---
 
 ## Overview

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentPreview } from "../src/components/AttachmentPreview";
@@ -155,6 +155,53 @@ describe("AttachmentPreview", () => {
 
 // ── ChatInput ──
 
+// jsdom has no media stack — mock getUserMedia + MediaRecorder + AudioContext
+// so the voice recorder logic is exercisable. Returns a restore function.
+class FakeMediaRecorder {
+  state = "inactive";
+  mimeType = "audio/webm";
+  ondataavailable: ((e: { data: Blob }) => void) | null = null;
+  onstop: (() => void) | null = null;
+  start() {
+    this.state = "recording";
+  }
+  stop() {
+    this.state = "inactive";
+    this.ondataavailable?.({ data: new Blob(["x"]) });
+    this.onstop?.();
+  }
+}
+
+class FakeAudioContext {
+  state = "running";
+  createAnalyser() {
+    return { fftSize: 0, getByteTimeDomainData: () => {} };
+  }
+  createMediaStreamSource() {
+    return { connect: () => {} };
+  }
+  close() {
+    this.state = "closed";
+    return Promise.resolve();
+  }
+}
+
+function installVoiceMocks(): () => void {
+  const nav = navigator as unknown as { mediaDevices?: unknown };
+  const w = window as unknown as Record<string, unknown>;
+  const prev = { md: nav.mediaDevices, mr: w.MediaRecorder, ac: w.AudioContext };
+  nav.mediaDevices = {
+    getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: vi.fn() }] })),
+  };
+  w.MediaRecorder = FakeMediaRecorder;
+  w.AudioContext = FakeAudioContext;
+  return () => {
+    nav.mediaDevices = prev.md;
+    w.MediaRecorder = prev.mr;
+    w.AudioContext = prev.ac;
+  };
+}
+
 describe("ChatInput", () => {
   it("renders textarea and send button", () => {
     render(<ChatInput onSend={vi.fn()} />);
@@ -213,6 +260,94 @@ describe("ChatInput", () => {
     const { container } = render(<ChatInput onSend={vi.fn()} acceptedFileTypes=".pdf,image/*" />);
     const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
     expect(input?.getAttribute("accept")).toBe(".pdf,image/*");
+  });
+
+  it("rejects files over maxUploadSize via onAttachmentError", () => {
+    const onAttachmentError = vi.fn();
+    const big = new File([new Uint8Array(10)], "clip.mp4", { type: "video/mp4" });
+    Object.defineProperty(big, "size", { value: 50 * 1024 * 1024 });
+    const { container } = render(
+      <ChatInput onSend={vi.fn()} maxUploadSize={20 * 1024 * 1024} onAttachmentError={onAttachmentError} />,
+    );
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [big] } });
+    expect(onAttachmentError).toHaveBeenCalled();
+    expect(onAttachmentError.mock.calls[0][0]).toMatch(/too large/i);
+  });
+
+  it("accepts audio/video by mime wildcard", () => {
+    const onAttachmentError = vi.fn();
+    const audio = new File(["x"], "note.mp3", { type: "audio/mpeg" });
+    const { container } = render(
+      <ChatInput
+        onSend={vi.fn()}
+        acceptedFileTypes="audio/*,video/*,.epub"
+        onAttachmentError={onAttachmentError}
+      />,
+    );
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [audio] } });
+    expect(onAttachmentError).not.toHaveBeenCalled();
+    expect(screen.getByText("note.mp3")).toBeTruthy();
+  });
+
+  it("hides the mic button when no onTranscribe is provided", () => {
+    const restore = installVoiceMocks();
+    render(<ChatInput onSend={vi.fn()} />);
+    expect(screen.queryByLabelText("Start voice input")).toBeNull();
+    restore();
+  });
+
+  it("hides the mic button when getUserMedia is unavailable", () => {
+    const nav = navigator as unknown as { mediaDevices?: unknown };
+    const prev = nav.mediaDevices;
+    delete nav.mediaDevices;
+    render(<ChatInput onSend={vi.fn()} onTranscribe={vi.fn(async () => "hi")} />);
+    expect(screen.queryByLabelText("Start voice input")).toBeNull();
+    nav.mediaDevices = prev;
+  });
+
+  it("shows the mic and enters recording mode on click", async () => {
+    const restore = installVoiceMocks();
+    render(<ChatInput onSend={vi.fn()} onTranscribe={vi.fn(async () => "hi")} />);
+    const mic = screen.getByLabelText("Start voice input");
+    await act(async () => {
+      fireEvent.click(mic);
+    });
+    expect(screen.getByLabelText("Cancel voice input")).toBeTruthy();
+    expect(screen.getByLabelText("Confirm voice input")).toBeTruthy();
+    restore();
+  });
+
+  it("confirm transcribes and inserts the text", async () => {
+    const restore = installVoiceMocks();
+    const onTranscribe = vi.fn(async () => "hello from voice");
+    render(<ChatInput onSend={vi.fn()} onTranscribe={onTranscribe} />);
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Start voice input"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Confirm voice input"));
+    });
+    expect(onTranscribe).toHaveBeenCalledTimes(1);
+    const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
+    expect(textarea.value).toBe("hello from voice");
+    restore();
+  });
+
+  it("cancel discards without transcribing", async () => {
+    const restore = installVoiceMocks();
+    const onTranscribe = vi.fn(async () => "should not appear");
+    render(<ChatInput onSend={vi.fn()} onTranscribe={onTranscribe} />);
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Start voice input"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Cancel voice input"));
+    });
+    expect(onTranscribe).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Start voice input")).toBeTruthy();
+    restore();
   });
 
   it("shows and clears a drag-over state for file drags", () => {

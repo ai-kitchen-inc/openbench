@@ -16,6 +16,7 @@ they only shape the data.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 __all__ = [
@@ -30,6 +31,8 @@ __all__ = [
     "CREATE_SCATTER_CHART_SCHEMA",
     "CREATE_AREA_CHART_SCHEMA",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 _MAX_PIE_SLICES = 8
@@ -68,15 +71,15 @@ def _push_to_render_queue(item: dict[str, Any]) -> None:
     try:
         from openbench.chat.render_queue import push as _push
     except Exception as e:
-        print(f"  [chart-push] FAILED import: {e}")
+        logger.debug("chart-push: render queue unavailable: %s", e)
         return
     try:
         _push(item)
         from openbench.chat.render_queue import get_items
 
-        print(f"  [chart-push] OK — queue now has {len(get_items())} item(s)")
+        logger.debug("chart-push: queued item, %d in queue", len(get_items()))
     except Exception as e:
-        print(f"  [chart-push] FAILED push: {e}")
+        logger.warning("chart-push: failed to push item: %s", e)
 
 
 def _chart_dict(

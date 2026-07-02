@@ -43,3 +43,12 @@ export function useChatContext(): UseChatReturn {
   }
   return ctx;
 }
+
+/**
+ * Access the chat context without throwing. Returns ``null`` when used
+ * outside a `<ChatProvider>` — for components (e.g. custom A2UI renderers)
+ * that may also render standalone in tests or storybook.
+ */
+export function useChatContextOptional(): UseChatReturn | null {
+  return useContext(ChatContext);
+}

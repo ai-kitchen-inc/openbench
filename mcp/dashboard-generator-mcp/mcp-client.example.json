@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "dashboard_generator": {
+      "command": "python",
+      "args": ["-m", "app.mcp_server", "--transport", "stdio"],
+      "cwd": "mcp/dashboard-generator-mcp",
+      "env": {
+        "OPENBENCH_EXPORT_DIR": "examples/general-chat/downloads",
+        "OPENBENCH_EXPORT_URL_BASE": "/downloads",
+        "DASHBOARD_RENDER_ADAPTER": "default"
+      }
+    }
+  }
+}

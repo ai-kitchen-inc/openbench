@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -72,6 +73,26 @@ class TestFileStore(unittest.TestCase):
         file_dir.mkdir()
         result = self.store.get("file-empty")
         self.assertIsNone(result)
+
+    def test_delete_removes_stored_file_directory(self):
+        """delete() removes a stored upload directory."""
+        stored = self.store.store("file.txt", b"data", "text/plain")
+        file_dir = Path(stored.path).parent
+
+        self.assertTrue(self.store.delete(stored.id))
+
+        self.assertFalse(file_dir.exists())
+        self.assertIsNone(self.store.get(stored.id))
+
+    def test_delete_rejects_paths_outside_upload_root(self):
+        """delete() only removes upload subdirectories."""
+        outside = Path(self.tmpdir).parent / f"outside-{uuid.uuid4().hex}"
+        outside.mkdir()
+        try:
+            self.assertFalse(self.store.delete(f"..{os.sep}{outside.name}"))
+            self.assertTrue(outside.exists())
+        finally:
+            outside.rmdir()
 
 
 class TestStoredFile(unittest.TestCase):

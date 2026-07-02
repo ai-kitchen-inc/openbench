@@ -56,19 +56,20 @@ interface ComponentNodeProps {
 }
 
 const ComponentNode: React.FC<ComponentNodeProps> = ({ component, surface, onAction }) => {
-  const Renderer = resolveComponent(component.component);
+  const normalizedComponent = normalizeComponent(component);
+  const Renderer = resolveComponent(normalizedComponent.component);
 
   if (!Renderer) {
     if (process.env.NODE_ENV !== "production") {
       console.warn(
-        `[SurfaceRenderer] Unknown component type: "${component.component}" (id: ${component.id})`,
+        `[SurfaceRenderer] Unknown component type: "${normalizedComponent.component}" (id: ${normalizedComponent.id})`,
       );
     }
     return null;
   }
 
   // Resolve children: "children" property is an array of component IDs
-  const childIds = component.children as string[] | undefined;
+  const childIds = normalizedComponent.children as string[] | undefined;
   let children: React.ReactNode = null;
 
   if (Array.isArray(childIds) && childIds.length > 0) {
@@ -77,7 +78,7 @@ const ComponentNode: React.FC<ComponentNodeProps> = ({ component, surface, onAct
       if (!childComponent) {
         if (process.env.NODE_ENV !== "production") {
           console.warn(
-            `[SurfaceRenderer] Child component not found: "${childId}" (parent: ${component.id})`,
+            `[SurfaceRenderer] Child component not found: "${childId}" (parent: ${normalizedComponent.id})`,
           );
         }
         return null;
@@ -94,8 +95,25 @@ const ComponentNode: React.FC<ComponentNodeProps> = ({ component, surface, onAct
   }
 
   return (
-    <Renderer component={component} surface={surface} onAction={onAction}>
+    <Renderer component={normalizedComponent} surface={surface} onAction={onAction}>
       {children}
     </Renderer>
   );
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeComponent(component: A2UIComponent): A2UIComponent {
+  const nestedProperties = isRecord(component.properties) ? component.properties : undefined;
+  if (!nestedProperties) return component;
+
+  const { properties: _properties, ...flatComponent } = component;
+  return {
+    ...nestedProperties,
+    ...flatComponent,
+    id: component.id,
+    component: component.component,
+  } as A2UIComponent;
+}

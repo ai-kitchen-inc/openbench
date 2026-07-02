@@ -9,6 +9,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from openbench.core.abstractions import DataStore, Query, RawData, SearchResult
+from openbench.core.constants import (
+    DEFAULT_EMBED_BATCH_SIZE,
+    DEFAULT_INDEX_READY_TIMEOUT_S,
+    DEFAULT_MAX_RETRIES,
+)
 from openbench.data.stores.base import (
     ChunkingConfig,
     EmbeddingMixin,
@@ -265,7 +270,7 @@ class PineconeStore(DataStore, EmbeddingMixin, HybridSearchMixin):
                 ),
             )
 
-    def _wait_for_index_ready(self, timeout: int = 60) -> None:
+    def _wait_for_index_ready(self, timeout: int = DEFAULT_INDEX_READY_TIMEOUT_S) -> None:
         """Wait for index to be ready for operations."""
         start = time.time()
         while time.time() - start < timeout:
@@ -353,7 +358,7 @@ class PineconeStore(DataStore, EmbeddingMixin, HybridSearchMixin):
         Returns:
             Source ID of the indexed data.
         """
-        batch_size = options.get("batch_size", 100)
+        batch_size = options.get("batch_size", DEFAULT_EMBED_BATCH_SIZE)
 
         # Chunk the data
         chunks = chunk_raw_data(data, self._chunking_config)
@@ -415,7 +420,7 @@ class PineconeStore(DataStore, EmbeddingMixin, HybridSearchMixin):
         return total
 
     def _upsert_with_retry(
-        self, vectors: list[dict], max_retries: int = 3, base_delay: float = 1.0
+        self, vectors: list[dict], max_retries: int = DEFAULT_MAX_RETRIES, base_delay: float = 1.0
     ) -> None:
         """Upsert with exponential backoff retry.
 

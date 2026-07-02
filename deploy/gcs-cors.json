@@ -1,0 +1,21 @@
+[
+  {
+    "origin": [
+      "https://sss-poc1-corporate.web.app",
+      "https://sss-poc1-corporate.firebaseapp.com",
+      "https://35-188-138-52.sslip.io",
+      "http://localhost:5173",
+      "http://localhost:5174"
+    ],
+    "method": ["GET", "PUT", "POST", "OPTIONS"],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Length",
+      "ETag",
+      "Location",
+      "Range",
+      "x-goog-resumable"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

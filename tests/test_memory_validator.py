@@ -226,8 +226,9 @@ class TestConverterIntegration:
     def test_validator_disabled_by_env(self, monkeypatch, caplog):
         """With OPENBENCH_MEMORY_VALIDATOR=0, validator is bypassed.
 
-        The orphan tool_call survives into the Gemini contents, which is
-        exactly the pre-fix behaviour (Gemini would reject it at the API).
+        Gemini's provider-level replay guard still refuses to synthesize
+        function_call parts without raw Gemini content, because that would
+        lose thought_signature metadata.
         """
         monkeypatch.setenv("OPENBENCH_MEMORY_VALIDATOR", "0")
         provider = self._build_provider_without_client()
@@ -241,9 +242,9 @@ class TestConverterIntegration:
 
         # No validator log
         assert not any("memory-validator" in r.message for r in caplog.records)
-        # Assistant content includes the (orphan) function_call part
-        assistant_c = contents[1]
-        assert any(getattr(p, "function_call", None) is not None for p in assistant_c.parts)
+        # The unsafe assistant(tool_calls) turn is skipped by the Gemini replay guard.
+        assert len(contents) == 1
+        assert contents[0].role == "user"
 
 
 # ---------------------------------------------------------------------------

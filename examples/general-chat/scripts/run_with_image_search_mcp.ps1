@@ -1,9 +1,9 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $generalChatRoot = Resolve-Path (Join-Path $scriptDir "..")
 $repoRoot = Resolve-Path (Join-Path $generalChatRoot "..\..")
-$imageSearchRoot = Join-Path $repoRoot "examples\image-search-mcp"
+$imageSearchRoot = Join-Path $repoRoot "mcp\image-search-mcp"
 $imageSearchData = Join-Path $imageSearchRoot "data"
 $imageSearchModels = Join-Path $imageSearchRoot "models"
 $imageSearchPreviews = Join-Path $imageSearchData "previews"

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "dev.openbench/dashboard-generator-mcp",
+  "title": "OpenBench Dashboard Generator MCP",
+  "description": "Metadata-first CSV/XLSX dashboard generation with SQLite aggregation and A2UI dashboard artifacts.",
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "openbench/dashboard-generator-mcp:cpu",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "OPENBENCH_EXPORT_DIR",
+          "description": "Directory where generated dashboard HTML exports are written.",
+          "isRequired": false
+        },
+        {
+          "name": "OPENBENCH_EXPORT_URL_BASE",
+          "description": "Public URL prefix for generated dashboard exports.",
+          "isRequired": false
+        },
+        {
+          "name": "DASHBOARD_RENDER_ADAPTER",
+          "description": "default, stitch, or auto.",
+          "isRequired": false
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "dev.openbench": {
+        "tools": [
+          "extract_metadata",
+          "aggregate_data",
+          "generate_dashboard"
+        ],
+        "permissions": {
+          "filesystem": {
+            "read": [
+              "/data",
+              "/general-chat/uploads"
+            ],
+            "readWrite": [
+              "/outputs"
+            ]
+          },
+          "network": {
+            "outbound": {
+              "allow_host": [
+                "stitch.googleapis.com"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

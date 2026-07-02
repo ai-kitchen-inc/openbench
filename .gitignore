@@ -110,6 +110,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.gcp
 .venv
 env/
 venv/
@@ -140,6 +141,17 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# ruff linter cache
+.ruff_cache/
+
+# Local scratch / scratch upload artifacts
+.tmp/
+
+# Local agent / tooling metadata
+.agents/
+.codex/
+.code-review-graph/
 
 # ==========================================
 # Node.js
@@ -523,6 +535,7 @@ examples/lci-mini/profiles/
 examples/lci-mini/.openbench/
 examples/general-chat/.openbench/
 examples/general-chat/env.cloudrun.yaml
+scripts/nginx-openbench-api.conf
 examples/lci-mini/lci_mini_memory.db
 examples/lci-mini/frontend/dist/
 
@@ -534,3 +547,6 @@ examples/lci-mini/frontend/dist/
 prompt-debug/
 # Added by code-review-graph
 .code-review-graph/
+
+# MCP settings
+tools.yml

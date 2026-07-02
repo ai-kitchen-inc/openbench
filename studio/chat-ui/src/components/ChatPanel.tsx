@@ -27,6 +27,10 @@ export interface ChatPanelProps {
   acceptedFileTypes?: string;
   /** Called when the composer rejects selected or dropped files. */
   onAttachmentError?: (message: string, files: File[]) => void;
+  /** Max size per file in bytes, forwarded to the composer. */
+  maxUploadSize?: number;
+  /** Fallback audio transcriber for browsers without the Web Speech API. */
+  onTranscribe?: (audio: Blob) => Promise<string>;
 }
 
 export function ChatPanel({
@@ -39,6 +43,8 @@ export function ChatPanel({
   persistentAttachments,
   acceptedFileTypes,
   onAttachmentError,
+  maxUploadSize,
+  onTranscribe,
 }: ChatPanelProps) {
   const {
     messages,
@@ -143,6 +149,8 @@ export function ChatPanel({
           placeholder={placeholder}
           acceptedFileTypes={acceptedFileTypes}
           onAttachmentError={onAttachmentError}
+          maxUploadSize={maxUploadSize}
+          onTranscribe={onTranscribe}
         />
       </div>
     </div>

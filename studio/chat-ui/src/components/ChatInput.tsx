@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { generateId } from "../core/utils";
 import type { Attachment } from "../types";
 import { AttachmentPreview } from "./AttachmentPreview";
+import { VoiceRecorder } from "./VoiceRecorder";
 
 export interface ChatInputProps {
   onSend: (content: string, attachments?: Attachment[]) => void;
@@ -17,6 +18,14 @@ export interface ChatInputProps {
   onAttachmentError?: (message: string, files: File[]) => void;
   /** Whether users can attach more than one file. Defaults to true. */
   multiple?: boolean;
+  /** Max size per file in bytes. Files larger than this are rejected. */
+  maxUploadSize?: number;
+  /**
+   * Optional fallback transcriber for browsers without the Web Speech API.
+   * Given a recorded audio blob, returns the transcript text. When omitted
+   * and Web Speech is unavailable, the mic button is hidden.
+   */
+  onTranscribe?: (audio: Blob) => Promise<string>;
 }
 
 export function ChatInput({
@@ -26,6 +35,8 @@ export function ChatInput({
   acceptedFileTypes,
   onAttachmentError,
   multiple = true,
+  maxUploadSize,
+  onTranscribe,
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -37,6 +48,121 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
+
+  // Voice input: record audio (with a live waveform) and transcribe via the
+  // injected onTranscribe backend. No Web Speech API — it's unreliable in
+  // Chrome/Edge and gives no audio levels for the waveform.
+  const [voiceState, setVoiceState] = useState<"idle" | "recording" | "transcribing">("idle");
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const cancelledRef = useRef(false);
+
+  const micAvailable =
+    !!onTranscribe &&
+    typeof navigator !== "undefined" &&
+    !!navigator.mediaDevices?.getUserMedia;
+
+  const appendTranscript = useCallback((transcript: string) => {
+    const clean = transcript.trim();
+    if (!clean) return;
+    setText((prev) => (prev ? `${prev} ${clean}` : clean));
+    textareaRef.current?.focus();
+  }, []);
+
+  const teardownAudio = useCallback(() => {
+    const stream = streamRef.current;
+    if (stream) for (const track of stream.getTracks()) track.stop();
+    streamRef.current = null;
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state !== "closed") void ctx.close();
+    audioCtxRef.current = null;
+    setAnalyser(null);
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    if (!onTranscribe || !navigator.mediaDevices?.getUserMedia) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
+      const AudioCtor =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtor) {
+        const ctx = new AudioCtor();
+        const analyserNode = ctx.createAnalyser();
+        analyserNode.fftSize = 1024;
+        ctx.createMediaStreamSource(stream).connect(analyserNode);
+        audioCtxRef.current = ctx;
+        setAnalyser(analyserNode);
+      }
+
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      cancelledRef.current = false;
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        const blob = new Blob(audioChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
+        mediaRecorderRef.current = null;
+        teardownAudio();
+        if (cancelledRef.current) {
+          setVoiceState("idle");
+          return;
+        }
+        setVoiceState("transcribing");
+        try {
+          appendTranscript(await onTranscribe(blob));
+        } catch {
+          // Surface nothing in the box on failure; user can retry.
+        } finally {
+          setVoiceState("idle");
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setVoiceState("recording");
+    } catch {
+      teardownAudio();
+      setVoiceState("idle");
+    }
+  }, [appendTranscript, onTranscribe, teardownAudio]);
+
+  const confirmRecording = useCallback(() => {
+    cancelledRef.current = false;
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+  }, []);
+
+  const cancelRecording = useCallback(() => {
+    cancelledRef.current = true;
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    } else {
+      teardownAudio();
+      setVoiceState("idle");
+    }
+  }, [teardownAudio]);
+
+  // Stop any in-flight capture on unmount.
+  useEffect(
+    () => () => {
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        cancelledRef.current = true;
+        recorder.stop();
+      }
+      teardownAudio();
+    },
+    [teardownAudio],
+  );
 
   // Revoke blob URLs on unmount to prevent memory leaks
   useEffect(() => {
@@ -75,11 +201,18 @@ export function ChatInput({
     const asArray = Array.from(files as FileList);
     if (asArray.length === 0) return;
     const selectedFiles = multiple ? asArray : asArray.slice(0, 1);
-    const acceptedFiles = selectedFiles.filter((file) => isAcceptedFile(file, acceptedFileTypes));
-    const rejectedFiles = selectedFiles.filter((file) => !isAcceptedFile(file, acceptedFileTypes));
+    const typeRejected = selectedFiles.filter((file) => !isAcceptedFile(file, acceptedFileTypes));
+    const typeOk = selectedFiles.filter((file) => isAcceptedFile(file, acceptedFileTypes));
+    const oversize = maxUploadSize
+      ? typeOk.filter((file) => file.size > maxUploadSize)
+      : [];
+    const acceptedFiles = typeOk.filter((file) => !maxUploadSize || file.size <= maxUploadSize);
 
-    if (rejectedFiles.length > 0) {
-      onAttachmentError?.(formatRejectedFilesMessage(rejectedFiles), rejectedFiles);
+    if (typeRejected.length > 0) {
+      onAttachmentError?.(formatRejectedFilesMessage(typeRejected), typeRejected);
+    }
+    if (oversize.length > 0) {
+      onAttachmentError?.(formatOversizeMessage(oversize, maxUploadSize as number), oversize);
     }
 
     if (acceptedFiles.length === 0) return;
@@ -94,7 +227,7 @@ export function ChatInput({
       file: file,
     }));
     setAttachments((prev) => [...prev, ...newAttachments]);
-  }, [acceptedFileTypes, multiple, onAttachmentError]);
+  }, [acceptedFileTypes, maxUploadSize, multiple, onAttachmentError]);
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -177,59 +310,96 @@ export function ChatInput({
         </div>
       )}
       <AttachmentPreview attachments={attachments} onRemove={handleRemoveAttachment} />
-      <div className="chat-input__row">
-        <button
-          className="chat-input__attach-btn"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled}
-          type="button"
-          aria-label="Attach file"
-        >
-          <svg
-            aria-hidden="true"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
+      {voiceState === "idle" ? (
+        <div className="chat-input__row">
+          <button
+            className="chat-input__attach-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled}
+            type="button"
+            aria-label="Attach file"
           >
-            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-          </svg>
-        </button>
-        <textarea
-          ref={textareaRef}
-          className="chat-input__textarea"
-          value={text}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          disabled={disabled}
-          rows={1}
-        />
-        <button
-          className="chat-input__send-btn"
-          onClick={handleSend}
-          disabled={disabled || (!text.trim() && attachments.length === 0)}
-          type="button"
-          aria-label="Send message"
-        >
-          <svg
-            aria-hidden="true"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+            <svg
+              aria-hidden="true"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
+          {micAvailable && (
+            <button
+              className="chat-input__mic-btn"
+              onClick={() => void startRecording()}
+              disabled={disabled}
+              type="button"
+              aria-label="Start voice input"
+            >
+              <svg
+                aria-hidden="true"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            </button>
+          )}
+          <textarea
+            ref={textareaRef}
+            className="chat-input__textarea"
+            value={text}
+            onChange={handleInput}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            disabled={disabled}
+            rows={1}
+          />
+          <button
+            className="chat-input__send-btn"
+            onClick={handleSend}
+            disabled={disabled || (!text.trim() && attachments.length === 0)}
+            type="button"
+            aria-label="Send message"
           >
-            <line x1="12" y1="19" x2="12" y2="5" />
-            <polyline points="5 12 12 5 19 12" />
-          </svg>
-        </button>
-      </div>
+            <svg
+              aria-hidden="true"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="12" y1="19" x2="12" y2="5" />
+              <polyline points="5 12 12 5 19 12" />
+            </svg>
+          </button>
+        </div>
+      ) : (
+        <div className="chat-input__row">
+          <VoiceRecorder
+            analyser={analyser}
+            state={voiceState}
+            onCancel={cancelRecording}
+            onConfirm={confirmRecording}
+          />
+        </div>
+      )}
       <input
         ref={fileInputRef}
         type="file"
@@ -272,4 +442,10 @@ function formatRejectedFilesMessage(files: File[]): string {
     return `Unsupported file type: ${files[0]?.name ?? "file"}`;
   }
   return `Unsupported file types: ${files.map((file) => file.name).join(", ")}`;
+}
+
+function formatOversizeMessage(files: File[], maxBytes: number): string {
+  const mb = Math.round(maxBytes / (1024 * 1024));
+  const names = files.map((file) => file.name).join(", ");
+  return `File too large (max ${mb} MB): ${names}`;
 }

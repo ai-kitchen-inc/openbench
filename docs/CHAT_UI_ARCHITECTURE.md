@@ -787,7 +787,7 @@ studio/chat-ui/
 │   │   │   ├── a2ui-choice-picker.tsx
 │   │   │   ├── a2ui-slider.tsx
 │   │   │   └── a2ui-datetime-input.tsx
-│   │   └── custom/                 # 6 OpenBench extended components
+│   │   └── custom/                 # 7 OpenBench extended components
 │   │       ├── index.ts
 │   │       ├── ob-chart.tsx        # Recharts wrapper
 │   │       ├── ob-file-card.tsx
@@ -1191,7 +1191,7 @@ transport.onEvent() -> for each AG-UI event:
 | `Slider` | Numeric range | `label`, `value` (DynamicNumber), `min`, `max`, `checks` |
 | `DateTimeInput` | Date/time input | `value` (DynamicString), `enableDate`, `enableTime`, `min`, `max` |
 
-### Custom (6 OpenBench extensions)
+### Custom (7 OpenBench extensions)
 
 | Component | Library | Purpose |
 |-----------|---------|---------|

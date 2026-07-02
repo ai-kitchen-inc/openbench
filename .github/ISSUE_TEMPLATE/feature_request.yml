@@ -1,0 +1,39 @@
+name: Feature Request
+description: Suggest an idea or enhancement for OpenBench
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! For larger proposals, consider opening
+        a [Discussion](https://github.com/ai-kitchen-inc/openbench/discussions)
+        first so the community can weigh in.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve? Why does it matter?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the feature or API you'd like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you evaluated and why you ruled them out.
+    validations:
+      required: false
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact on existing functionality
+      description: Would this be a breaking change? Which subsystems are affected?
+    validations:
+      required: false

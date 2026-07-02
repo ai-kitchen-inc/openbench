@@ -9,6 +9,15 @@ export default defineConfig({
   resolve: {
     dedupe: ["react", "react-dom"],
   },
+  // The workspace SDK is a file: dep hard-linked from studio/chat-ui/dist.
+  // Vite only invalidates its dep pre-bundle on lockfile/version changes, not
+  // when the hard-linked dist content changes — so a rebuilt SDK would keep
+  // serving a stale bundle. Force re-optimization on every dev start so the
+  // current dist is always picked up. (Pre-bundling stays ON so the SDK's
+  // transitive deps — recharts, zustand, etc. — resolve correctly.)
+  optimizeDeps: {
+    force: true,
+  },
   test: {
     environment: "jsdom",
     globals: true,
@@ -23,6 +32,8 @@ export default defineConfig({
       "/sessions": { target: backendUrl, changeOrigin: true },
       "/uploads": { target: backendUrl, changeOrigin: true },
       "/downloads": { target: backendUrl, changeOrigin: true },
+      "/dashboard": { target: backendUrl, changeOrigin: true },
+      "^/d/": { target: backendUrl, changeOrigin: true },
       "/image-search": { target: backendUrl, changeOrigin: true },
       "/persona": { target: backendUrl, changeOrigin: true },
       "/skills": { target: backendUrl, changeOrigin: true },

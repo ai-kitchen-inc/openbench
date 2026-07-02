@@ -227,5 +227,58 @@ class TestChatSession(unittest.TestCase):
         self.assertIn("1", repr(session))
 
 
+class TestTolerantDeserialization(unittest.TestCase):
+    """Loading must degrade on partial corruption, not raise (history robustness)."""
+
+    def test_skips_malformed_message_keeps_valid(self):
+        data = {
+            "sessionId": "s1",
+            "title": "T",
+            "createdAt": "2026-06-30T00:00:00+00:00",
+            "updatedAt": "2026-06-30T00:00:00+00:00",
+            "messages": [
+                {"id": "m1", "role": "user", "content": "hi", "timestamp": "2026-06-30T00:00:00+00:00"},
+                {"id": "m2", "role": "bogus-role", "content": "x", "timestamp": "2026-06-30T00:00:00+00:00"},
+                {"id": "m3", "role": "assistant", "content": "ok", "timestamp": "2026-06-30T00:00:00+00:00"},
+            ],
+        }
+        restored = ChatSession.from_dict(data)
+        # The bad-role message is dropped; the two valid ones survive.
+        self.assertEqual(len(restored), 2)
+        self.assertEqual(restored.messages[0].content, "hi")
+        self.assertEqual(restored.messages[1].content, "ok")
+
+    def test_missing_top_level_fields_do_not_raise(self):
+        restored = ChatSession.from_dict({"messages": []})
+        self.assertTrue(restored.session_id)  # defaulted uuid
+        self.assertIsNotNone(restored.created_at)
+        self.assertIsNotNone(restored.updated_at)
+
+    def test_message_defaults_missing_fields(self):
+        msg = ChatMessage.from_dict({"role": "user"})
+        self.assertTrue(msg.id)  # defaulted uuid
+        self.assertEqual(msg.content, "")
+        self.assertIsNotNone(msg.timestamp)
+
+    def test_message_bad_timestamp_falls_back(self):
+        msg = ChatMessage.from_dict(
+            {"id": "m", "role": "user", "content": "c", "timestamp": "not-a-date"}
+        )
+        self.assertIsNotNone(msg.timestamp)
+
+    def test_message_drops_bad_attachment(self):
+        msg = ChatMessage.from_dict(
+            {
+                "id": "m",
+                "role": "user",
+                "content": "c",
+                "timestamp": "2026-06-30T00:00:00+00:00",
+                "attachments": ["not-a-dict"],
+            }
+        )
+        # Bad attachment dropped, message still loads.
+        self.assertIsNone(msg.attachments)
+
+
 if __name__ == "__main__":
     unittest.main()

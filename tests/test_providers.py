@@ -516,6 +516,7 @@ class TestProviderType(unittest.TestCase):
     def test_all_types_exist(self):
         """Test that all expected provider types exist."""
         self.assertEqual(ProviderType.LLM.value, "llm")
+        self.assertEqual(ProviderType.VLM.value, "vlm")
         self.assertEqual(ProviderType.EMBEDDING.value, "embedding")
         self.assertEqual(ProviderType.VECTOR.value, "vector")
         self.assertEqual(ProviderType.STORAGE.value, "storage")

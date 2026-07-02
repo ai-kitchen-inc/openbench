@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use OpenBench in your research, please cite it as below."
+title: "OpenBench: The Open Source Agentic AI Workbench"
+abstract: >-
+  OpenBench is an open-source Python SDK for composable AI workflows. It acts as
+  a workflow orchestrator, agent runtime, and universal control plane for AI,
+  letting developers compose data sources, agents, and output generators with
+  chainable operators across multiple frameworks.
+type: software
+authors:
+  - name: "OpenBench Contributors"
+    email: openbench2026@gmail.com
+repository-code: "https://github.com/ai-kitchen-inc/openbench"
+url: "https://github.com/ai-kitchen-inc/openbench"
+license: Apache-2.0
+version: 0.1.0
+keywords:
+  - artificial-intelligence
+  - agents
+  - agentic-ai
+  - workflow-orchestration
+  - llm
+  - rag

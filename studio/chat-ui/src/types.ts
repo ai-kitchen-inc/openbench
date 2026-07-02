@@ -59,6 +59,8 @@ export interface Attachment {
   mimeType: string;
   sizeBytes?: number;
   file?: File; // Browser File reference (never serialized to server)
+  path?: string; // Server-side path for tools, when available
+  extractedText?: string; // Full server-side extracted context
   extractedPreview?: string; // Text preview from server extraction
 }
 
@@ -181,6 +183,7 @@ export interface ChatConfig {
   streamUrl: string; // POST → SSE AG-UI endpoint (e.g., "/awp")
   actionUrl?: string; // POST → JSON (defaults to "/chat/action")
   uploadUrl?: string; // POST → JSON (defaults to "/chat/upload")
+  uploadFile?: (file: File, options: AttachmentUploadOptions) => Promise<Attachment>;
   sessionsUrl?: string; // REST CRUD endpoint (defaults to "/sessions")
   theme?: "light" | "dark" | "auto";
   maxConcurrentStreams?: number; // Max parallel SSE streams (default: 3)
@@ -207,6 +210,34 @@ export interface ChatConfig {
    * whatever the transport threw. Use to surface a failure toast.
    */
   onUploadError?: (file: File, error: unknown) => void;
+  /**
+   * Optional host-provided actions for dashboard artifacts. When supplied,
+   * the dashboard renderer shows Publish / Export buttons that call these.
+   * The host wires them to its own authenticated API client, keeping the
+   * SDK decoupled from any specific backend.
+   */
+  dashboardActions?: DashboardActions;
+}
+
+export interface DashboardActions {
+  /** Persist the ViewModel and return a public, shareable URL. */
+  publish?: (viewModel: unknown) => Promise<{ url: string }>;
+  /** Convert the ViewModel to a Grafana dashboard JSON model. */
+  exportGrafana?: (viewModel: unknown) => Promise<unknown>;
+  /** Render the ViewModel to a PDF document (charts included) for download. */
+  exportPdf?: (viewModel: unknown) => Promise<Blob>;
+  /**
+   * Fetch a dashboard's standalone HTML through the host's authenticated
+   * client. Lets the renderer preview an auth-protected artifact URL via a
+   * sandboxed ``srcDoc`` iframe instead of a bare ``src`` the browser can't
+   * authenticate. Returns the raw HTML text.
+   */
+  loadHtml?: (url: string) => Promise<string>;
+}
+
+export interface AttachmentUploadOptions {
+  sessionId?: string | null;
+  onProgress?: (fraction: number) => void;
 }
 
 export type TransportStatus = "connected" | "disconnected" | "error";

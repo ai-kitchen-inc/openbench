@@ -19,8 +19,14 @@ from openbench.mcp.config import (
     MCPServerConfig,
     MCPServerConnectionConfig,
 )
+from openbench.mcp.errors import MCPPolicyDeniedError
+from openbench.mcp.permissions import MCPPermissionSession
 from openbench.mcp.server import OpenBenchMCPServer
 from openbench.mcp.transports import InMemoryMCPTransport, MCPTransport, StreamableHTTPTransport
+
+
+def approve_mcp(_request):
+    return "yes"
 
 
 class LoopBoundTransport(MCPTransport):
@@ -208,9 +214,7 @@ def fake_streamable_sdk(monkeypatch):
         captured["sse_read_timeout"] = sse_read_timeout
         yield "read", "write", lambda: "session-1"
 
-    monkeypatch.setattr(
-        "mcp.client.streamable_http.streamablehttp_client", fake_streamablehttp_client
-    )
+    monkeypatch.setattr("mcp.client.streamable_http.streamablehttp_client", fake_streamablehttp_client)
     monkeypatch.setattr("mcp.ClientSession", FakeStreamableSession)
     return captured
 
@@ -222,9 +226,7 @@ def test_server_exposes_sdk_tools_resources_and_prompts(openbench_mcp_server):
     assert "filter_records" in tool_names
     assert "read_pdf" in tool_names
     assert "export_to_excel" in tool_names
-    assert any(
-        r["uri"].startswith("openbench://skills/") for r in openbench_mcp_server.list_resources()
-    )
+    assert any(r["uri"].startswith("openbench://skills/") for r in openbench_mcp_server.list_resources())
     assert "summarize_pdf" in {p["name"] for p in openbench_mcp_server.list_prompts()}
 
 
@@ -307,7 +309,7 @@ def test_client_discovery_timeout_is_separate_from_tool_timeout(monkeypatch):
         )
     )
 
-    with pytest.raises(Exception, match="Timed out discovering MCP server 'sam' after 0.01s"):
+    with pytest.raises(Exception, match=r"Timed out discovering MCP server 'sam' after 0\.01s"):
         client.discover_sync()
 
     assert slow_transport.closed is True
@@ -419,6 +421,70 @@ def test_client_reconnects_streamable_http_once_after_closed_resource(monkeypatc
     assert ReconnectableTransport.instances[0].closed is True
 
 
+def test_client_close_after_call_closes_and_replaces_transport_after_success(monkeypatch):
+    ReconnectableTransport.instances = []
+
+    def build_fake_transport(config):
+        return ReconnectableTransport(fail_call=False)
+
+    monkeypatch.setattr("openbench.mcp.client.build_transport", build_fake_transport)
+    client = MCPClient(
+        MCPClientConfig(
+            servers={
+                "time": MCPServerConnectionConfig(
+                    command="fake-mcp",
+                    namespace="time",
+                    allowed=True,
+                )
+            }
+        )
+    )
+
+    first = client.call_tool_sync("time.echo", {"value": "one"}, close_after_call=True)
+    second = client.call_tool_sync("time.echo", {"value": "two"}, close_after_call=True)
+    client.close_sync()
+
+    assert first == {"value": "one"}
+    assert second == {"value": "two"}
+    assert len(ReconnectableTransport.instances) == 3
+    assert ReconnectableTransport.instances[0].closed is True
+    assert ReconnectableTransport.instances[1].closed is True
+
+
+def test_client_close_after_call_closes_and_replaces_transport_after_failure(monkeypatch):
+    ReconnectableTransport.instances = []
+
+    class BrokenTransport(ReconnectableTransport):
+        async def call_tool(self, name: str, arguments: dict) -> dict:
+            raise ValueError("server exploded")
+
+    def build_fake_transport(config):
+        return BrokenTransport(fail_call=False)
+
+    monkeypatch.setattr("openbench.mcp.client.build_transport", build_fake_transport)
+    client = MCPClient(
+        MCPClientConfig(
+            servers={
+                "time": MCPServerConnectionConfig(
+                    command="fake-mcp",
+                    namespace="time",
+                    allowed=True,
+                    retries=0,
+                )
+            }
+        )
+    )
+
+    try:
+        with pytest.raises(ValueError, match="server exploded"):
+            client.call_tool_sync("time.echo", {"value": "ok"}, close_after_call=True)
+    finally:
+        client.close_sync()
+
+    assert len(ReconnectableTransport.instances) == 2
+    assert ReconnectableTransport.instances[0].closed is True
+
+
 def test_client_does_not_reconnect_streamable_http_for_non_closed_error(monkeypatch):
     ReconnectableTransport.instances = []
 
@@ -476,7 +542,7 @@ def test_mcp_tool_adapter_works_with_tool_executor(openbench_mcp_server):
         client=client,
         namespaced_name="openbench.distinct_values",
         tool_schema=schema,
-        approved=True,
+        permission_provider=approve_mcp,
     )
 
     assert isinstance(adapter, Tool)
@@ -502,7 +568,7 @@ def test_mcp_tool_adapter_reports_empty_exception_class(openbench_mcp_server):
             "description": "Distinct values",
             "inputSchema": {"type": "object", "properties": {}, "required": []},
         },
-        approved=True,
+        permission_provider=approve_mcp,
     )
     adapter.client.call_tool_sync = lambda *args, **kwargs: (_ for _ in ()).throw(
         ClosedResourceError()
@@ -522,19 +588,165 @@ def test_mcp_tool_adapter_passes_configured_timeout_to_client(openbench_mcp_serv
             "description": "Distinct values",
             "inputSchema": {"type": "object", "properties": {}, "required": []},
         },
-        approved=True,
+        permission_provider=approve_mcp,
         timeout_seconds=123.0,
     )
     seen = {}
 
     def fake_call_tool_sync(*args, **kwargs):
         seen["timeout_seconds"] = kwargs.get("timeout_seconds")
+        seen["close_after_call"] = kwargs.get("close_after_call")
         return {"ok": True}
 
     adapter.client.call_tool_sync = fake_call_tool_sync
 
     assert adapter.execute() == {"ok": True}
     assert seen["timeout_seconds"] == 123.0
+    assert seen["close_after_call"] is True
+
+
+def test_mcp_tool_adapter_can_opt_out_of_close_after_execute(openbench_mcp_server):
+    client = MCPClient(transports={"openbench": InMemoryMCPTransport(openbench_mcp_server)})
+    adapter = MCPToolAdapter(
+        client=client,
+        namespaced_name="openbench.distinct_values",
+        tool_schema={
+            "name": "distinct_values",
+            "description": "Distinct values",
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        },
+        permission_provider=approve_mcp,
+        close_after_execute=False,
+    )
+    seen = {}
+
+    def fake_call_tool_sync(*args, **kwargs):
+        seen["close_after_call"] = kwargs.get("close_after_call")
+        return {"ok": True}
+
+    adapter.client.call_tool_sync = fake_call_tool_sync
+
+    assert adapter.execute() == {"ok": True}
+    assert seen["close_after_call"] is False
+
+
+def test_mcp_tool_adapter_approved_permission_calls_client():
+    seen = {}
+
+    class FakeClient:
+        def call_tool_sync(self, *args, **kwargs):
+            seen["args"] = args
+            seen["kwargs"] = kwargs
+            return {"ok": True}
+
+    adapter = MCPToolAdapter(
+        client=FakeClient(),
+        namespaced_name="openbench.distinct_values",
+        tool_schema={"description": "Distinct values"},
+        permission_provider=lambda request: "approve",
+    )
+
+    assert adapter.execute(column="region") == {"ok": True}
+    assert seen["args"] == ("openbench.distinct_values", {"column": "region"})
+    assert seen["kwargs"]["approved"] is True
+
+
+def test_mcp_tool_adapter_denied_permission_blocks_client():
+    class FakeClient:
+        def call_tool_sync(self, *args, **kwargs):
+            raise AssertionError("MCP client should not be called")
+
+    adapter = MCPToolAdapter(
+        client=FakeClient(),
+        namespaced_name="openbench.distinct_values",
+        tool_schema={"description": "Distinct values"},
+        permission_provider=lambda request: "no",
+    )
+
+    with pytest.raises(MCPPolicyDeniedError, match="not approved"):
+        adapter.execute(column="region")
+
+
+def test_mcp_tool_adapter_ambiguous_permission_blocks_client():
+    class FakeClient:
+        def call_tool_sync(self, *args, **kwargs):
+            raise AssertionError("MCP client should not be called")
+
+    adapter = MCPToolAdapter(
+        client=FakeClient(),
+        namespaced_name="openbench.distinct_values",
+        tool_schema={"description": "Distinct values"},
+        permission_provider=lambda request: "maybe",
+    )
+
+    with pytest.raises(MCPPolicyDeniedError, match="not approved"):
+        adapter.execute(column="region")
+
+
+def test_mcp_tool_adapter_missing_permission_provider_blocks_client():
+    class FakeClient:
+        def call_tool_sync(self, *args, **kwargs):
+            raise AssertionError("MCP client should not be called")
+
+    adapter = MCPToolAdapter(
+        client=FakeClient(),
+        namespaced_name="openbench.distinct_values",
+        tool_schema={"description": "Distinct values"},
+    )
+
+    with pytest.raises(MCPPolicyDeniedError, match="not approved"):
+        adapter.execute(column="region")
+
+
+def test_mcp_tool_adapter_reuses_cached_permission_for_same_action():
+    prompts = []
+    calls = []
+
+    class FakeClient:
+        def call_tool_sync(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return {"ok": True}
+
+    def provider(request):
+        prompts.append(request)
+        return "yes"
+
+    adapter = MCPToolAdapter(
+        client=FakeClient(),
+        namespaced_name="openbench.distinct_values",
+        tool_schema={"description": "Distinct values"},
+        permission_session=MCPPermissionSession(provider),
+    )
+
+    adapter.execute(column="region")
+    adapter.execute(column="region")
+
+    assert len(prompts) == 1
+    assert len(calls) == 2
+
+
+def test_mcp_tool_adapter_prompts_again_when_action_changes():
+    prompts = []
+
+    class FakeClient:
+        def call_tool_sync(self, *args, **kwargs):
+            return {"ok": True}
+
+    def provider(request):
+        prompts.append(request)
+        return "yes"
+
+    adapter = MCPToolAdapter(
+        client=FakeClient(),
+        namespaced_name="openbench.distinct_values",
+        tool_schema={"description": "Distinct values"},
+        permission_session=MCPPermissionSession(provider),
+    )
+
+    adapter.execute(column="region")
+    adapter.execute(column="country")
+
+    assert len(prompts) == 2
 
 
 def test_load_mcp_tools_propagates_server_timeout(monkeypatch):
@@ -549,17 +761,28 @@ def test_load_mcp_tools_propagates_server_timeout(monkeypatch):
     }
 
     class FakeMCPClient:
+        instances = []
+
         def __init__(self, config):
             self.config = config
+            self.closed = False
+            FakeMCPClient.instances.append(self)
 
         def discover_sync(self):
+            raise AssertionError("load_mcp_tools should use one-shot discovery")
+
+        def discover_and_close_sync(self, refresh: bool = False):
+            self.closed = True
             return SimpleNamespace(
                 servers={
-                    "sam_segmentation": SimpleNamespace(tools={"count_objects_with_sam3": schema})
+                    "sam_segmentation": SimpleNamespace(
+                        tools={"count_objects_with_sam3": schema}
+                    )
                 }
             )
 
     monkeypatch.setattr(adapters_module, "MCPClient", FakeMCPClient)
+    FakeMCPClient.instances = []
     config = MCPClientConfig(
         servers={
             "sam": MCPServerConnectionConfig(
@@ -575,3 +798,7 @@ def test_load_mcp_tools_propagates_server_timeout(monkeypatch):
     assert len(tools) == 1
     assert tools[0].namespaced_name == "sam_segmentation.count_objects_with_sam3"
     assert tools[0].timeout_seconds == 456.0
+    assert len(FakeMCPClient.instances) == 2
+    assert FakeMCPClient.instances[0].closed is True
+    assert FakeMCPClient.instances[1].closed is False
+    assert tools[0].client is FakeMCPClient.instances[1]

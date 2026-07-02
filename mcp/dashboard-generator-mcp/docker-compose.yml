@@ -1,0 +1,50 @@
+services:
+  dashboard-generator-mcp-cpu:
+    build:
+      context: ../..
+      dockerfile: mcp/dashboard-generator-mcp/Dockerfile
+      target: base
+    image: openbench/dashboard-generator-mcp:cpu
+    profiles: ["cpu"]
+    environment:
+      OPENBENCH_EXPORT_DIR: ${OPENBENCH_EXPORT_DIR:-/outputs}
+      OPENBENCH_EXPORT_URL_BASE: ${OPENBENCH_EXPORT_URL_BASE:-/outputs}
+      DASHBOARD_RENDER_ADAPTER: ${DASHBOARD_RENDER_ADAPTER:-default}
+      STITCH_API_KEY: ${STITCH_API_KEY:-}
+      STITCH_API_URL: ${STITCH_API_URL:-}
+    volumes:
+      - ${DASHBOARD_GENERATOR_MCP_OUTPUTS:-./outputs}:/outputs
+    stdin_open: true
+    tty: false
+    command: ["python", "-m", "app.mcp_server", "--transport", "stdio"]
+
+  dashboard-generator-mcp-dev:
+    build:
+      context: ../..
+      dockerfile: mcp/dashboard-generator-mcp/Dockerfile
+      target: base
+    image: openbench/dashboard-generator-mcp:dev
+    profiles: ["dev"]
+    environment:
+      OPENBENCH_EXPORT_DIR: /outputs
+      OPENBENCH_EXPORT_URL_BASE: /outputs
+      DASHBOARD_RENDER_ADAPTER: ${DASHBOARD_RENDER_ADAPTER:-default}
+      STITCH_API_KEY: ${STITCH_API_KEY:-}
+      STITCH_API_URL: ${STITCH_API_URL:-}
+    volumes:
+      - .:/repo/mcp/dashboard-generator-mcp
+      - ${DASHBOARD_GENERATOR_MCP_OUTPUTS:-./outputs}:/outputs
+    ports:
+      - "8003:8000"
+    command:
+      [
+        "python",
+        "-m",
+        "app.mcp_server",
+        "--transport",
+        "streamable-http",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]

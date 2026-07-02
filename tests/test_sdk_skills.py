@@ -16,6 +16,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from openbench.intelligence.skill import Skill
 from openbench.intelligence.skill_registry import SkillRegistry
@@ -28,8 +29,8 @@ class TestSDKSkillsDiscovery(unittest.TestCase):
 
     REQUIRED_SKILLS = {
         "data-context-extractor",
+        "dashboard-generator",
         "data-visualization",
-        "drive-explorer",
         "export-excel",
         "pdf-tools",
         "query-explorer",
@@ -314,6 +315,323 @@ class TestQueryExplorerSkill(unittest.TestCase):
     def test_top_n_invalid_n_returns_error(self):
         result = self.tools["top_n_records"](self.sample, "revenue", n=0)
         self.assertIn("error", result)
+
+
+class TestDashboardGeneratorSkill(unittest.TestCase):
+    """CSV/XLSX dashboard skill: metadata, aggregation, and artifact output."""
+
+    def setUp(self):
+        try:
+            import pandas  # noqa: F401
+        except ImportError:
+            self.skipTest("pandas is not installed")
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "dashboard-generator")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+        self.tool_schemas = {name: schema for name, _, schema in self.skill.tools}
+
+    def tearDown(self):
+        import sys
+
+        module = sys.modules.get("openbench_skill_dashboard_generator")
+        if module is not None and hasattr(module, "bind"):
+            module.bind(dashboard_adapter=None, dashboard_adapter_factory=None)
+
+    def _write_csv(self, directory: str) -> str:
+        path = Path(directory) / "sales.csv"
+        path.write_text(
+            "region,segment,revenue,date\n"
+            "EU,Enterprise,100,2026-01-01\n"
+            "EU,SMB,50,2026-01-02\n"
+            "US,Enterprise,150,2026-01-03\n",
+            encoding="utf-8",
+        )
+        return str(path)
+
+    def test_expected_tools_present(self):
+        self.assertEqual(
+            set(self.tools),
+            {"extract_metadata", "aggregate_data", "generate_dashboard"},
+        )
+        aggregate_parameters = self.tool_schemas["aggregate_data"]["function"]["parameters"]
+        self.assertIn("query", aggregate_parameters["properties"])
+        self.assertNotIn("operations", aggregate_parameters["properties"])
+        self.assertEqual(aggregate_parameters["required"], ["path", "query"])
+        # query advertises a list so the model batches all aggregations in one call.
+        self.assertEqual(aggregate_parameters["properties"]["query"]["type"], "array")
+
+    def test_extract_metadata_profiles_csv_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_csv(tmp)
+            result = self.tools["extract_metadata"](path=path)
+
+        self.assertNotIn("error", result)
+        self.assertEqual(result["format"], "csv")
+        self.assertEqual(result["row_count"], 3)
+        columns = {column["name"]: column for column in result["columns"]}
+        self.assertEqual(columns["revenue"]["role_hint"], "metric")
+        self.assertIn("region", columns)
+        self.assertIn("sample", result)
+        self.assertEqual(result["sql"]["dialect"], "sqlite")
+        self.assertEqual(result["sql"]["table"], "data")
+
+    def test_aggregate_data_group_sum(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_csv(tmp)
+            result = self.tools["aggregate_data"](
+                path=path,
+                dataset_id="revenue_by_region",
+                query=(
+                    'SELECT "region", SUM("revenue") AS revenue '
+                    'FROM data GROUP BY "region" ORDER BY revenue DESC'
+                ),
+            )
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["dialect"], "sqlite")
+        self.assertEqual(result["table"], "data")
+        self.assertEqual(result["datasets"][0]["id"], "revenue_by_region")
+        records = {row["region"]: row["revenue"] for row in result["datasets"][0]["records"]}
+        self.assertEqual(records, {"EU": 150, "US": 150})
+
+    def test_aggregate_data_batch_returns_one_dataset_per_query(self):
+        """A list of queries runs in one call and returns one dataset each."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_csv(tmp)
+            result = self.tools["aggregate_data"](
+                path=path,
+                query=[
+                    'SELECT "region", SUM("revenue") AS revenue FROM data GROUP BY "region"',
+                    'SELECT "segment", COUNT(*) AS orders FROM data GROUP BY "segment"',
+                ],
+            )
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(len(result["datasets"]), 2)
+        self.assertEqual(
+            {ds["id"] for ds in result["datasets"]}, {"dataset_1", "dataset_2"}
+        )
+
+    def test_aggregate_data_rejects_destructive_sql(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_csv(tmp)
+            result = self.tools["aggregate_data"](path=path, query="DROP TABLE data")
+
+        self.assertEqual(result["datasets"], [])
+        self.assertIn(
+            "Only read-only SELECT or WITH queries are allowed",
+            result["errors"][0]["error"],
+        )
+
+    def test_generate_dashboard_writes_html_and_queues_artifact(self):
+        from openbench.chat import render_queue
+        from openbench.chat.renderers.dashboard import DashboardRenderer
+
+        render_queue.clear()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                view_model={
+                    "title": "Sales Dashboard",
+                    "description": "Uploaded sales data.",
+                    "datasets": {
+                        "revenue_by_region": [
+                            {"region": "EU", "revenue": 150},
+                            {"region": "US", "revenue": 150},
+                        ]
+                    },
+                    "kpis": [{"label": "Total Revenue", "value": 300}],
+                    "sections": [
+                        {
+                            "title": "Revenue",
+                            "items": [
+                                {
+                                    "type": "chart",
+                                    "chart_type": "bar",
+                                    "dataset": "revenue_by_region",
+                                    "x": "region",
+                                    "y": "revenue",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+            output = Path(result["path"])
+            self.assertTrue(output.exists())
+            html_text = output.read_text(encoding="utf-8")
+
+        self.assertEqual(result["type"], "dashboard")
+        self.assertEqual(result["mimeType"], "text/html")
+        self.assertEqual(result["render_mode"], "a2ui")
+        self.assertEqual(result["viewModel"]["title"], "Sales Dashboard")
+        self.assertEqual(result["datasets"]["revenue_by_region"][0]["region"], "EU")
+        self.assertEqual(result["kpis"][0]["label"], "Total Revenue")
+        self.assertEqual(result["sections"][0]["title"], "Revenue")
+        self.assertEqual(result["sectionCount"], 1)
+        self.assertEqual(result["kpiCount"], 1)
+        self.assertIn("Sales Dashboard", html_text)
+        queued = render_queue.get_items()
+        self.assertEqual(len(queued), 1)
+        self.assertTrue(DashboardRenderer().detect(queued[0]))
+        self.assertEqual(queued[0]["render_mode"], "a2ui")
+        self.assertEqual(queued[0]["viewModel"]["title"], "Sales Dashboard")
+        self.assertEqual(queued[0]["datasets"], result["datasets"])
+        self.assertEqual(queued[0]["sections"], result["sections"])
+        render_queue.clear()
+
+    def test_generate_dashboard_uses_injected_adapter_factory(self):
+        import sys
+
+        calls: list[dict[str, Any]] = []
+        module = sys.modules["openbench_skill_dashboard_generator"]
+
+        def adapter_factory(*, output_path: str | Path, public_url: str | None = None):
+            class FakeAdapter:
+                def render(self, view_model: dict[str, Any]) -> dict[str, Any]:
+                    output = Path(output_path)
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_text("<html><body>Injected adapter</body></html>", encoding="utf-8")
+                    calls.append(
+                        {
+                            "view_model": view_model,
+                            "output_path": output,
+                            "public_url": public_url,
+                        }
+                    )
+                    return {
+                        "file_path": str(output),
+                        "size_bytes": output.stat().st_size,
+                        "adapter": {"name": "fake", "used": True},
+                    }
+
+            return FakeAdapter()
+
+        module.bind(dashboard_adapter_factory=adapter_factory)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                view_model={"title": "DI Dashboard", "sections": []},
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["view_model"]["title"], "DI Dashboard")
+        self.assertEqual(result["adapter"], {"name": "fake", "used": True})
+        self.assertTrue(result["path"].endswith(".html"))
+
+    def test_stitch_adapter_uses_mcp_tools_call_flow(self):
+        from unittest.mock import patch
+
+        class FakeResponse:
+            def __init__(self, payload: dict[str, Any]):
+                self._payload = payload
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self._payload
+
+        calls: list[dict[str, Any]] = []
+
+        def fake_post(url, *, headers=None, json=None, timeout=None):
+            calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+            if json["method"] == "tools/list":
+                return FakeResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "tools": [
+                                {"name": "create_project"},
+                                {"name": "generate_screen_from_text"},
+                            ]
+                        },
+                    }
+                )
+            if json["method"] == "tools/call" and json["params"]["name"] == "create_project":
+                return FakeResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": '{"name": "projects/123456789"}',
+                                }
+                            ]
+                        },
+                    }
+                )
+            if (
+                json["method"] == "tools/call"
+                and json["params"]["name"] == "generate_screen_from_text"
+            ):
+                return FakeResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        '{"name": "projects/123456789/screens/screenabc", '
+                                        '"url": "https://stitch.google.com/p/123456789/s/screenabc"}'
+                                    ),
+                                }
+                            ]
+                        },
+                    }
+                )
+            raise AssertionError(f"Unexpected MCP call: {json}")
+
+        saved_env = {
+            key: os.environ.get(key)
+            for key in [
+                "DASHBOARD_RENDER_ADAPTER",
+                "STITCH_API_KEY",
+                "STITCH_API_URL",
+                "STITCH_API_MODE",
+                "STITCH_PROJECT_ID",
+            ]
+        }
+        os.environ["DASHBOARD_RENDER_ADAPTER"] = "stitch"
+        os.environ["STITCH_API_KEY"] = "test-key"
+        os.environ["STITCH_API_URL"] = "https://stitch.googleapis.com/mcp"
+        os.environ.pop("STITCH_PROJECT_ID", None)
+        os.environ.pop("STITCH_API_MODE", None)
+        try:
+            with patch("requests.post", side_effect=fake_post):
+                with tempfile.TemporaryDirectory() as tmp:
+                    result = self.tools["generate_dashboard"](
+                        output_dir=tmp,
+                        view_model={
+                            "title": "MCP Dashboard",
+                            "datasets": {"sales": [{"region": "EU", "revenue": 10}]},
+                            "sections": [],
+                        },
+                    )
+                    output = Path(result["path"])
+                    html_text = output.read_text(encoding="utf-8")
+        finally:
+            for key, value in saved_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertEqual([call["json"]["method"] for call in calls], ["tools/list", "tools/call", "tools/call"])
+        self.assertEqual(calls[0]["headers"]["X-Goog-Api-Key"], "test-key")
+        self.assertEqual(calls[2]["json"]["params"]["name"], "generate_screen_from_text")
+        self.assertEqual(calls[2]["json"]["params"]["arguments"]["projectId"], "123456789")
+        self.assertEqual(result["adapter"], {"name": "stitch", "used": True, "transport": "mcp"})
+        self.assertEqual(result["stitch"]["transport"], "mcp")
+        self.assertEqual(result["stitch"]["project_id"], "123456789")
+        self.assertEqual(result["stitch"]["screen_id"], "screenabc")
+        self.assertNotIn("fallback", result["adapter"])
+        self.assertIn("Stitch MCP generated a screen", html_text)
 
 
 class TestDataContextExtractorSkill(unittest.TestCase):
@@ -1055,10 +1373,11 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         reg = SkillRegistry()
         reg.load_sdk_skills()
         tools = reg.collect_tools()
-        # data-context-extractor(2) + data-visualization(5) + export-excel(2)
+        # data-context-extractor(2) + dashboard-generator(3)
+        # + data-visualization(5) + export-excel(2)
         # + pdf-tools(7) + query-explorer(5) + web-search(7)
-        # + memory-scratchpad(4) + drive-explorer(4) = 36 tools
-        self.assertEqual(len(tools), 36)
+        # + memory-scratchpad(4) = 35 tools
+        self.assertEqual(len(tools), 35)
 
     def test_load_skills_by_name_after_load_sdk_skills(self):
         """load_skills(['data-visualization']) must work after load_sdk_skills()."""

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
+import threading
+import time
 import types
 import unittest
 import uuid
@@ -12,6 +15,7 @@ from os import environ
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
 import requests
 from fastapi.testclient import TestClient
 
@@ -27,17 +31,22 @@ from openbench.core.abstractions import (
     Tool,
 )
 from openbench.intelligence import BaseAgent
-from openbench.intelligence.base import Message, MessageRole
+from openbench.intelligence.base import Message, MessageRole, ToolExecutor
 from openbench.intelligence.memory import SQLiteMemoryStore
 
 GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-chat" / "src"
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
-from general_chat.agent import _ImageSearchRenderTool, _mcp_registry_root  # noqa: E402
+from general_chat.agent import (  # noqa: E402
+    _DiagnosticMCPToolDescription,
+    _ImageSearchRenderTool,
+    _mcp_registry_root,
+    _SamSegmentationCountTool,
+)
 from general_chat.extractor import DoclingContentExtractor  # noqa: E402
 from general_chat.server.app import _resolve_mime, _resolve_request_session_id  # noqa: E402
-from general_chat.server.handler import GeneralChatHandler  # noqa: E402
+from general_chat.server.handler import GeneralChatHandler, sanitize_messages  # noqa: E402
 from general_chat.sources import (  # noqa: E402
     SearchDiscoveryResponse,
     SearchDiscoveryResult,
@@ -48,12 +57,16 @@ from general_chat.sources import (  # noqa: E402
     SourceStore,
     TavilySearchDiscoveryProvider,
     clean_html_text,
+    mark_source_upload_deleted,
     source_record_from_file,
     source_record_from_text,
     source_record_from_url,
+    upload_file_ids_for_source,
     validate_file_source,
     validate_url,
 )
+
+pytestmark = pytest.mark.integration
 
 
 class MockAgent(Agent):
@@ -91,6 +104,93 @@ class MockLLMProvider(LLMProvider):
 
 
 class TestGeneralChatSources(unittest.TestCase):
+    def test_sanitize_messages_drops_unresolved_tool_exchange_before_new_user(self):
+        messages = [
+            Message(role=MessageRole.SYSTEM, content="system"),
+            Message(role=MessageRole.USER, content="old request"),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="",
+                tool_calls=[{"id": "call_0", "name": "generate_dashboard", "arguments": {}}],
+            ),
+            Message(
+                role=MessageRole.TOOL,
+                content='{"type": "dashboard"}',
+                name="generate_dashboard",
+                tool_call_id="call_0",
+            ),
+            Message(role=MessageRole.USER, content="new request"),
+        ]
+
+        sanitized = sanitize_messages(messages)
+
+        self.assertEqual(
+            [message.role for message in sanitized],
+            [MessageRole.SYSTEM, MessageRole.USER],
+        )
+        self.assertEqual(sanitized[-1].content, "new request")
+
+    def test_sanitize_messages_drops_completed_tool_exchange_without_raw_content(self):
+        messages = [
+            Message(role=MessageRole.SYSTEM, content="system"),
+            Message(role=MessageRole.USER, content="old request"),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="",
+                tool_calls=[{"id": "call_0", "name": "extract_metadata", "arguments": {}}],
+            ),
+            Message(
+                role=MessageRole.TOOL,
+                content='{"row_count": 10}',
+                name="extract_metadata",
+                tool_call_id="call_0",
+            ),
+            Message(role=MessageRole.ASSISTANT, content="Dashboard done"),
+        ]
+
+        sanitized = sanitize_messages(messages)
+
+        self.assertEqual(
+            [message.role for message in sanitized],
+            [MessageRole.SYSTEM, MessageRole.USER, MessageRole.ASSISTANT],
+        )
+        self.assertEqual(sanitized[-1].content, "Dashboard done")
+        self.assertFalse(any(message.tool_calls for message in sanitized))
+
+    def test_sanitize_messages_keeps_completed_tool_exchange_with_raw_content(self):
+        raw_content = object()
+        messages = [
+            Message(role=MessageRole.SYSTEM, content="system"),
+            Message(role=MessageRole.USER, content="old request"),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="",
+                tool_calls=[{"id": "call_0", "name": "extract_metadata", "arguments": {}}],
+                raw_content=raw_content,
+            ),
+            Message(
+                role=MessageRole.TOOL,
+                content='{"row_count": 10}',
+                name="extract_metadata",
+                tool_call_id="call_0",
+            ),
+            Message(role=MessageRole.ASSISTANT, content="Dashboard done"),
+        ]
+
+        sanitized = sanitize_messages(messages)
+
+        self.assertEqual(
+            [message.role for message in sanitized],
+            [
+                MessageRole.SYSTEM,
+                MessageRole.USER,
+                MessageRole.ASSISTANT,
+                MessageRole.TOOL,
+                MessageRole.ASSISTANT,
+            ],
+        )
+        self.assertIs(sanitized[2].raw_content, raw_content)
+
     def test_resolve_request_session_id_prefers_forwarded_session(self):
         body = {
             "threadId": "transport-thread",
@@ -259,6 +359,48 @@ class TestGeneralChatSources(unittest.TestCase):
             "/general-chat/uploads/file-7/dogs.png",
         )
 
+    def test_enriched_image_attachment_preserves_existing_file_mcp_path(self):
+        agent = MockAgent()
+        engine = ChatEngine(agent=agent)
+        existing_text = (
+            "Image source: images.jpeg\n"
+            "Browser URL: /uploads/file-7a3e15e3/images.jpeg\n"
+            "image_search MCP path: /general-chat/uploads/file-7a3e15e3/images.jpeg\n"
+            "sam_segmentation MCP path: /general-chat/uploads/file-7a3e15e3/images.jpeg\n\n"
+            "To count objects matching a text concept in this uploaded image, call "
+            "sam_segmentation.count_objects_with_sam3 with "
+            'image_path="/general-chat/uploads/file-7a3e15e3/images.jpeg".'
+        )
+        handler = GeneralChatHandler(engine=engine, db_path=":memory:", source_records=[])
+
+        _content, attachments = handler._extract_content(
+            {
+                "messages": [{"id": "m1", "role": "user", "content": "count cars"}],
+                "forwardedProps": {
+                    "sessionId": "chat-session",
+                    "attachments": [
+                        {
+                            "id": "source-9a9b15ad8b",
+                            "type": "image",
+                            "name": "images.jpeg",
+                            "url": "/uploads/source-9a9b15ad8b/images.jpeg",
+                            "mimeType": "image/jpeg",
+                            "sizeBytes": 6781,
+                            "extractedText": existing_text,
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertIsNotNone(attachments)
+        assert attachments is not None
+        self.assertEqual(attachments[0].path, "/general-chat/uploads/file-7a3e15e3/images.jpeg")
+        self.assertEqual(attachments[0].extracted_text, existing_text)
+        self.assertNotIn(
+            "/general-chat/uploads/source-9a9b15ad8b", attachments[0].extracted_text or ""
+        )
+
     def test_forwarded_draft_attachments_are_combined_with_source_records(self):
         agent = MockAgent()
         engine = ChatEngine(agent=agent)
@@ -342,6 +484,112 @@ class TestGeneralChatSources(unittest.TestCase):
             agent.context.data["attachments"][0]["path"], "/general-chat/uploads/file-1/photo.jpg"
         )
 
+    def test_image_source_runs_vision_agent_when_local_path_available(self):
+        class FakeVisionAgent:
+            def __init__(self):
+                self.context: ExecutionContext | None = None
+
+            def execute(self, context: ExecutionContext) -> ExecutionResult:
+                self.context = context
+                return ExecutionResult(
+                    output="The image shows a white car with plate B 1234 CD.",
+                    status="completed",
+                    metadata={"provider": "gemini", "model": "gemini-2.5-flash"},
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = Path(tmp) / "plate.jpg"
+            image_path.write_bytes(b"fake-image")
+            vision_agent = FakeVisionAgent()
+            agent = MockAgent()
+            agent._vision_agent = vision_agent
+            engine = ChatEngine(agent=agent)
+            source = SourceRecord.create(
+                session_id="chat-session",
+                name="plate.jpg",
+                kind="image",
+                mime_type="image/jpeg",
+                size_bytes=20,
+                url="/uploads/file-1/plate.jpg",
+                text="Image source: plate.jpg",
+                metadata={
+                    "imageSearchPath": "/general-chat/uploads/file-1/plate.jpg",
+                    "localFilePath": str(image_path),
+                },
+            )
+            handler = GeneralChatHandler(
+                engine=engine,
+                db_path=":memory:",
+                source_records=[source],
+            )
+
+            content, attachments = handler._extract_content(
+                {
+                    "messages": [{"id": "m1", "role": "user", "content": "baca plat nomor"}],
+                    "forwardedProps": {"sessionId": "chat-session"},
+                }
+            )
+
+        self.assertIsNotNone(attachments)
+        assert attachments is not None
+        self.assertEqual(attachments[0].path, str(image_path))
+        self.assertEqual(attachments[-1].name, "visual-observations.md")
+        self.assertIn("B 1234 CD", attachments[-1].extracted_text or "")
+        self.assertIsNotNone(vision_agent.context)
+        assert vision_agent.context is not None
+        self.assertEqual(
+            vision_agent.context.data["attachments"][0]["path"],
+            str(image_path),
+        )
+
+        engine._execute_agent(content, None, attachments=attachments)
+        self.assertIsNotNone(agent.context)
+        assert agent.context is not None
+        contents = "\n".join(item["content"] for item in agent.context.data["attachments"])
+        self.assertIn("Visual observation from the configured OpenBench VLM", contents)
+        self.assertIn("B 1234 CD", contents)
+
+    def test_spreadsheet_source_attachment_includes_dashboard_path(self):
+        agent = MockAgent()
+        engine = ChatEngine(agent=agent)
+        source = SourceRecord.create(
+            session_id="chat-session",
+            name="sales.csv",
+            kind="spreadsheet",
+            mime_type="text/csv",
+            size_bytes=20,
+            url="/uploads/file-1/sales.csv",
+            text="Spreadsheet source: sales.csv\n\n| raw_column |\n| should_not_enter_prompt |",
+            metadata={"localFilePath": "C:/tmp/openbench/sales.csv"},
+        )
+        handler = GeneralChatHandler(
+            engine=engine,
+            db_path=":memory:",
+            source_records=[source],
+        )
+
+        content, attachments = handler._extract_content(
+            {
+                "messages": [{"id": "m1", "role": "user", "content": "buatkan dashboard"}],
+                "forwardedProps": {"sessionId": "chat-session"},
+            }
+        )
+
+        self.assertEqual(content, "buatkan dashboard")
+        self.assertIsNotNone(attachments)
+        assert attachments is not None
+        self.assertEqual(attachments[0].type, "file")
+        self.assertEqual(attachments[0].path, "C:/tmp/openbench/sales.csv")
+        self.assertIn("extract_metadata", attachments[0].extracted_text or "")
+        self.assertIn("C:/tmp/openbench/sales.csv", attachments[0].extracted_text or "")
+        self.assertNotIn("should_not_enter_prompt", attachments[0].extracted_text or "")
+
+        engine._execute_agent(content, None, attachments=attachments)
+
+        self.assertIsNotNone(agent.context)
+        assert agent.context is not None
+        self.assertEqual(agent.context.data["attachments"][0]["path"], "C:/tmp/openbench/sales.csv")
+
     def test_similar_image_prompt_is_allowed_for_image_source(self):
         llm = MockLLMProvider("I will search similar images.")
         agent = BaseAgent(goal="General chat")
@@ -416,7 +664,7 @@ class TestGeneralChatSources(unittest.TestCase):
     def test_sam_segmentation_build_script_uses_hf_cli_token(self):
         script = (
             Path(__file__).resolve().parents[1]
-            / "examples"
+            / "mcp"
             / "sam-segmentation-mcp"
             / "scripts"
             / "build_with_sam3.ps1"
@@ -588,11 +836,47 @@ class TestGeneralChatSources(unittest.TestCase):
             if tmpdir.exists():
                 tmpdir.rmdir()
 
-        text = parsed.text
-        self.assertIn("Sheet: People", text)
-        self.assertIn("Ada", text)
-        self.assertIn("Sheet: Inventory", text)
-        self.assertIn("Widget", text)
+        self.assertEqual(parsed.text, "")
+        self.assertEqual((parsed.metadata or {})["spreadsheetContextMode"], "metadata-first")
+
+    def test_csv_source_becomes_dashboard_ready_spreadsheet(self):
+        try:
+            import pandas  # noqa: F401
+        except ImportError:
+            self.skipTest("pandas is not installed")
+
+        tmpdir = Path("tests/.tmp") / f"csv-{uuid.uuid4().hex}"
+        tmpdir.mkdir(parents=True, exist_ok=True)
+        path = tmpdir / "sales.csv"
+        path.write_text("region,revenue\nEU,100\nUS,150\n", encoding="utf-8")
+        try:
+            stored = StoredFile(
+                id="file-1",
+                name="sales.csv",
+                path=str(path),
+                mime_type="text/csv",
+                size_bytes=path.stat().st_size,
+                stored_at="2026-01-01T00:00:00+00:00",
+            )
+            record = source_record_from_file(
+                session_id="s1",
+                stored_file=stored,
+                parser=SourceParserRegistry(),
+                max_bytes=1000,
+            )
+        finally:
+            if path.exists():
+                path.unlink()
+            if tmpdir.exists():
+                tmpdir.rmdir()
+
+        self.assertEqual(record.status, "ready")
+        self.assertEqual(record.kind, "spreadsheet")
+        self.assertTrue((record.metadata or {})["dashboardSource"])
+        self.assertIn("localFilePath", record.metadata or {})
+        self.assertIn("extract_metadata", record.text)
+        self.assertIn("Raw spreadsheet rows are not included", record.text)
+        self.assertNotIn("| region", record.text)
 
     def test_png_ocr_success_creates_searchable_image_source(self):
         extractor = Mock()
@@ -735,13 +1019,13 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertEqual(record.metadata["format"], "webp")
         extractor.extract_image.assert_called_once_with(stored)
 
-    def test_invalid_image_type_is_rejected(self):
+    def test_invalid_source_type_is_rejected(self):
         parser = SourceParserRegistry()
         stored = StoredFile(
             id="file-6",
-            name="animation.gif",
-            path="animation.gif",
-            mime_type="image/gif",
+            name="firmware.bin",
+            path="firmware.bin",
+            mime_type="application/x-unknown",
             size_bytes=24,
             stored_at="2026-01-01T00:00:00+00:00",
         )
@@ -1207,17 +1491,287 @@ class TestGeneralChatSources(unittest.TestCase):
 
         return TestClient(create_app())
 
+    def _upload_text_source(
+        self,
+        client: TestClient,
+        *,
+        session_id: str,
+        filename: str = "notes.txt",
+        content: bytes = b"Useful source text",
+    ) -> tuple[dict, Path]:
+        response = client.post(
+            "/chat/upload",
+            files={"file": (filename, content, "text/plain")},
+            data={"sessionId": session_id},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        file_id = payload["url"].split("/")[2]
+        return payload, Path(environ["GENERAL_CHAT_UPLOAD_DIR"]) / file_id
+
+    def test_source_upload_cleanup_scrubs_mcp_paths_and_preserves_text(self):
+        record = SourceRecord.create(
+            session_id="s1",
+            name="photo.png",
+            kind="image",
+            mime_type="image/png",
+            size_bytes=10,
+            url="/uploads/file-abc123/photo.png",
+            text=(
+                "Image source: photo.png\n"
+                "Browser URL: /uploads/file-abc123/photo.png\n"
+                "image_search MCP path: /general-chat/uploads/file-abc123/photo.png\n"
+                "Extracted image context:\nA dog on grass."
+            ),
+            metadata={
+                "imageSearchPath": "/general-chat/uploads/file-abc123/photo.png",
+                "samSegmentationPath": "/general-chat/uploads/file-abc123/photo.png",
+                "imageSearchPreviewUrl": "/uploads/file-abc123/photo.png",
+                "description": "A dog on grass.",
+            },
+        )
+
+        self.assertEqual(upload_file_ids_for_source(record), {"file-abc123"})
+
+        mark_source_upload_deleted(record, deleted_at="2026-06-03T00:00:00+00:00")
+
+        self.assertIsNone(record.url)
+        self.assertNotIn("imageSearchPath", record.metadata or {})
+        self.assertNotIn("samSegmentationPath", record.metadata or {})
+        self.assertNotIn("imageSearchPreviewUrl", record.metadata or {})
+        self.assertTrue((record.metadata or {})["uploadDeleted"])
+        self.assertEqual(
+            (record.metadata or {})["uploadDeletedAt"],
+            "2026-06-03T00:00:00+00:00",
+        )
+        self.assertIn("A dog on grass.", record.text)
+        self.assertNotIn("/uploads/file-abc123", record.text)
+        self.assertNotIn("/general-chat/uploads/file-abc123", record.text)
+
+    def test_awp_stream_deletes_used_upload_and_scrubs_source_record(self):
+        client = self._build_test_client(agent=MockAgent())
+        payload, file_dir = self._upload_text_source(client, session_id="s-clean")
+        self.assertTrue(file_dir.exists())
+
+        response = client.post(
+            "/awp",
+            json={
+                "threadId": "s-clean",
+                "messages": [{"role": "user", "content": "Use my source"}],
+                "forwardedProps": {"sessionId": "s-clean"},
+            },
+            headers={"accept": "text/event-stream"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(file_dir.exists())
+        sources = client.get("/chat/sources/s-clean").json()
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["id"], payload["id"])
+        self.assertIsNone(sources[0]["url"])
+        self.assertTrue(sources[0]["metadata"]["uploadDeleted"])
+        search = client.get("/chat/sources/s-clean/search?q=Useful").json()
+        self.assertEqual(search["results"][0]["sourceId"], payload["id"])
+
+    def test_awp_stream_preserves_spreadsheet_upload_for_dashboard_turns(self):
+        try:
+            import pandas  # noqa: F401
+        except ImportError:
+            self.skipTest("pandas is not installed")
+
+        client = self._build_test_client(agent=MockAgent())
+        response = client.post(
+            "/chat/upload",
+            files={"file": ("sales.csv", b"region,revenue\nEU,100\n", "text/csv")},
+            data={"sessionId": "s-dashboard"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        file_id = payload["url"].split("/")[2]
+        file_dir = Path(environ["GENERAL_CHAT_UPLOAD_DIR"]) / file_id
+        self.assertEqual(payload["kind"], "spreadsheet")
+        self.assertTrue(file_dir.exists())
+
+        response = client.post(
+            "/awp",
+            json={
+                "threadId": "s-dashboard",
+                "messages": [{"role": "user", "content": "buatkan dashboard"}],
+                "forwardedProps": {"sessionId": "s-dashboard"},
+            },
+            headers={"accept": "text/event-stream"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(file_dir.exists())
+        sources = client.get("/chat/sources/s-dashboard").json()
+        self.assertEqual(sources[0]["metadata"]["dashboardSource"], True)
+        self.assertIn("localFilePath", sources[0]["metadata"])
+
+    def test_delete_source_removes_referenced_upload_file(self):
+        client = self._build_test_client()
+        payload, file_dir = self._upload_text_source(client, session_id="s-delete")
+        self.assertTrue(file_dir.exists())
+
+        response = client.delete(f"/chat/sources/s-delete/{payload['id']}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(file_dir.exists())
+        self.assertEqual(client.get("/chat/sources/s-delete").json(), [])
+
+    def test_clear_sources_removes_referenced_upload_files(self):
+        client = self._build_test_client()
+        _, first_dir = self._upload_text_source(client, session_id="s-clear", filename="a.txt")
+        _, second_dir = self._upload_text_source(client, session_id="s-clear", filename="b.txt")
+        self.assertTrue(first_dir.exists())
+        self.assertTrue(second_dir.exists())
+
+        response = client.delete("/chat/sources/s-clear")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(first_dir.exists())
+        self.assertFalse(second_dir.exists())
+        self.assertEqual(client.get("/chat/sources/s-clear").json(), [])
+
+    def test_delete_session_removes_session_sources_and_upload_files(self):
+        client = self._build_test_client()
+        _, file_dir = self._upload_text_source(client, session_id="s-session")
+        self.assertTrue(file_dir.exists())
+
+        response = client.delete("/sessions/s-session")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(file_dir.exists())
+        self.assertEqual(client.get("/chat/sources/s-session").json(), [])
+
     def test_create_agent_mcp_disabled_by_default(self):
         import general_chat.agent as agent_module
 
         with patch.dict(environ, {"GOOGLE_API_KEY": "test-key"}, clear=False):
             environ.pop("GENERAL_CHAT_MCP_ENABLED", None)
-            with patch.object(agent_module, "configure_provider"):
+            with patch.object(agent_module, "_configure_general_chat_provider"):
                 agent = agent_module.create_agent()
 
         self.assertFalse(agent._mcp_enabled)
         self.assertEqual(agent._mcp_tools, [])
-        self.assertEqual(len(agent.tools), 0)
+        self.assertTrue(agent._vlm_summary["enabled"])
+        self.assertEqual(agent._vlm_summary["model"], "gemini-2.5-flash")
+        self.assertIsNotNone(agent._vision_agent)
+        self.assertEqual(len(agent.tools), 3)
+        self.assertEqual(
+            set(agent._dashboard_skill_tools),
+            {"aggregate_data", "extract_metadata", "generate_dashboard"},
+        )
+
+    def test_configure_general_chat_provider_does_not_persist_provider_state(self):
+        import general_chat.agent as agent_module
+
+        captured = {}
+
+        class FakeProviderService:
+            def configure(self, config, save=True):
+                captured["config"] = config
+                captured["save"] = save
+
+        with patch.object(agent_module, "get_provider_service", return_value=FakeProviderService()):
+            agent_module._configure_general_chat_provider("test-key", "test-model")
+
+        config = captured["config"]
+        self.assertFalse(captured["save"])
+        self.assertEqual(config.name, "gemini-general-chat")
+        self.assertEqual(config.provider_type.value, "llm")
+        self.assertEqual(config.provider, "gemini")
+        self.assertEqual(config.plugin_type, "chat")
+        self.assertEqual(config.credentials, {"api_key": "test-key"})
+        self.assertEqual(
+            config.settings, {"model": "test-model", "max_output_tokens": 32768}
+        )
+        self.assertTrue(config.is_default)
+
+    def test_configure_general_chat_vlm_provider_does_not_persist_provider_state(self):
+        import general_chat.agent as agent_module
+
+        captured = {}
+
+        class FakeProviderService:
+            def configure(self, config, save=True):
+                captured["config"] = config
+                captured["save"] = save
+
+        with patch.object(agent_module, "get_provider_service", return_value=FakeProviderService()):
+            agent_module._configure_general_chat_vlm_provider(
+                api_key="test-key",
+                provider="gemini",
+                model="gemini-2.5-flash",
+                temperature=0.2,
+                max_output_tokens=2048,
+            )
+
+        config = captured["config"]
+        self.assertFalse(captured["save"])
+        self.assertEqual(config.name, "general-chat-vlm")
+        self.assertEqual(config.provider_type.value, "vlm")
+        self.assertEqual(config.provider, "gemini")
+        self.assertEqual(config.plugin_type, "vision")
+        self.assertEqual(config.credentials, {"api_key": "test-key"})
+        self.assertEqual(
+            config.settings,
+            {"model": "gemini-2.5-flash", "temperature": 0.2, "max_output_tokens": 2048},
+        )
+        self.assertTrue(config.is_default)
+
+    def test_gemma_vlm_model_resolves_to_ollama_provider(self):
+        import general_chat.agent as agent_module
+
+        with patch.dict(
+            environ,
+            {
+                "GENERAL_CHAT_VLM_MODEL": "gemma-2b",
+                "GENERAL_CHAT_VLM_BASE_URL": "http://localhost:11434/v1",
+            },
+            clear=False,
+        ):
+            environ.pop("GENERAL_CHAT_VLM_PROVIDER", None)
+            environ.pop("OPENBENCH_VLM_PROVIDER", None)
+            provider, model, requested = agent_module._resolve_vlm_selection()
+
+        self.assertEqual(provider, "ollama")
+        self.assertEqual(model, "gemma4:e2b")
+        self.assertEqual(requested, "gemma-2b")
+
+    def test_configure_ollama_vlm_uses_local_base_url(self):
+        import general_chat.agent as agent_module
+
+        captured = {}
+
+        class FakeProviderService:
+            def configure(self, config, save=True):
+                captured["config"] = config
+                captured["save"] = save
+
+        with (
+            patch.dict(
+                environ,
+                {"GENERAL_CHAT_VLM_BASE_URL": "http://localhost:11434/v1"},
+                clear=False,
+            ),
+            patch.object(agent_module, "get_provider_service", return_value=FakeProviderService()),
+        ):
+            details = agent_module._configure_general_chat_vlm_provider(
+                api_key="test-key",
+                provider="gemma",
+                model="gemma4:e2b",
+                temperature=0.2,
+                max_output_tokens=2048,
+            )
+
+        config = captured["config"]
+        self.assertFalse(captured["save"])
+        self.assertEqual(details["provider"], "ollama")
+        self.assertEqual(details["base_url"], "http://localhost:11434/v1")
+        self.assertEqual(config.provider, "ollama")
+        self.assertEqual(config.settings["model"], "gemma4:e2b")
+        self.assertEqual(config.settings["base_url"], "http://localhost:11434/v1")
 
     def test_create_agent_mcp_enabled_loads_allowlisted_adapters(self):
         import general_chat.agent as agent_module
@@ -1238,7 +1792,7 @@ class TestGeneralChatSources(unittest.TestCase):
                 },
                 clear=False,
             ),
-            patch.object(agent_module, "configure_provider"),
+            patch.object(agent_module, "_configure_general_chat_provider"),
         ):
             agent = agent_module.create_agent()
 
@@ -1253,7 +1807,7 @@ class TestGeneralChatSources(unittest.TestCase):
                 "openbench.top_n_records",
             },
         )
-        self.assertEqual(len(agent.tools), 4)
+        self.assertEqual(len(agent.tools), 7)
 
     def test_mcp_tools_endpoint_disabled_by_default(self):
         client = self._build_test_client()
@@ -1318,6 +1872,7 @@ class TestGeneralChatSources(unittest.TestCase):
             namespaced_name = "image_search.search_similar_images"
             tool_schema = {"description": "Search similar images"}
             approved = True
+            timeout_seconds = 3600
 
             @property
             def name(self):
@@ -1347,9 +1902,11 @@ class TestGeneralChatSources(unittest.TestCase):
         render_queue.clear()
         self.addCleanup(render_queue.clear)
 
-        result = _ImageSearchRenderTool(FakeImageSearchTool()).execute(top_k=10)
+        wrapped = _ImageSearchRenderTool(FakeImageSearchTool())
+        result = wrapped.execute(top_k=10)
 
         items = render_queue.get_items()
+        self.assertEqual(wrapped.timeout_seconds, 3600)
         self.assertEqual(result["results"][0]["image_id"], "cifar10-train-00001")
         self.assertEqual(items[0]["headers"], ["Rank", "Label", "Score", "Image ID"])
         self.assertEqual(items[0]["rows"], [["1", "automobile", "0.9877", "cifar10-train-00001"]])
@@ -1359,6 +1916,190 @@ class TestGeneralChatSources(unittest.TestCase):
             "/image-search/previews/train/cifar10-train-00001.png",
         )
         self.assertNotIn("preview_path", items[1])
+
+    def test_sam_segmentation_count_tool_defaults_and_caches_success(self):
+        class FakeSamCountTool(Tool):
+            namespaced_name = "sam_segmentation.count_objects_with_sam3"
+            tool_schema = {"description": "Count objects with SAM 3"}
+            approved = True
+            timeout_seconds = 3600
+
+            def __init__(self):
+                self.calls = 0
+
+            @property
+            def name(self):
+                return "sam_segmentation_count_objects_with_sam3"
+
+            @property
+            def description(self):
+                return "Count objects with SAM 3"
+
+            def execute(self, **params):
+                self.calls += 1
+                return {"count": 3, "received": params}
+
+            def get_schema(self):
+                return {
+                    "type": "function",
+                    "function": {
+                        "name": self.name,
+                        "description": self.description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "image_path": {"type": "string"},
+                                "concept": {"type": "string"},
+                                "return_segments": {"type": "boolean", "default": True},
+                                "return_overlay": {"type": "boolean", "default": True},
+                            },
+                        },
+                    },
+                }
+
+        inner = FakeSamCountTool()
+        wrapped = _SamSegmentationCountTool(inner)
+
+        first = wrapped.execute(
+            image_path="/general-chat/uploads/file-1/cats.jpg",
+            concept="cat",
+        )
+        second = wrapped.execute(
+            image_path="/general-chat/uploads/file-1/cats.jpg",
+            concept="cat",
+        )
+        schema = wrapped.get_schema()
+        properties = schema["function"]["parameters"]["properties"]
+
+        self.assertEqual(wrapped.timeout_seconds, 3600)
+        self.assertEqual(first["count"], 3)
+        self.assertEqual(first["received"]["return_segments"], False)
+        self.assertEqual(first["received"]["return_overlay"], False)
+        self.assertIn("Use the returned count", first["final_answer_hint"])
+        self.assertEqual(second["count"], 3)
+        self.assertTrue(second["cached"])
+        self.assertEqual(inner.calls, 1)
+        self.assertIn("call this once", schema["function"]["description"])
+        self.assertFalse(properties["return_segments"]["default"])
+        self.assertFalse(properties["return_overlay"]["default"])
+
+    def test_sam_segmentation_count_tool_coalesces_inflight_duplicates(self):
+        class SlowSamCountTool(Tool):
+            namespaced_name = "sam_segmentation.count_objects_with_sam3"
+            tool_schema = {"description": "Count objects with SAM 3"}
+            approved = True
+            timeout_seconds = 3600
+
+            def __init__(self):
+                self.calls = 0
+                self.started = threading.Event()
+                self.lock = threading.Lock()
+
+            @property
+            def name(self):
+                return "sam_segmentation_count_objects_with_sam3"
+
+            @property
+            def description(self):
+                return "Count objects with SAM 3"
+
+            def execute(self, **params):
+                with self.lock:
+                    self.calls += 1
+                self.started.set()
+                time.sleep(0.05)
+                return {"count": 2, "received": params}
+
+            def get_schema(self):
+                return {"type": "function", "function": {"name": self.name}}
+
+        inner = SlowSamCountTool()
+        wrapped = _SamSegmentationCountTool(inner)
+        results: list[dict[str, object]] = []
+        errors: list[BaseException] = []
+
+        def call_tool():
+            try:
+                results.append(
+                    wrapped.execute(
+                        image_path="/general-chat/uploads/file-1/cars.jpg",
+                        concept="car",
+                    )
+                )
+            except BaseException as exc:
+                errors.append(exc)
+
+        first = threading.Thread(target=call_tool)
+        first.start()
+        self.assertTrue(inner.started.wait(timeout=1))
+        second = threading.Thread(target=call_tool)
+        second.start()
+        first.join(timeout=1)
+        second.join(timeout=1)
+
+        self.assertFalse(errors)
+        self.assertEqual(inner.calls, 1)
+        self.assertEqual([item["count"] for item in results], [2, 2])
+        self.assertTrue(any(item.get("cached") for item in results))
+
+    def test_wrapped_sam_tool_timeout_is_visible_to_tool_executor(self):
+        class SlowSamCountTool(Tool):
+            namespaced_name = "sam_segmentation.count_objects_with_sam3"
+            tool_schema = {"description": "Count objects with SAM 3"}
+            approved = True
+            timeout_seconds = 0.01
+
+            @property
+            def name(self):
+                return "sam_segmentation_count_objects_with_sam3"
+
+            @property
+            def description(self):
+                return "Count objects with SAM 3"
+
+            def execute(self, **params):
+                time.sleep(0.05)
+                return {"count": 1}
+
+            def get_schema(self):
+                return {"type": "function", "function": {"name": self.name}}
+
+        executor = ToolExecutor()
+        wrapped = _SamSegmentationCountTool(SlowSamCountTool())
+        executor.register(wrapped.name, wrapped)
+
+        with self.assertRaisesRegex(TimeoutError, "0.01s timeout"):
+            executor.execute(
+                wrapped.name,
+                image_path="/general-chat/uploads/file-1/cars.jpg",
+                concept="car",
+            )
+
+    def test_diagnostic_mcp_tool_description_preserves_timeout(self):
+        class FakeServiceInfoTool(Tool):
+            namespaced_name = "sam_segmentation.service_info"
+            tool_schema = {"description": "Service info"}
+            approved = True
+            timeout_seconds = 3600
+
+            @property
+            def name(self):
+                return "sam_segmentation_service_info"
+
+            @property
+            def description(self):
+                return "Service info"
+
+            def execute(self, **params):
+                return {"ok": True}
+
+            def get_schema(self):
+                return {"type": "function", "function": {"name": self.name}}
+
+        self.assertEqual(
+            _DiagnosticMCPToolDescription(FakeServiceInfoTool()).timeout_seconds,
+            3600,
+        )
 
     def test_external_filesystem_mcp_example_config_and_sample_data(self):
         from openbench.mcp.config import MCPConfig
@@ -1413,6 +2154,26 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertIn("SAM3_DEVICE=cpu", server.args)
         self.assertIn("IMAGE_INPUT_ROOTS=/general-chat/uploads", server.args)
         self.assertNotIn("SAM_MODEL=sam_b.pt", server.args)
+
+    def test_docker_mcp_gateway_example_config(self):
+        from openbench.mcp.config import MCPConfig
+
+        example_root = Path(__file__).resolve().parents[1] / "examples" / "general-chat"
+        config_path = example_root / "mcp" / "docker-mcp-gateway.yaml"
+
+        config = MCPConfig.from_file(config_path)
+
+        server = config.client_config().servers["docker"]
+        self.assertEqual(server.transport, "stdio")
+        self.assertEqual(server.command, "docker")
+        self.assertEqual(server.namespace, "docker")
+        self.assertTrue(server.allowed)
+        self.assertEqual(server.discovery_timeout_seconds, 15)
+        self.assertEqual(server.timeout_seconds, 3600)
+        self.assertEqual(
+            server.args,
+            ["mcp", "gateway", "run", "--profile", "openbench"],
+        )
 
     def _cleanup_path_tree(self, root: Path) -> None:
         if not root.exists():

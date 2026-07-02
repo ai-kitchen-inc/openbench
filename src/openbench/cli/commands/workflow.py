@@ -135,8 +135,7 @@ def show(name: str) -> None:
 
     # Show workflow DAG
     console.print("[bold]Workflow DAG:[/bold]\n")
-    console.print(
-        """
+    console.print("""
     +------------------+
     |  Data Collection |
     |  (research)      |
@@ -156,8 +155,7 @@ def show(name: str) -> None:
     |  Export Output   |
     |  (pdf)           |
     +------------------+
-    """
-    )
+    """)
 
     # Show configuration
     table = Table(title="Workflow Configuration")

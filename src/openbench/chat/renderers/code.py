@@ -7,11 +7,10 @@ Supports any language with optional line numbers and max height.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 
 @ContentRendererRegistry.register("code", "default", description="Code block renderer")
@@ -55,7 +54,7 @@ class CodeRenderer(ContentRenderer):
         if title:
             components.append(
                 A2UIComponent(
-                    id=_gen_id("code-title"),
+                    id=gen_id("code-title"),
                     component="Text",
                     properties={"text": title, "variant": "h4"},
                 )
@@ -64,7 +63,7 @@ class CodeRenderer(ContentRenderer):
         # ObCodeBlock component
         components.append(
             A2UIComponent(
-                id=_gen_id("code"),
+                id=gen_id("code"),
                 component="ObCodeBlock",
                 properties={
                     "code": code,
@@ -76,8 +75,3 @@ class CodeRenderer(ContentRenderer):
         )
 
         return components
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"

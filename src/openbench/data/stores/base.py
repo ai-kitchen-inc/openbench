@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from openbench.core.constants import DEFAULT_EMBED_BATCH_SIZE
+
 if TYPE_CHECKING:
     from openbench.core.abstractions import RawData
 
@@ -374,7 +376,9 @@ class EmbeddingMixin:
         provider = self._get_embedding_provider()
         return provider.embed(text, model=self._embedding_model)
 
-    def _embed_batch(self, texts: list[str], batch_size: int = 100) -> list[list[float]]:
+    def _embed_batch(
+        self, texts: list[str], batch_size: int = DEFAULT_EMBED_BATCH_SIZE
+    ) -> list[list[float]]:
         """Generate embeddings for multiple texts.
 
         Args:

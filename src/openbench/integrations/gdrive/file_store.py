@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import time
 import uuid
 from contextlib import suppress
@@ -221,6 +222,21 @@ class GoogleDriveFileStore:
             cache_path.write_text(str(data), encoding="utf-8")
         return str(cache_path.absolute())
 
+    def delete(self, file_id: str) -> bool:
+        """Delete a Drive-backed upload and its local cache entry."""
+        if not file_id:
+            return False
+
+        service = self._get_service()
+        try:
+            service.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+        except Exception as exc:
+            logger.debug("GoogleDriveFileStore.delete(%s) failed: %s", file_id, exc)
+            return False
+
+        self._delete_cache_entry(file_id)
+        return True
+
     def __repr__(self) -> str:
         return f"GoogleDriveFileStore(folder_id={self.folder_id!r})"
 
@@ -231,6 +247,19 @@ class GoogleDriveFileStore:
         filename collisions impossible across users / uploads."""
         safe = Path(name).name or "unnamed"
         return self._cache_root / file_id / safe
+
+    def _delete_cache_entry(self, file_id: str) -> None:
+        """Best-effort removal of the cache directory for one Drive file."""
+        root = self._cache_root.resolve()
+        target = (self._cache_root / file_id).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return
+        if target == root or not target.exists() or not target.is_dir():
+            return
+        with suppress(OSError):
+            shutil.rmtree(target)
 
     def _is_stale(self, path: Path) -> bool:
         try:

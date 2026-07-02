@@ -30,7 +30,7 @@ export type { ChatPanelProps } from "./components/ChatPanel";
 export { ChatPanel } from "./components/ChatPanel";
 export type { ChatProviderProps } from "./components/ChatProvider";
 // ── Components (drop-in ready) ──
-export { ChatProvider, useChatContext } from "./components/ChatProvider";
+export { ChatProvider, useChatContext, useChatContextOptional } from "./components/ChatProvider";
 export type { MessageBubbleProps } from "./components/MessageBubble";
 export { MessageBubble } from "./components/MessageBubble";
 export type { MessageListProps } from "./components/MessageList";
@@ -78,6 +78,7 @@ export type {
   A2UISurface,
   A2UITheme,
   Attachment,
+  AttachmentUploadOptions,
   // Config
   ChatConfig,
   // Chat
@@ -87,6 +88,7 @@ export type {
   ComponentCatalog,
   // A2UI Server Messages
   CreateSurfacePayload,
+  DashboardActions,
   DataBinding,
   DeleteSurfacePayload,
   DynamicBoolean,
