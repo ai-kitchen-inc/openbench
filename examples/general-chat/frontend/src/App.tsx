@@ -1331,6 +1331,15 @@ function ChatShell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           if (!response.ok) throw new Error(`Export failed: ${response.status}`);
           return await response.json();
         },
+        deployGrafana: async (viewModel: unknown) => {
+          const response = await apiFetch(apiPath("/dashboard/deploy/grafana"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ viewModel }),
+          });
+          if (!response.ok) throw new Error(`Deploy failed: ${response.status}`);
+          return (await response.json()) as { url: string };
+        },
         exportPdf: async (viewModel: unknown) => {
           const response = await apiFetch(apiPath("/dashboard/export/pdf"), {
             method: "POST",

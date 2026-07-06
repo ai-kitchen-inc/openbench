@@ -399,8 +399,9 @@ function downloadJson(filename: string, data: unknown): void {
 
 function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string }) {
   const actions = useChatContextOptional()?.dashboardActions;
-  const [busy, setBusy] = useState<"publish" | "export" | "pdf" | null>(null);
+  const [busy, setBusy] = useState<"publish" | "export" | "pdf" | "deploy" | null>(null);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
+  const [deployedUrl, setDeployedUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -423,7 +424,12 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
     };
   }, [exportOpen]);
 
-  if (!actions || (!actions.publish && !actions.exportGrafana && !actions.exportPdf)) return null;
+  if (
+    !actions ||
+    (!actions.publish && !actions.exportGrafana && !actions.exportPdf && !actions.deployGrafana)
+  ) {
+    return null;
+  }
 
   const canExport = Boolean(actions.exportGrafana || actions.exportPdf);
 
@@ -472,6 +478,22 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
     }
   }
 
+  async function handleDeploy() {
+    if (!actions?.deployGrafana) return;
+    setBusy("deploy");
+    setError(null);
+    try {
+      const result = await actions.deployGrafana(viewModel);
+      const url = result?.url ?? null;
+      setDeployedUrl(url);
+      if (url) window.open(url, "_blank", "noopener");
+    } catch {
+      setError("Deploy failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleCopy() {
     if (!publishedUrl) return;
     try {
@@ -494,6 +516,17 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
           >
             <ShareIcon />
             {busy === "publish" ? "Publishing…" : "Publish"}
+          </button>
+        )}
+        {actions.deployGrafana && (
+          <button
+            type="button"
+            className="ob-dashboard-frame__action"
+            onClick={handleDeploy}
+            disabled={busy !== null}
+          >
+            <ExternalLinkIcon />
+            {busy === "deploy" ? "Deploying…" : "Deploy"}
           </button>
         )}
         {canExport && (
@@ -553,6 +586,13 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
             <CopyIcon />
             {copied ? "Copied" : "Copy"}
           </button>
+        </div>
+      )}
+      {deployedUrl && (
+        <div className="ob-dashboard-frame__share-link">
+          <a href={deployedUrl} target="_blank" rel="noopener noreferrer">
+            {deployedUrl}
+          </a>
         </div>
       )}
       {error && <div className="ob-dashboard-frame__action-error">{error}</div>}
