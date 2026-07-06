@@ -14,6 +14,7 @@
 #   backend        Build the API image (Cloud Build) and roll it out on the VM
 #   frontend       Build the SPA and deploy it to Firebase Hosting
 #   mcp-image      Build the forked db_server MCP image (Cloud Build) + pull on VM
+#   grafana        Provision + start the self-hosted Grafana on the VM (subpath /grafana/)
 #   nginx          Sync compose + nginx reverse-proxy config to the VM, reload nginx
 #   add-user EMAIL    Add an email to the backend allowlist and restart the API
 #   remove-user EMAIL Remove an email from the backend allowlist and restart the API
@@ -169,6 +170,38 @@ cmd_mcp_image() {
   ok "db_server MCP image ready on the VM"
 }
 
+# --- grafana -------------------------------------------------------------------
+# Provision + start the self-hosted Grafana (nginx serves it at /grafana/).
+# Idempotent: generates missing env keys on the VM, syncs datasource
+# provisioning + compose, (re)starts the container, waits for /api/health.
+cmd_grafana() {
+  log "Syncing Grafana provisioning + compose to the VM"
+  "$GCLOUD" compute scp deploy/grafana/datasources.yaml "$VM_NAME:/tmp/grafana-datasources.yaml" --zone "$VM_ZONE" \
+    || die "scp of datasources.yaml failed"
+  "$GCLOUD" compute scp "$COMPOSE_FILE" "$VM_NAME:$VM_DEPLOY_DIR/$COMPOSE_FILE" --zone "$VM_ZONE" \
+    || die "scp of compose file failed"
+
+  log "Preparing env + volumes and starting Grafana"
+  vm_ssh "set -e; cd $VM_DEPLOY_DIR && \
+    sudo mkdir -p /app-data/grafana && sudo chown -R 472:472 /app-data/grafana && \
+    mkdir -p grafana-provisioning && mv /tmp/grafana-datasources.yaml grafana-provisioning/datasources.yaml && \
+    cp .env.gcp .env.gcp.bak-grafana-\$(date +%Y%m%d-%H%M%S) && \
+    grep -q '^GRAFANA_ADMIN_PASSWORD=' .env.gcp || echo \"GRAFANA_ADMIN_PASSWORD=\$(openssl rand -hex 16)\" >> .env.gcp; \
+    grep -q '^GRAFANA_PG_PASSWORD=' .env.gcp || { \
+      pgpw=\$(grep '^MCP_DB_DATABASE_URL=' .env.gcp | sed -E 's#.*://[^:]+:([^@]+)@.*#\1#' | tr -d '\r'); \
+      [ -n \"\$pgpw\" ] || { echo 'cannot derive GRAFANA_PG_PASSWORD (MCP_DB_DATABASE_URL missing)'; exit 1; }; \
+      echo \"GRAFANA_PG_PASSWORD=\$pgpw\" >> .env.gcp; }; \
+    grep -q '^GRAFANA_PUBLIC_URL=' .env.gcp || echo 'GRAFANA_PUBLIC_URL=$API_URL/grafana' >> .env.gcp; \
+    sudo docker-compose --env-file .env.gcp -f $COMPOSE_FILE up -d grafana && \
+    for i in \$(seq 1 30); do \
+      code=\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/grafana/api/health || true); \
+      code2=\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/health || true); \
+      { [ \"\$code\" = '200' ] || [ \"\$code2\" = '200' ]; } && { echo GRAFANA_HEALTHY; exit 0; }; sleep 3; \
+    done; echo 'grafana did not become healthy'; sudo docker logs --tail 30 \$(sudo docker ps -q -f name=grafana); exit 1" \
+    || die "grafana rollout failed"
+  ok "Grafana healthy on the VM (127.0.0.1:3000, public at $API_URL/grafana/ after 'nginx')"
+}
+
 # --- frontend ----------------------------------------------------------------
 cmd_frontend() {
   log "Building workspace SDK ($CHATUI_DIR) so the SPA bundles the latest chat-ui"
@@ -290,9 +323,13 @@ cmd_verify() {
   check "API /persona (no token)"     "$API_URL/persona"      "401"
   check "API /openapi.json (hardened)" "$API_URL/openapi.json" "404"
   check "Hosting SPA"                  "$HOSTING_URL"          "200"
+  check "Grafana /grafana/api/health"  "$API_URL/grafana/api/health" "200"
   # 8080 must NOT be publicly reachable (expect connection failure → 000).
   local raw; raw="$(http_code "http://$VM_PUBLIC_IP:8080/health" 8)"
   if [ "$raw" = "000" ] || [ "$raw" = "0" ]; then ok "raw :8080 unreachable (private)"; else warn "raw :8080 reachable ($raw) — should be private"; fail=1; fi
+  # Grafana's raw port must be private too.
+  local rawg; rawg="$(http_code "http://$VM_PUBLIC_IP:3000/api/health" 8)"
+  if [ "$rawg" = "000" ] || [ "$rawg" = "0" ]; then ok "raw :3000 unreachable (private)"; else warn "raw :3000 reachable ($rawg) — should be private"; fail=1; fi
   [ "$fail" -eq 0 ] && ok "all checks passed" || die "one or more checks failed"
 }
 
@@ -319,6 +356,7 @@ case "${1:-help}" in
   backend)  cmd_backend ;;
   frontend) cmd_frontend ;;
   mcp-image) cmd_mcp_image ;;
+  grafana)  cmd_grafana ;;
   nginx)    cmd_nginx ;;
   add-user) shift; cmd_add_user "${1:-}" ;;
   remove-user) shift; cmd_remove_user "${1:-}" ;;
@@ -327,5 +365,5 @@ case "${1:-help}" in
   verify)   cmd_verify ;;
   all)      cmd_backend; cmd_frontend; cmd_verify ;;
   help|-h|--help) cmd_help ;;
-  *) die "unknown command '$1' (try: backend|frontend|mcp-image|nginx|add-user|remove-user|init-appdb|seed-mcp-db|verify|all|help)" ;;
+  *) die "unknown command '$1' (try: backend|frontend|mcp-image|grafana|nginx|add-user|remove-user|init-appdb|seed-mcp-db|verify|all|help)" ;;
 esac
