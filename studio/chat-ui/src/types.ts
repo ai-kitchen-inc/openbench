@@ -224,6 +224,8 @@ export interface DashboardActions {
   publish?: (viewModel: unknown) => Promise<{ url: string }>;
   /** Convert the ViewModel to a Grafana dashboard JSON model. */
   exportGrafana?: (viewModel: unknown) => Promise<unknown>;
+  /** Push the ViewModel to a hosted Grafana; resolves to the dashboard URL. */
+  deployGrafana?: (viewModel: unknown) => Promise<{ url: string }>;
   /** Render the ViewModel to a PDF document (charts included) for download. */
   exportPdf?: (viewModel: unknown) => Promise<Blob>;
   /**

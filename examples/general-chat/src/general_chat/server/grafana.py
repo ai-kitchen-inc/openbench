@@ -1,8 +1,18 @@
 """Convert an OpenBench dashboard ViewModel to a Grafana dashboard model.
 
-The output is a self-contained Grafana dashboard JSON: every panel carries its
-own data inline via the built-in ``grafana-testdata-datasource`` ``csv_content``
-scenario, so importing the file into any Grafana needs no external data source.
+Two modes:
+
+* **Export (default, ``live=None``)** — a self-contained, importable dashboard:
+  every panel carries its own data inline via the built-in
+  ``grafana-testdata-datasource`` ``csv_content`` scenario, referenced through
+  the import-style ``${DS_TESTDATA}`` input variable.
+
+* **Deploy (``live={...}``)** — a model ready to POST to ``/api/dashboards/db``
+  on a live Grafana. Import-style ``__inputs`` variables do not resolve there,
+  so panels reference concrete datasource UIDs. Datasets backed by a real
+  Postgres table become live SQL panels; everything else stays inline CSV.
+  ``live`` keys: ``tables`` (dataset name -> "schema.table"), ``pg_uid``,
+  ``testdata_uid``.
 
 The conversion mirrors the field-alias resolution used by the on-screen renderers
 (``DashboardGenerator`` and the React ``ObDashboardFrame``) so the exported
@@ -11,11 +21,17 @@ dashboard matches what the user sees.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # Built-in datasource shipped with every Grafana install.
 _TESTDATA_PLUGIN = "grafana-testdata-datasource"
 _DS_INPUT = "${DS_TESTDATA}"
+_POSTGRES_PLUGIN = "grafana-postgresql-datasource"
+
+# Safe SQL identifier (unquoted); anything else falls back to inline CSV.
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_LIVE_ROW_LIMIT = 1000
 
 # 24-column Grafana grid layout.
 _GRID_COLS = 24
@@ -25,19 +41,26 @@ _PANEL_W = 12
 _PANEL_H = 8
 
 
-def view_model_to_grafana(view_model: dict[str, Any]) -> dict[str, Any]:
+def view_model_to_grafana(
+    view_model: dict[str, Any], *, live: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Convert a dashboard ViewModel to an importable Grafana dashboard model.
 
     Args:
         view_model: OpenBench dashboard ViewModel (``title``, ``description``,
             ``datasets``, ``kpis``, ``sections``).
+        live: Optional deploy-mode config (see module docstring). When set, the
+            model targets concrete datasource UIDs (Postgres for table-backed
+            datasets, TestData CSV otherwise) and omits ``__inputs``.
 
     Returns:
-        A Grafana dashboard dict ready to serialize to JSON and import.
+        A Grafana dashboard dict ready to serialize to JSON and import (or POST
+        to ``/api/dashboards/db`` when ``live`` is given).
     """
     view_model = view_model or {}
     datasets = _normalize_datasets(view_model.get("datasets"))
     title = str(view_model.get("title") or "OpenBench Dashboard")
+    targets = _Targets(live)
 
     panels: list[dict[str, Any]] = []
     cursor = _GridCursor()
@@ -45,7 +68,7 @@ def view_model_to_grafana(view_model: dict[str, Any]) -> dict[str, Any]:
 
     for kpi in view_model.get("kpis") or []:
         if isinstance(kpi, dict):
-            panels.append(_kpi_panel(kpi, panel_id.next(), cursor))
+            panels.append(_kpi_panel(kpi, panel_id.next(), cursor, targets))
 
     for section in view_model.get("sections") or []:
         if not isinstance(section, dict):
@@ -58,30 +81,11 @@ def view_model_to_grafana(view_model: dict[str, Any]) -> dict[str, Any]:
         for item in items:
             if not isinstance(item, dict):
                 continue
-            panel = _item_panel(item, datasets, panel_id.next(), cursor)
+            panel = _item_panel(item, datasets, panel_id.next(), cursor, targets)
             if panel is not None:
                 panels.append(panel)
 
-    return {
-        "__inputs": [
-            {
-                "name": "DS_TESTDATA",
-                "label": "TestData",
-                "description": "",
-                "type": "datasource",
-                "pluginId": _TESTDATA_PLUGIN,
-                "pluginName": "TestData",
-            }
-        ],
-        "__requires": [
-            {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0"},
-            {
-                "type": "datasource",
-                "id": _TESTDATA_PLUGIN,
-                "name": "TestData",
-                "version": "1.0.0",
-            },
-        ],
+    model: dict[str, Any] = {
         "annotations": {"list": []},
         "editable": True,
         "description": str(view_model.get("description") or ""),
@@ -95,6 +99,38 @@ def view_model_to_grafana(view_model: dict[str, Any]) -> dict[str, Any]:
         "uid": None,
         "version": 1,
     }
+    if targets.live:
+        return model
+    model["__inputs"] = [
+        {
+            "name": "DS_TESTDATA",
+            "label": "TestData",
+            "description": "",
+            "type": "datasource",
+            "pluginId": _TESTDATA_PLUGIN,
+            "pluginName": "TestData",
+        }
+    ]
+    model["__requires"] = [
+        {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0"},
+        {
+            "type": "datasource",
+            "id": _TESTDATA_PLUGIN,
+            "name": "TestData",
+            "version": "1.0.0",
+        },
+    ]
+    return model
+
+
+def partition_datasets(
+    view_model: dict[str, Any], tables: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    """Split ViewModel dataset names into (live table-backed, inline-only)."""
+    names = list(_normalize_datasets((view_model or {}).get("datasets")).keys())
+    live = [name for name in names if name in tables]
+    inline = [name for name in names if name not in tables]
+    return live, inline
 
 
 class _Counter:
@@ -130,17 +166,75 @@ class _GridCursor:
         self._row_h = 0
 
 
-def _datasource_ref() -> dict[str, str]:
-    return {"type": _TESTDATA_PLUGIN, "uid": _DS_INPUT}
+class _Targets:
+    """Builds panel datasource refs + targets for export or deploy mode."""
 
+    def __init__(self, live: dict[str, Any] | None) -> None:
+        self.live = bool(live)
+        live = live or {}
+        raw_tables = live.get("tables") or {}
+        self.tables = {str(k): str(v) for k, v in raw_tables.items()} if isinstance(raw_tables, dict) else {}
+        self.pg_uid = str(live.get("pg_uid") or "appdata-postgres")
+        self.testdata_uid = str(live.get("testdata_uid") or "testdata")
 
-def _csv_target(records: list[dict[str, Any]]) -> dict[str, Any]:
-    return {
-        "refId": "A",
-        "datasource": _datasource_ref(),
-        "scenarioId": "csv_content",
-        "csvContent": _records_to_csv(records),
-    }
+    def inline_ref(self) -> dict[str, str]:
+        uid = self.testdata_uid if self.live else _DS_INPUT
+        return {"type": _TESTDATA_PLUGIN, "uid": uid}
+
+    def pg_ref(self) -> dict[str, str]:
+        return {"type": _POSTGRES_PLUGIN, "uid": self.pg_uid}
+
+    def csv_target(self, records: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "refId": "A",
+            "datasource": self.inline_ref(),
+            "scenarioId": "csv_content",
+            "csvContent": _records_to_csv(records),
+        }
+
+    def _live_table_for(self, item: dict[str, Any]) -> str | None:
+        """schema.table when this item's dataset maps to a real table, else None."""
+        if not self.live:
+            return None
+        # Inline data on the item always wins — mirror _resolve_item_data.
+        if isinstance(item.get("data") or item.get("records"), list):
+            return None
+        dataset_key = (
+            item.get("dataset")
+            or item.get("dataset_id")
+            or item.get("datasetId")
+            or item.get("source")
+        )
+        if not dataset_key:
+            return None
+        table = self.tables.get(str(dataset_key))
+        if not table:
+            return None
+        parts = table.split(".")
+        if not (1 <= len(parts) <= 2) or not all(_IDENT_RE.match(p) for p in parts):
+            return None
+        return table
+
+    def item_target(
+        self, item: dict[str, Any], records: list[dict[str, Any]], keys: list[str]
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        """(datasource ref, target) for a chart/table item.
+
+        Live SQL when the dataset is table-backed and every projected column is
+        a safe identifier; inline CSV otherwise.
+        """
+        table = self._live_table_for(item)
+        columns = [k for k in dict.fromkeys(keys) if k]
+        if table and all(_IDENT_RE.match(k) for k in columns):
+            select = ", ".join(f'"{k}"' for k in columns) if columns else "*"
+            target = {
+                "refId": "A",
+                "datasource": self.pg_ref(),
+                "format": "table",
+                "rawSql": f"SELECT {select} FROM {table} LIMIT {_LIVE_ROW_LIMIT}",
+            }
+            return self.pg_ref(), target
+        return self.inline_ref(), self.csv_target(_project_records(records, keys))
 
 
 def _row_panel(title: str, panel_id: int, cursor: _GridCursor) -> dict[str, Any]:
@@ -156,7 +250,9 @@ def _row_panel(title: str, panel_id: int, cursor: _GridCursor) -> dict[str, Any]
     }
 
 
-def _kpi_panel(kpi: dict[str, Any], panel_id: int, cursor: _GridCursor) -> dict[str, Any]:
+def _kpi_panel(
+    kpi: dict[str, Any], panel_id: int, cursor: _GridCursor, targets: _Targets
+) -> dict[str, Any]:
     label = str(kpi.get("label") or kpi.get("title") or "KPI")
     value = kpi.get("value")
     unit = str(kpi.get("unit") or "")
@@ -166,8 +262,8 @@ def _kpi_panel(kpi: dict[str, Any], panel_id: int, cursor: _GridCursor) -> dict[
         "type": "stat",
         "title": label,
         "gridPos": cursor.place(_KPI_W, _KPI_H),
-        "datasource": _datasource_ref(),
-        "targets": [_csv_target(records)],
+        "datasource": targets.inline_ref(),
+        "targets": [targets.csv_target(records)],
         "fieldConfig": {"defaults": {"unit": unit or "none"}, "overrides": []},
         "options": {
             "reduceOptions": {"calcs": ["lastNotNull"], "fields": "/^value$/", "values": False},
@@ -183,16 +279,17 @@ def _item_panel(
     datasets: dict[str, list[dict[str, Any]]],
     panel_id: int,
     cursor: _GridCursor,
+    targets: _Targets,
 ) -> dict[str, Any] | None:
     kind = str(item.get("type") or item.get("kind") or "chart").lower()
     if kind in {"chart", "bar", "line", "area", "pie", "scatter"}:
-        return _chart_panel(item, datasets, panel_id, cursor)
+        return _chart_panel(item, datasets, panel_id, cursor, targets)
     if kind == "table":
-        return _table_panel(item, datasets, panel_id, cursor)
+        return _table_panel(item, datasets, panel_id, cursor, targets)
     if kind in {"text", "markdown", "summary"}:
         return _text_panel(item, panel_id, cursor)
     if kind in {"kpi", "metric"}:
-        return _kpi_panel(item, panel_id, cursor)
+        return _kpi_panel(item, panel_id, cursor, targets)
     return _text_panel(item, panel_id, cursor)
 
 
@@ -211,6 +308,7 @@ def _chart_panel(
     datasets: dict[str, list[dict[str, Any]]],
     panel_id: int,
     cursor: _GridCursor,
+    targets: _Targets,
 ) -> dict[str, Any]:
     records = _resolve_item_data(item, datasets)
     chart_type = str(
@@ -228,14 +326,15 @@ def _chart_panel(
     if panel_type == "piechart":
         options["reduceOptions"] = {"calcs": ["lastNotNull"], "fields": "", "values": True}
 
+    datasource, target = targets.item_target(item, records, [x_key, *y_keys])
     return {
         "id": panel_id,
         "type": panel_type,
         "title": str(item.get("title") or "Chart"),
         "description": str(item.get("description") or ""),
         "gridPos": cursor.place(_PANEL_W, _PANEL_H),
-        "datasource": _datasource_ref(),
-        "targets": [_csv_target(_project_records(records, [x_key, *y_keys]))],
+        "datasource": datasource,
+        "targets": [target],
         "fieldConfig": {"defaults": {"custom": {}}, "overrides": []},
         "options": options,
     }
@@ -246,17 +345,19 @@ def _table_panel(
     datasets: dict[str, list[dict[str, Any]]],
     panel_id: int,
     cursor: _GridCursor,
+    targets: _Targets,
 ) -> dict[str, Any]:
     records = _resolve_item_data(item, datasets)
     columns = _normalize_table_columns(item.get("columns"), records)
     keys = [key for key, _label in columns] or (list(records[0].keys()) if records else [])
+    datasource, target = targets.item_target(item, records, keys)
     return {
         "id": panel_id,
         "type": "table",
         "title": str(item.get("title") or "Table"),
         "gridPos": cursor.place(_PANEL_W, _PANEL_H),
-        "datasource": _datasource_ref(),
-        "targets": [_csv_target(_project_records(records, keys))],
+        "datasource": datasource,
+        "targets": [target],
         "fieldConfig": {"defaults": {"custom": {}}, "overrides": []},
         "options": {"showHeader": True},
     }

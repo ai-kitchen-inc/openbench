@@ -26,6 +26,7 @@ from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.server.auth import auth_enabled, require_firebase_user
 from general_chat.server.dashboard_pdf import render_dashboard_pdf
 from general_chat.server.grafana import view_model_to_grafana
+from general_chat.server.grafana_client import GrafanaDeployError, deploy_view_model
 from general_chat.server.handler import GeneralChatHandler
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.server.publish_store import PublishStore
@@ -1306,6 +1307,16 @@ def create_app() -> FastAPI:
         if view_model is None:
             raise HTTPException(status_code=400, detail="Missing viewModel")
         return view_model_to_grafana(view_model)
+
+    @app.post("/dashboard/deploy/grafana")
+    async def deploy_dashboard_grafana(request: Request) -> dict:
+        view_model = await _read_dashboard_view_model(request)
+        if view_model is None:
+            raise HTTPException(status_code=400, detail="Missing viewModel")
+        try:
+            return deploy_view_model(view_model)
+        except GrafanaDeployError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/dashboard/export/pdf")
     async def export_dashboard_pdf(request: Request) -> Response:

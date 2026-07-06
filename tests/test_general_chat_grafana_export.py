@@ -19,7 +19,10 @@ GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-c
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
-from general_chat.server.grafana import view_model_to_grafana  # noqa: E402
+from general_chat.server.grafana import (  # noqa: E402
+    partition_datasets,
+    view_model_to_grafana,
+)
 
 _VIEW_MODEL = {
     "title": "Sales Dashboard",
@@ -164,6 +167,86 @@ class TestGrafanaConverter(unittest.TestCase):
         self.assertIn('"has ""quote"""', csv)
 
 
+class TestGrafanaLiveMode(unittest.TestCase):
+    """Deploy-mode (`live=`) targets concrete datasource UIDs."""
+
+    _LIVE = {
+        "tables": {"by_region": "public.by_region"},
+        "pg_uid": "appdata-postgres",
+        "testdata_uid": "testdata",
+    }
+
+    def setUp(self) -> None:
+        self.model = view_model_to_grafana(_VIEW_MODEL, live=self._LIVE)
+        self.panels = [p for p in self.model["panels"] if p["type"] != "row"]
+
+    def test_no_import_inputs_in_live_mode(self):
+        self.assertNotIn("__inputs", self.model)
+        self.assertNotIn("__requires", self.model)
+
+    def test_table_backed_dataset_becomes_postgres_sql(self):
+        bar = next(p for p in self.panels if p["type"] == "barchart")
+        self.assertEqual(bar["datasource"]["uid"], "appdata-postgres")
+        target = bar["targets"][0]
+        self.assertEqual(target["format"], "table")
+        self.assertEqual(
+            target["rawSql"],
+            'SELECT "region", "revenue" FROM public.by_region LIMIT 1000',
+        )
+
+    def test_kpi_stays_inline_with_concrete_uid(self):
+        stat = next(p for p in self.panels if p["type"] == "stat")
+        self.assertEqual(stat["datasource"]["uid"], "testdata")
+        self.assertEqual(stat["targets"][0]["scenarioId"], "csv_content")
+
+    def test_inline_item_data_stays_csv(self):
+        vm = {
+            "sections": [
+                {
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "data": [{"x": "a", "y": 1}],
+                            "x": "x",
+                            "y": "y",
+                        }
+                    ]
+                }
+            ]
+        }
+        panels = [
+            p
+            for p in view_model_to_grafana(vm, live=self._LIVE)["panels"]
+            if p["type"] != "row"
+        ]
+        self.assertEqual(panels[0]["targets"][0]["scenarioId"], "csv_content")
+        self.assertEqual(panels[0]["datasource"]["uid"], "testdata")
+
+    def test_unsafe_table_name_falls_back_to_csv(self):
+        live = {**self._LIVE, "tables": {"by_region": 'public."x"; DROP TABLE y'}}
+        model = view_model_to_grafana(_VIEW_MODEL, live=live)
+        bar = next(p for p in model["panels"] if p["type"] == "barchart")
+        self.assertEqual(bar["targets"][0].get("scenarioId"), "csv_content")
+
+    def test_unsafe_column_falls_back_to_csv(self):
+        vm = {
+            "datasets": {"by_region": [{'a"b': 1, "region": "EU"}]},
+            "sections": [
+                {"items": [{"type": "table", "dataset": "by_region"}]}
+            ],
+        }
+        model = view_model_to_grafana(vm, live=self._LIVE)
+        table = next(p for p in model["panels"] if p["type"] == "table")
+        self.assertEqual(table["targets"][0].get("scenarioId"), "csv_content")
+
+    def test_partition_datasets(self):
+        vm = {"datasets": {"by_region": [], "computed": [{"a": 1}]}}
+        live, inline = partition_datasets(vm, {"by_region": "public.by_region"})
+        self.assertEqual(live, ["by_region"])
+        self.assertEqual(inline, ["computed"])
+
+
 class TestDashboardRoutes(unittest.TestCase):
     def _client(self) -> TestClient:
         stack = ExitStack()
@@ -293,6 +376,49 @@ class TestDashboardRoutes(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"%PDF-1.4 fake")
+
+    def test_deploy_grafana_requires_auth(self):
+        client = self._client()
+        response = client.post("/dashboard/deploy/grafana", json={"viewModel": _VIEW_MODEL})
+        self.assertEqual(response.status_code, 401)
+
+    def test_deploy_grafana_rejects_empty(self):
+        client = self._client()
+        response = client.post("/dashboard/deploy/grafana", json={}, headers=self._auth)
+        self.assertEqual(response.status_code, 400)
+
+    def test_deploy_grafana_returns_url(self):
+        client = self._client()
+        result = {
+            "url": "https://host/grafana/d/abc123def456",
+            "uid": "abc123def456",
+            "live": ["by_region"],
+            "inline": [],
+        }
+        with patch("general_chat.server.app.deploy_view_model", return_value=result):
+            response = client.post(
+                "/dashboard/deploy/grafana",
+                json={"viewModel": _VIEW_MODEL},
+                headers=self._auth,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), result)
+
+    def test_deploy_grafana_maps_deploy_error_to_503(self):
+        from general_chat.server.grafana_client import GrafanaDeployError
+
+        client = self._client()
+        with patch(
+            "general_chat.server.app.deploy_view_model",
+            side_effect=GrafanaDeployError("Grafana unreachable"),
+        ):
+            response = client.post(
+                "/dashboard/deploy/grafana",
+                json={"viewModel": _VIEW_MODEL},
+                headers=self._auth,
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("unreachable", response.json()["detail"])
 
     def test_unknown_dashboard_id_is_404(self):
         client = self._client()
