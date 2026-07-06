@@ -21,9 +21,12 @@ services:
       SAM_SEGMENTATION_MCP_DEBUG_PATH: ${SAM_SEGMENTATION_MCP_DEBUG_PATH:-/app-data/uploads/_sam_debug}
       OPENBENCH_MCP_DOCKER_PROFILE: ${OPENBENCH_MCP_DOCKER_PROFILE:-openbench}
       DOCKER_MCP_IN_CONTAINER: ${DOCKER_MCP_IN_CONTAINER:-1}
-      # VM host path holding the db_server MCP's SQLite file (mounted into the
-      # sibling container at /data). Seed it with `deploy.sh seed-mcp-db FILE.sql`.
-      MCP_DB_DATA_PATH: ${MCP_DB_DATA_PATH:-/app-data/mcp-db}
+      # db_server MCP → Cloud SQL Postgres (appdata) over the instance's public IP
+      # (same path as GENERAL_CHAT_DATABASE_URL). The API interpolates these into
+      # mcp/db-server-docker.yaml when it spawns the db_server container.
+      MCP_DB_DATABASE_URL: ${MCP_DB_DATABASE_URL}
+      MCP_ALLOW_WRITES: ${MCP_ALLOW_WRITES:-1}
+      MCP_MAX_ROWS: ${MCP_MAX_ROWS:-1000}
       # Dashboard generator MCP (replaces the in-process SDK dashboard skill).
       GENERAL_CHAT_DASHBOARD_SKILL_ENABLED: ${GENERAL_CHAT_DASHBOARD_SKILL_ENABLED:-0}
       OPENBENCH_EXPORT_DIR: ${OPENBENCH_EXPORT_DIR:-/general-chat/downloads}

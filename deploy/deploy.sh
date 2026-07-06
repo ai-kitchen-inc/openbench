@@ -13,10 +13,12 @@
 # Commands:
 #   backend        Build the API image (Cloud Build) and roll it out on the VM
 #   frontend       Build the SPA and deploy it to Firebase Hosting
+#   mcp-image      Build the forked db_server MCP image (Cloud Build) + pull on VM
 #   nginx          Sync compose + nginx reverse-proxy config to the VM, reload nginx
 #   add-user EMAIL    Add an email to the backend allowlist and restart the API
 #   remove-user EMAIL Remove an email from the backend allowlist and restart the API
-#   seed-mcp-db FILE  Load a .sql file into the db_server MCP's SQLite database
+#   init-appdb     Create the appdata DB + mart schema + mcp_app role on Cloud SQL
+#   seed-mcp-db FILE  Load a .sql file into the appdata Postgres DB (db_server data)
 #   verify         Probe the live deployment (health/auth/hardening/network)
 #   all            backend → frontend → verify
 #   help           Print this help + the resource inventory
@@ -46,9 +48,15 @@ REGION="${REGION:-us-central1}"
 IMAGE="${IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/general-chat:latest}"
 CLOUDBUILD_CONFIG="${CLOUDBUILD_CONFIG:-cloudbuild.general-chat.yaml}"
 
-# db_server MCP: VM host dir for the SQLite file + the sqlite3 image used to seed it.
-MCP_DB_DATA_PATH_VM="${MCP_DB_DATA_PATH_VM:-/app-data/mcp-db}"
-SQLITE_IMAGE="${SQLITE_IMAGE:-nouchka/sqlite3}"
+# db_server MCP data lives in Cloud SQL (appdata). init/seed run psql from a
+# throwaway container that reaches Cloud SQL over its public IP (same path the
+# app already uses), so no special docker network is needed.
+PSQL_IMAGE="${PSQL_IMAGE:-postgres:16}"
+
+# db_server MCP forked image (Postgres + materialize): source dir + Cloud Build.
+MCP_IMAGE="${MCP_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/mcp-db-server:1.3.1-ob1}"
+MCP_CLOUDBUILD_CONFIG="${MCP_CLOUDBUILD_CONFIG:-cloudbuild.mcp-db-server.yaml}"
+MCP_IMAGE_DIR="${MCP_IMAGE_DIR:-examples/general-chat/mcp/db-server}"
 
 VM_NAME="${VM_NAME:-openbench-general-chat}"
 VM_ZONE="${VM_ZONE:-us-central1-a}"
@@ -135,6 +143,32 @@ cmd_backend() {
   ok "API healthy at $API_URL/health"
 }
 
+# --- mcp-image ---------------------------------------------------------------
+# Build the forked db_server MCP image (Postgres + materialize) via Cloud Build
+# and pull it on the VM so the API can spawn it with `docker run`.
+cmd_mcp_image() {
+  log "Building db_server MCP image via Cloud Build ($MCP_IMAGE)"
+  local build_id
+  build_id="$("$GCLOUD" builds submit --async --config "$MCP_CLOUDBUILD_CONFIG" "$MCP_IMAGE_DIR" \
+    --format='value(id)')" || die "Cloud Build submit failed"
+  [ -n "$build_id" ] || die "Could not capture Cloud Build id"
+  ok "submitted build $build_id — polling"
+
+  local status=""
+  while :; do
+    status="$("$GCLOUD" builds describe "$build_id" --format='value(status)' 2>/dev/null || echo '')"
+    case "$status" in
+      SUCCESS) ok "build $build_id SUCCESS"; break ;;
+      FAILURE|TIMEOUT|CANCELLED|EXPIRED) die "build $build_id ended: $status" ;;
+      *) printf '  ... %s\n' "${status:-pending}"; sleep 15 ;;
+    esac
+  done
+
+  log "Pulling MCP image on the VM ($VM_NAME)"
+  vm_ssh "sudo docker pull $MCP_IMAGE" || die "VM pull of $MCP_IMAGE failed"
+  ok "db_server MCP image ready on the VM"
+}
+
 # --- frontend ----------------------------------------------------------------
 cmd_frontend() {
   log "Building workspace SDK ($CHATUI_DIR) so the SPA bundles the latest chat-ui"
@@ -203,22 +237,45 @@ cmd_remove_user() {
   ok "allowlist updated (API restarting if changed)"
 }
 
+# --- init-appdb --------------------------------------------------------------
+# Create the appdata database + mart schema + mcp_app role on Cloud SQL. Runs
+# deploy/appdb/roles.sql against a maintenance connection via a throwaway psql
+# container on the shared network. Idempotent. Reads secrets from the VM .env.gcp.
+cmd_init_appdb() {
+  log "Initializing appdata DB + mart schema + mcp_app role"
+  "$GCLOUD" compute scp deploy/appdb/roles.sql "$VM_NAME:/tmp/appdb-roles.sql" --zone "$VM_ZONE" \
+    || die "scp of roles.sql failed"
+  vm_ssh "admin=\$(grep '^APPDATA_ADMIN_URL=' $VM_DEPLOY_DIR/.env.gcp | cut -d= -f2-); \
+    mcpurl=\$(grep '^MCP_DB_DATABASE_URL=' $VM_DEPLOY_DIR/.env.gcp | cut -d= -f2-); \
+    [ -n \"\$admin\" ] || { echo 'APPDATA_ADMIN_URL missing in .env.gcp'; exit 1; }; \
+    maint=\"\${admin%/*}/postgres\"; \
+    pw=\$(printf '%s' \"\$mcpurl\" | sed -E 's#.*://[^:]+:([^@]+)@.*#\1#'); \
+    sudo docker run --rm -i $PSQL_IMAGE \
+      psql \"\$maint\" -v ON_ERROR_STOP=1 -v mcp_password=\"\$pw\" -f - < /tmp/appdb-roles.sql && \
+    rm -f /tmp/appdb-roles.sql && echo INITED" \
+    || die "init-appdb failed"
+  ok "appdata + mart + mcp_app ready"
+}
+
 # --- seed-mcp-db -------------------------------------------------------------
-# Load data into the db_server MCP's SQLite file. The server is read-only (the
-# chat agent can only query), so data is added here: copy a local .sql to the VM
-# and apply it to the shared volume via a throwaway sqlite3 container (no VM deps).
+# Load a .sql file into the appdata Postgres DB (the db_server MCP data). Copies
+# the file to the VM and applies it with a throwaway psql container on the shared
+# network, using the admin connection from .env.gcp. This is the ".sql" data path
+# (DBeaver over a local cloud-sql-proxy is the manual path — see DEPLOY.md).
 cmd_seed_mcp_db() {
   local file="${1:-}"
   [ -n "$file" ] || die "usage: deploy.sh seed-mcp-db FILE.sql"
   [ -f "$file" ] || die "no such file: $file"
-  log "Seeding db_server SQLite on the VM from $file"
-  "$GCLOUD" compute scp "$file" "$VM_NAME:/tmp/mcp-db-seed.sql" --zone "$VM_ZONE" \
+  log "Seeding appdata (Postgres) on the VM from $file"
+  "$GCLOUD" compute scp "$file" "$VM_NAME:/tmp/appdb-seed.sql" --zone "$VM_ZONE" \
     || die "scp of seed file failed"
-  vm_ssh "sudo mkdir -p $MCP_DB_DATA_PATH_VM && \
-    sudo docker run --rm -i -v $MCP_DB_DATA_PATH_VM:/data $SQLITE_IMAGE /data/default.db < /tmp/mcp-db-seed.sql && \
-    rm -f /tmp/mcp-db-seed.sql && echo SEEDED" \
+  vm_ssh "admin=\$(grep '^APPDATA_ADMIN_URL=' $VM_DEPLOY_DIR/.env.gcp | cut -d= -f2-); \
+    [ -n \"\$admin\" ] || { echo 'APPDATA_ADMIN_URL missing in .env.gcp'; exit 1; }; \
+    sudo docker run --rm -i $PSQL_IMAGE \
+      psql \"\$admin\" -v ON_ERROR_STOP=1 -f - < /tmp/appdb-seed.sql && \
+    rm -f /tmp/appdb-seed.sql && echo SEEDED" \
     || die "seed failed"
-  ok "SQLite seeded — db_server picks it up on its next tool call"
+  ok "appdata seeded — db_server reads it live"
 }
 
 # --- verify ------------------------------------------------------------------
@@ -261,12 +318,14 @@ EOF
 case "${1:-help}" in
   backend)  cmd_backend ;;
   frontend) cmd_frontend ;;
+  mcp-image) cmd_mcp_image ;;
   nginx)    cmd_nginx ;;
   add-user) shift; cmd_add_user "${1:-}" ;;
   remove-user) shift; cmd_remove_user "${1:-}" ;;
+  init-appdb) cmd_init_appdb ;;
   seed-mcp-db) shift; cmd_seed_mcp_db "${1:-}" ;;
   verify)   cmd_verify ;;
   all)      cmd_backend; cmd_frontend; cmd_verify ;;
   help|-h|--help) cmd_help ;;
-  *) die "unknown command '$1' (try: backend|frontend|nginx|add-user|remove-user|seed-mcp-db|verify|all|help)" ;;
+  *) die "unknown command '$1' (try: backend|frontend|mcp-image|nginx|add-user|remove-user|init-appdb|seed-mcp-db|verify|all|help)" ;;
 esac

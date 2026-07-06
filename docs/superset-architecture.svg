@@ -1,0 +1,152 @@
+<svg viewBox="0 0 940 780" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif" role="img">
+  <title>Deploy dashboards to self-hosted Superset with live SQLite</title>
+  <desc>The React SPA calls openbench-api through nginx. A Deploy action pushes the dashboard ViewModel via Superset's REST API. Four new containers (superset, superset-init, superset-postgres, superset-redis) run alongside the API in docker-compose. Superset reads the same SQLite file read-only for live charts and keeps its own metadata in a bundled Postgres.</desc>
+
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--text-secondary, #8a8a84)"/>
+    </marker>
+    <marker id="ahA" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--text-accent, #4c8dd0)"/>
+    </marker>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.4" flood-color="#000000" flood-opacity="0.14"/>
+    </filter>
+  </defs>
+
+  <style>
+    .t     { fill: var(--text-primary, #1a1a1a); font-size: 13px; font-weight: 600; }
+    .s     { fill: var(--text-secondary, #77776f); font-size: 10.5px; }
+    .tag   { fill: var(--text-accent, #4c8dd0); font-size: 8.5px; font-weight: 700; letter-spacing: .6px; }
+    .glbl  { fill: var(--text-secondary, #77776f); font-size: 11px; font-weight: 600; letter-spacing: .4px; }
+    .lab   { font-size: 9.5px; font-weight: 600; paint-order: stroke; stroke: var(--bg2, #0e0e0e);
+             stroke-width: 3.2px; stroke-linejoin: round; }
+    .labN  { fill: var(--text-secondary, #9a9a92); }
+    .labA  { fill: var(--text-accent, #4c8dd0); }
+    .edge  { stroke: var(--text-secondary, #9a9a92); stroke-width: 1.3; fill: none; }
+    .edgeA { stroke: var(--text-accent, #4c8dd0); stroke-width: 1.4; fill: none; }
+  </style>
+
+  <!-- title -->
+  <text x="40" y="30" class="t" font-size="15.5">Deploy Dashboards → Self-Hosted Superset</text>
+  <text x="40" y="47" class="s">live SQLite · bundled Postgres metadata · open in new tab</text>
+  <rect x="40" y="55" width="150" height="2.5" rx="1" fill="var(--text-accent, #4c8dd0)"/>
+
+  <!-- Browser -->
+  <rect x="340" y="74" width="260" height="48" rx="9" fill="var(--bg2, #f5f5f3)" stroke="var(--border, #e0e0da)" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="470" y="97" text-anchor="middle" class="t">React SPA</text>
+  <text x="470" y="112" text-anchor="middle" class="s">chat-ui · ob-dashboard-frame</text>
+
+  <!-- SPA -> nginx -->
+  <path d="M470 122 L470 156" class="edge" marker-end="url(#ah)"/>
+  <text x="482" y="143" class="lab labN">HTTPS + Firebase token</text>
+
+  <!-- VM -->
+  <rect x="40" y="156" width="860" height="608" rx="14" fill="none" stroke="var(--border, #e0e0da)" stroke-width="1.3" stroke-dasharray="5 5"/>
+  <text x="58" y="177" class="glbl">GCE VM · openbench-general-chat</text>
+
+  <!-- nginx -->
+  <rect x="72" y="188" width="796" height="46" rx="9" fill="var(--bg2, #f5f5f3)" stroke="var(--border, #e0e0da)" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="470" y="210" text-anchor="middle" class="t">nginx — TLS (Let's Encrypt)</text>
+  <text x="470" y="225" text-anchor="middle" class="s">35-188-138-52.sslip.io</text>
+
+  <!-- compose group -->
+  <rect x="62" y="256" width="816" height="278" rx="12" fill="none" stroke="var(--border, #e0e0da)" stroke-width="1.2" stroke-dasharray="5 5"/>
+  <text x="80" y="277" class="glbl">docker-compose.gce.yml</text>
+
+  <!-- API -->
+  <rect x="92" y="292" width="220" height="70" rx="9" fill="var(--bg2, #f5f5f3)" stroke="var(--border, #e0e0da)" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="202" y="318" text-anchor="middle" class="t">openbench-api :8080</text>
+  <text x="202" y="334" text-anchor="middle" class="s">+ SupersetClient adapter</text>
+  <text x="202" y="349" text-anchor="middle" class="s">db_server MCP</text>
+
+  <!-- worker -->
+  <rect x="92" y="378" width="220" height="44" rx="9" fill="var(--bg2, #f5f5f3)" stroke="var(--border, #e0e0da)" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="202" y="405" text-anchor="middle" class="t">openbench-worker</text>
+
+  <!-- superset (new) -->
+  <rect x="360" y="292" width="220" height="70" rx="9" fill="rgba(76,141,208,0.12)" stroke="var(--text-accent, #4c8dd0)" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="470" y="316" text-anchor="middle" class="t">superset :8088</text>
+  <text x="470" y="332" text-anchor="middle" class="s">REST API + web UI</text>
+  <text x="562" y="306" text-anchor="end" class="tag">NEW</text>
+
+  <!-- superset-init (new) -->
+  <rect x="360" y="378" width="220" height="44" rx="9" fill="rgba(76,141,208,0.12)" stroke="var(--text-accent, #4c8dd0)" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="470" y="399" text-anchor="middle" class="t">superset-init</text>
+  <text x="470" y="413" text-anchor="middle" class="s">oneshot · db upgrade + admin</text>
+
+  <!-- superset-postgres (new) -->
+  <rect x="628" y="292" width="220" height="70" rx="9" fill="rgba(76,141,208,0.12)" stroke="var(--text-accent, #4c8dd0)" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="738" y="316" text-anchor="middle" class="t">superset-postgres</text>
+  <text x="738" y="332" text-anchor="middle" class="s">metadata DB</text>
+  <text x="830" y="306" text-anchor="end" class="tag">NEW</text>
+
+  <!-- superset-redis (new) -->
+  <rect x="628" y="378" width="220" height="44" rx="9" fill="rgba(76,141,208,0.12)" stroke="var(--text-accent, #4c8dd0)" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="738" y="399" text-anchor="middle" class="t">superset-redis</text>
+  <text x="738" y="413" text-anchor="middle" class="s">cache / results</text>
+
+  <!-- storage group -->
+  <rect x="62" y="554" width="816" height="192" rx="12" fill="none" stroke="var(--border, #e0e0da)" stroke-width="1.2" stroke-dasharray="5 5"/>
+  <text x="80" y="575" class="glbl">/app-data · persistent volumes</text>
+
+  <!-- SQLite cylinder -->
+  <g filter="url(#sh)">
+    <path d="M92 600 L92 648 A110 9 0 0 0 312 648 L312 600 A110 9 0 0 1 92 600 Z" fill="var(--bg2, #f5f5f3)" stroke="var(--border, #e0e0da)" stroke-width="1.2"/>
+    <ellipse cx="202" cy="600" rx="110" ry="9" fill="var(--bg, #ffffff)" stroke="var(--border, #e0e0da)" stroke-width="1.2"/>
+  </g>
+  <text x="202" y="626" text-anchor="middle" class="t">mcp-db/default.db</text>
+  <text x="202" y="641" text-anchor="middle" class="s">SQLite · shared</text>
+
+  <!-- superset-home box -->
+  <rect x="360" y="592" width="220" height="60" rx="9" fill="var(--bg2, #f5f5f3)" stroke="var(--border, #e0e0da)" stroke-width="1.2" filter="url(#sh)"/>
+  <text x="470" y="618" text-anchor="middle" class="t">superset-home</text>
+  <text x="470" y="634" text-anchor="middle" class="s">superset_config.py</text>
+
+  <!-- superset-pg cylinder -->
+  <g filter="url(#sh)">
+    <path d="M628 600 L628 648 A110 9 0 0 0 848 648 L848 600 A110 9 0 0 1 628 600 Z" fill="rgba(76,141,208,0.12)" stroke="var(--text-accent, #4c8dd0)" stroke-width="1.3"/>
+    <ellipse cx="738" cy="600" rx="110" ry="9" fill="var(--bg, #ffffff)" stroke="var(--text-accent, #4c8dd0)" stroke-width="1.3"/>
+  </g>
+  <text x="738" y="626" text-anchor="middle" class="t">superset-pg</text>
+  <text x="738" y="641" text-anchor="middle" class="s">metadata store</text>
+
+  <!-- nginx -> API -->
+  <path d="M300 234 Q238 262 210 290" class="edge" marker-end="url(#ah)"/>
+  <text x="150" y="258" class="lab labN">/ (API)</text>
+
+  <!-- nginx -> superset -->
+  <path d="M580 234 Q522 262 480 290" class="edgeA" marker-end="url(#ahA)"/>
+  <text x="486" y="258" class="lab labA">/superset/</text>
+
+  <!-- API -> superset REST -->
+  <path d="M312 310 L360 310" class="edgeA" marker-end="url(#ahA)"/>
+  <text x="336" y="303" text-anchor="middle" class="lab labA">REST deploy</text>
+
+  <!-- superset -> postgres -->
+  <path d="M580 314 L628 314" class="edgeA" marker-end="url(#ahA)"/>
+
+  <!-- superset -> redis (lane x=604) -->
+  <path d="M580 330 L604 330 L604 400 L628 400" class="edgeA" marker-end="url(#ahA)"/>
+
+  <!-- LANE x=76 : API -> sqlite (enters left) -->
+  <path d="M92 322 L76 322 L76 620 L92 620" class="edge" marker-end="url(#ah)"/>
+  <text x="84" y="470" class="lab labN">SELECT (ro)</text>
+
+  <!-- LANE x=336 : superset -> sqlite live (enters right) -->
+  <path d="M360 350 L336 350 L336 622 L312 622" class="edgeA" marker-end="url(#ahA)"/>
+  <text x="344" y="470" class="lab labA">live SQL (ro)</text>
+
+  <!-- LANE x=616 : superset -> home (enters right) -->
+  <path d="M580 356 L616 356 L616 622 L580 622" class="edgeA" marker-end="url(#ahA)"/>
+  <text x="622" y="470" class="lab labN">config mount</text>
+
+  <!-- LANE x=864 : postgres -> pg vol (enters right) -->
+  <path d="M848 322 L864 322 L864 620 L848 620" class="edgeA" marker-end="url(#ahA)"/>
+
+  <!-- legend -->
+  <rect x="600" y="752" width="13" height="13" rx="3" fill="rgba(76,141,208,0.12)" stroke="var(--text-accent, #4c8dd0)" stroke-width="1.4"/>
+  <text x="620" y="762" class="s">new (Superset)</text>
+  <rect x="738" y="752" width="13" height="13" rx="3" fill="var(--bg2, #f5f5f3)" stroke="var(--border, #e0e0da)" stroke-width="1.2"/>
+  <text x="758" y="762" class="s">existing</text>
+</svg>
