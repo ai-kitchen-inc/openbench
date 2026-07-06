@@ -68,13 +68,22 @@ def view_model_to_grafana(
 
     for kpi in view_model.get("kpis") or []:
         if isinstance(kpi, dict):
-            panels.append(_kpi_panel(kpi, panel_id.next(), cursor, targets))
+            panels.append(_kpi_panel(kpi, datasets, panel_id.next(), cursor, targets))
 
     for section in view_model.get("sections") or []:
         if not isinstance(section, dict):
             continue
         section_title = str(section.get("title") or "")
-        items = section.get("items") or section.get("components") or []
+        # Full alias chain — mirrors DashboardGenerator (generator.py:245-250).
+        items = (
+            section.get("items")
+            or section.get("components")
+            or section.get("widgets")
+            or section.get("panels")
+            or section.get("charts")
+            or section.get("cards")
+            or []
+        )
         if section_title:
             cursor.newline()
             panels.append(_row_panel(section_title, panel_id.next(), cursor))
@@ -250,11 +259,51 @@ def _row_panel(title: str, panel_id: int, cursor: _GridCursor) -> dict[str, Any]
     }
 
 
+def _resolve_kpi_value(
+    kpi: dict[str, Any], datasets: dict[str, list[dict[str, Any]]]
+) -> Any:
+    """Inline ``value`` or first-row dataset column — mirrors the renderers
+    (ob-dashboard-frame.tsx resolveKpiValue / DashboardGenerator datasets.py)."""
+    if kpi.get("value") is not None:
+        return kpi.get("value")
+    dataset_key = kpi.get("dataset_id") or kpi.get("dataset") or kpi.get("source")
+    column = (
+        kpi.get("value_column") or kpi.get("value_key") or kpi.get("column") or kpi.get("field")
+    )
+    if dataset_key and column:
+        records = datasets.get(str(dataset_key)) or []
+        if records and isinstance(records[0], dict):
+            return records[0].get(str(column))
+    return None
+
+
+def _coerce_kpi_number(value: Any) -> Any:
+    """Turn formatted strings like ``$115,431.58`` or ``12.5%`` into numbers so
+    the stat panel's numeric reduce works; unparseable values pass through
+    (Grafana stat renders strings)."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip().replace(",", "").replace("$", "").replace("%", "")
+        try:
+            number = float(stripped)
+        except ValueError:
+            return value
+        return int(number) if number.is_integer() else number
+    return value
+
+
 def _kpi_panel(
-    kpi: dict[str, Any], panel_id: int, cursor: _GridCursor, targets: _Targets
+    kpi: dict[str, Any],
+    datasets: dict[str, list[dict[str, Any]]],
+    panel_id: int,
+    cursor: _GridCursor,
+    targets: _Targets,
 ) -> dict[str, Any]:
     label = str(kpi.get("label") or kpi.get("title") or "KPI")
-    value = kpi.get("value")
+    value = _coerce_kpi_number(_resolve_kpi_value(kpi, datasets))
     unit = str(kpi.get("unit") or "")
     records = [{"metric": label, "value": value}]
     return {
@@ -264,10 +313,14 @@ def _kpi_panel(
         "gridPos": cursor.place(_KPI_W, _KPI_H),
         "datasource": targets.inline_ref(),
         "targets": [targets.csv_target(records)],
+        # textMode "value" shows just the number — the panel title carries the
+        # label. Do NOT set fieldConfig displayName here: the stat's
+        # reduceOptions.fields regex matches DISPLAY names, so renaming the
+        # field breaks /^value$/ and the panel reports "No data".
         "fieldConfig": {"defaults": {"unit": unit or "none"}, "overrides": []},
         "options": {
             "reduceOptions": {"calcs": ["lastNotNull"], "fields": "/^value$/", "values": False},
-            "textMode": "value_and_name",
+            "textMode": "value",
             "colorMode": "none",
             "graphMode": "none",
         },
@@ -289,7 +342,7 @@ def _item_panel(
     if kind in {"text", "markdown", "summary"}:
         return _text_panel(item, panel_id, cursor)
     if kind in {"kpi", "metric"}:
-        return _kpi_panel(item, panel_id, cursor, targets)
+        return _kpi_panel(item, datasets, panel_id, cursor, targets)
     return _text_panel(item, panel_id, cursor)
 
 
@@ -301,6 +354,46 @@ _CHART_PANEL_TYPE = {
     "pie": "piechart",
     "scatter": "xychart",
 }
+
+# Column names that suggest a temporal axis when there is no data to inspect.
+_TEMPORAL_KEY_RE = re.compile(r"date|time|month|day|week|year|timestamp", re.IGNORECASE)
+
+
+def _looks_like_date(value: Any) -> bool:
+    """True for values Grafana's timeseries panel can use as a time field."""
+    from datetime import datetime
+
+    if isinstance(value, bool) or value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value >= 1_000_000_000  # epoch seconds/millis, not category codes
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    try:
+        datetime.fromisoformat(text)  # YYYY-MM-DD, full ISO timestamps
+        return True
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m", "%Y/%m/%d", "%d-%m-%Y", "%m/%d/%Y"):
+        try:
+            datetime.strptime(text, fmt)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _x_is_temporal(records: list[dict[str, Any]], x_key: str) -> bool:
+    """Whether the x column can drive a Grafana timeseries panel.
+
+    With data: every non-null x value must parse as a date/timestamp. Without
+    data (live table, no inline records): fall back to a name heuristic.
+    """
+    values = [row.get(x_key) for row in records if row.get(x_key) is not None]
+    if values:
+        return all(_looks_like_date(v) for v in values)
+    return bool(_TEMPORAL_KEY_RE.search(x_key))
 
 
 def _chart_panel(
@@ -316,9 +409,20 @@ def _chart_panel(
     ).lower()
     panel_type = _CHART_PANEL_TYPE.get(chart_type, "barchart")
     x_key = str(
-        item.get("x") or item.get("x_key") or item.get("xKey") or item.get("xField") or _first_key(records)
+        item.get("x")
+        or item.get("x_key")
+        or item.get("xKey")
+        or item.get("x_axis")
+        or item.get("xAxis")
+        or item.get("xField")
+        or _first_category_key(records)
     )
     y_keys = _series_keys(item, records, x_key)
+
+    # Grafana's timeseries panel errors on categorical x ("Data is missing a
+    # time field") — months like "Feb" can't render. Fall back to barchart.
+    if panel_type == "timeseries" and not _x_is_temporal(records, x_key):
+        panel_type = "barchart"
 
     options: dict[str, Any] = {"legend": {"showLegend": True}}
     if panel_type == "barchart":
@@ -400,6 +504,9 @@ def _series_keys(item: dict[str, Any], records: list[dict[str, Any]], x_key: str
         or item.get("y")
         or item.get("y_key")
         or item.get("yKey")
+        or item.get("y_axis")
+        or item.get("yAxis")
+        or item.get("yField")
         or item.get("metric")
         or item.get("value")
     )
@@ -476,10 +583,30 @@ def _column_text(value: Any) -> str:
     return ""
 
 
-def _first_key(records: list[dict[str, Any]]) -> str:
+def _is_numberish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
+        try:
+            float(value.replace(",", ""))
+            return True
+        except ValueError:
+            return False
+    return False
+
+
+def _first_category_key(records: list[dict[str, Any]]) -> str:
+    """First non-numeric column — the natural x-axis (mirrors DashboardGenerator)."""
     if not records:
         return "name"
-    return str(next(iter(records[0].keys()), "name"))
+    keys = list(records[0].keys())
+    for key in keys:
+        value = next((row.get(key) for row in records if row.get(key) is not None), None)
+        if value is not None and not _is_numberish(value):
+            return str(key)
+    return str(keys[0]) if keys else "name"
 
 
 def _first_numeric_key(records: list[dict[str, Any]], *, fallback: str = "") -> str:
