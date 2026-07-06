@@ -1,6 +1,9 @@
 # Deploy Dashboards to Self-Hosted Superset (live Postgres)
 
-**Status:** Design / RFC. Not yet implemented.
+**Status:** Design / RFC. Not yet implemented — **Grafana shipped first**: the
+live "Deploy" button pushes dashboards to the self-hosted Grafana at
+`/grafana/` (see [deploy/DEPLOY.md](../deploy/DEPLOY.md), section "Grafana").
+This document remains the design for a future Superset alternative.
 
 > **Update:** the data layer moved from SQLite to **Cloud SQL Postgres** (the
 > `appdata` database — see [deploy/DEPLOY.md](../deploy/DEPLOY.md)). Superset now

@@ -1,0 +1,30 @@
+# Grafana datasource provisioning for the general-chat deployment.
+# scp'd to the VM by `deploy.sh grafana` and mounted at
+# /etc/grafana/provisioning/datasources (read-only).
+#
+# UIDs are contract: grafana_client.py targets "appdata-postgres" for live
+# table-backed panels and "testdata" for inline CSV panels.
+apiVersion: 1
+
+datasources:
+  - name: AppData (Cloud SQL Postgres)
+    uid: appdata-postgres
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: 34.61.185.118:5432
+    database: appdata
+    user: mcp_app
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1500
+      maxOpenConns: 4
+    secureJsonData:
+      password: $__env{GRAFANA_PG_PASSWORD}
+    isDefault: true
+    editable: false
+
+  - name: TestData (inline)
+    uid: testdata
+    type: grafana-testdata-datasource
+    access: proxy
+    editable: false

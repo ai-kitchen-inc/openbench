@@ -91,6 +91,7 @@ Or individually:
 | `deploy/deploy.sh backend` | Cloud Build the image (async + poll), `docker pull` + `docker-compose up -d` on the VM, wait for `/health`. |
 | `deploy/deploy.sh frontend` | `pnpm build` the SPA with the right `VITE_*`, `firebase deploy --only hosting`. |
 | `deploy/deploy.sh mcp-image` | Cloud Build the forked `db_server` MCP image (`mcp-db-server:1.3.1-ob1`) and `docker pull` it on the VM. |
+| `deploy/deploy.sh grafana` | Provision + start the self-hosted Grafana on the VM (env gen, datasources, health). |
 | `deploy/deploy.sh nginx` | scp `docker-compose.gce.yml` + nginx conf to the VM, `nginx -t` + reload. Run only when those files change. |
 | `deploy/deploy.sh add-user EMAIL` | Append `EMAIL` to the allowlist on the VM and restart the API (idempotent). |
 | `deploy/deploy.sh remove-user EMAIL` | Remove `EMAIL` from the allowlist on the VM and restart the API (idempotent). |
@@ -116,6 +117,9 @@ web config (`VITE_FIREBASE_*`) is baked into `deploy.sh` (it ships in the JS bun
 | `MCP_DB_DATABASE_URL` | `db_server` MCP → `appdata` over the Cloud SQL public IP (`mcp_app` role) |
 | `APPDATA_ADMIN_URL` | admin URL used by `init-appdb` / `seed-mcp-db` (DDL + seeding) |
 | `MCP_ALLOW_WRITES` / `MCP_MAX_ROWS` | enable agent write/materialize; read-query row cap |
+| `GRAFANA_ADMIN_PASSWORD` | Grafana admin login + the API's dashboard pushes |
+| `GRAFANA_PG_PASSWORD` | provisioned Postgres datasource (same value as `mcp_app`) |
+| `GRAFANA_PUBLIC_URL` | browser-facing Grafana base (`https://<host>/grafana`) |
 | `GENERAL_CHAT_FIREBASE_PROJECT_ID` | enables auth; must be `sss-poc1-corporate` |
 | `GENERAL_CHAT_ALLOWED_EMAILS` | comma-separated allowlist (use `add-user`) |
 | `GENERAL_CHAT_ALLOWED_DOMAINS` | optional domain allowlist |
@@ -204,6 +208,46 @@ cloud-sql-proxy PROJECT:REGION:INSTANCE --port 5432
 # DBeaver → new Postgres connection → host 127.0.0.1, port 5432, database appdata
 ```
 Edits made in DBeaver are visible to the agent immediately (it queries live).
+
+## Grafana (deploy-to-Grafana dashboards)
+
+A self-hosted Grafana (`grafana/grafana:11.1.0`, bound to `127.0.0.1:3000`)
+runs next to the API and is served by nginx at
+**`https://35-188-138-52.sslip.io/grafana/`** (`GF_SERVER_ROOT_URL` +
+`serve_from_sub_path`). Access model:
+
+- **View** — anonymous access is enabled with the **Viewer** role: anyone with
+  a dashboard link can view it, no login (same trust model as the `/d/{id}`
+  public shares).
+- **Edit** — requires the admin login (`admin` / `GRAFANA_ADMIN_PASSWORD` in
+  the VM `.env.gcp`). Sign-up is disabled.
+
+**Deploy flow:** the dashboard frame's **Deploy** button posts the ViewModel to
+`POST /dashboard/deploy/grafana` (Firebase-auth). The API converts it with
+`view_model_to_grafana(..., live=...)` and pushes it to Grafana over the compose
+network (`http://grafana:3000`, `POST /api/dashboards/db`, `overwrite=true` with
+a title-derived uid, so re-deploys update in place). Datasets backed by a real
+`appdata` table (`public.*`/`mart.*` — discovered via `MCP_DB_DATABASE_URL`)
+become **live Postgres panels** through the provisioned `appdata-postgres`
+datasource (read-only `mcp_app` role); everything else is embedded as inline
+CSV via the `testdata` datasource. The response `{url, live, inline}` reports
+the split; the UI opens the URL in a new tab.
+
+**Provisioning:** `deploy/grafana/datasources.yaml` (scp'd to the VM, mounted
+read-only). The two datasource UIDs (`appdata-postgres`, `testdata`) are the
+contract with `grafana_client.py` — don't rename one without the other.
+
+### First-time setup
+
+```bash
+bash deploy/deploy.sh grafana   # env gen + provisioning + container + health
+bash deploy/deploy.sh nginx     # publish the /grafana/ route
+bash deploy/deploy.sh backend   # API with the deploy endpoint
+bash deploy/deploy.sh frontend  # SPA with the Deploy button
+bash deploy/deploy.sh verify    # includes /grafana/api/health + raw :3000 closed
+```
+
+Grafana state (dashboards, users) persists in `/app-data/grafana` (uid 472).
 
 ## Verify
 
