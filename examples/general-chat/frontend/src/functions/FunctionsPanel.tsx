@@ -155,7 +155,7 @@ export function FunctionsPanel({ open, onClose }: { open: boolean; onClose: () =
               </p>
             </div>
           </div>
-          <label className="mcp-search">
+          <label className="mcp-field">
             <span>Function name</span>
             <input
               value={name}
@@ -163,7 +163,7 @@ export function FunctionsPanel({ open, onClose }: { open: boolean; onClose: () =
               onChange={(event) => setName(event.target.value)}
             />
           </label>
-          <label className="mcp-search">
+          <label className="mcp-field">
             <span>Description</span>
             <input
               value={description}
@@ -171,13 +171,12 @@ export function FunctionsPanel({ open, onClose }: { open: boolean; onClose: () =
               onChange={(event) => setDescription(event.target.value)}
             />
           </label>
-          <label className="mcp-search">
+          <label className="mcp-field">
             <span>Python code</span>
             <textarea
               value={code}
               spellCheck={false}
               rows={12}
-              style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 13 }}
               onChange={(event) => setCode(event.target.value)}
             />
           </label>
@@ -210,7 +209,7 @@ export function FunctionsPanel({ open, onClose }: { open: boolean; onClose: () =
               </button>
             </div>
           </div>
-          <label className="mcp-search">
+          <label className="mcp-field">
             <span>Test arguments (JSON object)</span>
             <input
               value={runArgs}
