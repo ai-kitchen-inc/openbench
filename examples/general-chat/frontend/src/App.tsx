@@ -18,6 +18,7 @@ import "@openbench/chat-ui/styles/bundle.css";
 import { apiFetch, apiPath, authHeaders, setAuthTokenProvider, transcribeAudio } from "./api";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { getFirebaseAuth, googleProvider, isFirebaseConfigured } from "./firebase";
+import { FunctionsPanel } from "./functions/FunctionsPanel";
 import { McpCatalogPanel } from "./mcp-catalog/McpCatalogPanel";
 import { ToastProvider, useToast } from "./Toast";
 import "./global.css";
@@ -1199,6 +1200,7 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
   const toast = useToast();
   const [dark, toggleDark] = useDarkMode();
   const [mcpCatalogOpen, setMcpCatalogOpen] = useState(false);
+  const [functionsOpen, setFunctionsOpen] = useState(false);
   const latestDashboard = useMemo(() => findLatestDashboard(messages), [messages]);
   const [dismissedDashboardKey, setDismissedDashboardKey] = useState<string | null>(null);
   const dashboardKey = latestDashboard
@@ -1230,6 +1232,20 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
             <span>
               <strong>MCP servers</strong>
               <span>Manage tools</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className="mcp-servers-button"
+            onClick={() => setFunctionsOpen(true)}
+            aria-label="Open Custom Functions"
+          >
+            <span className="mcp-servers-button__icon" aria-hidden="true">
+              FN
+            </span>
+            <span>
+              <strong>Functions</strong>
+              <span>Custom Python tools</span>
             </span>
           </button>
           <SourcePanel
@@ -1279,6 +1295,7 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
         />
       )}
       <McpCatalogPanel open={mcpCatalogOpen} onClose={() => setMcpCatalogOpen(false)} />
+      <FunctionsPanel open={functionsOpen} onClose={() => setFunctionsOpen(false)} />
     </div>
   );
 }
