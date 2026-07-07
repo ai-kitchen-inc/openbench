@@ -506,8 +506,20 @@ Invoke-RestMethod http://localhost:8005/mcp/tools
 
 Expected `namespaced_tool_names` include the internal OpenBench query tools and,
 when dependencies are available, tools from `dashboard_generator`, `filesystem`,
-`generic_api`, `image_search`, `sam_segmentation`, Docker MCP Gateway, and any
-running ToolHive workloads.
+`generic_api`, `image_search`, `sam_segmentation`, `custom_function`, Docker MCP
+Gateway, and any running ToolHive workloads.
+
+`custom_function` exposes the functions saved in the **Functions** panel to the
+agent (`list_functions`, `describe_function`, `run_function`). Local
+prerequisite — build the sandbox image once:
+
+```powershell
+docker build -t custom-function-mcp:local mcp/custom-function-mcp
+```
+
+(from the repo root; or set `CUSTOM_FN_IMAGE` to another image). The first
+agent call shows an MCP tool permission card — click **Approve** to let the
+sandboxed run proceed.
 Optional services that are missing or not built remain visible through
 `/mcp/catalogs` and `/mcp/tools` diagnostics rather than being silently hidden.
 `general-chat-all` uses the isolated `examples/general-chat/.openbench/all-mcp`
