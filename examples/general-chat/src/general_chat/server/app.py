@@ -7,6 +7,7 @@ when GENERAL_CHAT_FIREBASE_PROJECT_ID is configured.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -1380,7 +1381,8 @@ def create_app() -> FastAPI:
         if not isinstance(kwargs, dict):
             raise HTTPException(status_code=400, detail="kwargs must be a JSON object")
         try:
-            return custom_functions.test_run(name, kwargs)
+            # subprocess-based sandbox run — keep it off the event loop
+            return await asyncio.to_thread(custom_functions.test_run, name, kwargs)
         except CustomFunctionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except FileNotFoundError as exc:
