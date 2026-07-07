@@ -25,7 +25,9 @@ mcp:
         - "128"
         - "-v"
         - "${CUSTOM_FN_DATA_PATH}:/data/functions:ro"
-        - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/custom-function-mcp:0.1.0
+        # Overridable for local dev (e.g. custom-function-mcp:local); the
+        # default is the Artifact Registry image used on the deployed VM.
+        - "${CUSTOM_FN_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/custom-function-mcp:0.1.0}"
       namespace: custom_function
       allowed: true
       discovery_timeout_seconds: 15

@@ -59,7 +59,9 @@ _GENERAL_CHAT_ALL_MCP_CONFIGS = (
     "image-search-docker.yaml",
     "sam-segmentation-docker.yaml",
     "docker-mcp-gateway.yaml",
+    "custom-function-docker.yaml",
 )
+_CUSTOM_FN_LOCAL_IMAGE = "custom-function-mcp:local"
 
 
 def _resolve_pnpm_command() -> list[str] | None:
@@ -315,6 +317,9 @@ def _general_chat_all_mcp_env(
     uploads_dir = _ensure_dir(demo_dir / "uploads")
     downloads_dir = _ensure_dir(demo_dir / "downloads")
     storage_root = _ensure_dir(demo_dir / ".openbench" / "all-mcp")
+    # Same dir CustomFunctionStore uses (it honors CUSTOM_FN_DATA_PATH), so the
+    # Functions panel writes and the custom_function MCP mount stay in sync.
+    custom_fn_dir = _ensure_dir(storage_root / "custom-functions")
     sandbox_dir = _ensure_dir(demo_dir / "mcp-sandbox")
     sam_debug_dir = _ensure_dir(uploads_dir / "_sam_debug")
 
@@ -348,6 +353,7 @@ def _general_chat_all_mcp_env(
         "IMAGE_SEARCH_MCP_HF_CACHE_PATH": _as_posix_path(hf_cache_dir),
         "SAM_SEGMENTATION_MCP_UPLOADS_PATH": _as_posix_path(uploads_dir),
         "SAM_SEGMENTATION_MCP_DEBUG_PATH": _as_posix_path(sam_debug_dir),
+        "CUSTOM_FN_DATA_PATH": _as_posix_path(custom_fn_dir),
         "GENERIC_API_USERNAME": os.getenv("GENERIC_API_USERNAME", ""),
         "GENERIC_API_PASSWORD": os.getenv("GENERIC_API_PASSWORD", ""),
         "GENERIC_API_TIMEOUT_SECONDS": os.getenv("GENERIC_API_TIMEOUT_SECONDS", "30"),
@@ -384,6 +390,19 @@ def _general_chat_all_mcp_env(
                 "with 'Connection closed'. Build it with: docker compose -f "
                 "mcp\\image-search-mcp\\docker-compose.yml --profile cpu build. "
                 f"Details: {image_search_error}"
+            )
+        custom_fn_image = os.getenv("CUSTOM_FN_IMAGE", "").strip()
+        if not custom_fn_image and not _docker_image_inspect_error(_CUSTOM_FN_LOCAL_IMAGE):
+            custom_fn_image = _CUSTOM_FN_LOCAL_IMAGE
+        if custom_fn_image:
+            env["CUSTOM_FN_IMAGE"] = custom_fn_image
+        else:
+            console.print(
+                f"[yellow]Warning:[/yellow] Docker image {_CUSTOM_FN_LOCAL_IMAGE} is not "
+                "available and CUSTOM_FN_IMAGE is unset. custom_function will fall back "
+                "to the private Artifact Registry image, which usually cannot be pulled "
+                "locally. Build it with: docker build -t "
+                f"{_CUSTOM_FN_LOCAL_IMAGE} mcp\\custom-function-mcp"
             )
     if not _command_available("npx", "npx.cmd"):
         console.print(
@@ -853,11 +872,16 @@ def _run_server(
         str(backend_port),
         "--reload",
     ]
+    # Watch only source code: reloading on the whole demo dir restarts the
+    # server whenever runtime data is written under .openbench/ (e.g. saving
+    # a custom function), killing in-flight requests.
+    if (demo_dir / "src").is_dir():
+        backend_cmd += ["--reload-dir", "src"]
 
     try:
         # Start backend
         console.print(
-            f"\n[green]Starting backend:[/green] uvicorn server:app --port {backend_port} --reload"
+            f"\n[green]Starting backend:[/green] {' '.join(backend_cmd[2:])}"
         )
         backend = subprocess.Popen(
             backend_cmd,
