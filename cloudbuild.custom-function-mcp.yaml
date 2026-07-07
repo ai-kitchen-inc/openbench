@@ -1,0 +1,11 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile
+      - -t
+      - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/custom-function-mcp:0.1.0
+      - .
+images:
+  - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/custom-function-mcp:0.1.0

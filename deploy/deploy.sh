@@ -14,6 +14,7 @@
 #   backend        Build the API image (Cloud Build) and roll it out on the VM
 #   frontend       Build the SPA and deploy it to Firebase Hosting
 #   mcp-image      Build the forked db_server MCP image (Cloud Build) + pull on VM
+#   fn-image       Build the custom_function MCP image (Cloud Build) + pull on VM
 #   grafana        Provision + start the self-hosted Grafana on the VM (subpath /grafana/)
 #   nginx          Sync compose + nginx reverse-proxy config to the VM, reload nginx
 #   add-user EMAIL    Add an email to the backend allowlist and restart the API
@@ -58,6 +59,11 @@ PSQL_IMAGE="${PSQL_IMAGE:-postgres:16}"
 MCP_IMAGE="${MCP_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/mcp-db-server:1.3.1-ob1}"
 MCP_CLOUDBUILD_CONFIG="${MCP_CLOUDBUILD_CONFIG:-cloudbuild.mcp-db-server.yaml}"
 MCP_IMAGE_DIR="${MCP_IMAGE_DIR:-examples/general-chat/mcp/db-server}"
+
+# custom_function MCP (sandboxed user Python): source dir + Cloud Build.
+FN_IMAGE="${FN_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/custom-function-mcp:0.1.0}"
+FN_CLOUDBUILD_CONFIG="${FN_CLOUDBUILD_CONFIG:-cloudbuild.custom-function-mcp.yaml}"
+FN_IMAGE_DIR="${FN_IMAGE_DIR:-mcp/custom-function-mcp}"
 
 VM_NAME="${VM_NAME:-openbench-general-chat}"
 VM_ZONE="${VM_ZONE:-us-central1-a}"
@@ -168,6 +174,33 @@ cmd_mcp_image() {
   log "Pulling MCP image on the VM ($VM_NAME)"
   vm_ssh "sudo docker pull $MCP_IMAGE" || die "VM pull of $MCP_IMAGE failed"
   ok "db_server MCP image ready on the VM"
+}
+
+# --- fn-image ------------------------------------------------------------------
+# Build the custom_function MCP image (sandboxed user Python) via Cloud Build,
+# pull it on the VM, and ensure the functions volume dir exists.
+cmd_fn_image() {
+  log "Building custom_function MCP image via Cloud Build ($FN_IMAGE)"
+  local build_id
+  build_id="$("$GCLOUD" builds submit --async --config "$FN_CLOUDBUILD_CONFIG" "$FN_IMAGE_DIR" \
+    --format='value(id)')" || die "Cloud Build submit failed"
+  [ -n "$build_id" ] || die "Could not capture Cloud Build id"
+  ok "submitted build $build_id — polling"
+
+  local status=""
+  while :; do
+    status="$("$GCLOUD" builds describe "$build_id" --format='value(status)' 2>/dev/null || echo '')"
+    case "$status" in
+      SUCCESS) ok "build $build_id SUCCESS"; break ;;
+      FAILURE|TIMEOUT|CANCELLED|EXPIRED) die "build $build_id ended: $status" ;;
+      *) printf '  ... %s\n' "${status:-pending}"; sleep 15 ;;
+    esac
+  done
+
+  log "Pulling custom_function image on the VM ($VM_NAME)"
+  vm_ssh "sudo docker pull $FN_IMAGE && sudo mkdir -p /app-data/custom-functions" \
+    || die "VM pull of $FN_IMAGE failed"
+  ok "custom_function MCP image + functions dir ready on the VM"
 }
 
 # --- grafana -------------------------------------------------------------------
@@ -356,6 +389,7 @@ case "${1:-help}" in
   backend)  cmd_backend ;;
   frontend) cmd_frontend ;;
   mcp-image) cmd_mcp_image ;;
+  fn-image) cmd_fn_image ;;
   grafana)  cmd_grafana ;;
   nginx)    cmd_nginx ;;
   add-user) shift; cmd_add_user "${1:-}" ;;
@@ -365,5 +399,5 @@ case "${1:-help}" in
   verify)   cmd_verify ;;
   all)      cmd_backend; cmd_frontend; cmd_verify ;;
   help|-h|--help) cmd_help ;;
-  *) die "unknown command '$1' (try: backend|frontend|mcp-image|grafana|nginx|add-user|remove-user|init-appdb|seed-mcp-db|verify|all|help)" ;;
+  *) die "unknown command '$1' (try: backend|frontend|mcp-image|fn-image|grafana|nginx|add-user|remove-user|init-appdb|seed-mcp-db|verify|all|help)" ;;
 esac

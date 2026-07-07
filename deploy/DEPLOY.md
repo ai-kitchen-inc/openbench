@@ -91,6 +91,7 @@ Or individually:
 | `deploy/deploy.sh backend` | Cloud Build the image (async + poll), `docker pull` + `docker-compose up -d` on the VM, wait for `/health`. |
 | `deploy/deploy.sh frontend` | `pnpm build` the SPA with the right `VITE_*`, `firebase deploy --only hosting`. |
 | `deploy/deploy.sh mcp-image` | Cloud Build the forked `db_server` MCP image (`mcp-db-server:1.3.1-ob1`) and `docker pull` it on the VM. |
+| `deploy/deploy.sh fn-image` | Cloud Build the `custom_function` MCP image + `docker pull` on the VM (+ functions dir). |
 | `deploy/deploy.sh grafana` | Provision + start the self-hosted Grafana on the VM (env gen, datasources, health). |
 | `deploy/deploy.sh nginx` | scp `docker-compose.gce.yml` + nginx conf to the VM, `nginx -t` + reload. Run only when those files change. |
 | `deploy/deploy.sh add-user EMAIL` | Append `EMAIL` to the allowlist on the VM and restart the API (idempotent). |
@@ -120,6 +121,7 @@ web config (`VITE_FIREBASE_*`) is baked into `deploy.sh` (it ships in the JS bun
 | `GRAFANA_ADMIN_PASSWORD` | Grafana admin login + the API's dashboard pushes |
 | `GRAFANA_PG_PASSWORD` | provisioned Postgres datasource (same value as `mcp_app`) |
 | `GRAFANA_PUBLIC_URL` | browser-facing Grafana base (`https://<host>/grafana`) |
+| `CUSTOM_FN_DATA_PATH` | VM dir holding user-defined functions (custom_function MCP) |
 | `GENERAL_CHAT_FIREBASE_PROJECT_ID` | enables auth; must be `sss-poc1-corporate` |
 | `GENERAL_CHAT_ALLOWED_EMAILS` | comma-separated allowlist (use `add-user`) |
 | `GENERAL_CHAT_ALLOWED_DOMAINS` | optional domain allowlist |
@@ -248,6 +250,35 @@ bash deploy/deploy.sh verify    # includes /grafana/api/health + raw :3000 close
 ```
 
 Grafana state (dashboards, users) persists in `/app-data/grafana` (uid 472).
+
+## Custom functions (user-defined Python the agent can run)
+
+Users define Python functions in the app's **Functions** panel; the agent runs
+them through the **`custom_function` MCP** (`mcp/custom-function-mcp/`,
+image `custom-function-mcp:0.1.0` in Artifact Registry).
+
+**Trust model:** definitions are auth-gated (Firebase + allowlist) and
+validated (identifier name, syntax, exactly one top-level function, 64KB cap).
+Execution is sandboxed — the MCP container is spawned per call with `--rm`,
+`--network none`, `--memory 512m --cpus 1 --pids-limit 128`, a non-root user,
+and the functions dir (`CUSTOM_FN_DATA_PATH=/app-data/custom-functions`)
+mounted **read-only**; each run is a fresh subprocess with a hard timeout.
+Fixed preinstalled libs (pandas, numpy, matplotlib, openpyxl, dateutil) — no
+runtime pip, no network. The UI **Test run** goes through the same sandbox
+(`POST /functions/{name}/run`).
+
+### First-time setup
+
+```bash
+bash deploy/deploy.sh fn-image   # build + pull the sandbox image, create the dir
+bash deploy/deploy.sh nginx      # push the updated compose (new API env + volume)
+bash deploy/deploy.sh backend    # roll out the API (routes + bundled MCP config)
+bash deploy/deploy.sh frontend   # SPA with the Functions panel
+```
+
+Smoke: Functions panel → save `add` (`def add(a, b): return a + b`) → Test run
+with `{"a": 2, "b": 3}` → `5`; then in chat: "run the add function with a=2
+b=3" → the agent calls `custom_function.run_function`.
 
 ## Verify
 
