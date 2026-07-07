@@ -32,6 +32,9 @@ services:
       GRAFANA_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
       GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-https://35-188-138-52.sslip.io/grafana}
+      # Custom functions: host path (== in-container path) holding user-defined
+      # Python; mounted read-only into the sandboxed custom_function MCP.
+      CUSTOM_FN_DATA_PATH: ${CUSTOM_FN_DATA_PATH:-/app-data/custom-functions}
       # Dashboard generator MCP (replaces the in-process SDK dashboard skill).
       GENERAL_CHAT_DASHBOARD_SKILL_ENABLED: ${GENERAL_CHAT_DASHBOARD_SKILL_ENABLED:-0}
       OPENBENCH_EXPORT_DIR: ${OPENBENCH_EXPORT_DIR:-/general-chat/downloads}
@@ -58,6 +61,9 @@ services:
       - /app-data/huggingface:/general-chat/huggingface
       - /app-data/docker-config:/root/.docker
       - /var/run/docker.sock:/var/run/docker.sock
+      # Same path inside + outside the container so the sibling `docker run -v`
+      # (custom_function MCP + test runs) resolves on the host.
+      - /app-data/custom-functions:/app-data/custom-functions
 
   openbench-worker:
     image: ${OPENBENCH_IMAGE:-openbench-general-chat:latest}

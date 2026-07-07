@@ -24,6 +24,7 @@ from general_chat.extractor import DoclingContentExtractor
 from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.server.auth import auth_enabled, require_firebase_user
+from general_chat.server.custom_functions import CustomFunctionError, CustomFunctionStore
 from general_chat.server.dashboard_pdf import render_dashboard_pdf
 from general_chat.server.grafana import view_model_to_grafana
 from general_chat.server.grafana_client import GrafanaDeployError, deploy_view_model
@@ -135,6 +136,7 @@ _AUTH_PROTECTED_PREFIXES = (
     "/chat",
     "/dashboard",
     "/downloads",
+    "/functions",
     "/image-search",
     "/mcp",
     "/persona",
@@ -353,6 +355,7 @@ def create_app() -> FastAPI:
 
     storage = _build_storage_backend(storage_root)
     publish_store = PublishStore(storage_root)
+    custom_functions = CustomFunctionStore(storage_root)
     file_store = LocalFileStore(upload_dir=upload_dir)
     archiver = _build_attachment_archiver()
     extractor = DoclingContentExtractor()
@@ -1334,6 +1337,54 @@ def create_app() -> FastAPI:
             media_type="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="{slug}.pdf"'},
         )
+
+    # --- Custom functions (user-defined Python the agent can run) ------------
+    # Definitions are auth-gated here; execution happens in the sandboxed
+    # custom_function MCP container (see mcp/custom-function-mcp/).
+
+    @app.get("/functions")
+    async def list_custom_functions() -> dict:
+        return {"functions": custom_functions.list()}
+
+    @app.post("/functions")
+    async def save_custom_function(request: Request) -> dict:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Expected a JSON object")
+        try:
+            meta = custom_functions.save(
+                str(body.get("name") or ""),
+                str(body.get("code") or ""),
+                str(body.get("description") or ""),
+            )
+        except CustomFunctionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return meta
+
+    @app.delete("/functions/{name}")
+    async def delete_custom_function(name: str) -> dict:
+        try:
+            existed = custom_functions.delete(name)
+        except CustomFunctionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not existed:
+            raise HTTPException(status_code=404, detail="Function not found")
+        return {"ok": True, "name": name}
+
+    @app.post("/functions/{name}/run")
+    async def test_run_custom_function(name: str, request: Request) -> dict:
+        body = await request.json()
+        kwargs = body.get("kwargs") if isinstance(body, dict) else None
+        if kwargs is None:
+            kwargs = {}
+        if not isinstance(kwargs, dict):
+            raise HTTPException(status_code=400, detail="kwargs must be a JSON object")
+        try:
+            return custom_functions.test_run(name, kwargs)
+        except CustomFunctionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/dashboard/publish")
     async def publish_dashboard(request: Request) -> dict:

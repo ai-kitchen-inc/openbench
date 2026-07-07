@@ -1,0 +1,33 @@
+mcp:
+  policy:
+    allow_remote_servers: false
+    allowed_servers:
+      - custom_function
+    max_timeout_seconds: 60
+
+  servers:
+    custom_function:
+      transport: stdio
+      command: docker
+      args:
+        - run
+        - "--rm"
+        - "-i"
+        # The container is the sandbox: no network, resource caps, read-only
+        # functions mount. Definitions come from the auth-gated /functions API.
+        - "--network"
+        - "none"
+        - "--memory"
+        - "512m"
+        - "--cpus"
+        - "1"
+        - "--pids-limit"
+        - "128"
+        - "-v"
+        - "${CUSTOM_FN_DATA_PATH}:/data/functions:ro"
+        - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/custom-function-mcp:0.1.0
+      namespace: custom_function
+      allowed: true
+      discovery_timeout_seconds: 15
+      timeout_seconds: 60
+      retries: 0
