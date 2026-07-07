@@ -1,0 +1,13 @@
+mcp:
+  server:
+    name: custom_function
+    include_sdk_tools: false
+    transport: stdio
+    policy:
+      allowed_servers:
+        - custom_function
+      require_approval_for_risks:
+        - write
+        - artifact_write
+        - external_network
+        - destructive
