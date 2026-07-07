@@ -175,6 +175,231 @@ describe("ObDashboardFrame", () => {
     expect(container.querySelector(".ob-chart")).not.toBeNull();
   });
 
+  it("renders KPI and chart panels from top-level layout components", () => {
+    const viewModel = {
+      title: "Dashboard Penjualan Kopi",
+      layout: { columns: 3 },
+      datasets: {
+        dataset_1: [
+          { month: "Jan", sales: 6398.86 },
+          { month: "Feb", sales: 13215.48 },
+        ],
+      },
+      components: [
+        {
+          id: "kpi_total_sales",
+          type: "kpi",
+          content: { title: "Total Penjualan", value: 115431.58, variant: "currency" },
+        },
+        {
+          id: "chart_monthly_trend",
+          type: "chart",
+          content: {
+            title: "Tren Penjualan Bulanan",
+            data: "dataset_1",
+            type: "line",
+            x: "month",
+            y: "sales",
+          },
+        },
+      ],
+      kpis: [],
+      sections: [{ title: "Dashboard", items: [] }],
+    };
+
+    const { container } = render(
+      <ObDashboardFrame
+        component={{ id: "dashboard", component: "ObDashboardFrame", viewModel }}
+        surface={surface()}
+      />,
+    );
+
+    expect(screen.getByText("Dashboard Penjualan Kopi")).toBeDefined();
+    expect(screen.getByText("Total Penjualan")).toBeDefined();
+    expect(screen.getByText("$115,431.58")).toBeDefined();
+    expect(screen.getByText("Tren Penjualan Bulanan")).toBeDefined();
+    expect(container.querySelector(".ob-chart")).not.toBeNull();
+    expect(container.querySelector('[data-dashboard-renderer="a2ui"]')).not.toBeNull();
+    expect(container.querySelector("iframe")).toBeNull();
+  });
+
+  it("renders nested section components with inline chart view models", () => {
+    const viewModel = {
+      title: "Coffee Sales Performance Dashboard",
+      components: [
+        {
+          type: "section",
+          columns: 4,
+          components: [
+            {
+              type: "kpi",
+              label: "Total Revenue",
+              value: 115431.58,
+              value_format: "$,.2f",
+            },
+            {
+              type: "kpi",
+              label: "Total Transactions",
+              value: 3636,
+            },
+          ],
+        },
+        {
+          type: "section",
+          columns: 2,
+          components: [
+            {
+              type: "chart",
+              view_model: {
+                type: "line_chart",
+                data: [
+                  { label: "Jan", value: 6398.86 },
+                  { label: "Feb", value: 13215.48 },
+                ],
+              },
+              options: { title: "Monthly Revenue Trend" },
+            },
+            {
+              type: "chart",
+              view_model: {
+                type: "bar_chart",
+                data: [
+                  { label: "Latte", value: 27866.3 },
+                  { label: "Americano with Milk", value: 25269.12 },
+                ],
+              },
+              options: { title: "Revenue by Coffee Type" },
+            },
+          ],
+        },
+      ],
+      datasets: {},
+      kpis: [],
+      sections: [
+        {
+          title: "Dashboard",
+          items: [
+            {
+              type: "section",
+              components: [
+                {
+                  type: "chart",
+                  view_model: {
+                    type: "bar_chart",
+                    data: [{ label: "Latte", value: 27866.3 }],
+                  },
+                  options: { title: "Stale Wrapped Section" },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const { container } = render(
+      <ObDashboardFrame
+        component={{ id: "dashboard", component: "ObDashboardFrame", viewModel }}
+        surface={surface()}
+      />,
+    );
+
+    expect(screen.getByText("Coffee Sales Performance Dashboard")).toBeDefined();
+    expect(screen.getByText("Total Revenue")).toBeDefined();
+    expect(screen.getByText("$115,431.58")).toBeDefined();
+    expect(screen.getByText("Total Transactions")).toBeDefined();
+    expect(screen.getByText("3,636")).toBeDefined();
+    expect(screen.getByText("Monthly Revenue Trend")).toBeDefined();
+    expect(screen.getByText("Revenue by Coffee Type")).toBeDefined();
+    expect(screen.queryByText("Summary")).toBeNull();
+    expect(container.querySelectorAll(".ob-chart").length).toBe(2);
+    expect(container.querySelector('[data-dashboard-renderer="a2ui"]')).not.toBeNull();
+  });
+
+  it("renders row column props with dataset-backed chart and table", () => {
+    const viewModel = {
+      title: "Row Props Dashboard",
+      datasets: {
+        revenue_trend: [{ month: "2022-01", revenue: 1419751.89 }],
+        top_products: [{ product: "Latte", revenue: 27866.3 }],
+      },
+      components: [
+        {
+          component: "row",
+          columns: [
+            {
+              component: "kpi",
+              props: { label: "Total Revenue", value: 32866573.74, format: "$0.2s" },
+            },
+            {
+              component: "chart",
+              props: {
+                title: "Monthly Revenue Trend",
+                dataset_id: "revenue_trend",
+                chart_type: "line",
+                x_axis: { property: "month", label: "Month" },
+                y_axis: { property: "revenue", label: "Revenue" },
+              },
+            },
+            {
+              component: "table",
+              props: {
+                title: "Top Products",
+                dataset_id: "top_products",
+                columns: [{ key: "product" }, { key: "revenue" }],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const { container } = render(
+      <ObDashboardFrame
+        component={{ id: "dashboard", component: "ObDashboardFrame", viewModel }}
+        surface={surface()}
+      />,
+    );
+
+    expect(screen.getByText("Total Revenue")).toBeDefined();
+    expect(screen.getByText("$32,866,573.74")).toBeDefined();
+    expect(screen.getByText("Monthly Revenue Trend")).toBeDefined();
+    expect(screen.getByText("Top Products")).toBeDefined();
+    expect(container.querySelector(".ob-chart")).not.toBeNull();
+    expect(container.querySelector(".ob-table")).not.toBeNull();
+    expect(screen.queryByText("No chart data available")).toBeNull();
+  });
+
+  it("renders kpi_grid and Chart.js data from loose charts list", () => {
+    const viewModel = {
+      title: "Loose Charts Dashboard",
+      charts: [
+        { type: "kpi_grid", data: { values: [{ label: "Revenue", value: 123 }] } },
+        {
+          type: "bar",
+          title: "Revenue by Product",
+          data: {
+            labels: ["Latte", "Americano"],
+            datasets: [{ label: "Revenue", data: [123, 95] }],
+          },
+        },
+      ],
+    };
+
+    const { container } = render(
+      <ObDashboardFrame
+        component={{ id: "dashboard", component: "ObDashboardFrame", viewModel }}
+        surface={surface()}
+      />,
+    );
+
+    expect(screen.getByText("Revenue")).toBeDefined();
+    expect(screen.getByText("123")).toBeDefined();
+    expect(screen.getByText("Revenue by Product")).toBeDefined();
+    expect(container.querySelector(".ob-chart")).not.toBeNull();
+    expect(screen.queryByText("No chart data available")).toBeNull();
+  });
+
   it("renders table panels with object column descriptors", () => {
     const viewModel = {
       title: "Coffee Dashboard",
@@ -239,6 +464,34 @@ describe("ObDashboardFrame", () => {
 
     expect(container.querySelector('[data-dashboard-renderer="a2ui"]')).not.toBeNull();
     expect(container.querySelector("iframe")).toBeNull();
+  });
+
+  it("marks native A2UI dashboards with uploaded template metadata", () => {
+    const viewModel = {
+      title: "Templated Dashboard",
+      datasets: {},
+      kpis: [{ label: "Revenue", value: 270 }],
+      sections: [],
+    };
+
+    const { container } = render(
+      <ObDashboardFrame
+        component={{
+          id: "dashboard",
+          component: "ObDashboardFrame",
+          viewModel,
+          customTemplate: { source: "design.md", format: "markdown", chars: 120 },
+          templateSource: "user",
+          templateFormat: "markdown",
+        }}
+        surface={surface()}
+      />,
+    );
+
+    const frame = container.querySelector('[data-dashboard-renderer="a2ui"]');
+    expect(frame).not.toBeNull();
+    expect(frame?.getAttribute("data-dashboard-template-source")).toBe("user");
+    expect(frame?.getAttribute("data-dashboard-template-format")).toBe("markdown");
   });
 
   it("prefers native A2UI rendering when ViewModel is inside legacy properties", () => {

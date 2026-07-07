@@ -53,6 +53,10 @@ SPREADSHEET_EXTENSIONS = EXCEL_EXTENSIONS | CSV_EXTENSIONS
 TEXT_MIME_TYPES = {"application/json"}
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".json"}
 
+DASHBOARD_TEMPLATE_MIME_TYPES = {"text/html"}
+DASHBOARD_TEMPLATE_EXTENSIONS = {".html", ".htm"}
+DASHBOARD_TEMPLATE_MARKDOWN_NAMES = {"design", "dashboard-design", "dashboard-template", "template"}
+
 AUDIO_MIME_TYPES = {
     "audio/mpeg",
     "audio/wav",
@@ -96,6 +100,7 @@ UPLOAD_METADATA_KEYS = {
     "samSegmentationPath",
     "imageSearchPreviewUrl",
     "localFilePath",
+    "dashboardTemplatePath",
 }
 _UPLOAD_FILE_ID_PATTERN = re.compile(r"(?:^|/)(file-[A-Za-z0-9_-]+)(?:/|$)")
 
@@ -103,6 +108,7 @@ ALLOWED_EXTENSIONS = (
     DOCUMENT_EXTENSIONS
     | SPREADSHEET_EXTENSIONS
     | TEXT_EXTENSIONS
+    | DASHBOARD_TEMPLATE_EXTENSIONS
     | IMAGE_EXTENSIONS
     | AUDIO_EXTENSIONS
     | VIDEO_EXTENSIONS
@@ -1489,6 +1495,68 @@ def dashboard_source_text(stored_file: StoredFile, *, parsed_text: str) -> str:
     return "\n".join(parts).strip()
 
 
+def is_dashboard_template_file(filename: str, mime_type: str) -> bool:
+    """Return True when an uploaded source should be treated as a dashboard template."""
+    path = Path(filename)
+    ext = path.suffix.lower()
+    stem = path.stem.lower()
+    if mime_type in DASHBOARD_TEMPLATE_MIME_TYPES or ext in DASHBOARD_TEMPLATE_EXTENSIONS:
+        return True
+    return ext in {".md", ".markdown"} and (
+        stem in DASHBOARD_TEMPLATE_MARKDOWN_NAMES
+        or "template" in stem
+        or "design" in stem
+    )
+
+
+def dashboard_template_metadata(
+    stored_file: StoredFile,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return metadata that lets dashboard tools read an uploaded template."""
+    result = dict(metadata or {})
+    template_path = str(Path(stored_file.path).resolve())
+    ext = Path(stored_file.name).suffix.lower()
+    result["localFilePath"] = template_path
+    result["dashboardTemplate"] = True
+    result["dashboardTemplatePath"] = template_path
+    result["dashboardTemplateFormat"] = "html" if ext in {".html", ".htm"} else "markdown"
+    return result
+
+
+def dashboard_template_text(stored_file: StoredFile) -> str:
+    """Build source text with explicit dashboard template instructions."""
+    metadata = dashboard_template_metadata(stored_file)
+    template_path = metadata["dashboardTemplatePath"]
+    template_format = metadata["dashboardTemplateFormat"]
+    preview = ""
+    try:
+        raw = Path(stored_file.path).read_text(encoding="utf-8")
+        preview = raw[:1600].strip()
+    except Exception:
+        preview = ""
+    parts = [
+        f"Dashboard template source: {stored_file.name}",
+        f"Dashboard template path: {template_path}",
+        f"Dashboard template format: {template_format}",
+        "",
+        (
+            "For dashboard requests that mention this template, call "
+            f"generate_dashboard with template_path=\"{template_path}\" after "
+            "building the declarative OpenBench ViewModel. Still use "
+            "extract_metadata and aggregate_data for uploaded spreadsheet data."
+        ),
+        (
+            "Do not paste or rewrite the template into the ViewModel. The dashboard "
+            "tool will read this template path directly and keep A2UI as the "
+            "interactive dashboard surface."
+        ),
+    ]
+    if preview:
+        parts.extend(["", "Template preview:", preview])
+    return "\n".join(parts).strip()
+
+
 def upload_file_ids_for_source(record: SourceRecord) -> set[str]:
     """Return local upload file ids referenced by a source record."""
     values: list[str] = []
@@ -1645,6 +1713,9 @@ def source_record_from_file(
         if kind == "spreadsheet":
             metadata = dashboard_source_metadata(stored_file, metadata)
             text = dashboard_source_text(stored_file, parsed_text=parsed.text)
+        if kind == "dashboard_template":
+            metadata = dashboard_template_metadata(stored_file, metadata)
+            text = dashboard_template_text(stored_file)
         return SourceRecord.create(
             session_id=session_id,
             name=stored_file.name,
@@ -1742,6 +1813,8 @@ def source_record_from_url(
 
 def kind_for_file(filename: str, mime_type: str) -> str:
     ext = Path(filename).suffix.lower()
+    if is_dashboard_template_file(filename, mime_type):
+        return "dashboard_template"
     if mime_type in DOCUMENT_MIME_TYPES or ext in DOCUMENT_EXTENSIONS:
         return ext.lstrip(".") or "document"
     if mime_type in SPREADSHEET_MIME_TYPES or ext in SPREADSHEET_EXTENSIONS:

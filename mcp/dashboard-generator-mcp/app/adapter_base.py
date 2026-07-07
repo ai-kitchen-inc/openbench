@@ -29,9 +29,16 @@ class BaseAdapter(ABC):
 
     name = "base"
 
-    def __init__(self, *, output_path: str | Path, public_url: str | None = None):
+    def __init__(
+        self,
+        *,
+        output_path: str | Path,
+        public_url: str | None = None,
+        dashboard_template: dict[str, Any] | None = None,
+    ):
         self.output_path = Path(output_path)
         self.public_url = public_url
+        self.dashboard_template = dashboard_template
 
     @abstractmethod
     def render(self, view_model: dict[str, Any]) -> DashboardRenderResult:

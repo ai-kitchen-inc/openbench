@@ -878,6 +878,82 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertIn("Raw spreadsheet rows are not included", record.text)
         self.assertNotIn("| region", record.text)
 
+    def test_design_md_source_becomes_dashboard_template(self):
+        tmpdir = Path("tests/.tmp") / f"template-{uuid.uuid4().hex}"
+        tmpdir.mkdir(parents=True, exist_ok=True)
+        path = tmpdir / "design.md"
+        path.write_text("# Dashboard Design\n\n```css\n:root { --ob-accent: #0f766e; }\n```", encoding="utf-8")
+        try:
+            stored = StoredFile(
+                id="file-template",
+                name="design.md",
+                path=str(path),
+                mime_type="text/markdown",
+                size_bytes=path.stat().st_size,
+                stored_at="2026-01-01T00:00:00+00:00",
+            )
+            record = source_record_from_file(
+                session_id="s1",
+                stored_file=stored,
+                parser=SourceParserRegistry(),
+                max_bytes=1000,
+            )
+        finally:
+            if path.exists():
+                path.unlink()
+            if tmpdir.exists():
+                tmpdir.rmdir()
+
+        self.assertEqual(record.status, "ready")
+        self.assertEqual(record.kind, "dashboard_template")
+        self.assertTrue((record.metadata or {})["dashboardTemplate"])
+        self.assertEqual((record.metadata or {})["dashboardTemplateFormat"], "markdown")
+        self.assertIn("Dashboard template path:", record.text)
+        self.assertIn("generate_dashboard", record.text)
+
+    def test_dashboard_template_source_attachment_includes_template_path(self):
+        agent = MockAgent()
+        engine = ChatEngine(agent=agent)
+        source = SourceRecord.create(
+            session_id="chat-session",
+            name="template.html",
+            kind="dashboard_template",
+            mime_type="text/html",
+            size_bytes=20,
+            url="/uploads/file-template/template.html",
+            text="Dashboard template source: template.html",
+            metadata={
+                "dashboardTemplate": True,
+                "dashboardTemplatePath": "C:/tmp/template.html",
+                "dashboardTemplateFormat": "html",
+            },
+        )
+        handler = GeneralChatHandler(
+            engine=engine,
+            db_path=":memory:",
+            source_records=[source],
+        )
+
+        content, attachments = handler._extract_content(
+            {
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": "buatkan dashboard pakai template ini",
+                    }
+                ],
+                "forwardedProps": {"sessionId": "chat-session"},
+            }
+        )
+
+        self.assertEqual(content, "buatkan dashboard pakai template ini")
+        self.assertIsNotNone(attachments)
+        assert attachments is not None
+        self.assertEqual(attachments[0].path, "C:/tmp/template.html")
+        self.assertIn("template_path", attachments[0].extracted_text or "")
+        self.assertIn("C:/tmp/template.html", attachments[0].extracted_text or "")
+
     def test_png_ocr_success_creates_searchable_image_source(self):
         extractor = Mock()
         extractor.extract_image.return_value = {

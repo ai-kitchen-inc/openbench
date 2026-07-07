@@ -91,7 +91,7 @@ function normalizeDatasets(value: unknown): DashboardDatasets {
   if (!isRecord(value)) return {};
   const result: DashboardDatasets = {};
   for (const [key, rows] of Object.entries(value)) {
-    result[key] = toRows(rows);
+    result[key] = recordsFromValue(rows);
   }
   return result;
 }
@@ -108,6 +108,30 @@ function stringList(value: unknown): string[] {
   }
   const text = stringValue(value);
   return text ? [text] : [];
+}
+
+function templateRecord(value: unknown): DashboardRecord | undefined {
+  if (isRecord(value)) return value;
+  if (typeof value !== "string") return undefined;
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function templateFormatFrom(component: DashboardRecord): string {
+  const direct = stringValue(component.templateFormat ?? component.template_format).toLowerCase();
+  if (direct) return direct;
+  const custom = templateRecord(component.customTemplate ?? component.custom_template);
+  return stringValue(custom?.format).toLowerCase();
+}
+
+function templateSourceFrom(component: DashboardRecord, format: string): string {
+  const direct = stringValue(component.templateSource ?? component.template_source).toLowerCase();
+  if (direct) return direct;
+  return format ? "user" : "default";
 }
 
 function columnString(value: unknown): string {
@@ -153,6 +177,186 @@ function stableKey(value: DashboardRecord, fallback: string): string {
   } catch {
     return fallback;
   }
+}
+
+function componentParameters(component: DashboardRecord): DashboardRecord {
+  const merged: DashboardRecord = {};
+  for (const key of ["props", "parameters", "content", "value", "view_model", "options"]) {
+    const nested = component[key];
+    if (isRecord(nested)) Object.assign(merged, nested);
+  }
+  for (const [key, value] of Object.entries(component)) {
+    if (["props", "parameters", "content", "value", "view_model", "options"].includes(key) && isRecord(value)) continue;
+    if ((key === "type" || key === "component" || key === "kind") && merged[key] !== undefined) {
+      merged[`component_${key}`] = value;
+      continue;
+    }
+    merged[key] = value;
+  }
+  return merged;
+}
+
+function normalizedChartType(value: unknown): string {
+  const requested = stringValue(value, "bar").toLowerCase();
+  const aliases: Record<string, string> = {
+    bar_chart: "bar",
+    column: "bar",
+    column_chart: "bar",
+    line_chart: "line",
+    area_chart: "area",
+    pie_chart: "pie",
+    scatter_chart: "scatter",
+  };
+  return aliases[requested] ?? requested.replace(/_chart$/, "");
+}
+
+function normalizeDashboardComponentItem(component: DashboardRecord): DashboardRecord | null {
+  let rawType = stringValue(component.type ?? component.component ?? component.kind).toLowerCase();
+  const merged = componentParameters(component);
+  if (!rawType) {
+    if (merged.chart_type ?? merged.chartType ?? merged.visualization) rawType = "chart";
+    if ((merged.data || merged.dataset_id || merged.dataset) && merged.columns) rawType = "table";
+  }
+  if (["kpi", "metric", "stat", "stat_card", "metric_card", "kpi_card"].includes(rawType)) {
+    return {
+      ...merged,
+      type: "kpi",
+      label: merged.label ?? merged.title ?? merged.name ?? "KPI",
+    };
+  }
+  if (
+    [
+      "chart",
+      "bar",
+      "bar_chart",
+      "column",
+      "column_chart",
+      "line",
+      "line_chart",
+      "area",
+      "area_chart",
+      "pie",
+      "pie_chart",
+      "scatter",
+      "scatter_chart",
+    ].includes(rawType)
+  ) {
+    return {
+      ...merged,
+      type: "chart",
+      chart_type: normalizedChartType(
+        merged.chart_type ??
+          merged.chartType ??
+          merged.visualization ??
+          merged.visualizationType ??
+          (rawType === "chart" ? merged.type : undefined) ??
+          rawType,
+      ),
+    };
+  }
+  if (rawType === "kpi_grid") {
+    return { ...merged, type: "kpi_grid" };
+  }
+  if (["table", "data_table", "text", "markdown", "summary"].includes(rawType)) {
+    return { ...merged, type: rawType };
+  }
+  return Object.keys(merged).length > 0 ? merged : null;
+}
+
+function componentChildItems(component: DashboardRecord): DashboardRecord[] {
+  const columnItems = Array.isArray(component.columns) ? component.columns : undefined;
+  return toRows(
+    component.items ??
+      component.components ??
+      component.panels ??
+      component.charts ??
+      component.widgets ??
+      component.cards,
+  ).concat(toRows(component.children)).concat(toRows(columnItems));
+}
+
+function kpisFromGrid(component: DashboardRecord): DashboardRecord[] {
+  const merged = componentParameters(component);
+  const data = isRecord(merged.data) ? merged.data : {};
+  const values = toRows(data.values ?? merged.values ?? merged.items);
+  return values.map((value) => normalizeDashboardComponentItem({ ...value, type: "kpi" })).filter(
+    (item): item is DashboardRecord => item !== null,
+  );
+}
+
+function isComponentContainer(component: DashboardRecord): boolean {
+  const rawType = stringValue(component.type ?? component.component ?? component.kind).toLowerCase();
+  return ["section", "group", "container", "row", "column", "columns", "grid"].includes(rawType);
+}
+
+function flattenDashboardComponentItems(components: DashboardRecord[]): DashboardRecord[] {
+  const items: DashboardRecord[] = [];
+  for (const component of components) {
+    const children = componentChildItems(component);
+    if (children.length > 0 && isComponentContainer(component)) {
+      items.push(...flattenDashboardComponentItems(children));
+      continue;
+    }
+    const normalized = normalizeDashboardComponentItem(component);
+    if (normalized?.type === "kpi_grid") {
+      items.push(...kpisFromGrid(component));
+      continue;
+    }
+    if (normalized) items.push(normalized);
+  }
+  return items;
+}
+
+function componentHasHeading(component: DashboardRecord): boolean {
+  const merged = componentParameters(component);
+  return Boolean(merged.title ?? merged.name ?? merged.label ?? merged.description);
+}
+
+function componentSectionTitle(component: DashboardRecord): string {
+  const merged = componentParameters(component);
+  return stringValue(merged.title ?? merged.name ?? merged.label, "Dashboard");
+}
+
+function componentsToLayout(value: unknown): {
+  kpis: DashboardRecord[];
+  panels: DashboardRecord[];
+  sections: DashboardRecord[];
+} {
+  const kpis: DashboardRecord[] = [];
+  const panels: DashboardRecord[] = [];
+  const sections: DashboardRecord[] = [];
+  for (const component of toRows(value)) {
+    const children = componentChildItems(component);
+    if (children.length > 0 && isComponentContainer(component)) {
+      const childItems = flattenDashboardComponentItems(children);
+      const childKpis = childItems.filter((item) => item.type === "kpi");
+      const childPanels = childItems.filter((item) => item.type !== "kpi");
+      kpis.push(...childKpis);
+      if (childPanels.length > 0 && componentHasHeading(component)) {
+        const merged = componentParameters(component);
+        sections.push({
+          title: componentSectionTitle(component),
+          description: merged.description ?? "",
+          items: childPanels,
+        });
+      } else {
+        panels.push(...childPanels);
+      }
+      continue;
+    }
+    const normalized = normalizeDashboardComponentItem(component);
+    if (!normalized) continue;
+    if (normalized.type === "kpi_grid") {
+      kpis.push(...kpisFromGrid(component));
+      continue;
+    }
+    if (normalized.type === "kpi") {
+      kpis.push(normalized);
+    } else {
+      panels.push(normalized);
+    }
+  }
+  return { kpis, panels, sections };
 }
 
 function formatDashboardValue(value: unknown): string {
@@ -221,11 +425,74 @@ function tableCellValue(row: DashboardRecord, column: TableColumn): unknown {
   return undefined;
 }
 
+function safeFieldName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "value";
+}
+
+function chartJsRecords(value: unknown): { rows: DashboardRecord[]; xKey: string; yKey: string } {
+  if (!isRecord(value) || !Array.isArray(value.labels) || !Array.isArray(value.datasets)) {
+    return { rows: [], xKey: "label", yKey: "value" };
+  }
+  const datasets = value.datasets.filter(isRecord);
+  if (datasets.length === 0) return { rows: [], xKey: "label", yKey: "value" };
+  const keys = datasets.map((dataset, index) =>
+    safeFieldName(stringValue(dataset.label, `value_${index + 1}`)),
+  );
+  const rows = value.labels.map((label, index) => {
+    const row: DashboardRecord = { label };
+    datasets.forEach((dataset, datasetIndex) => {
+      const values = Array.isArray(dataset.data) ? dataset.data : [];
+      row[keys[datasetIndex] ?? `value_${datasetIndex + 1}`] = values[index];
+    });
+    return row;
+  });
+  return { rows, xKey: "label", yKey: keys[0] ?? "value" };
+}
+
+function recordsFromValue(value: unknown): DashboardRecord[] {
+  const directRows = toRows(value);
+  if (directRows.length > 0) return directRows;
+  const chartJs = chartJsRecords(value);
+  if (chartJs.rows.length > 0) return chartJs.rows;
+  if (isRecord(value)) {
+    for (const key of ["values", "records", "rows", "data", "groups"]) {
+      const nestedRows = recordsFromValue(value[key]);
+      if (nestedRows.length > 0) return nestedRows;
+    }
+  }
+  return [];
+}
+
+function fieldFromAxis(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (isRecord(value)) {
+    for (const key of ["property", "field", "key", "dataKey", "name", "id", "value", "column"]) {
+      if (value[key] != null) return stringValue(value[key]);
+    }
+  }
+  return "";
+}
+
+function axisField(panel: DashboardRecord, keys: string[], optionKeys: string[]): string {
+  for (const key of keys) {
+    const value = fieldFromAxis(panel[key]);
+    if (value) return value;
+  }
+  const options = isRecord(panel.options) ? panel.options : {};
+  for (const key of optionKeys) {
+    const value = fieldFromAxis(options[key]);
+    if (value) return value;
+  }
+  return "";
+}
+
 function resolvePanelData(panel: DashboardRecord, datasets: DashboardDatasets): DashboardRecord[] {
-  const directRows = toRows(panel.data ?? panel.records);
+  const directRows = recordsFromValue(panel.data ?? panel.records ?? panel.values);
   if (directRows.length > 0) return directRows;
 
   const datasetKey = stringValue(
+    (typeof panel.data === "string" ? panel.data : undefined) ??
     panel.dataset ??
       panel.dataset_id ??
       panel.datasetId ??
@@ -251,14 +518,24 @@ function panelItems(section: DashboardRecord): DashboardRecord[] {
 
 function sectionsFrom(value: unknown, fallbackItems: unknown): DashboardRecord[] {
   const sections = toRows(value);
-  if (sections.length > 0) return sections;
+  if (sections.length > 0 && sections.some((section) => panelItems(section).length > 0)) {
+    return sections;
+  }
 
   const items = toRows(fallbackItems);
   return items.length > 0 ? [{ title: "Dashboard", items }] : [];
 }
 
+function sectionsContainComponentContainers(value: unknown): boolean {
+  return toRows(value).some((section) =>
+    panelItems(section).some(
+      (item) => componentChildItems(item).length > 0 && isComponentContainer(item),
+    ),
+  );
+}
+
 function panelKind(panel: DashboardRecord): string {
-  return stringValue(panel.type ?? panel.kind, "chart").toLowerCase();
+  return stringValue(panel.type ?? panel.component ?? panel.kind, "chart").toLowerCase();
 }
 
 function chartType(panel: DashboardRecord): string {
@@ -266,7 +543,8 @@ function chartType(panel: DashboardRecord): string {
     panel.chart_type ?? panel.chartType ?? panel.visualization ?? panel.visualizationType ?? panel.type,
     "bar",
   ).toLowerCase();
-  return ["bar", "line", "pie", "scatter", "area"].includes(requested) ? requested : "bar";
+  const normalized = normalizedChartType(requested);
+  return ["bar", "line", "pie", "scatter", "area"].includes(normalized) ? normalized : "bar";
 }
 
 function maxRows(panel: DashboardRecord): number {
@@ -747,8 +1025,11 @@ function resolveKpiValue(item: DashboardRecord, datasets: DashboardDatasets): un
 function formatKpiValue(item: DashboardRecord, datasets: DashboardDatasets): string {
   const text = formatDashboardValue(resolveKpiValue(item, datasets));
   if (!text) return "";
-  const fmt = stringValue(item.format);
-  if (fmt.includes("$") && !text.startsWith("$")) return `$${text}`;
+  const fmt = stringValue(item.format ?? item.value_format ?? item.valueFormat);
+  const variant = stringValue(item.variant ?? item.type).toLowerCase();
+  if ((fmt.includes("$") || ["currency", "money", "usd"].includes(variant)) && !text.startsWith("$")) {
+    return `$${text}`;
+  }
   if (fmt.includes("%") && !text.endsWith("%")) return `${text}%`;
   return text;
 }
@@ -795,23 +1076,40 @@ function ChartPanel({
   surface: A2UISurface;
 }) {
   const data = resolvePanelData(panel, datasets);
+  const chartJs = chartJsRecords(panel.data);
   const title = stringValue(panel.title, "Chart");
   const description = stringValue(panel.description);
-  const xKey = stringValue(
-    panel.x ?? panel.x_key ?? panel.xKey ?? panel.x_axis ?? panel.xAxis ?? panel.xField,
-    firstCategoryKey(data),
-  );
-  const series = stringList(
-    panel.series ??
-      panel.y ??
-      panel.y_key ??
-      panel.yKey ??
-      panel.y_axis ??
-      panel.yAxis ??
-      panel.yField ??
-      panel.metric ??
-      panel.value,
-  );
+  const xKey =
+    axisField(
+      panel,
+      ["x_field", "xField", "x", "x_key", "xKey", "x_axis", "xAxis", "label_column", "labelColumn"],
+      ["x", "label_column", "labelColumn"],
+    ) ||
+    (chartJs.rows.length > 0 ? chartJs.xKey : "") ||
+    firstCategoryKey(data);
+  const yAxisKey =
+    axisField(
+      panel,
+      [
+        "y_field",
+        "yField",
+        "y",
+        "y_key",
+        "yKey",
+        "y_axis",
+        "yAxis",
+        "value_field",
+        "valueField",
+        "value_column",
+        "valueColumn",
+      ],
+      ["y", "value_column", "valueColumn"],
+    ) ||
+    (Array.isArray(panel.y_fields) ? fieldFromAxis(panel.y_fields[0]) : "") ||
+    (Array.isArray(panel.yFields) ? fieldFromAxis(panel.yFields[0]) : "") ||
+    (chartJs.rows.length > 0 ? chartJs.yKey : "");
+  const seriesValue = panel.series ?? (yAxisKey || panel.metric || panel.value);
+  const series = stringList(seriesValue);
   const yKeys = series.length > 0 ? series : [firstNumericKey(data, xKey)];
   const height = Number(panel.height) || 280;
   const options = {
@@ -880,7 +1178,13 @@ function TablePanel({
 
 function TextPanel({ panel }: { panel: DashboardRecord }) {
   const title = stringValue(panel.title, "Summary");
-  const content = stringValue(panel.content ?? panel.text ?? panel.value);
+  const rawContent = panel.content ?? panel.text ?? panel.value;
+  const content =
+    typeof rawContent === "string" ||
+    typeof rawContent === "number" ||
+    typeof rawContent === "boolean"
+      ? stringValue(rawContent)
+      : "";
 
   return (
     <article className="ob-dashboard-panel ob-dashboard-panel--text">
@@ -977,6 +1281,17 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
     surface,
   );
   const viewModel = parseViewModel(rawViewModel);
+  const rawComponents = [
+    ...toRows(resolveValue(viewModel?.components ?? dashboardComponent.components, surface)),
+    ...toRows(viewModel?.charts),
+  ];
+  const componentLayout = componentsToLayout(rawComponents);
+  const componentKpis = componentLayout.kpis;
+  const componentPanels = componentLayout.panels;
+  const componentSections = [
+    ...componentLayout.sections,
+    ...(componentPanels.length > 0 ? [{ title: "Dashboard", items: componentPanels }] : []),
+  ];
   const rawDatasets =
     viewModel?.datasets !== undefined
       ? viewModel.datasets
@@ -992,6 +1307,7 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
     viewModel?.panels ??
     viewModel?.charts ??
     viewModel?.widgets ??
+    (componentPanels.length > 0 ? componentPanels : undefined) ??
     resolveValue(
       dashboardComponent.items ??
         dashboardComponent.panels ??
@@ -1001,8 +1317,16 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
     );
 
   const datasets = normalizeDatasets(rawDatasets);
-  const kpis = toRows(rawKpis);
-  const sections = sectionsFrom(rawSections, rawItems);
+  const normalizedKpis = toRows(rawKpis);
+  const kpis = normalizedKpis.length > 0 ? normalizedKpis : componentKpis;
+  const rawSectionsHaveItems = toRows(rawSections).some(
+    (section) => panelItems(section).length > 0,
+  );
+  const sections =
+    componentSections.length > 0 &&
+    (!rawSectionsHaveItems || sectionsContainComponentContainers(rawSections))
+      ? componentSections
+      : sectionsFrom(rawSections, rawItems);
   const hasDashboardData =
     Boolean(viewModel) ||
     kpis.length > 0 ||
@@ -1029,6 +1353,8 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
       ? resolveNumber(dashboardComponent.fileSize, surface)
       : undefined;
   const preview = dashboardComponent.preview !== false;
+  const templateFormat = templateFormatFrom(dashboardComponent);
+  const templateSource = templateSourceFrom(dashboardComponent, templateFormat);
 
   if (!hasDashboardData && dashboardUrl) {
     return (
@@ -1036,6 +1362,8 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
         className="ob-dashboard-frame"
         data-component-id={dashboardComponent.id}
         data-dashboard-renderer="html-fallback"
+        data-dashboard-template-source={templateSource}
+        data-dashboard-template-format={templateFormat || "default"}
       >
         <NativeHeader
           title={title}
@@ -1057,6 +1385,8 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
         className="ob-dashboard-frame ob-dashboard-frame--native"
         data-component-id={dashboardComponent.id}
         data-dashboard-renderer="empty"
+        data-dashboard-template-source={templateSource}
+        data-dashboard-template-format={templateFormat || "default"}
       >
         <NativeHeader
           title={title}
@@ -1079,6 +1409,8 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
       className="ob-dashboard-frame ob-dashboard-frame--native"
       data-component-id={dashboardComponent.id}
       data-dashboard-renderer="a2ui"
+      data-dashboard-template-source={templateSource}
+      data-dashboard-template-format={templateFormat || "default"}
     >
       <NativeHeader
         title={title}

@@ -350,6 +350,14 @@ Spreadsheet rows are not pasted into the LLM prompt. General Chat passes only
 the local file path and dashboard SOP to the agent; the skill tools inspect
 metadata and run aggregations from the file.
 
+Users may also upload their own dashboard template. `.html` / `.htm` files and
+markdown design briefs named like `design.md` or `dashboard-template.md` are
+stored as dashboard template sources. When the user asks to use one, the agent
+passes the uploaded `Dashboard template path` to `generate_dashboard` as
+`template_path`. If no template is uploaded or requested, the existing
+default/Stitch adapter selection is unchanged. Sample upload templates live in
+`template-dashboard-sample/`.
+
 The result appears as a chat link and in the right-side dashboard artifact
 window. Generated HTML files are written to `downloads/` and served from
 `/downloads/...`.

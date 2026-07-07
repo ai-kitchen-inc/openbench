@@ -62,6 +62,7 @@ _FORBIDDEN_SQL_KEYWORDS = {
 _ADAPTERS_MODULE: Any | None = None
 _DASHBOARD_ADAPTER: Any | None = None
 _DASHBOARD_ADAPTER_FACTORY: Any | None = None
+_LAST_AGGREGATE_DATASETS: dict[str, list[dict[str, Any]]] = {}
 
 
 def bind(**kwargs: Any) -> None:
@@ -271,7 +272,8 @@ def _normalise_sql_queries(
             return _normalise_sql_queries(query["queries"], dataset_id)
         sql = query.get("query") or query.get("sql")
         if isinstance(sql, str):
-            queries.append((str(query.get("id") or dataset_id or "dataset_1"), sql))
+            op_id = query.get("id") or query.get("name") or dataset_id or "dataset_1"
+            queries.append((str(op_id), sql))
         else:
             errors.append({"error": "query object must include a SQL string in `query` or `sql`"})
         return queries, errors
@@ -285,7 +287,8 @@ def _normalise_sql_queries(
             if isinstance(item, dict):
                 sql = item.get("query") or item.get("sql")
                 if isinstance(sql, str):
-                    queries.append((str(item.get("id") or fallback_id), sql))
+                    op_id = item.get("id") or item.get("name") or fallback_id
+                    queries.append((str(op_id), sql))
                 else:
                     errors.append(
                         {
@@ -299,6 +302,55 @@ def _normalise_sql_queries(
 
     errors.append({"error": "`query` must be a SQL string, object, or list"})
     return queries, errors
+
+
+def _remember_aggregate_datasets(datasets: list[dict[str, Any]]) -> None:
+    for dataset in datasets:
+        if not isinstance(dataset, dict):
+            continue
+        dataset_id = dataset.get("id") or dataset.get("name")
+        records = dataset.get("records")
+        if dataset_id and isinstance(records, list):
+            _LAST_AGGREGATE_DATASETS[str(dataset_id)] = [
+                row for row in records if isinstance(row, dict)
+            ]
+
+
+def _collect_dataset_refs(value: Any) -> set[str]:
+    refs: set[str] = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in {
+                "data",
+                "dataset",
+                "dataset_id",
+                "datasetId",
+                "source",
+            } and isinstance(item, str):
+                refs.add(item)
+            refs.update(_collect_dataset_refs(item))
+    elif isinstance(value, list):
+        for item in value:
+            refs.update(_collect_dataset_refs(item))
+    return refs
+
+
+def _hydrate_cached_datasets(view_model: dict[str, Any]) -> dict[str, Any]:
+    if not _LAST_AGGREGATE_DATASETS:
+        return view_model
+
+    current = view_model.get("datasets")
+    datasets = dict(current) if isinstance(current, dict) else {}
+    missing: dict[str, list[dict[str, Any]]] = {}
+    for dataset_id in _collect_dataset_refs(view_model):
+        if dataset_id not in datasets and dataset_id in _LAST_AGGREGATE_DATASETS:
+            missing[dataset_id] = _LAST_AGGREGATE_DATASETS[dataset_id]
+    if not missing:
+        return view_model
+
+    hydrated = dict(view_model)
+    hydrated["datasets"] = {**datasets, **missing}
+    return hydrated
 
 
 def _validate_readonly_sql(sql: str) -> tuple[str | None, str | None]:
@@ -380,7 +432,7 @@ def aggregate_data(
     except Exception as exc:
         errors.append({"error": f"Failed to prepare SQL workspace: {exc}"})
 
-    return {
+    result = {
         "source": str(p.resolve()),
         "sheet": _json_value(resolved_sheet),
         "dialect": "sqlite",
@@ -388,6 +440,8 @@ def aggregate_data(
         "datasets": datasets,
         "errors": errors,
     }
+    _remember_aggregate_datasets(datasets)
+    return result
 
 
 def _slug(value: str) -> str:
@@ -411,13 +465,39 @@ def _public_url(path: Path) -> str:
     return f"{base.rstrip('/')}/{path.name}"
 
 
-def _write_dashboard_export(view_model: dict[str, Any], output_path: Path) -> dict[str, Any]:
+def _dashboard_template_options(
+    *,
+    template_path: str | None = None,
+    template_text: str | None = None,
+    template_format: str | None = None,
+) -> dict[str, Any] | None:
+    if not template_path and not template_text:
+        return None
+    result: dict[str, Any] = {}
+    if template_path:
+        result["template_path"] = template_path
+        with contextlib.suppress(Exception):
+            result["template_text"] = Path(template_path).read_text(encoding="utf-8")
+    if template_text:
+        result["template_text"] = template_text
+    if template_format:
+        result["template_format"] = template_format
+    return result
+
+
+def _write_dashboard_export(
+    view_model: dict[str, Any],
+    output_path: Path,
+    *,
+    dashboard_template: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     adapters = _load_adapters_module()
     adapter = adapters.create_dashboard_adapter(
         output_path=output_path,
         public_url=_public_url(output_path),
         adapter=_DASHBOARD_ADAPTER,
         adapter_factory=_DASHBOARD_ADAPTER_FACTORY,
+        dashboard_template=dashboard_template,
     )
     rendered = adapter.render(view_model)
     if hasattr(rendered, "to_dict") and callable(rendered.to_dict):
@@ -440,16 +520,29 @@ def generate_dashboard(
     view_model: dict[str, Any],
     filename: str | None = None,
     output_dir: str | None = None,
+    template_path: str | None = None,
+    template_text: str | None = None,
+    template_format: str | None = None,
 ) -> dict[str, Any]:
     """Create a dashboard artifact from a declarative ViewModel."""
     if not isinstance(view_model, dict) or not view_model:
         return _error("dashboard", "`view_model` must be a non-empty object")
 
+    view_model = _hydrate_cached_datasets(view_model)
     title = str(view_model.get("title") or "OpenBench Dashboard")
     out_dir = Path(output_dir or os.environ.get("OPENBENCH_EXPORT_DIR") or "outputs").resolve()
     out_name = _unique_dashboard_filename(title, filename)
     out_path = out_dir / out_name
-    written = _write_dashboard_export(view_model, out_path)
+    dashboard_template = _dashboard_template_options(
+        template_path=template_path,
+        template_text=template_text,
+        template_format=template_format,
+    )
+    written = _write_dashboard_export(
+        view_model,
+        out_path,
+        dashboard_template=dashboard_template,
+    )
     url = _public_url(out_path)
     rendered_view_model = written.get("viewModel") or written.get("view_model") or view_model
     datasets = (
@@ -480,10 +573,24 @@ def generate_dashboard(
         "kpiCount": len(kpis) if isinstance(kpis, list) else 0,
         "adapter": written.get("adapter", {}),
         "stitch": written.get("stitch", {}),
+        "customTemplate": written.get("custom_template"),
+        "templateSource": written.get("template_source") or (
+            "user" if written.get("custom_template") else "default"
+        ),
+        "templateFormat": written.get("template_format")
+        or (written.get("custom_template") or {}).get("format")
+        or "default",
+        "templateName": written.get("template_name")
+        or (written.get("custom_template") or {}).get("source")
+        or "openbench",
     }
     logger.info(
-        "[dashboard] artifact created render_mode=%s title=%s datasets=%d kpis=%d sections=%d",
+        "[dashboard] artifact created render_mode=%s template_source=%s template_format=%s "
+        "template_name=%s title=%s datasets=%d kpis=%d sections=%d",
         item.get("render_mode"),
+        item.get("templateSource"),
+        item.get("templateFormat"),
+        item.get("templateName"),
         item.get("title"),
         len(item.get("datasets") or {}),
         len(item.get("kpis") or []),
@@ -557,14 +664,40 @@ AGGREGATE_DATA_SCHEMA = _schema(
 GENERATE_DASHBOARD_SCHEMA = _schema(
     "generate_dashboard",
     "Render a declarative dashboard ViewModel as an HTML artifact. The ViewModel "
-    "must contain dashboard structure and aggregate datasets, not raw UI code.",
+    "must use the canonical OpenBench shape: title, kpis, sections[].items[]. "
+    "KPI cards are {label, value, value_format}. Chart panels are "
+    "{type:'chart', chart_type, title, data:[rows], x_field, y_field}. "
+    "Table panels are {type:'table', title, data:[rows], columns}. "
+    "Prefer this canonical shape over props/content/components/Chart.js dialects. "
+    "Do not include raw UI code.",
     {
         "view_model": {
             "type": "object",
-            "description": "Dashboard ViewModel with title, datasets, kpis, and sections.",
+            "description": (
+                "Canonical dashboard ViewModel: {title, optional description, "
+                "kpis:[{label,value,value_format}], sections:[{title, items:["
+                "{type:'chart', chart_type, title, data, x_field, y_field} or "
+                "{type:'table', title, data, columns}]}]}. The backend has a "
+                "normalizer fallback, but tool callers should emit this shape."
+            ),
         },
         "filename": {"type": "string", "description": "Optional .html filename"},
         "output_dir": {"type": "string", "description": "Optional output directory"},
+        "template_path": {
+            "type": "string",
+            "description": (
+                "Optional uploaded dashboard template path. Accepts .html/.htm templates "
+                "or markdown design briefs such as design.md."
+            ),
+        },
+        "template_text": {
+            "type": "string",
+            "description": "Optional inline dashboard template or markdown design brief.",
+        },
+        "template_format": {
+            "type": "string",
+            "description": "Optional template format: html or markdown.",
+        },
     },
     ["view_model"],
 )

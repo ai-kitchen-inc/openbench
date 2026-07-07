@@ -65,6 +65,7 @@ _ALLOWED_MIME_TYPES = {
     "text/plain",
     "text/csv",
     "text/markdown",
+    "text/html",
     "application/json",
     "image/png",
     "image/jpeg",
@@ -101,6 +102,9 @@ _EXT_MIME_MAP = {
     ".txt": "text/plain",
     ".csv": "text/csv",
     ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".html": "text/html",
+    ".htm": "text/html",
     ".json": "application/json",
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -497,7 +501,7 @@ def create_app() -> FastAPI:
             for record in records
             if upload_file_ids_for_source(record)
             and not _is_gcs_source(record)
-            and getattr(record, "kind", "") not in {"spreadsheet", "image"}
+            and getattr(record, "kind", "") not in {"spreadsheet", "image", "dashboard_template"}
         ]
         if not records_with_uploads:
             return

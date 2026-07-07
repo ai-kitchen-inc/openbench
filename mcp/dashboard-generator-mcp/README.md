@@ -6,7 +6,8 @@ exposes the same three tools as the SDK skill:
 - `extract_metadata`: inspect CSV/XLSX columns, types, samples, and SQL hints
 - `aggregate_data`: run read-only SQLite `SELECT`/`WITH` queries over the file
 - `generate_dashboard`: render a declarative dashboard ViewModel as an A2UI
-  dashboard artifact with an HTML export
+  dashboard artifact with an HTML export, optionally using a user-uploaded
+  `.html` template or `design.md` design brief
 
 ## Configuration
 
@@ -80,6 +81,12 @@ with `GENERAL_CHAT_DASHBOARD_SKILL_ENABLED=0`, then loads the MCP tools as:
 
 Generated dashboard exports are written to `examples/general-chat/downloads/`
 and served from `/downloads/...`.
+
+Uploaded templates are optional. In General Chat, upload a spreadsheet plus
+`template.html` or `design.md`; the chat source context will expose
+`Dashboard template path:`. Pass that path to
+`dashboard_generator.generate_dashboard(template_path=...)`. Without it, the
+server uses the configured `default`/`stitch`/`auto` adapter as before.
 
 When using the dedicated launcher, General Chat keeps the dashboard stdio MCP
 process open across the metadata, aggregation, and render calls. This avoids

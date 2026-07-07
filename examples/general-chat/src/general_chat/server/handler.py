@@ -391,11 +391,15 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
         image_search_path = metadata.get("imageSearchPath")
         sam_segmentation_path = metadata.get("samSegmentationPath")
         dashboard_source_path = metadata.get("localFilePath")
+        dashboard_template_path = metadata.get("dashboardTemplatePath")
         extra_lines = ""
         image_tool_path = image_search_path if isinstance(image_search_path, str) else None
         sam_tool_path = sam_segmentation_path if isinstance(sam_segmentation_path, str) else None
         dashboard_tool_path = (
             dashboard_source_path if isinstance(dashboard_source_path, str) else None
+        )
+        template_tool_path = (
+            dashboard_template_path if isinstance(dashboard_template_path, str) else None
         )
         if record.kind == "image" and image_tool_path:
             extra_lines = f"Image search path: {image_tool_path}\n\n"
@@ -417,6 +421,21 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
                 "Use extract_metadata, aggregate_data, and generate_dashboard for "
                 "dashboard requests."
             )
+        elif record.kind == "dashboard_template" and template_tool_path:
+            extra_lines += (
+                f"Dashboard template path: {template_tool_path}\n"
+                f"Dashboard template format: {metadata.get('dashboardTemplateFormat') or 'auto'}\n"
+                "For dashboard requests that should use this uploaded template, pass "
+                "this path as generate_dashboard(template_path=...).\n\n"
+            )
+            extracted_text = (
+                f"Source name: {record.name}\n"
+                f"Source type: {record.kind}\n"
+                f"Source URL: {record.url or '(none)'}\n\n"
+                f"{extra_lines}"
+                "Optional context extracted from this user-added source.\n\n"
+                f"## {record.name}\n\n{record.text}"
+            )
         else:
             extracted_text = (
                 f"Source name: {record.name}\n"
@@ -434,7 +453,7 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
                 url=record.url or "",
                 mime_type=record.mime_type or "text/plain",
                 size_bytes=record.size_bytes,
-                path=dashboard_tool_path or sam_tool_path or image_tool_path,
+                path=template_tool_path or dashboard_tool_path or sam_tool_path or image_tool_path,
                 extracted_text=extracted_text,
             )
         )

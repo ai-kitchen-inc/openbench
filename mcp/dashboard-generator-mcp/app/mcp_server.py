@@ -108,6 +108,9 @@ def build_mcp():
         view_model: dict[str, Any],
         filename: str | None = None,
         output_dir: str | None = None,
+        template_path: str | None = None,
+        template_text: str | None = None,
+        template_format: str | None = None,
     ) -> dict[str, Any]:
         """Render a declarative dashboard ViewModel as an HTML/A2UI artifact."""
         try:
@@ -116,6 +119,9 @@ def build_mcp():
                     view_model=view_model,
                     filename=filename,
                     output_dir=output_dir,
+                    template_path=template_path,
+                    template_text=template_text,
+                    template_format=template_format,
                 )
             )
         except Exception as exc:

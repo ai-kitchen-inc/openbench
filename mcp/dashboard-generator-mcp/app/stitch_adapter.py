@@ -31,12 +31,17 @@ class StitchAdapter(BaseAdapter):
         *,
         output_path: str | Path,
         public_url: str | None = None,
+        dashboard_template: dict[str, Any] | None = None,
         api_key: str | None = None,
         endpoint: str | None = None,
         timeout_seconds: float | None = None,
         fallback: BaseAdapter | None = None,
     ):
-        super().__init__(output_path=output_path, public_url=public_url)
+        super().__init__(
+            output_path=output_path,
+            public_url=public_url,
+            dashboard_template=dashboard_template,
+        )
         self.api_key = api_key or os.environ.get("STITCH_API_KEY") or os.environ.get(
             "GOOGLE_STITCH_API_KEY"
         )
@@ -47,6 +52,7 @@ class StitchAdapter(BaseAdapter):
         self.fallback = fallback or DefaultGeneratorAdapter(
             output_path=self.output_path,
             public_url=self.public_url,
+            dashboard_template=self.dashboard_template,
         )
 
     def _download_html(self, url: str) -> str:
@@ -137,7 +143,7 @@ class StitchAdapter(BaseAdapter):
 
         args: dict[str, Any] = {
             "projectId": project_id,
-            "prompt": _view_model_to_prompt(view_model),
+            "prompt": _view_model_to_prompt(view_model, self.dashboard_template),
             "deviceType": os.environ.get("STITCH_DEVICE_TYPE") or "DESKTOP",
             "modelId": os.environ.get("STITCH_MODEL_ID") or "GEMINI_3_FLASH",
         }
@@ -318,16 +324,29 @@ class StitchAdapter(BaseAdapter):
         )
 
 
-def _view_model_to_prompt(view_model: dict[str, Any]) -> str:
+def _view_model_to_prompt(
+    view_model: dict[str, Any],
+    dashboard_template: dict[str, Any] | None = None,
+) -> str:
     serialized = json.dumps(view_model, ensure_ascii=False, indent=2)
     if len(serialized) > 30000:
         serialized = serialized[:30000] + "\n...TRUNCATED..."
+    template_text = ""
+    if dashboard_template:
+        raw = str(dashboard_template.get("template_text") or "")
+        if raw:
+            template_text = (
+                "\n\nUser-provided dashboard template or design brief. Preserve the "
+                "analytics data from the ViewModel while following this visual direction:\n"
+                f"{raw[:12000]}"
+            )
     return (
         "Create a polished desktop analytics dashboard screen from this declarative "
         "OpenBench ViewModel. Preserve the KPI labels, chart titles, datasets, and "
         "section hierarchy. Use a clean professional dashboard layout with visible "
         "charts and tables. Do not invent unrelated metrics.\n\n"
         f"ViewModel JSON:\n{serialized}"
+        f"{template_text}"
     )
 
 

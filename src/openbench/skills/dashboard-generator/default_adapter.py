@@ -20,6 +20,7 @@ class DefaultGeneratorAdapter(BaseAdapter):
             view_model,
             output_path=str(self.output_path),
             public_url=self.public_url,
+            **(self.dashboard_template or {}),
         )
         return DashboardRenderResult(
             file_path=result.file_path,

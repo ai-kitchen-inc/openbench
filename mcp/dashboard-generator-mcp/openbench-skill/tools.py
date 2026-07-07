@@ -56,10 +56,16 @@ def generate_dashboard(
     view_model: dict[str, Any],
     filename: str | None = None,
     output_dir: str | None = None,
+    template_path: str | None = None,
+    template_text: str | None = None,
+    template_format: str | None = None,
 ) -> dict[str, Any]:
     """Create a dashboard artifact from a declarative ViewModel."""
     return get_service().generate_dashboard(
         view_model=view_model,
         filename=filename,
         output_dir=output_dir,
+        template_path=template_path,
+        template_text=template_text,
+        template_format=template_format,
     )

@@ -126,6 +126,22 @@ class DashboardRenderer(ContentRenderer):
             props["fileSize"] = content["size"]
         if "path" in content:
             props["path"] = str(content["path"])
+        if "customTemplate" in content:
+            props["customTemplate"] = content["customTemplate"]
+        if "custom_template" in content:
+            props["customTemplate"] = content["custom_template"]
+        if "templateSource" in content:
+            props["templateSource"] = str(content["templateSource"])
+        if "template_source" in content:
+            props["templateSource"] = str(content["template_source"])
+        if "templateFormat" in content:
+            props["templateFormat"] = str(content["templateFormat"])
+        if "template_format" in content:
+            props["templateFormat"] = str(content["template_format"])
+        if "templateName" in content:
+            props["templateName"] = str(content["templateName"])
+        if "template_name" in content:
+            props["templateName"] = str(content["template_name"])
 
         return [
             A2UIComponent(

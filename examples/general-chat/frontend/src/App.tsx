@@ -24,7 +24,7 @@ import "./global.css";
 
 const STREAM_URL = apiPath("/awp");
 export const SOURCE_ACCEPT =
-  ".xlsx,.xls,.pdf,.epub,.docx,.doc,.pptx,.ppt,.txt,.md,.csv,.json," +
+  ".xlsx,.xls,.pdf,.epub,.docx,.doc,.pptx,.ppt,.txt,.md,.markdown,.html,.htm,.csv,.json," +
   ".png,.jpg,.jpeg,.webp,.gif,.heic,.heif,.tiff,.tif,.bmp,.svg," +
   ".mp3,.wav,.m4a,.ogg,.aac,.flac," +
   ".mp4,.webm,.mov,.avi";

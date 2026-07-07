@@ -8,12 +8,17 @@ OpenBench `dashboard-generator` SDK skill or the standardized
 
 1. Open General Chat.
 2. Upload a `.csv` or `.xlsx` file in the Sources panel.
-3. Ask: `buatkan dashboard dari data ini`.
-4. The agent calls:
+3. Optionally upload a dashboard template: `.html`, `.htm`, or a markdown
+   design brief named like `design.md` / `dashboard-template.md`.
+4. Ask: `buatkan dashboard dari data ini` or
+   `buatkan dashboard dari data ini pakai template yang saya upload`.
+5. The agent calls:
    - `extract_metadata`
    - `aggregate_data` with read-only SQLite SQL
-   - `generate_dashboard`
-5. The dashboard appears as a link in chat and as a side-by-side artifact panel.
+   - `generate_dashboard`, with `template_path=...` when an uploaded template
+     source is present and requested
+6. The dashboard appears as a link in chat and as a side-by-side A2UI artifact
+   panel.
 
 For an MCP-only test run, start General Chat with:
 
@@ -40,6 +45,10 @@ default and served from `/downloads/...`.
 CSV/XLSX source uploads are kept after a chat turn so the user can upload first
 and request a dashboard later. They are removed when the source, source list, or
 session is deleted.
+
+Dashboard template uploads are also kept after a chat turn. The source context
+exposes `Dashboard template path:` so both SDK and MCP dashboard tools can read
+the user-provided template directly.
 
 ## Environment
 
@@ -107,6 +116,11 @@ In the browser, use the same testing flow for all three modes: open the frontend
 URL printed by the demo runner, click the Sources/upload control, choose the
 CSV/XLSX file, wait until the source status is ready, then ask
 `buatkan dashboard dari data ini`.
+
+For template testing, use the sample files in
+`examples/general-chat/template-dashboard-sample/`: upload `design.md` or
+`template.html` with your spreadsheet, then ask for a dashboard using the
+uploaded template.
 
 Expected MCP progress for the dedicated dashboard run:
 

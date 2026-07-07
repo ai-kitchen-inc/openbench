@@ -63,50 +63,79 @@ steps exactly.
    `aggregate_data` multiple times or pass a list of query objects.
 6. Build a dashboard ViewModel as declarative JSON. Treat this step as A2UI-style
    ViewModel composition only:
+   - use the canonical ViewModel shape below exactly
    - include `title`, optional `description`, `kpis`, and `sections`
-   - chart panels use `type: "chart"`, `chart_type`, `dataset`, `x`, and `y`
-   - table panels use `type: "table"`, `dataset`, and `columns`
+   - KPI cards use `{ "label": "...", "value": 123, "value_format": "$0,0.00" }`
+   - chart panels use `type: "chart"`, `chart_type`, `title`, `data`, `x_field`,
+     and `y_field`
+   - table panels use `type: "table"`, `title`, `data`, and `columns`
+   - prefer embedding the small aggregate dataset directly in each chart/table
+     `data` array; alternatively reference a named dataset with `dataset`
    - do not include raw UI code, HTML, CSS, JavaScript, or prompt instructions
-7. Call `generate_dashboard(view_model=...)`. The tool publishes the ViewModel
+   - do not invent alternate component dialects such as `props`, nested `content`,
+     `component: "row"`, Chart.js `labels/datasets`, or `components` grids
+7. If the user uploaded a dashboard template, locate its attachment/source path
+   from `Dashboard template path:` and pass it as
+   `generate_dashboard(view_model=..., template_path=...)`. Templates are
+   optional; when absent, omit all template fields so the system uses the
+   configured default/Stitch adapter.
+8. Call `generate_dashboard(view_model=...)`. The tool publishes the ViewModel
    as a dashboard artifact. In General Chat, A2UI renders it side-by-side; any
    returned HTML link is only a fallback/export.
-8. In the final answer, mention the dashboard is ready and refer to the returned
+9. In the final answer, mention the dashboard is ready and refer to the returned
    link. Do not dump the full ViewModel unless the user asks for implementation
    details.
 
+## Uploaded Templates
+
+`generate_dashboard` accepts optional `template_path`, `template_text`, and
+`template_format` arguments. Use `template_path` for user-uploaded `.html`,
+`.htm`, or markdown design briefs such as `design.md`. The template changes the
+HTML export/fallback and can guide Stitch, while the interactive chat artifact
+still carries the canonical A2UI ViewModel.
+
+HTML templates can include placeholders: `{{title}}`, `{{description}}`,
+`{{body}}`, `{{openbench_css}}`, `{{dashboard_json}}`, and `{{generated_at}}`.
+Markdown design briefs can include fenced `css` blocks; the renderer applies
+those CSS overrides to the generated dashboard export.
+
 ## ViewModel Contract
 
-Minimum shape:
+Canonical shape. Prefer this exact structure every time:
 
 ```json
 {
   "title": "Sales Dashboard",
   "description": "Overview of uploaded sales data.",
-  "datasets": {
-    "sales_by_region": [
-      {"region": "EU", "revenue": 1200}
-    ]
-  },
   "kpis": [
-    {"label": "Total Revenue", "value": 1200, "unit": "USD"}
+    {"label": "Total Revenue", "value": 1200, "value_format": "$0,0.00"}
   ],
   "sections": [
     {
-      "title": "Performance",
+      "title": "Dashboard",
       "items": [
         {
           "type": "chart",
           "chart_type": "bar",
           "title": "Revenue by Region",
-          "dataset": "sales_by_region",
-          "x": "region",
-          "y": "revenue"
+          "data": [{"region": "EU", "revenue": 1200}],
+          "x_field": "region",
+          "y_field": "revenue"
+        },
+        {
+          "type": "table",
+          "title": "Top Regions",
+          "data": [{"region": "EU", "revenue": 1200}],
+          "columns": ["region", "revenue"]
         }
       ]
     }
   ]
 }
 ```
+
+The backend normalizes common noncanonical shapes as a fallback, but agents
+should still emit the canonical shape above for deterministic rendering.
 
 ## Dependencies
 

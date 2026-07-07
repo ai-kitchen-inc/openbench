@@ -38,8 +38,9 @@ def _format_kpi_value(item: dict[str, Any], datasets: dict[str, list[dict[str, A
     text = _format_value(raw)
     if not text:
         return ""
-    fmt = str(item.get("format") or "")
-    if "$" in fmt and not text.startswith("$"):
+    fmt = str(item.get("format") or item.get("value_format") or item.get("valueFormat") or "")
+    variant = str(item.get("variant") or item.get("type") or "").lower()
+    if ("$" in fmt or variant in {"currency", "money", "usd"}) and not text.startswith("$"):
         return f"${text}"
     if "%" in fmt and not text.endswith("%"):
         return f"{text}%"

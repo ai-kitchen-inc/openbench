@@ -13,7 +13,7 @@ Added to the framework:
 - `src/openbench/skills/dashboard-generator/`
   - `extract_metadata(path, sheet=None, sample_rows=5)`
   - `aggregate_data(path, query, sheet=None, dataset_id=None)`
-  - `generate_dashboard(view_model, filename=None, output_dir=None)`
+  - `generate_dashboard(view_model, filename=None, output_dir=None, template_path=None, template_text=None, template_format=None)`
   - `adapters.py` registry plus separate adapter modules:
     `adapter_base.py`, `default_adapter.py`, and `stitch_adapter.py`
 - `DashboardGenerator` in `src/openbench/output/generators.py`
@@ -98,11 +98,33 @@ this order:
    or table datasets.
 5. Call `aggregate_data(path=..., query="...", dataset_id="...")`.
 6. Build a declarative ViewModel. Treat this as A2UI-style data, not UI code.
-7. Call `generate_dashboard(view_model=...)`.
-8. Return the generated link and a short explanation.
+7. Optionally pass a user-uploaded template with
+   `generate_dashboard(view_model=..., template_path="...")`.
+8. Call `generate_dashboard(view_model=...)`.
+9. Return the generated link and a short explanation.
 
 Step 6 must not include raw HTML, CSS, JavaScript, or renderer instructions.
 The `generate_dashboard` tool owns the visual stitching.
+
+## User-Uploaded Templates
+
+Dashboard templates are optional. If no template is supplied, OpenBench keeps
+the existing adapter selection: `default`, `stitch`, or `auto`.
+
+When a user uploads a template in General Chat, the source context exposes a
+`Dashboard template path:` line. Agents should pass that value to
+`generate_dashboard(template_path=...)`. Supported uploaded template files are:
+
+- `.html` / `.htm`: may include `{{title}}`, `{{description}}`, `{{body}}`,
+  `{{openbench_css}}`, `{{dashboard_json}}`, and `{{generated_at}}`
+  placeholders.
+- `design.md` or markdown files with `design`/`template` in the name: treated
+  as design briefs. Fenced `css` blocks are applied to the HTML export.
+
+The visible chat artifact remains A2UI-first: `generate_dashboard` returns the
+canonical `viewModel`, `datasets`, `kpis`, and `sections` for
+`ObDashboardFrame`. The custom template affects the HTML export/fallback and
+provides Stitch visual guidance.
 
 ## ViewModel Shape
 

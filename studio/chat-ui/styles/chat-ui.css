@@ -1607,6 +1607,51 @@ video.chat-attachment-preview__media {
   padding-bottom: 16px;
 }
 
+.ob-dashboard-frame[data-dashboard-template-format="markdown"] {
+  --ob-dashboard-template-bg: #fff5f5;
+  --ob-dashboard-template-panel: #ffffff;
+  --ob-dashboard-template-border: rgba(185, 28, 28, 0.28);
+  --ob-dashboard-template-accent: #b91c1c;
+  --ob-dashboard-template-muted: #7f1d1d;
+  background: var(--ob-dashboard-template-bg);
+  border-color: var(--ob-dashboard-template-border);
+}
+
+.ob-dashboard-frame[data-dashboard-template-format="html"] {
+  --ob-dashboard-template-bg: #f0fdf4;
+  --ob-dashboard-template-panel: #ffffff;
+  --ob-dashboard-template-border: rgba(21, 128, 61, 0.28);
+  --ob-dashboard-template-accent: #15803d;
+  --ob-dashboard-template-muted: #166534;
+  background: var(--ob-dashboard-template-bg);
+  border-color: var(--ob-dashboard-template-border);
+}
+
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-frame__header {
+  border-bottom-color: var(--ob-dashboard-template-border);
+}
+
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-frame__icon,
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-frame__title,
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-section__heading h3 {
+  color: var(--ob-dashboard-template-accent);
+}
+
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-frame__description,
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-frame__meta,
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-kpi__label,
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-panel__description,
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-section__heading p {
+  color: var(--ob-dashboard-template-muted);
+}
+
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-kpi,
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-panel,
+.ob-dashboard-frame[data-dashboard-template-source="user"] .ob-dashboard-frame__empty {
+  border-color: var(--ob-dashboard-template-border);
+  background: var(--ob-dashboard-template-panel);
+}
+
 .ob-dashboard-frame__header {
   display: flex;
   align-items: flex-start;

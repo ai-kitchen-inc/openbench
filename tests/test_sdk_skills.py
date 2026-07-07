@@ -358,6 +358,12 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         self.assertEqual(aggregate_parameters["required"], ["path", "query"])
         # query advertises a list so the model batches all aggregations in one call.
         self.assertEqual(aggregate_parameters["properties"]["query"]["type"], "array")
+        generate_schema = self.tool_schemas["generate_dashboard"]["function"]
+        self.assertIn("canonical OpenBench shape", generate_schema["description"])
+        self.assertIn(
+            "x_field",
+            generate_schema["parameters"]["properties"]["view_model"]["description"],
+        )
 
     def test_extract_metadata_profiles_csv_columns(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -478,6 +484,85 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         self.assertEqual(queued[0]["datasets"], result["datasets"])
         self.assertEqual(queued[0]["sections"], result["sections"])
         render_queue.clear()
+
+    def test_generate_dashboard_accepts_uploaded_template_path(self):
+        template_path = (
+            Path(__file__).resolve().parent.parent
+            / "examples"
+            / "general-chat"
+            / "template-dashboard-sample"
+            / "template.html"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                template_path=str(template_path),
+                view_model={
+                    "title": "Uploaded Template Dashboard",
+                    "kpis": [{"label": "Revenue", "value": 300}],
+                    "sections": [],
+                },
+            )
+            html_text = Path(result["path"]).read_text(encoding="utf-8")
+
+        self.assertEqual(result["render_mode"], "a2ui")
+        self.assertEqual(result["customTemplate"]["format"], "html")
+        self.assertEqual(result["templateSource"], "user")
+        self.assertEqual(result["templateFormat"], "html")
+        self.assertIn('data-custom-template="executive-html"', html_text)
+        self.assertIn("Uploaded Template Dashboard", html_text)
+
+    def test_generate_dashboard_hydrates_cached_aggregate_datasets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "coffee.csv"
+            source.write_text(
+                "coffee_name,money\nLatte,10\nLatte,15\nEspresso,5\n",
+                encoding="utf-8",
+            )
+            aggregate = self.tools["aggregate_data"](
+                path=str(source),
+                query=[
+                    {
+                        "name": "revenue_by_coffee",
+                        "sql": (
+                            "SELECT coffee_name, SUM(money) AS revenue "
+                            "FROM data GROUP BY coffee_name ORDER BY revenue DESC"
+                        ),
+                    }
+                ],
+            )
+            self.assertEqual(aggregate["errors"], [])
+            self.assertEqual(aggregate["datasets"][0]["id"], "revenue_by_coffee")
+
+            result = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                view_model={
+                    "title": "Coffee Sales",
+                    "components": [
+                        {
+                            "type": "kpi",
+                            "content": {"title": "Total Revenue", "value": 30},
+                        },
+                        {
+                            "type": "chart",
+                            "content": {
+                                "title": "Revenue by Coffee",
+                                "type": "bar",
+                                "data": "revenue_by_coffee",
+                                "x": "coffee_name",
+                                "y": "revenue",
+                            },
+                        },
+                    ],
+                },
+            )
+            html_text = Path(result["path"]).read_text(encoding="utf-8")
+
+        self.assertEqual(result["datasets"]["revenue_by_coffee"][0]["coffee_name"], "Latte")
+        self.assertEqual(result["kpis"][0]["label"], "Total Revenue")
+        self.assertIn("Revenue by Coffee", html_text)
+        self.assertIn("Latte", html_text)
+        self.assertNotIn("No chart data available.", html_text)
 
     def test_generate_dashboard_uses_injected_adapter_factory(self):
         import sys
