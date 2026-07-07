@@ -146,7 +146,7 @@ Manual fallback:
 ```bash
 cd examples/general-chat
 pip install -e .
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 In a second terminal:

@@ -38,4 +38,4 @@ Write-Host "Config : $env:GENERAL_CHAT_MCP_CONFIG"
 Write-Host "Tools  : $env:GENERAL_CHAT_MCP_APPROVED_TOOLS"
 Write-Host "Registry: disabled for this dedicated MCP run"
 Write-Host "Uploads: $env:IMAGE_SEARCH_MCP_UPLOADS_PATH -> /general-chat/uploads"
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src

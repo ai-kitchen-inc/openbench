@@ -201,7 +201,7 @@ This installs `fastapi`, `uvicorn`, `docling`, `python-docx`, `pandas`,
 
 ```bash
 cd examples/general-chat
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 Verify it is running: open `http://localhost:8005/health`
@@ -481,7 +481,7 @@ opt-in MCP mode:
 $env:GENERAL_CHAT_MCP_ENABLED="1"
 $env:GENERAL_CHAT_MCP_MODE="local"
 $env:GENERAL_CHAT_MCP_CONFIG="mcp/openbench-mcp.yaml"
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 Then verify:
@@ -722,13 +722,13 @@ Set the key in `.env` or export it before running uvicorn.
 Linux/macOS:
 ```bash
 export GOOGLE_API_KEY=YOUR_KEY_HERE
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 Windows (PowerShell):
 ```powershell
 $env:GOOGLE_API_KEY="YOUR_KEY_HERE"
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 **Internet search returns a configuration warning**
@@ -737,13 +737,13 @@ Set `TAVILY_API_KEY` in `.env` to enable source discovery search.
 Linux/macOS:
 ```bash
 export TAVILY_API_KEY=YOUR_KEY_HERE
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 Windows (PowerShell):
 ```powershell
 $env:TAVILY_API_KEY="YOUR_KEY_HERE"
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 **`docling` install takes a long time**
