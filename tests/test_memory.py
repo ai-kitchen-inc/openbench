@@ -68,6 +68,47 @@ class TestAgentMemoryWindow(unittest.TestCase):
         # Generous budget -> same as full history.
         self.assertEqual(windowed, m.get_messages())
 
+    def test_window_reanchors_leading_function_call_on_user_turn(self):
+        # Regression: a tight budget can strand the window on an assistant
+        # function-call turn after its user message fell outside — Gemini
+        # rejects that with 400 INVALID_ARGUMENT ("function call turn must
+        # come immediately after a user turn or a function response turn").
+        m = AgentMemory()
+        m.add_system("sys")
+        m.add_user("build a dashboard")
+        # A large early tool exchange the budget will exclude.
+        m.add_assistant("", tool_calls=[{"id": "c0", "name": "extract", "arguments": {}}])
+        m.add_tool_result("c0", "extract", "x" * 8000)
+        # Recent tool-call turns that fit the budget.
+        m.add_assistant("", tool_calls=[{"id": "c1", "name": "generate", "arguments": {}}])
+        m.add_tool_result("c1", "generate", "result " + "y" * 400)
+        m.add_assistant("", tool_calls=[{"id": "c2", "name": "generate", "arguments": {}}])
+        m.add_tool_result("c2", "generate", "result " + "z" * 400)
+
+        windowed = m.get_messages(token_budget=400)
+        self.assertEqual(windowed[0]["role"], "system")
+        # The window must not open on an assistant function-call turn: the
+        # most recent user message is re-inserted as an anchor.
+        self.assertEqual(windowed[1]["role"], "user")
+        self.assertEqual(windowed[1]["content"], "build a dashboard")
+        # The recent tool exchange is intact and correctly ordered.
+        roles = [msg["role"] for msg in windowed[2:]]
+        self.assertEqual(roles[:2], ["assistant", "tool"])
+
+    def test_window_without_any_user_message_keeps_suffix(self):
+        # No user message exists at all (degenerate) — window falls back to
+        # the plain suffix instead of crashing.
+        m = AgentMemory()
+        m.add_system("sys")
+        m.add_assistant("", tool_calls=[{"id": "c0", "name": "calc", "arguments": {}}])
+        m.add_tool_result("c0", "calc", "x" * 4000)
+        m.add_assistant("", tool_calls=[{"id": "c1", "name": "calc", "arguments": {}}])
+        m.add_tool_result("c1", "calc", "small")
+
+        windowed = m.get_messages(token_budget=50)
+        self.assertEqual(windowed[0]["role"], "system")
+        self.assertEqual(windowed[1]["role"], "assistant")
+
 
 class TestSQLiteMemoryStore(unittest.TestCase):
     """Test SQLiteMemoryStore."""
