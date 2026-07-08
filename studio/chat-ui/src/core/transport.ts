@@ -12,6 +12,8 @@
 import { HttpAgent } from "@ag-ui/client";
 import type { BaseEvent } from "@ag-ui/core";
 import type {
+  A2UIComponent,
+  A2UISurface,
   Attachment,
   ChatConfig,
   ChatMessage,
@@ -21,13 +23,25 @@ import type {
 } from "../types";
 import { generateId } from "./utils";
 
+/**
+ * Persisted surface shape from the Python backend. Unlike the runtime
+ * `A2UISurface`, `components` is a plain JSON array (JSON has no Map),
+ * and legacy sessions may carry id-only stubs with no components at all.
+ */
+interface WireSurface {
+  surfaceId: string;
+  catalogId?: string;
+  components?: unknown[];
+  dataModel?: Record<string, unknown>;
+}
+
 /** Raw shape returned by the Python ChatSession.to_dict(). */
 interface WireChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
   content: string;
   timestamp: string;
-  surfaces?: ChatMessage["surfaces"];
+  surfaces?: WireSurface[];
   attachments?: ChatMessage["attachments"];
   metadata?: ChatMessage["metadata"];
 }
@@ -38,6 +52,40 @@ interface WireChatSession {
   messages: WireChatMessage[];
   createdAt: string;
   updatedAt: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Convert persisted surfaces into the runtime `A2UISurface` shape the
+ * rest of the app assumes (`components` as a Map keyed by component id,
+ * mirroring the streaming processor). Legacy `{surfaceId}` stubs and
+ * malformed entries are dropped — reloaded sessions degrade to text
+ * instead of crashing consumers that dereference `surface.components`.
+ */
+function wireSurfacesToRuntime(raw: WireSurface[] | undefined): A2UISurface[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const result: A2UISurface[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry) || typeof entry.surfaceId !== "string") continue;
+    if (!Array.isArray(entry.components)) continue; // legacy id-only stub
+    const components = new Map<string, A2UIComponent>();
+    for (const comp of entry.components) {
+      if (isRecord(comp) && typeof comp.id === "string" && typeof comp.component === "string") {
+        components.set(comp.id, comp as A2UIComponent);
+      }
+    }
+    if (components.size === 0) continue;
+    result.push({
+      surfaceId: entry.surfaceId,
+      catalogId: typeof entry.catalogId === "string" ? entry.catalogId : "",
+      components,
+      dataModel: isRecord(entry.dataModel) ? entry.dataModel : {},
+    });
+  }
+  return result.length > 0 ? result : undefined;
 }
 
 function wireToChatSession(raw: WireChatSession): ChatSession {
@@ -51,7 +99,7 @@ function wireToChatSession(raw: WireChatSession): ChatSession {
       role: m.role,
       content: m.content,
       timestamp: m.timestamp,
-      surfaces: m.surfaces,
+      surfaces: wireSurfacesToRuntime(m.surfaces),
       attachments: m.attachments,
       metadata: m.metadata,
       status: "complete" as const,
