@@ -1345,8 +1345,11 @@ function ChatShell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ viewModel }),
           });
-          if (!response.ok) throw new Error(`Export failed: ${response.status}`);
-          return await response.json();
+          try {
+            return await parseJsonResponse<Record<string, unknown>>(response);
+          } catch (error) {
+            throw new Error(`Export failed: ${readErrorMessage(error)}`);
+          }
         },
         deployGrafana: async (viewModel: unknown) => {
           const response = await apiFetch(apiPath("/dashboard/deploy/grafana"), {
@@ -1354,8 +1357,11 @@ function ChatShell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ viewModel }),
           });
-          if (!response.ok) throw new Error(`Deploy failed: ${response.status}`);
-          return (await response.json()) as { url: string };
+          try {
+            return await parseJsonResponse<{ url: string }>(response);
+          } catch (error) {
+            throw new Error(`Deploy failed: ${readErrorMessage(error)}`);
+          }
         },
         exportPdf: async (viewModel: unknown) => {
           const response = await apiFetch(apiPath("/dashboard/export/pdf"), {
