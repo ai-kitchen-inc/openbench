@@ -180,7 +180,7 @@ class _EventStreamMixin:
             # ── Step 3: Rendering response (rich content only) ──
             # Text was already streamed via TEXT_MESSAGE events.
             # A2UI surfaces are only for rich content (charts, forms, files).
-            surface_id = None
+            surface_record = None
 
             if extra_items:
                 yield encoder.encode(StepStartedEvent(step_name="Rendering response"))
@@ -192,6 +192,11 @@ class _EventStreamMixin:
                 messages = self.engine.builder.build_surface(
                     surface_id, components, data_model=data_model
                 )
+                # Persist the full snapshot (not just the id) so reloading
+                # the session can replay this surface.
+                surface_record = self.engine._build_surface_record(
+                    surface_id, components, data_model
+                )
 
                 for msg in messages:
                     yield encoder.encode(CustomEvent(name="a2ui", value=msg))
@@ -202,7 +207,7 @@ class _EventStreamMixin:
             text_content = self.engine._extract_text_content(agent_output)
             session.add_assistant_message(
                 content=text_content,
-                surfaces=[{"surfaceId": surface_id}] if surface_id else None,
+                surfaces=[surface_record] if surface_record else None,
                 metadata=metadata,
             )
             self._persist_session(session)

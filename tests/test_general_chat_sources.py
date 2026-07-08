@@ -39,6 +39,7 @@ if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
 from general_chat.agent import (  # noqa: E402
+    _DashboardGeneratorRenderTool,
     _DiagnosticMCPToolDescription,
     _ImageSearchRenderTool,
     _latest_dashboard_revision_note,
@@ -1208,6 +1209,58 @@ class TestGeneralChatSources(unittest.TestCase):
             if tmpdir.exists():
                 tmpdir.rmdir()
 
+    def test_source_store_for_owner_isolates_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = SourceStore(tmp)
+            alice = base.for_owner("alice@example.com")
+            bob = base.for_owner("bob@example.com")
+
+            record = SourceRecord.create(
+                session_id="thread-x",
+                name="alpha.txt",
+                kind="text",
+                mime_type="text/plain",
+                size_bytes=10,
+                text="Alpha secret",
+                metadata={"fileId": "file-alpha"},
+            )
+            alice.add(record)
+
+            # Records land in a per-owner subdirectory and get stamped.
+            owner_file = Path(tmp) / "sources" / "alice_example_com" / "thread-x.json"
+            self.assertTrue(owner_file.exists())
+            self.assertEqual(alice.list("thread-x")[0].owner, "alice@example.com")
+
+            # The other owner sees nothing — list, search, and file-id lookup.
+            self.assertEqual(bob.list("thread-x"), [])
+            self.assertEqual(bob.search("thread-x", "Alpha"), [])
+            self.assertIsNone(bob.find_by_upload_file_id("file-alpha"))
+            self.assertIsNotNone(alice.find_by_upload_file_id("file-alpha"))
+
+            # The unscoped store (worker path) still sees everything and
+            # writes updates back to the record's owner file.
+            found = base.find_by_upload_file_id("file-alpha")
+            self.assertIsNotNone(found)
+            found.status = "failed"
+            base.upsert(found)
+            self.assertEqual(alice.list("thread-x")[0].status, "failed")
+            self.assertEqual(alice.list("thread-x")[0].owner, "alice@example.com")
+
+    def test_source_record_owner_round_trips(self):
+        record = SourceRecord.create(
+            session_id="s1",
+            name="a.txt",
+            kind="text",
+            mime_type="text/plain",
+            size_bytes=1,
+            text="x",
+            owner="alice@example.com",
+        )
+        payload = record.to_dict(include_text=True)
+        self.assertEqual(payload["owner"], "alice@example.com")
+        restored = SourceRecord.from_dict(record.to_dict(include_text=True))
+        self.assertEqual(restored.owner, "alice@example.com")
+
     def test_discovery_endpoint_ignores_empty_query(self):
         client = self._build_test_client()
         response = client.get("/chat/sources/discover?q=   ")
@@ -2007,6 +2060,111 @@ class TestGeneralChatSources(unittest.TestCase):
             "/image-search/previews/train/cifar10-train-00001.png",
         )
         self.assertNotIn("preview_path", items[1])
+
+    def test_dashboard_render_tool_returns_stub_and_queues_full_payload(self):
+        class FakeDashboardTool(Tool):
+            namespaced_name = "openbench.generate_dashboard"
+            tool_schema = {"description": "Generate dashboard"}
+            approved = True
+            timeout_seconds = 600
+
+            def __init__(self, warnings):
+                self._warnings = warnings
+
+            @property
+            def name(self):
+                return "openbench_generate_dashboard"
+
+            @property
+            def description(self):
+                return "Generate dashboard"
+
+            def execute(self, **params):
+                return {
+                    "type": "dashboard",
+                    "title": "Coffee Sales Dashboard",
+                    "description": "Sales overview",
+                    "viewModel": {"title": "Coffee Sales Dashboard", "sections": []},
+                    "datasets": {"sales": [{"region": "EU", "revenue": 1}]},
+                    "kpis": [{"label": "Revenue", "value": 1}],
+                    "sections": [{"title": "Revenue", "items": []}],
+                    "name": "coffee.html",
+                    "url": "/downloads/coffee.html",
+                    "dashboardUrl": "/downloads/coffee.html",
+                    "path": "C:/tmp/coffee.html",
+                    "mimeType": "text/html",
+                    "size": 9076,
+                    "sectionCount": 1,
+                    "kpiCount": 1,
+                    "chartCount": 0,
+                    "tableCount": 0,
+                    "warnings": self._warnings,
+                }
+
+            def get_schema(self):
+                return {"type": "function", "function": {"name": self.name}}
+
+        render_queue.clear()
+        self.addCleanup(render_queue.clear)
+
+        wrapped = _DashboardGeneratorRenderTool(FakeDashboardTool(warnings=[]))
+        result = wrapped.execute(view_model={"title": "Coffee Sales Dashboard"})
+
+        # Full payload (viewModel + datasets) goes to the UI render queue.
+        items = render_queue.get_items()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["viewModel"]["title"], "Coffee Sales Dashboard")
+        self.assertIn("datasets", items[0])
+        # The agent only sees a compact stub — echoing the full ViewModel
+        # bloated the history window and drove regenerate loops.
+        self.assertNotIn("viewModel", result)
+        self.assertNotIn("datasets", result)
+        self.assertNotIn("kpis", result)
+        self.assertNotIn("sections", result)
+        self.assertEqual(result["status"], "created")
+        self.assertEqual(result["url"], "/downloads/coffee.html")
+        self.assertEqual(result["chartCount"], 0)
+        self.assertIn("Do NOT call generate_dashboard again", result["final_answer_hint"])
+
+    def test_dashboard_render_tool_surfaces_warnings_with_corrective_hint(self):
+        render_queue.clear()
+        self.addCleanup(render_queue.clear)
+
+        warnings = ["section item must be a chart/table/kpi object, got int: 6"]
+
+        class FakeDashboardTool(Tool):
+            namespaced_name = "openbench.generate_dashboard"
+            tool_schema = {"description": "Generate dashboard"}
+            approved = True
+            timeout_seconds = 600
+
+            @property
+            def name(self):
+                return "openbench_generate_dashboard"
+
+            @property
+            def description(self):
+                return "Generate dashboard"
+
+            def execute(self, **params):
+                return {
+                    "type": "dashboard",
+                    "title": "Coffee Sales Dashboard",
+                    "viewModel": {"title": "Coffee Sales Dashboard"},
+                    "url": "/downloads/coffee.html",
+                    "chartCount": 0,
+                    "warnings": warnings,
+                }
+
+            def get_schema(self):
+                return {"type": "function", "function": {"name": self.name}}
+
+        wrapped = _DashboardGeneratorRenderTool(FakeDashboardTool())
+        result = wrapped.execute(view_model={"title": "Coffee Sales Dashboard"})
+
+        self.assertEqual(result["warnings"], warnings)
+        self.assertIn("invalid", result["final_answer_hint"])
+        self.assertIn("ONCE", result["final_answer_hint"])
 
     def test_sam_segmentation_count_tool_defaults_and_caches_success(self):
         class FakeSamCountTool(Tool):

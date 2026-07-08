@@ -1,10 +1,12 @@
 """Tests for SQLiteSessionStore."""
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from openbench.chat.session import ChatSession
+from openbench.chat.session_store import SessionOwnershipError
 from openbench.chat.stores.sqlite import SQLiteSessionStore
 
 
@@ -87,6 +89,87 @@ class TestSQLiteSessionStore(unittest.TestCase):
         self.store.save(self._session("s1", title="Persisted"))
         reopened = SQLiteSessionStore(self.db_path)
         self.assertEqual(reopened.load("s1").title, "Persisted")
+
+
+class TestSQLiteSessionStoreOwnerScoping(unittest.TestCase):
+    """Owner-scoped stores: visibility, hijack protection, migration."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self._tmp.name) / "sessions.db"
+        self.alice = SQLiteSessionStore(self.db_path, owner="alice@example.com")
+        self.bob = SQLiteSessionStore(self.db_path, owner="bob@example.com")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    @staticmethod
+    def _session(sid: str, title: str = "T") -> ChatSession:
+        session = ChatSession(session_id=sid, title=title)
+        session.add_user_message("hello")
+        return session
+
+    def test_scoped_visibility(self):
+        self.alice.save(self._session("s-a", title="Alice's"))
+
+        self.assertIsNotNone(self.alice.load("s-a"))
+        self.assertIsNone(self.bob.load("s-a"))
+        self.assertEqual([s.session_id for s in self.alice.list()], ["s-a"])
+        self.assertEqual(self.bob.list(), [])
+        self.assertEqual(self.bob.search("Alice"), [])
+
+    def test_save_hijack_raises_and_preserves_original(self):
+        self.alice.save(self._session("s-a", title="Original"))
+
+        with self.assertRaises(SessionOwnershipError):
+            self.bob.save(self._session("s-a", title="Hijacked"))
+
+        self.assertEqual(self.alice.load("s-a").title, "Original")
+        self.assertIsNone(self.bob.load("s-a"))
+
+    def test_scoped_delete_ignores_foreign_session(self):
+        self.alice.save(self._session("s-a"))
+        self.bob.delete("s-a")
+        self.assertIsNotNone(self.alice.load("s-a"))
+
+    def test_owner_resave_updates_own_session(self):
+        self.alice.save(self._session("s-a", title="First"))
+        self.alice.save(self._session("s-a", title="Second"))
+        self.assertEqual(self.alice.load("s-a").title, "Second")
+
+    def test_unscoped_store_sees_everything_but_keeps_owner(self):
+        self.alice.save(self._session("s-a", title="Alice's"))
+        unscoped = SQLiteSessionStore(self.db_path)
+
+        self.assertIsNotNone(unscoped.load("s-a"))
+        unscoped.save(self._session("s-a", title="Updated by system"))
+
+        # Unscoped save updates content but never strips ownership.
+        self.assertEqual(self.alice.load("s-a").title, "Updated by system")
+        self.assertIsNone(self.bob.load("s-a"))
+
+    def test_old_schema_db_is_migrated_on_open(self):
+        old_path = Path(self._tmp.name) / "old.db"
+        conn = sqlite3.connect(old_path)
+        conn.execute(
+            """
+            CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                preview TEXT NOT NULL DEFAULT '',
+                data TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        store = SQLiteSessionStore(old_path, owner="alice@example.com")
+        store.save(self._session("s-new"))
+        self.assertIsNotNone(store.load("s-new"))
 
 
 if __name__ == "__main__":

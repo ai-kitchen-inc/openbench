@@ -14,11 +14,14 @@
 #   backend        Build the API image (Cloud Build) and roll it out on the VM
 #   frontend       Build the SPA and deploy it to Firebase Hosting
 #   mcp-image      Build the forked db_server MCP image (Cloud Build) + pull on VM
+#   fn-image       Build the custom_function MCP image (Cloud Build) + pull on VM
+#   grafana        Provision + start the self-hosted Grafana on the VM (subpath /grafana/)
 #   nginx          Sync compose + nginx reverse-proxy config to the VM, reload nginx
 #   add-user EMAIL    Add an email to the backend allowlist and restart the API
 #   remove-user EMAIL Remove an email from the backend allowlist and restart the API
 #   init-appdb     Create the appdata DB + mart schema + mcp_app role on Cloud SQL
 #   seed-mcp-db FILE  Load a .sql file into the appdata Postgres DB (db_server data)
+#   wipe-chat-data DESTRUCTIVE: drop all chat sessions/memory/sources/uploads
 #   verify         Probe the live deployment (health/auth/hardening/network)
 #   all            backend → frontend → verify
 #   help           Print this help + the resource inventory
@@ -57,6 +60,11 @@ PSQL_IMAGE="${PSQL_IMAGE:-postgres:16}"
 MCP_IMAGE="${MCP_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/mcp-db-server:1.3.1-ob1}"
 MCP_CLOUDBUILD_CONFIG="${MCP_CLOUDBUILD_CONFIG:-cloudbuild.mcp-db-server.yaml}"
 MCP_IMAGE_DIR="${MCP_IMAGE_DIR:-examples/general-chat/mcp/db-server}"
+
+# custom_function MCP (sandboxed user Python): source dir + Cloud Build.
+FN_IMAGE="${FN_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/custom-function-mcp:0.1.0}"
+FN_CLOUDBUILD_CONFIG="${FN_CLOUDBUILD_CONFIG:-cloudbuild.custom-function-mcp.yaml}"
+FN_IMAGE_DIR="${FN_IMAGE_DIR:-mcp/custom-function-mcp}"
 
 VM_NAME="${VM_NAME:-openbench-general-chat}"
 VM_ZONE="${VM_ZONE:-us-central1-a}"
@@ -169,6 +177,65 @@ cmd_mcp_image() {
   ok "db_server MCP image ready on the VM"
 }
 
+# --- fn-image ------------------------------------------------------------------
+# Build the custom_function MCP image (sandboxed user Python) via Cloud Build,
+# pull it on the VM, and ensure the functions volume dir exists.
+cmd_fn_image() {
+  log "Building custom_function MCP image via Cloud Build ($FN_IMAGE)"
+  local build_id
+  build_id="$("$GCLOUD" builds submit --async --config "$FN_CLOUDBUILD_CONFIG" "$FN_IMAGE_DIR" \
+    --format='value(id)')" || die "Cloud Build submit failed"
+  [ -n "$build_id" ] || die "Could not capture Cloud Build id"
+  ok "submitted build $build_id — polling"
+
+  local status=""
+  while :; do
+    status="$("$GCLOUD" builds describe "$build_id" --format='value(status)' 2>/dev/null || echo '')"
+    case "$status" in
+      SUCCESS) ok "build $build_id SUCCESS"; break ;;
+      FAILURE|TIMEOUT|CANCELLED|EXPIRED) die "build $build_id ended: $status" ;;
+      *) printf '  ... %s\n' "${status:-pending}"; sleep 15 ;;
+    esac
+  done
+
+  log "Pulling custom_function image on the VM ($VM_NAME)"
+  vm_ssh "sudo docker pull $FN_IMAGE && sudo mkdir -p /app-data/custom-functions" \
+    || die "VM pull of $FN_IMAGE failed"
+  ok "custom_function MCP image + functions dir ready on the VM"
+}
+
+# --- grafana -------------------------------------------------------------------
+# Provision + start the self-hosted Grafana (nginx serves it at /grafana/).
+# Idempotent: generates missing env keys on the VM, syncs datasource
+# provisioning + compose, (re)starts the container, waits for /api/health.
+cmd_grafana() {
+  log "Syncing Grafana provisioning + compose to the VM"
+  "$GCLOUD" compute scp deploy/grafana/datasources.yaml "$VM_NAME:/tmp/grafana-datasources.yaml" --zone "$VM_ZONE" \
+    || die "scp of datasources.yaml failed"
+  "$GCLOUD" compute scp "$COMPOSE_FILE" "$VM_NAME:$VM_DEPLOY_DIR/$COMPOSE_FILE" --zone "$VM_ZONE" \
+    || die "scp of compose file failed"
+
+  log "Preparing env + volumes and starting Grafana"
+  vm_ssh "set -e; cd $VM_DEPLOY_DIR && \
+    sudo mkdir -p /app-data/grafana && sudo chown -R 472:472 /app-data/grafana && \
+    mkdir -p grafana-provisioning && mv /tmp/grafana-datasources.yaml grafana-provisioning/datasources.yaml && \
+    cp .env.gcp .env.gcp.bak-grafana-\$(date +%Y%m%d-%H%M%S) && \
+    grep -q '^GRAFANA_ADMIN_PASSWORD=' .env.gcp || echo \"GRAFANA_ADMIN_PASSWORD=\$(openssl rand -hex 16)\" >> .env.gcp; \
+    grep -q '^GRAFANA_PG_PASSWORD=' .env.gcp || { \
+      pgpw=\$(grep '^MCP_DB_DATABASE_URL=' .env.gcp | sed -E 's#.*://[^:]+:([^@]+)@.*#\1#' | tr -d '\r'); \
+      [ -n \"\$pgpw\" ] || { echo 'cannot derive GRAFANA_PG_PASSWORD (MCP_DB_DATABASE_URL missing)'; exit 1; }; \
+      echo \"GRAFANA_PG_PASSWORD=\$pgpw\" >> .env.gcp; }; \
+    grep -q '^GRAFANA_PUBLIC_URL=' .env.gcp || echo 'GRAFANA_PUBLIC_URL=$API_URL/grafana' >> .env.gcp; \
+    sudo docker-compose --env-file .env.gcp -f $COMPOSE_FILE up -d grafana && \
+    for i in \$(seq 1 30); do \
+      code=\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/grafana/api/health || true); \
+      code2=\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/health || true); \
+      { [ \"\$code\" = '200' ] || [ \"\$code2\" = '200' ]; } && { echo GRAFANA_HEALTHY; exit 0; }; sleep 3; \
+    done; echo 'grafana did not become healthy'; sudo docker logs --tail 30 \$(sudo docker ps -q -f name=grafana); exit 1" \
+    || die "grafana rollout failed"
+  ok "Grafana healthy on the VM (127.0.0.1:3000, public at $API_URL/grafana/ after 'nginx')"
+}
+
 # --- frontend ----------------------------------------------------------------
 cmd_frontend() {
   log "Building workspace SDK ($CHATUI_DIR) so the SPA bundles the latest chat-ui"
@@ -278,6 +345,40 @@ cmd_seed_mcp_db() {
   ok "appdata seeded — db_server reads it live"
 }
 
+# --- wipe-chat-data ------------------------------------------------------------
+# One-time destructive reset of all per-user chat data (sessions, agent memory,
+# sources, uploads, downloads). Used for the user-isolation rollout: the old
+# rows have no owner column values and would be invisible/unmigrated, so they
+# are dropped instead (decision: wipe, no migration). Leaves published
+# dashboards, MCP registry, custom functions, Grafana and image-search data
+# untouched. The API containers are stopped during the wipe and restarted.
+cmd_wipe_chat_data() {
+  log "Wiping chat data (sessions, memory, sources, uploads, downloads) on the VM"
+  # The chat database referenced by GENERAL_CHAT_DATABASE_URL may not exist yet
+  # (observed in prod: URL points at db 'openbench' that was never created), so
+  # create it when missing and only then drop the chat tables.
+  vm_ssh "cd $VM_DEPLOY_DIR && \
+    sudo docker-compose --env-file .env.gcp -f $COMPOSE_FILE stop openbench-api openbench-worker && \
+    dburl=\$(grep '^GENERAL_CHAT_DATABASE_URL=' .env.gcp | cut -d= -f2-); \
+    [ -n \"\$dburl\" ] || { echo 'GENERAL_CHAT_DATABASE_URL missing in .env.gcp'; exit 1; }; \
+    dbname=\${dburl##*/}; dbname=\${dbname%%\?*}; maint=\"\${dburl%/*}/postgres\"; \
+    exists=\$(sudo docker run --rm -i $PSQL_IMAGE psql \"\$maint\" -tAc \
+      \"SELECT 1 FROM pg_database WHERE datname='\$dbname'\") || exit 1; \
+    if [ \"\$exists\" != \"1\" ]; then \
+      echo \"creating missing database \$dbname\"; \
+      sudo docker run --rm -i $PSQL_IMAGE psql \"\$maint\" -v ON_ERROR_STOP=1 \
+        -c \"CREATE DATABASE \\\"\$dbname\\\";\" || exit 1; \
+    fi; \
+    sudo docker run --rm -i $PSQL_IMAGE psql \"\$dburl\" -v ON_ERROR_STOP=1 \
+      -c 'DROP TABLE IF EXISTS openbench_sessions, openbench_sources, openbench_messages;' && \
+    sudo rm -rf /app-data/openbench/sources /app-data/openbench/sessions.db /app-data/openbench/memory.db && \
+    sudo find /app-data/uploads -mindepth 1 -maxdepth 1 -exec rm -rf {} + && \
+    sudo find /app-data/downloads -mindepth 1 -maxdepth 1 -exec rm -rf {} + && \
+    sudo docker-compose --env-file .env.gcp -f $COMPOSE_FILE up -d && echo WIPED" \
+    || die "wipe-chat-data failed"
+  ok "chat data wiped — tables recreate with the owner column on next boot"
+}
+
 # --- verify ------------------------------------------------------------------
 cmd_verify() {
   log "Verifying live deployment"
@@ -290,9 +391,13 @@ cmd_verify() {
   check "API /persona (no token)"     "$API_URL/persona"      "401"
   check "API /openapi.json (hardened)" "$API_URL/openapi.json" "404"
   check "Hosting SPA"                  "$HOSTING_URL"          "200"
+  check "Grafana /grafana/api/health"  "$API_URL/grafana/api/health" "200"
   # 8080 must NOT be publicly reachable (expect connection failure → 000).
   local raw; raw="$(http_code "http://$VM_PUBLIC_IP:8080/health" 8)"
   if [ "$raw" = "000" ] || [ "$raw" = "0" ]; then ok "raw :8080 unreachable (private)"; else warn "raw :8080 reachable ($raw) — should be private"; fail=1; fi
+  # Grafana's raw port must be private too.
+  local rawg; rawg="$(http_code "http://$VM_PUBLIC_IP:3000/api/health" 8)"
+  if [ "$rawg" = "000" ] || [ "$rawg" = "0" ]; then ok "raw :3000 unreachable (private)"; else warn "raw :3000 reachable ($rawg) — should be private"; fail=1; fi
   [ "$fail" -eq 0 ] && ok "all checks passed" || die "one or more checks failed"
 }
 
@@ -319,13 +424,16 @@ case "${1:-help}" in
   backend)  cmd_backend ;;
   frontend) cmd_frontend ;;
   mcp-image) cmd_mcp_image ;;
+  fn-image) cmd_fn_image ;;
+  grafana)  cmd_grafana ;;
   nginx)    cmd_nginx ;;
   add-user) shift; cmd_add_user "${1:-}" ;;
   remove-user) shift; cmd_remove_user "${1:-}" ;;
   init-appdb) cmd_init_appdb ;;
   seed-mcp-db) shift; cmd_seed_mcp_db "${1:-}" ;;
+  wipe-chat-data) cmd_wipe_chat_data ;;
   verify)   cmd_verify ;;
   all)      cmd_backend; cmd_frontend; cmd_verify ;;
   help|-h|--help) cmd_help ;;
-  *) die "unknown command '$1' (try: backend|frontend|mcp-image|nginx|add-user|remove-user|init-appdb|seed-mcp-db|verify|all|help)" ;;
+  *) die "unknown command '$1' (try: backend|frontend|mcp-image|fn-image|grafana|nginx|add-user|remove-user|init-appdb|seed-mcp-db|wipe-chat-data|verify|all|help)" ;;
 esac

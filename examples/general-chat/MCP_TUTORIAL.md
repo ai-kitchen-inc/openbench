@@ -74,7 +74,7 @@ Then start the backend:
 
 ```powershell
 cd examples/general-chat
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 Check health:

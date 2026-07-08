@@ -57,12 +57,12 @@ class GoogleCloudStorageBackend:
             local_root = Path(tempfile.gettempdir()) / "openbench-gcp-local"
         self._local = LocalStorageBackend(local_root)
 
-    def session_store(self) -> SessionStore:
+    def session_store(self, *, owner: str | None = None) -> SessionStore:
         if self.database_url:
             from openbench.integrations.gcp.session_store import PostgresSessionStore
 
-            return PostgresSessionStore(self.database_url)
-        return self._local.session_store()
+            return PostgresSessionStore(self.database_url, owner=owner)
+        return self._local.session_store(owner=owner)
 
     def memory_store(self) -> MemoryStore:
         if self.database_url:

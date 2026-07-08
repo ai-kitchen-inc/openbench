@@ -529,6 +529,37 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         self.assertEqual(queued[0]["viewModel"]["title"], "Sales Dashboard")
         self.assertEqual(queued[0]["datasets"], result["datasets"])
         self.assertEqual(queued[0]["sections"], result["sections"])
+        self.assertEqual(result["chartCount"], 1)
+        self.assertEqual(result["tableCount"], 0)
+        self.assertEqual(result["warnings"], [])
+        render_queue.clear()
+
+    def test_generate_dashboard_surfaces_invalid_item_warnings(self):
+        from openbench.chat import render_queue
+
+        render_queue.clear()
+        with tempfile.TemporaryDirectory() as tmp:
+            # Bare integers as section items (invented dataset references) —
+            # the tool must report them so the calling agent can self-correct
+            # instead of retrying blind.
+            result = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                view_model={
+                    "title": "Coffee Sales Dashboard",
+                    "kpis": [{"label": "Total Revenue", "value": 115431.58}],
+                    "sections": [
+                        {"title": "Sales Trends", "items": [6]},
+                        {"title": "Product Analysis", "items": [8]},
+                    ],
+                },
+            )
+
+        self.assertEqual(result["type"], "dashboard")
+        self.assertEqual(result["chartCount"], 0)
+        self.assertTrue(result["warnings"], "expected warnings for invalid section items")
+        self.assertIn("int", result["warnings"][0])
+        # Warnings are lifted out of the viewModel so the UI payload stays clean.
+        self.assertNotIn("normalization_warnings", result["viewModel"])
         render_queue.clear()
 
     def test_dashboard_memory_loads_previous_dashboard_for_same_schema(self):

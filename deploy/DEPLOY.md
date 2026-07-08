@@ -38,6 +38,26 @@ Auth boundary: Firebase admits any Google account; **authorization** is decided
 server-side. `GENERAL_CHAT_ALLOWED_EMAILS` / `GENERAL_CHAT_ALLOWED_DOMAINS` gate
 access (403 for non-listed). The SPA shows an "Access not authorized" screen on 403.
 
+Per-user isolation: chat sessions, agent memory, and sources/uploads are scoped
+to the authenticated user's **lowercased email** (the `owner` column in
+`openbench_sessions` / `openbench_sources`; JSON sources use a per-owner
+subdirectory). Cross-user access behaves as "not found" (404 / empty list) —
+existence is never leaked. The first save of a client-generated session id
+claims it for that user; a save under a different user is rejected
+(`SessionOwnershipError` → 404). Local dev with `OPENBENCH_AUTH_DISABLED=1`
+stores everything under the sentinel owner `local`. Rollout was a clean wipe
+(`deploy.sh wipe-chat-data`) — pre-isolation rows had no owner and were dropped
+rather than migrated.
+
+Accepted residual risks (documented decisions, not bugs):
+- `/uploads`, `/downloads`, `/image-search/previews` static mounts are
+  allowlist-gated but not per-user: paths contain unguessable uuid file ids.
+- `GET /d/{id}` share links stay public by design (below).
+- Publish store, custom functions, MCP catalogs, persona, and skills are shared
+  app-level configuration visible to every allowlisted user.
+- The Pub/Sub worker updates source records without a request identity; it
+  preserves the existing row's owner and never creates user-visible rows.
+
 Public dashboard share links: `POST /dashboard/publish` (auth) persists a dashboard
 under `$GENERAL_CHAT_STORAGE_ROOT/published/` (on the persistent `/app-data/openbench`
 volume) and returns a `GET /d/{id}` URL. **`/d/{id}` is intentionally unauthenticated**
@@ -91,11 +111,14 @@ Or individually:
 | `deploy/deploy.sh backend` | Cloud Build the image (async + poll), `docker pull` + `docker-compose up -d` on the VM, wait for `/health`. |
 | `deploy/deploy.sh frontend` | `pnpm build` the SPA with the right `VITE_*`, `firebase deploy --only hosting`. |
 | `deploy/deploy.sh mcp-image` | Cloud Build the forked `db_server` MCP image (`mcp-db-server:1.3.1-ob1`) and `docker pull` it on the VM. |
+| `deploy/deploy.sh fn-image` | Cloud Build the `custom_function` MCP image + `docker pull` on the VM (+ functions dir). |
+| `deploy/deploy.sh grafana` | Provision + start the self-hosted Grafana on the VM (env gen, datasources, health). |
 | `deploy/deploy.sh nginx` | scp `docker-compose.gce.yml` + nginx conf to the VM, `nginx -t` + reload. Run only when those files change. |
 | `deploy/deploy.sh add-user EMAIL` | Append `EMAIL` to the allowlist on the VM and restart the API (idempotent). |
 | `deploy/deploy.sh remove-user EMAIL` | Remove `EMAIL` from the allowlist on the VM and restart the API (idempotent). |
 | `deploy/deploy.sh init-appdb` | Create the `appdata` DB + `mart` schema + `mcp_app` role on Cloud SQL (idempotent). |
 | `deploy/deploy.sh seed-mcp-db FILE.sql` | Load a `.sql` file into the `appdata` Postgres DB (the `db_server` data). |
+| `deploy/deploy.sh wipe-chat-data` | **DESTRUCTIVE**: drop all chat sessions/memory/sources and clear uploads/downloads on the VM (leaves published dashboards, MCP registry, functions, Grafana intact). Used once for the user-isolation rollout. |
 | `deploy/deploy.sh verify` | Probe health/auth/hardening/network on the live deployment. |
 
 All identifiers are defaults in `deploy.sh`; override any via env or a gitignored
@@ -116,6 +139,10 @@ web config (`VITE_FIREBASE_*`) is baked into `deploy.sh` (it ships in the JS bun
 | `MCP_DB_DATABASE_URL` | `db_server` MCP → `appdata` over the Cloud SQL public IP (`mcp_app` role) |
 | `APPDATA_ADMIN_URL` | admin URL used by `init-appdb` / `seed-mcp-db` (DDL + seeding) |
 | `MCP_ALLOW_WRITES` / `MCP_MAX_ROWS` | enable agent write/materialize; read-query row cap |
+| `GRAFANA_ADMIN_PASSWORD` | Grafana admin login + the API's dashboard pushes |
+| `GRAFANA_PG_PASSWORD` | provisioned Postgres datasource (same value as `mcp_app`) |
+| `GRAFANA_PUBLIC_URL` | browser-facing Grafana base (`https://<host>/grafana`) |
+| `CUSTOM_FN_DATA_PATH` | VM dir holding user-defined functions (custom_function MCP) |
 | `GENERAL_CHAT_FIREBASE_PROJECT_ID` | enables auth; must be `sss-poc1-corporate` |
 | `GENERAL_CHAT_ALLOWED_EMAILS` | comma-separated allowlist (use `add-user`) |
 | `GENERAL_CHAT_ALLOWED_DOMAINS` | optional domain allowlist |
@@ -204,6 +231,75 @@ cloud-sql-proxy PROJECT:REGION:INSTANCE --port 5432
 # DBeaver → new Postgres connection → host 127.0.0.1, port 5432, database appdata
 ```
 Edits made in DBeaver are visible to the agent immediately (it queries live).
+
+## Grafana (deploy-to-Grafana dashboards)
+
+A self-hosted Grafana (`grafana/grafana:11.1.0`, bound to `127.0.0.1:3000`)
+runs next to the API and is served by nginx at
+**`https://35-188-138-52.sslip.io/grafana/`** (`GF_SERVER_ROOT_URL` +
+`serve_from_sub_path`). Access model:
+
+- **View** — anonymous access is enabled with the **Viewer** role: anyone with
+  a dashboard link can view it, no login (same trust model as the `/d/{id}`
+  public shares).
+- **Edit** — requires the admin login (`admin` / `GRAFANA_ADMIN_PASSWORD` in
+  the VM `.env.gcp`). Sign-up is disabled.
+
+**Deploy flow:** the dashboard frame's **Deploy** button posts the ViewModel to
+`POST /dashboard/deploy/grafana` (Firebase-auth). The API converts it with
+`view_model_to_grafana(..., live=...)` and pushes it to Grafana over the compose
+network (`http://grafana:3000`, `POST /api/dashboards/db`, `overwrite=true` with
+a title-derived uid, so re-deploys update in place). Datasets backed by a real
+`appdata` table (`public.*`/`mart.*` — discovered via `MCP_DB_DATABASE_URL`)
+become **live Postgres panels** through the provisioned `appdata-postgres`
+datasource (read-only `mcp_app` role); everything else is embedded as inline
+CSV via the `testdata` datasource. The response `{url, live, inline}` reports
+the split; the UI opens the URL in a new tab.
+
+**Provisioning:** `deploy/grafana/datasources.yaml` (scp'd to the VM, mounted
+read-only). The two datasource UIDs (`appdata-postgres`, `testdata`) are the
+contract with `grafana_client.py` — don't rename one without the other.
+
+### First-time setup
+
+```bash
+bash deploy/deploy.sh grafana   # env gen + provisioning + container + health
+bash deploy/deploy.sh nginx     # publish the /grafana/ route
+bash deploy/deploy.sh backend   # API with the deploy endpoint
+bash deploy/deploy.sh frontend  # SPA with the Deploy button
+bash deploy/deploy.sh verify    # includes /grafana/api/health + raw :3000 closed
+```
+
+Grafana state (dashboards, users) persists in `/app-data/grafana` (uid 472).
+
+## Custom functions (user-defined Python the agent can run)
+
+Users define Python functions in the app's **Functions** panel; the agent runs
+them through the **`custom_function` MCP** (`mcp/custom-function-mcp/`,
+image `custom-function-mcp:0.1.0` in Artifact Registry).
+
+**Trust model:** definitions are auth-gated (Firebase + allowlist) and
+validated (identifier name, syntax, exactly one top-level function, 64KB cap).
+Execution is sandboxed — the MCP container is spawned per call with `--rm`,
+`--network none`, `--memory 512m --cpus 1 --pids-limit 128`, a non-root user,
+and the functions dir (`CUSTOM_FN_DATA_PATH=/app-data/custom-functions`)
+mounted **read-only**; each run is a fresh subprocess with a hard timeout.
+Fixed preinstalled libs (pandas, numpy, matplotlib, openpyxl, dateutil) — no
+runtime pip, no network. The UI **Test run** goes through the same sandbox
+(`POST /functions/{name}/run`).
+
+### First-time setup
+
+```bash
+bash deploy/deploy.sh fn-image   # build + pull the sandbox image, create the dir
+bash deploy/deploy.sh nginx      # push the updated compose (new API env + volume)
+bash deploy/deploy.sh backend    # roll out the API (routes + bundled MCP config)
+bash deploy/deploy.sh frontend   # SPA with the Functions panel
+```
+
+Smoke: Functions panel → save `add` (`def add(a, b): return a + b`) → Test run
+with `{"a": 2, "b": 3}` → `5`; then in chat: "run the add function with a=2
+b=3" → the agent calls `custom_function.run_function`.
 
 ## Verify
 

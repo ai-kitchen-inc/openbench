@@ -18,6 +18,7 @@ import "@openbench/chat-ui/styles/bundle.css";
 import { apiFetch, apiPath, authHeaders, setAuthTokenProvider, transcribeAudio } from "./api";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { getFirebaseAuth, googleProvider, isFirebaseConfigured } from "./firebase";
+import { FunctionsPanel } from "./functions/FunctionsPanel";
 import { McpCatalogPanel } from "./mcp-catalog/McpCatalogPanel";
 import { ToastProvider, useToast } from "./Toast";
 import "./global.css";
@@ -176,7 +177,11 @@ export function findLatestDashboard(messages: ChatMessage[]): DashboardArtifact 
     const surfaces = message.surfaces ?? [];
     for (let surfaceIndex = surfaces.length - 1; surfaceIndex >= 0; surfaceIndex -= 1) {
       const surface = surfaces[surfaceIndex];
-      const components = Array.from(surface.components.values()).reverse();
+      // Persisted legacy sessions can carry surface stubs without a
+      // components Map — skip them instead of crashing the chat layout.
+      const surfaceComponents = surface?.components;
+      if (!surfaceComponents || typeof surfaceComponents.values !== "function") continue;
+      const components = Array.from(surfaceComponents.values()).reverse();
       for (const component of components) {
         if (component.component !== "ObDashboardFrame") continue;
         const url = componentString(
@@ -1199,6 +1204,7 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
   const toast = useToast();
   const [dark, toggleDark] = useDarkMode();
   const [mcpCatalogOpen, setMcpCatalogOpen] = useState(false);
+  const [functionsOpen, setFunctionsOpen] = useState(false);
   const latestDashboard = useMemo(() => findLatestDashboard(messages), [messages]);
   const [dismissedDashboardKey, setDismissedDashboardKey] = useState<string | null>(null);
   const dashboardKey = latestDashboard
@@ -1230,6 +1236,20 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
             <span>
               <strong>MCP servers</strong>
               <span>Manage tools</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className="mcp-servers-button"
+            onClick={() => setFunctionsOpen(true)}
+            aria-label="Open Custom Functions"
+          >
+            <span className="mcp-servers-button__icon" aria-hidden="true">
+              FN
+            </span>
+            <span>
+              <strong>Functions</strong>
+              <span>Custom Python tools</span>
             </span>
           </button>
           <SourcePanel
@@ -1279,6 +1299,7 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
         />
       )}
       <McpCatalogPanel open={mcpCatalogOpen} onClose={() => setMcpCatalogOpen(false)} />
+      <FunctionsPanel open={functionsOpen} onClose={() => setFunctionsOpen(false)} />
     </div>
   );
 }
@@ -1328,8 +1349,23 @@ function ChatShell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ viewModel }),
           });
-          if (!response.ok) throw new Error(`Export failed: ${response.status}`);
-          return await response.json();
+          try {
+            return await parseJsonResponse<Record<string, unknown>>(response);
+          } catch (error) {
+            throw new Error(`Export failed: ${readErrorMessage(error)}`);
+          }
+        },
+        deployGrafana: async (viewModel: unknown) => {
+          const response = await apiFetch(apiPath("/dashboard/deploy/grafana"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ viewModel }),
+          });
+          try {
+            return await parseJsonResponse<{ url: string }>(response);
+          } catch (error) {
+            throw new Error(`Deploy failed: ${readErrorMessage(error)}`);
+          }
         },
         exportPdf: async (viewModel: unknown) => {
           const response = await apiFetch(apiPath("/dashboard/export/pdf"), {

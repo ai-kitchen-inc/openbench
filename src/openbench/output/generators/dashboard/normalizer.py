@@ -47,6 +47,7 @@ def normalize_dashboard_view_model(content: dict[str, Any], *, title: str | None
     dialects = _detect_dialects(content)
     kpis: list[dict[str, Any]] = []
     panels: list[dict[str, Any]] = []
+    warnings: list[str] = []
 
     for item in _as_list(content.get("kpis")):
         kpi = _normalize_kpi(item, datasets)
@@ -62,13 +63,13 @@ def normalize_dashboard_view_model(content: dict[str, Any], *, title: str | None
     )
     if not skip_raw_sections:
         for section in _as_list(content.get("sections")):
-            normalized_items = _normalize_items(_section_items(section), datasets, kpis)
+            normalized_items = _normalize_items(_section_items(section), datasets, kpis, warnings)
             if normalized_items:
                 panels.extend(normalized_items)
 
     if _is_visual_item(content):
         top_level_items.append(content)
-    panels.extend(_normalize_items(top_level_items, datasets, kpis))
+    panels.extend(_normalize_items(top_level_items, datasets, kpis, warnings))
     if not panels and _should_synthesize_panels_from_datasets(datasets):
         panels.extend(_panels_from_datasets(datasets))
 
@@ -104,6 +105,12 @@ def normalize_dashboard_view_model(content: dict[str, Any], *, title: str | None
     unresolved = _unresolved_charts(canonical["sections"])
     if unresolved:
         logger.warning("[dashboard] unresolved chart items after normalization: %s", unresolved)
+        warnings.extend(
+            f"chart item could not be resolved to data: {entry}" for entry in unresolved
+        )
+    if warnings:
+        canonical["normalization_warnings"] = warnings
+        logger.warning("[dashboard] normalization warnings: %s", warnings)
     logger.info(
         "[dashboard] normalized dialect=%s kpis=%d charts=%d tables=%d unresolved_charts=%d",
         ",".join(dialects) or "canonical",
@@ -199,14 +206,23 @@ def _normalize_items(
     items: list[Any],
     datasets: dict[str, list[dict[str, Any]]],
     kpis: list[dict[str, Any]],
+    warnings: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     panels: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
+            # Bare scalars (e.g. dataset indices the LLM invented) cannot be
+            # rendered; surface them so the caller can self-correct instead of
+            # silently receiving an empty section.
+            if warnings is not None:
+                warnings.append(
+                    "section item must be a chart/table/kpi object, got "
+                    f"{type(item).__name__}: {item!r}"
+                )
             continue
         kind = _component_kind(item)
         if kind in _CONTAINER_TYPES or (not _is_visual_item(item) and _section_items(item)):
-            panels.extend(_normalize_items(_section_items(item), datasets, kpis))
+            panels.extend(_normalize_items(_section_items(item), datasets, kpis, warnings))
             continue
         if kind == "kpi_grid":
             kpis.extend(_normalize_kpi_grid(item, datasets))

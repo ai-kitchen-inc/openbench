@@ -202,7 +202,7 @@ This installs `fastapi`, `uvicorn`, `docling`, `python-docx`, `pandas`,
 
 ```bash
 cd examples/general-chat
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 Verify it is running: open `http://localhost:8005/health`
@@ -492,7 +492,7 @@ opt-in MCP mode:
 $env:GENERAL_CHAT_MCP_ENABLED="1"
 $env:GENERAL_CHAT_MCP_MODE="local"
 $env:GENERAL_CHAT_MCP_CONFIG="mcp/openbench-mcp.yaml"
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 Then verify:
@@ -517,8 +517,20 @@ Invoke-RestMethod http://localhost:8005/mcp/tools
 
 Expected `namespaced_tool_names` include the internal OpenBench query tools and,
 when dependencies are available, tools from `dashboard_generator`, `filesystem`,
-`generic_api`, `image_search`, `sam_segmentation`, Docker MCP Gateway, and any
-running ToolHive workloads.
+`generic_api`, `image_search`, `sam_segmentation`, `custom_function`, Docker MCP
+Gateway, and any running ToolHive workloads.
+
+`custom_function` exposes the functions saved in the **Functions** panel to the
+agent (`list_functions`, `describe_function`, `run_function`). Local
+prerequisite — build the sandbox image once:
+
+```powershell
+docker build -t custom-function-mcp:local mcp/custom-function-mcp
+```
+
+(from the repo root; or set `CUSTOM_FN_IMAGE` to another image). The first
+agent call shows an MCP tool permission card — click **Approve** to let the
+sandboxed run proceed.
 Optional services that are missing or not built remain visible through
 `/mcp/catalogs` and `/mcp/tools` diagnostics rather than being silently hidden.
 `general-chat-all` uses the isolated `examples/general-chat/.openbench/all-mcp`
@@ -733,13 +745,13 @@ Set the key in `.env` or export it before running uvicorn.
 Linux/macOS:
 ```bash
 export GOOGLE_API_KEY=YOUR_KEY_HERE
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 Windows (PowerShell):
 ```powershell
 $env:GOOGLE_API_KEY="YOUR_KEY_HERE"
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 **Internet search returns a configuration warning**
@@ -748,13 +760,13 @@ Set `TAVILY_API_KEY` in `.env` to enable source discovery search.
 Linux/macOS:
 ```bash
 export TAVILY_API_KEY=YOUR_KEY_HERE
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 Windows (PowerShell):
 ```powershell
 $env:TAVILY_API_KEY="YOUR_KEY_HERE"
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src
 ```
 
 **`docling` install takes a long time**

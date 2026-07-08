@@ -146,6 +146,11 @@ def test_general_chat_all_mcp_env_creates_paths_and_seeds_registry(tmp_path, mon
         "image-search-docker.yaml": ("image_search", "docker", ['"run"', '"image-search"']),
         "sam-segmentation-docker.yaml": ("sam_segmentation", "docker", ['"run"', '"sam"']),
         "docker-mcp-gateway.yaml": ("docker", "docker", ['"mcp"', '"gateway"', '"run"']),
+        "custom-function-docker.yaml": (
+            "custom_function",
+            "docker",
+            ['"run"', '"-v"', '"${CUSTOM_FN_DATA_PATH}:/data/functions:ro"', '"fn-image"'],
+        ),
     }
     for filename, (server_name, command, args) in configs.items():
         (mcp_dir / filename).write_text(
@@ -223,12 +228,17 @@ def test_general_chat_all_mcp_env_creates_paths_and_seeds_registry(tmp_path, mon
     assert Path(env["GENERAL_CHAT_DOWNLOAD_DIR"]).is_dir()
     assert Path(env["GENERAL_CHAT_MCP_SANDBOX"]).is_dir()
     assert Path(env["GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR"]).is_dir()
+    assert Path(env["CUSTOM_FN_DATA_PATH"]).is_dir()
+    assert Path(env["CUSTOM_FN_DATA_PATH"]) == (
+        Path(env["GENERAL_CHAT_STORAGE_ROOT"]) / "custom-functions"
+    )
     assert default_registry_path.exists()
 
     state_path = Path(env["GENERAL_CHAT_STORAGE_ROOT"]) / "mcp_registry" / "servers.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     server_names = {item["name"] for item in state["servers"]}
     assert {
+        "custom_function",
         "docker",
         "filesystem",
         "generic_api",
@@ -237,6 +247,9 @@ def test_general_chat_all_mcp_env_creates_paths_and_seeds_registry(tmp_path, mon
         "openbench",
         "sam_segmentation",
     }.issubset(server_names)
+    custom_fn = next(item for item in state["servers"] if item["name"] == "custom_function")
+    # ${CUSTOM_FN_DATA_PATH} must be expanded at seed time, not stored raw.
+    assert f"{env['CUSTOM_FN_DATA_PATH']}:/data/functions:ro" in custom_fn["config"]["args"]
     assert "time" not in server_names
 
 
@@ -264,6 +277,8 @@ def test_general_chat_all_mcp_warns_when_image_search_docker_image_missing(
         assert timeout == 10
         assert check is False
         if cmd[3] == "openbench/generic-api-mcp:cpu":
+            return FakeInspectResult(0, "")
+        if cmd[3] == "custom-function-mcp:local":
             return FakeInspectResult(0, "")
         assert cmd[3] == "openbench/image-search-mcp:cpu"
         return FakeInspectResult(1, "No such image: openbench/image-search-mcp:cpu")
@@ -411,6 +426,59 @@ def test_run_server_passes_plain_general_chat_unified_mcp_env(tmp_path, monkeypa
     assert captured["env"]["GENERAL_CHAT_MCP_ENABLED"] == "0"
     assert captured["env"]["GENERAL_CHAT_MCP_REGISTRY_ENABLED"] == "1"
     assert captured["cmd"][-3:] == ["--port", "8005", "--reload"]
+
+
+def test_run_server_watches_only_src_when_present(tmp_path, monkeypatch):
+    demo_dir = tmp_path / "general-chat"
+    demo_dir.mkdir()
+    (demo_dir / "src").mkdir()
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        def __init__(self):
+            self.returncode = None
+            self._polls = 0
+
+        def poll(self):
+            self._polls += 1
+            return None if self._polls == 1 else 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            self.returncode = 0
+            return 0
+
+        def kill(self):
+            self.returncode = -9
+
+    def fake_popen(cmd, cwd, env, stdout, stderr):
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        captured["env"] = env
+        return FakeProcess()
+
+    monkeypatch.setattr(demo_module, "_resolve_pnpm_command", lambda: None)
+    monkeypatch.setattr(demo_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(demo_module.time, "sleep", lambda _seconds: None)
+
+    demo_module._run_server(
+        {
+            "name": "general-chat",
+            "type": "server",
+            "dir": demo_dir,
+            "port": 8005,
+            "has_frontend": True,
+        },
+        port=None,
+        no_frontend=True,
+        no_install=True,
+    )
+
+    # Reload must be scoped to src/ so runtime writes under .openbench/
+    # (e.g. saving a custom function) don't restart the server.
+    assert captured["cmd"][-5:] == ["--port", "8005", "--reload", "--reload-dir", "src"]
 
 
 def test_run_server_passes_all_mcp_env_to_backend(tmp_path, monkeypatch):

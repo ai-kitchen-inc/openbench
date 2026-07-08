@@ -30,4 +30,4 @@ Write-Host "Tools  : $env:GENERAL_CHAT_MCP_APPROVED_TOOLS"
 Write-Host "Python : $env:DASHBOARD_GENERATOR_MCP_PYTHON"
 Write-Host "SDK dashboard skill: disabled for this MCP-only dashboard run"
 Write-Host "Exports: $env:OPENBENCH_EXPORT_DIR -> /downloads"
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src

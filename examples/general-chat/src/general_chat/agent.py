@@ -352,6 +352,28 @@ class _DashboardGeneratorRenderTool(Tool):
     def timeout_seconds(self) -> Any:
         return getattr(self.inner, "timeout_seconds", None)
 
+    # Keys returned to the agent. The full payload (viewModel, datasets, kpis,
+    # sections) goes to the render queue for the UI only — echoing it back to
+    # the LLM bloats the history window and previously drove regenerate loops.
+    _AGENT_RESULT_KEYS = (
+        "type",
+        "title",
+        "description",
+        "name",
+        "url",
+        "dashboardUrl",
+        "path",
+        "mimeType",
+        "size",
+        "sectionCount",
+        "kpiCount",
+        "chartCount",
+        "tableCount",
+        "warnings",
+        "templateSource",
+        "templateName",
+    )
+
     def execute(self, **params: Any) -> Any:
         if not params.get("revision_notes") and self.revision_note_provider:
             note = self.revision_note_provider()
@@ -359,12 +381,29 @@ class _DashboardGeneratorRenderTool(Tool):
                 params["revision_notes"] = note
         payload = self.inner.execute(**params)
         if isinstance(payload, dict) and payload.get("type") == "dashboard" and not payload.get("error"):
-            payload.setdefault(
-                "final_answer_hint",
-                "Dashboard artifact is ready and has been rendered in the side panel. "
-                "Do not paste the full ViewModel unless the user asks for implementation details.",
-            )
             shared_render_queue.push(payload)
+            result = {
+                key: payload[key] for key in self._AGENT_RESULT_KEYS if key in payload
+            }
+            result["status"] = "created"
+            warnings = payload.get("warnings") or []
+            if warnings:
+                result["final_answer_hint"] = (
+                    "Dashboard artifact was created but some section items were invalid "
+                    "and dropped (see warnings). If charts are missing, call "
+                    "generate_dashboard ONCE more with sections[].items as full inline "
+                    "objects: {type:'chart', chart_type, title, data:[rows], x_field, "
+                    "y_field} — never bare numbers or dataset indices. Do not paste the "
+                    "full ViewModel in your reply."
+                )
+            else:
+                result["final_answer_hint"] = (
+                    "Dashboard artifact is ready and has been rendered in the side panel. "
+                    "Do NOT call generate_dashboard again for this request. Summarize the "
+                    "dashboard briefly in the user's language; do not paste the full "
+                    "ViewModel."
+                )
+            return result
         return payload
 
     def get_schema(self) -> dict[str, Any]:

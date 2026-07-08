@@ -19,7 +19,10 @@ GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-c
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
-from general_chat.server.grafana import view_model_to_grafana  # noqa: E402
+from general_chat.server.grafana import (  # noqa: E402
+    partition_datasets,
+    view_model_to_grafana,
+)
 
 _VIEW_MODEL = {
     "title": "Sales Dashboard",
@@ -98,6 +101,8 @@ class TestGrafanaConverter(unittest.TestCase):
         self.assertEqual(bar["targets"][0]["datasource"]["type"], "grafana-testdata-datasource")
 
     def test_chart_type_mapping(self):
+        # line/area use date x values — categorical x falls back to barchart
+        # (see TestGrafanaTimeseriesFallback).
         cases = {
             "line": "timeseries",
             "area": "timeseries",
@@ -114,7 +119,7 @@ class TestGrafanaConverter(unittest.TestCase):
                             {
                                 "type": "chart",
                                 "chart_type": chart_type,
-                                "data": [{"x": "a", "y": 1}],
+                                "data": [{"x": "2026-06-01", "y": 1}],
                                 "x": "x",
                                 "y": "y",
                             }
@@ -162,6 +167,258 @@ class TestGrafanaConverter(unittest.TestCase):
         csv = view_model_to_grafana(vm)["panels"][0]["targets"][0]["csvContent"]
         self.assertIn('"a,b"', csv)
         self.assertIn('"has ""quote"""', csv)
+
+
+class TestGrafanaRendererParity(unittest.TestCase):
+    """Exporter must resolve KPI values and x/y aliases like the renderers."""
+
+    def test_kpi_value_derived_from_dataset_first_row(self):
+        vm = {
+            "datasets": {"summary": [{"total_revenue": 115431.58, "tx": 3636}]},
+            "kpis": [
+                {"label": "Total Revenue", "dataset_id": "summary", "value_column": "total_revenue"}
+            ],
+        }
+        stat = view_model_to_grafana(vm)["panels"][0]
+        self.assertIn("115431.58", stat["targets"][0]["csvContent"])
+
+    def test_kpi_value_dataset_alias_and_column_alias(self):
+        vm = {
+            "datasets": {"summary": [{"count": 42}]},
+            "kpis": [{"label": "Count", "dataset": "summary", "field": "count"}],
+        }
+        stat = view_model_to_grafana(vm)["panels"][0]
+        self.assertIn("42", stat["targets"][0]["csvContent"])
+
+    def test_kpi_formatted_string_coerced_to_number(self):
+        vm = {"kpis": [{"label": "Revenue", "value": "$115,431.58"}]}
+        stat = view_model_to_grafana(vm)["panels"][0]
+        csv = stat["targets"][0]["csvContent"]
+        self.assertIn("115431.58", csv)
+        self.assertNotIn("$", csv)
+
+    def test_kpi_unparseable_string_passes_through(self):
+        vm = {"kpis": [{"label": "Status", "value": "healthy"}]}
+        stat = view_model_to_grafana(vm)["panels"][0]
+        self.assertIn("healthy", stat["targets"][0]["csvContent"])
+
+    def test_chart_x_axis_and_y_axis_aliases(self):
+        vm = {
+            "sections": [
+                {
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "data": [{"month": "Feb", "revenue": 6398.86}],
+                            "x_axis": "month",
+                            "y_axis": "revenue",
+                        }
+                    ]
+                }
+            ]
+        }
+        panel = [p for p in view_model_to_grafana(vm)["panels"] if p["type"] != "row"][0]
+        self.assertEqual(
+            panel["targets"][0]["csvContent"].splitlines()[0], "month,revenue"
+        )
+
+    def test_section_item_aliases(self):
+        # Renderers accept items|components|widgets|panels|charts|cards —
+        # the exporter must too (a miss deploys empty rows).
+        chart = {
+            "type": "chart",
+            "chart_type": "bar",
+            "title": "T",
+            "data": [{"name": "a", "v": 1}],
+            "x": "name",
+            "y": "v",
+        }
+        for alias in ("items", "components", "widgets", "panels", "charts", "cards"):
+            vm = {"sections": [{"title": "S", alias: [chart]}]}
+            types = [p["type"] for p in view_model_to_grafana(vm)["panels"]]
+            self.assertEqual(types, ["row", "barchart"], alias)
+
+    def test_kpi_stat_field_regex_not_broken_by_display_name(self):
+        # Grafana matches reduceOptions.fields against DISPLAY names; setting
+        # fieldConfig.defaults.displayName renames the 'value' field and the
+        # /^value$/ regex stops matching -> stat shows "No data". Guard it.
+        vm = {"kpis": [{"label": "Total Revenue", "value": 42}]}
+        stat = view_model_to_grafana(vm)["panels"][0]
+        self.assertNotIn("displayName", stat["fieldConfig"]["defaults"])
+        self.assertEqual(stat["options"]["reduceOptions"]["fields"], "/^value$/")
+        self.assertEqual(stat["options"]["textMode"], "value")
+
+    def test_x_fallback_prefers_category_column(self):
+        # Numeric column first — the renderers pick the first NON-numeric column.
+        vm = {
+            "sections": [
+                {
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "data": [{"revenue": 6398.86, "month": "Feb"}],
+                        }
+                    ]
+                }
+            ]
+        }
+        panel = [p for p in view_model_to_grafana(vm)["panels"] if p["type"] != "row"][0]
+        self.assertEqual(
+            panel["targets"][0]["csvContent"].splitlines()[0], "month,revenue"
+        )
+
+
+class TestGrafanaTimeseriesFallback(unittest.TestCase):
+    """line/area only map to timeseries when x is temporal."""
+
+    @staticmethod
+    def _panel(vm: dict) -> dict:
+        return [p for p in view_model_to_grafana(vm)["panels"] if p["type"] != "row"][0]
+
+    @staticmethod
+    def _line_vm(data: list[dict], **item_extra) -> dict:
+        item = {"type": "chart", "chart_type": "line", "data": data, **item_extra}
+        return {"sections": [{"items": [item]}]}
+
+    def test_month_names_fall_back_to_barchart(self):
+        panel = self._panel(
+            self._line_vm([{"month": "Feb", "revenue": 1.0}], x="month", y="revenue")
+        )
+        self.assertEqual(panel["type"], "barchart")
+        self.assertEqual(panel["options"]["xField"], "month")
+
+    def test_iso_dates_keep_timeseries(self):
+        panel = self._panel(
+            self._line_vm(
+                [{"day": "2026-06-01", "revenue": 1.0}, {"day": "2026-06-02", "revenue": 2.0}],
+                x="day",
+                y="revenue",
+            )
+        )
+        self.assertEqual(panel["type"], "timeseries")
+
+    def test_year_month_keeps_timeseries(self):
+        panel = self._panel(
+            self._line_vm([{"month": "2026-06", "revenue": 1.0}], x="month", y="revenue")
+        )
+        self.assertEqual(panel["type"], "timeseries")
+
+    def test_epoch_values_keep_timeseries(self):
+        panel = self._panel(
+            self._line_vm([{"ts": 1750000000, "revenue": 1.0}], x="ts", y="revenue")
+        )
+        self.assertEqual(panel["type"], "timeseries")
+
+    def test_live_table_without_records_uses_key_name_heuristic(self):
+        live = {"tables": {"trend": "mart.trend"}, "pg_uid": "pg", "testdata_uid": "td"}
+        base = {
+            "datasets": {"trend": []},
+            "sections": [
+                {
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "line",
+                            "dataset": "trend",
+                            "x": "order_date",
+                            "y": "revenue",
+                        }
+                    ]
+                }
+            ],
+        }
+        panel = [
+            p for p in view_model_to_grafana(base, live=live)["panels"] if p["type"] != "row"
+        ][0]
+        self.assertEqual(panel["type"], "timeseries")
+
+        base["sections"][0]["items"][0]["x"] = "category"
+        panel = [
+            p for p in view_model_to_grafana(base, live=live)["panels"] if p["type"] != "row"
+        ][0]
+        self.assertEqual(panel["type"], "barchart")
+
+
+class TestGrafanaLiveMode(unittest.TestCase):
+    """Deploy-mode (`live=`) targets concrete datasource UIDs."""
+
+    _LIVE = {
+        "tables": {"by_region": "public.by_region"},
+        "pg_uid": "appdata-postgres",
+        "testdata_uid": "testdata",
+    }
+
+    def setUp(self) -> None:
+        self.model = view_model_to_grafana(_VIEW_MODEL, live=self._LIVE)
+        self.panels = [p for p in self.model["panels"] if p["type"] != "row"]
+
+    def test_no_import_inputs_in_live_mode(self):
+        self.assertNotIn("__inputs", self.model)
+        self.assertNotIn("__requires", self.model)
+
+    def test_table_backed_dataset_becomes_postgres_sql(self):
+        bar = next(p for p in self.panels if p["type"] == "barchart")
+        self.assertEqual(bar["datasource"]["uid"], "appdata-postgres")
+        target = bar["targets"][0]
+        self.assertEqual(target["format"], "table")
+        self.assertEqual(
+            target["rawSql"],
+            'SELECT "region", "revenue" FROM public.by_region LIMIT 1000',
+        )
+
+    def test_kpi_stays_inline_with_concrete_uid(self):
+        stat = next(p for p in self.panels if p["type"] == "stat")
+        self.assertEqual(stat["datasource"]["uid"], "testdata")
+        self.assertEqual(stat["targets"][0]["scenarioId"], "csv_content")
+
+    def test_inline_item_data_stays_csv(self):
+        vm = {
+            "sections": [
+                {
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "data": [{"x": "a", "y": 1}],
+                            "x": "x",
+                            "y": "y",
+                        }
+                    ]
+                }
+            ]
+        }
+        panels = [
+            p
+            for p in view_model_to_grafana(vm, live=self._LIVE)["panels"]
+            if p["type"] != "row"
+        ]
+        self.assertEqual(panels[0]["targets"][0]["scenarioId"], "csv_content")
+        self.assertEqual(panels[0]["datasource"]["uid"], "testdata")
+
+    def test_unsafe_table_name_falls_back_to_csv(self):
+        live = {**self._LIVE, "tables": {"by_region": 'public."x"; DROP TABLE y'}}
+        model = view_model_to_grafana(_VIEW_MODEL, live=live)
+        bar = next(p for p in model["panels"] if p["type"] == "barchart")
+        self.assertEqual(bar["targets"][0].get("scenarioId"), "csv_content")
+
+    def test_unsafe_column_falls_back_to_csv(self):
+        vm = {
+            "datasets": {"by_region": [{'a"b': 1, "region": "EU"}]},
+            "sections": [
+                {"items": [{"type": "table", "dataset": "by_region"}]}
+            ],
+        }
+        model = view_model_to_grafana(vm, live=self._LIVE)
+        table = next(p for p in model["panels"] if p["type"] == "table")
+        self.assertEqual(table["targets"][0].get("scenarioId"), "csv_content")
+
+    def test_partition_datasets(self):
+        vm = {"datasets": {"by_region": [], "computed": [{"a": 1}]}}
+        live, inline = partition_datasets(vm, {"by_region": "public.by_region"})
+        self.assertEqual(live, ["by_region"])
+        self.assertEqual(inline, ["computed"])
 
 
 class TestDashboardRoutes(unittest.TestCase):
@@ -293,6 +550,49 @@ class TestDashboardRoutes(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"%PDF-1.4 fake")
+
+    def test_deploy_grafana_requires_auth(self):
+        client = self._client()
+        response = client.post("/dashboard/deploy/grafana", json={"viewModel": _VIEW_MODEL})
+        self.assertEqual(response.status_code, 401)
+
+    def test_deploy_grafana_rejects_empty(self):
+        client = self._client()
+        response = client.post("/dashboard/deploy/grafana", json={}, headers=self._auth)
+        self.assertEqual(response.status_code, 400)
+
+    def test_deploy_grafana_returns_url(self):
+        client = self._client()
+        result = {
+            "url": "https://host/grafana/d/abc123def456",
+            "uid": "abc123def456",
+            "live": ["by_region"],
+            "inline": [],
+        }
+        with patch("general_chat.server.app.deploy_view_model", return_value=result):
+            response = client.post(
+                "/dashboard/deploy/grafana",
+                json={"viewModel": _VIEW_MODEL},
+                headers=self._auth,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), result)
+
+    def test_deploy_grafana_maps_deploy_error_to_503(self):
+        from general_chat.server.grafana_client import GrafanaDeployError
+
+        client = self._client()
+        with patch(
+            "general_chat.server.app.deploy_view_model",
+            side_effect=GrafanaDeployError("Grafana unreachable"),
+        ):
+            response = client.post(
+                "/dashboard/deploy/grafana",
+                json={"viewModel": _VIEW_MODEL},
+                headers=self._auth,
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("unreachable", response.json()["detail"])
 
     def test_unknown_dashboard_id_is_404(self):
         client = self._client()

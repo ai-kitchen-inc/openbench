@@ -707,7 +707,9 @@ Provide clear, actionable responses."""
                             # Sequential execution (default)
                             for tc in tool_calls:
                                 try:
-                                    result = self.tools.execute(tc["name"], **tc["arguments"])
+                                    result = self.tools.execute(
+                                        tc["name"], arguments=tc["arguments"]
+                                    )
                                     result_str = _tool_result_to_json(result)
                                 except Exception as e:
                                     result_str = f"Error: {e!s}"

@@ -817,6 +817,20 @@ def generate_dashboard(
     sections = (
         rendered_view_model.get("sections", []) if isinstance(rendered_view_model, dict) else []
     )
+    warnings = (
+        rendered_view_model.pop("normalization_warnings", [])
+        if isinstance(rendered_view_model, dict)
+        else []
+    )
+    panels = [
+        panel
+        for section in (sections if isinstance(sections, list) else [])
+        if isinstance(section, dict)
+        for panel in section.get("items", [])
+        if isinstance(panel, dict)
+    ]
+    chart_count = sum(1 for panel in panels if panel.get("type") == "chart")
+    table_count = sum(1 for panel in panels if panel.get("type") == "table")
     item = {
         "type": "dashboard",
         "title": title,
@@ -836,6 +850,9 @@ def generate_dashboard(
         "summary": str(view_model.get("description") or ""),
         "sectionCount": len(sections) if isinstance(sections, list) else 0,
         "kpiCount": len(kpis) if isinstance(kpis, list) else 0,
+        "chartCount": chart_count,
+        "tableCount": table_count,
+        "warnings": warnings,
         "adapter": written.get("adapter", {}),
         "stitch": written.get("stitch", {}),
         "customTemplate": written.get("custom_template"),
@@ -851,7 +868,8 @@ def generate_dashboard(
     }
     logger.info(
         "[dashboard] artifact created render_mode=%s template_source=%s template_format=%s "
-        "template_name=%s title=%s datasets=%d kpis=%d sections=%d",
+        "template_name=%s title=%s datasets=%d kpis=%d sections=%d charts=%d tables=%d "
+        "warnings=%d",
         item.get("render_mode"),
         item.get("templateSource"),
         item.get("templateFormat"),
@@ -860,6 +878,9 @@ def generate_dashboard(
         len(item.get("datasets") or {}),
         len(item.get("kpis") or []),
         len(item.get("sections") or []),
+        chart_count,
+        table_count,
+        len(warnings),
     )
     _push_to_render_queue(item)
     return item

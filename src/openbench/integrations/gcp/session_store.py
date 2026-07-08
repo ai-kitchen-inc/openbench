@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from openbench.chat.session import ChatSession, MessageRole
-from openbench.chat.session_store import SessionStore, SessionSummary
+from openbench.chat.session_store import SessionOwnershipError, SessionStore, SessionSummary
 
 __all__ = ["PostgresSessionStore"]
 
@@ -29,50 +29,87 @@ class PostgresSessionStore(SessionStore):
         *,
         conn: Any | None = None,
         table_name: str = "openbench_sessions",
+        owner: str | None = None,
     ):
         if conn is None and not database_url:
             raise ValueError("Either database_url= or conn= must be provided.")
         self.database_url = database_url
         self._conn = conn
         self.table_name = table_name
+        self.owner = owner
         self._init_db()
 
     def save(self, session: ChatSession) -> None:
+        """Persist a session. Owner-scoped stores claim the id on first save
+        and raise :class:`SessionOwnershipError` if it belongs to another owner."""
         preview = self._compute_preview(session)
         data = json.dumps(session.to_dict(), ensure_ascii=False)
         with self._connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    INSERT INTO {self.table_name}
-                        (session_id, title, created_at, updated_at,
-                         message_count, preview, data)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
-                    ON CONFLICT(session_id) DO UPDATE SET
-                        title = EXCLUDED.title,
-                        updated_at = EXCLUDED.updated_at,
-                        message_count = EXCLUDED.message_count,
-                        preview = EXCLUDED.preview,
-                        data = EXCLUDED.data
-                    """,
-                    (
-                        session.session_id,
-                        session.title,
-                        session.created_at,
-                        session.updated_at,
-                        len(session.messages),
-                        preview,
-                        data,
-                    ),
-                )
+                if self.owner is None:
+                    # Legacy upsert; never touches the owner column.
+                    cur.execute(
+                        f"""
+                        INSERT INTO {self.table_name}
+                            (session_id, title, created_at, updated_at,
+                             message_count, preview, data, owner)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, '')
+                        ON CONFLICT(session_id) DO UPDATE SET
+                            title = EXCLUDED.title,
+                            updated_at = EXCLUDED.updated_at,
+                            message_count = EXCLUDED.message_count,
+                            preview = EXCLUDED.preview,
+                            data = EXCLUDED.data
+                        """,
+                        (
+                            session.session_id,
+                            session.title,
+                            session.created_at,
+                            session.updated_at,
+                            len(session.messages),
+                            preview,
+                            data,
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        f"""
+                        INSERT INTO {self.table_name}
+                            (session_id, title, created_at, updated_at,
+                             message_count, preview, data, owner)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                        ON CONFLICT(session_id) DO UPDATE SET
+                            title = EXCLUDED.title,
+                            updated_at = EXCLUDED.updated_at,
+                            message_count = EXCLUDED.message_count,
+                            preview = EXCLUDED.preview,
+                            data = EXCLUDED.data
+                        WHERE {self.table_name}.owner = EXCLUDED.owner
+                        """,
+                        (
+                            session.session_id,
+                            session.title,
+                            session.created_at,
+                            session.updated_at,
+                            len(session.messages),
+                            preview,
+                            data,
+                            self.owner,
+                        ),
+                    )
+                    if cur.rowcount == 0:
+                        conn.commit()
+                        raise SessionOwnershipError(session.session_id)
             conn.commit()
 
     def load(self, session_id: str) -> ChatSession | None:
+        query = f"SELECT data FROM {self.table_name} WHERE session_id = %s"
+        params: tuple = (session_id,)
+        if self.owner is not None:
+            query += " AND owner = %s"
+            params = (session_id, self.owner)
         with self._connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"SELECT data FROM {self.table_name} WHERE session_id = %s",
-                (session_id,),
-            )
+            cur.execute(query, params)
             row = cur.fetchone()
         if row is None:
             return None
@@ -82,16 +119,22 @@ class PostgresSessionStore(SessionStore):
         return ChatSession.from_dict(data)
 
     def list(self, limit: int = 50, offset: int = 0) -> list[SessionSummary]:
+        where = ""
+        params: tuple = (limit, offset)
+        if self.owner is not None:
+            where = "WHERE owner = %s"
+            params = (self.owner, limit, offset)
         with self._connection() as conn, conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT session_id, title, created_at, updated_at,
                        message_count, preview
                 FROM {self.table_name}
+                {where}
                 ORDER BY updated_at DESC
                 LIMIT %s OFFSET %s
                 """,
-                (limit, offset),
+                params,
             )
             rows = cur.fetchall()
         return [
@@ -107,12 +150,14 @@ class PostgresSessionStore(SessionStore):
         ]
 
     def delete(self, session_id: str) -> None:
+        query = f"DELETE FROM {self.table_name} WHERE session_id = %s"
+        params: tuple = (session_id,)
+        if self.owner is not None:
+            query += " AND owner = %s"
+            params = (session_id, self.owner)
         with self._connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"DELETE FROM {self.table_name} WHERE session_id = %s",
-                    (session_id,),
-                )
+                cur.execute(query, params)
             conn.commit()
 
     def _init_db(self) -> None:
@@ -127,13 +172,22 @@ class PostgresSessionStore(SessionStore):
                         updated_at TIMESTAMPTZ NOT NULL,
                         message_count INTEGER NOT NULL DEFAULT 0,
                         preview TEXT NOT NULL DEFAULT '',
-                        data JSONB NOT NULL
+                        data JSONB NOT NULL,
+                        owner TEXT NOT NULL DEFAULT ''
                     )
                     """
                 )
                 cur.execute(
+                    f"ALTER TABLE {self.table_name} "
+                    "ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT ''"
+                )
+                cur.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_updated "
                     f"ON {self.table_name} (updated_at DESC)"
+                )
+                cur.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_owner_updated "
+                    f"ON {self.table_name} (owner, updated_at DESC)"
                 )
             conn.commit()
 

@@ -614,6 +614,107 @@ describe("AGUITransport sessions", () => {
     expect(await t.loadSession("missing")).toBeNull();
   });
 
+  it("loadSession hydrates persisted surfaces into Maps", async () => {
+    const wire = {
+      sessionId: "s-rich",
+      title: "Dashboard chat",
+      createdAt: "2026-07-08T10:00:00Z",
+      updatedAt: "2026-07-08T10:05:00Z",
+      messages: [
+        {
+          id: "m-1",
+          role: "assistant",
+          content: "Here is your dashboard.",
+          timestamp: "2026-07-08T10:00:30Z",
+          surfaces: [
+            {
+              surfaceId: "s-abc123",
+              catalogId: "https://openbench.dev/catalog/v1",
+              components: [
+                { id: "root", component: "Column", children: ["chart-0"] },
+                { id: "chart-0", component: "ObChart", title: "Sales" },
+              ],
+              dataModel: { "/form": { email: "" } },
+            },
+          ],
+        },
+      ],
+    };
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse(wire));
+    const t = new AGUITransport(config);
+    const session = await t.loadSession("s-rich");
+
+    const surfaces = session?.messages[0].surfaces;
+    expect(surfaces).toHaveLength(1);
+    const surface = surfaces![0];
+    expect(surface.components).toBeInstanceOf(Map);
+    expect(surface.components.get("root")?.component).toBe("Column");
+    expect(surface.components.get("chart-0")?.component).toBe("ObChart");
+    expect(surface.catalogId).toBe("https://openbench.dev/catalog/v1");
+    expect(surface.dataModel).toEqual({ "/form": { email: "" } });
+  });
+
+  it("loadSession drops legacy id-only surface stubs without throwing", async () => {
+    const wire = {
+      sessionId: "s-legacy",
+      title: "Old chat",
+      createdAt: "2026-07-08T10:00:00Z",
+      updatedAt: "2026-07-08T10:05:00Z",
+      messages: [
+        {
+          id: "m-1",
+          role: "assistant",
+          content: "Old rich reply.",
+          timestamp: "2026-07-08T10:00:30Z",
+          surfaces: [{ surfaceId: "s-stub" }],
+        },
+      ],
+    };
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse(wire));
+    const t = new AGUITransport(config);
+    const session = await t.loadSession("s-legacy");
+
+    expect(session?.messages[0].surfaces).toBeUndefined();
+  });
+
+  it("loadSession skips malformed component entries", async () => {
+    const wire = {
+      sessionId: "s-mixed",
+      title: "Mixed",
+      createdAt: "2026-07-08T10:00:00Z",
+      updatedAt: "2026-07-08T10:05:00Z",
+      messages: [
+        {
+          id: "m-1",
+          role: "assistant",
+          content: "Partly valid.",
+          timestamp: "2026-07-08T10:00:30Z",
+          surfaces: [
+            {
+              surfaceId: "s-ok",
+              components: [
+                null,
+                "junk",
+                { id: "root", component: "Text", text: "hi" },
+                { component: "MissingId" },
+              ],
+            },
+            { surfaceId: "s-empty", components: [null] },
+          ],
+        },
+      ],
+    };
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse(wire));
+    const t = new AGUITransport(config);
+    const session = await t.loadSession("s-mixed");
+
+    const surfaces = session?.messages[0].surfaces;
+    expect(surfaces).toHaveLength(1);
+    expect(surfaces![0].surfaceId).toBe("s-ok");
+    expect(surfaces![0].components.size).toBe(1);
+    expect(surfaces![0].dataModel).toEqual({});
+  });
+
   it("deleteSession issues DELETE request", async () => {
     global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 200));
     const t = new AGUITransport(config);

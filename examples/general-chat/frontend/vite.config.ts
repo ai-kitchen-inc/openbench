@@ -40,6 +40,7 @@ export default defineConfig({
       "/mcp/tools": { target: backendUrl, changeOrigin: true },
       "/mcp/catalogs": { target: backendUrl, changeOrigin: true },
       "/toolhive": { target: backendUrl, changeOrigin: true },
+      "/functions": { target: backendUrl, changeOrigin: true },
     },
   },
 });

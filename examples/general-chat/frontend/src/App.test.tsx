@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import {
   DashboardArtifactPanel,
   DIRECT_UPLOAD_THRESHOLD_BYTES,
+  findLatestDashboard,
   SOURCE_ACCEPT,
   SourcePanel,
   uploadComposerAttachment,
@@ -669,6 +670,84 @@ describe("SourcePanel discovery flow", () => {
     expect(await screen.findByText("big-notes.pdf")).toBeInTheDocument();
     expect(screen.getByText("Processing: queued")).toBeInTheDocument();
     expect(screen.getByText("Queued for parsing")).toBeInTheDocument();
+  });
+});
+
+describe("findLatestDashboard", () => {
+  const baseMessage = {
+    role: "assistant" as const,
+    content: "reply",
+    timestamp: "2026-07-08T10:00:00Z",
+    status: "complete" as const,
+  };
+
+  it("does not throw on persisted stub surfaces without components", () => {
+    // Regression: opening a past chat crashed with
+    // `can't access property "values", a.components is undefined`.
+    const messages = [
+      {
+        ...baseMessage,
+        id: "m-1",
+        surfaces: [{ surfaceId: "s-stub" } as never],
+      },
+    ];
+
+    expect(() => findLatestDashboard(messages)).not.toThrow();
+    expect(findLatestDashboard(messages)).toBeNull();
+  });
+
+  it("finds the dashboard in a Map-based surface", () => {
+    const messages = [
+      {
+        ...baseMessage,
+        id: "m-1",
+        surfaces: [
+          {
+            surfaceId: "s-1",
+            catalogId: "openbench",
+            components: new Map([
+              [
+                "root",
+                {
+                  id: "root",
+                  component: "ObDashboardFrame",
+                  title: "Sales Dashboard",
+                  dashboardUrl: "/downloads/sales.html",
+                },
+              ],
+            ]),
+            dataModel: {},
+          },
+        ],
+      },
+    ];
+
+    const artifact = findLatestDashboard(messages);
+    expect(artifact).not.toBeNull();
+    expect(artifact?.title).toBe("Sales Dashboard");
+    expect(artifact?.url).toBe("/downloads/sales.html");
+    expect(artifact?.surface.components.get("root")).toBeDefined();
+  });
+
+  it("returns null when no dashboard components exist", () => {
+    const messages = [
+      {
+        ...baseMessage,
+        id: "m-1",
+        surfaces: [
+          {
+            surfaceId: "s-1",
+            catalogId: "openbench",
+            components: new Map([
+              ["root", { id: "root", component: "Text", text: "plain" }],
+            ]),
+            dataModel: {},
+          },
+        ],
+      },
+    ];
+
+    expect(findLatestDashboard(messages)).toBeNull();
   });
 });
 

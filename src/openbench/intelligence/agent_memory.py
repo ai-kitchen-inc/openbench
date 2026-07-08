@@ -137,7 +137,11 @@ class AgentMemory:
         assistant turn fell outside the window), which Gemini rejects: because
         the kept messages are a contiguous suffix, every ``tool`` result still
         follows its call, and any ``tool`` messages left dangling at the front
-        are trimmed.
+        are trimmed. If the window would open on an assistant function-call
+        turn (its triggering user message fell outside the budget), the most
+        recent preceding user message is re-inserted as an anchor — Gemini
+        rejects a function call that does not follow a user turn or a function
+        response turn, and a slightly oversized prompt beats a hard 400.
         """
         if token_budget is None:
             return [m.to_dict() for m in self.messages]
@@ -161,6 +165,19 @@ class AgentMemory:
         # Drop leading orphan tool results (their assistant call fell outside).
         while window and window[0].role == MessageRole.TOOL:
             window.pop(0)
+
+        # Re-anchor a window that opens on an assistant function-call turn:
+        # its user message fell outside the budget, and Gemini rejects a
+        # function call that is not preceded by a user or function-response
+        # turn. Insert the most recent user message from before the window.
+        if window and window[0].role == MessageRole.ASSISTANT and window[0].tool_calls:
+            before_window = rest[: len(rest) - len(window)]
+            anchor = next(
+                (m for m in reversed(before_window) if m.role == MessageRole.USER),
+                None,
+            )
+            if anchor is not None:
+                window.insert(0, anchor)
 
         return [m.to_dict() for m in (*system, *window)]
 

@@ -19,6 +19,7 @@ BUNDLED_MCP_CONFIGS = (
     "docker-mcp-gateway.yaml",
     "dashboard-generator-stdio.yaml",
     "db-server-docker.yaml",
+    "custom-function-docker.yaml",
 )
 
 

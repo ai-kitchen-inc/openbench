@@ -27,6 +27,14 @@ services:
       MCP_DB_DATABASE_URL: ${MCP_DB_DATABASE_URL}
       MCP_ALLOW_WRITES: ${MCP_ALLOW_WRITES:-1}
       MCP_MAX_ROWS: ${MCP_MAX_ROWS:-1000}
+      # Deploy-to-Grafana: API pushes dashboards over the compose network.
+      GRAFANA_URL: ${GRAFANA_URL:-http://grafana:3000}
+      GRAFANA_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-https://35-188-138-52.sslip.io/grafana}
+      # Custom functions: host path (== in-container path) holding user-defined
+      # Python; mounted read-only into the sandboxed custom_function MCP.
+      CUSTOM_FN_DATA_PATH: ${CUSTOM_FN_DATA_PATH:-/app-data/custom-functions}
       # Dashboard generator MCP (replaces the in-process SDK dashboard skill).
       GENERAL_CHAT_DASHBOARD_SKILL_ENABLED: ${GENERAL_CHAT_DASHBOARD_SKILL_ENABLED:-0}
       OPENBENCH_EXPORT_DIR: ${OPENBENCH_EXPORT_DIR:-/general-chat/downloads}
@@ -53,6 +61,9 @@ services:
       - /app-data/huggingface:/general-chat/huggingface
       - /app-data/docker-config:/root/.docker
       - /var/run/docker.sock:/var/run/docker.sock
+      # Same path inside + outside the container so the sibling `docker run -v`
+      # (custom_function MCP + test runs) resolves on the host.
+      - /app-data/custom-functions:/app-data/custom-functions
 
   openbench-worker:
     image: ${OPENBENCH_IMAGE:-openbench-general-chat:latest}
@@ -83,3 +94,26 @@ services:
       - /app-data/downloads:/general-chat/downloads
       - /app-data/image-search:/general-chat/image-search
       - /app-data/huggingface:/general-chat/huggingface
+
+  # Self-hosted Grafana behind nginx at /grafana/ (see deploy/DEPLOY.md).
+  # Anyone with a link can VIEW (anonymous Viewer); editing needs the admin
+  # login. Dashboards are pushed by the API via POST /api/dashboards/db.
+  grafana:
+    image: grafana/grafana:11.1.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SERVER_ROOT_URL: ${GRAFANA_PUBLIC_URL:-https://35-188-138-52.sslip.io/grafana}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      # Referenced by $__env{...} in the provisioned Postgres datasource.
+      GRAFANA_PG_PASSWORD: ${GRAFANA_PG_PASSWORD}
+    volumes:
+      - /app-data/grafana:/var/lib/grafana
+      - /home/Admin/openbench-deploy/grafana-provisioning:/etc/grafana/provisioning/datasources:ro

@@ -110,15 +110,29 @@ class ToolExecutor:
         """Get all tool schemas for LLM."""
         return list(self._schemas.values())
 
-    def execute(self, name: str, timeout: int | float | None = None, **params) -> Any:
+    def execute(
+        self,
+        name: str,
+        /,
+        timeout: int | float | None = None,
+        *,
+        arguments: dict[str, Any] | None = None,
+        **params,
+    ) -> Any:
         """
         Execute a tool by name.
 
         Args:
-            name: Tool name
+            name: Tool name. Positional-only, so a tool parameter that is
+                itself called ``name`` (e.g. MCP ``run_function(name, ...)``)
+                can pass through ``**params`` without a TypeError collision.
             timeout: Maximum execution time in seconds. When omitted, tools may
                 provide a ``timeout_seconds`` attribute; otherwise defaults to 30.
-            **params: Tool parameters
+            arguments: Tool parameters as a dict. Collision-proof path — safe
+                for parameter names like ``timeout`` or ``arguments`` that
+                would clash with this signature via ``**params``.
+            **params: Tool parameters as kwargs (legacy style). Merged over
+                ``arguments`` when both are given.
 
         Returns:
             Tool execution result
@@ -127,6 +141,8 @@ class ToolExecutor:
             ValueError: If tool not found or invalid type
             TimeoutError: If tool execution exceeds timeout
         """
+        merged_params = dict(arguments or {})
+        merged_params.update(params)
         tool = self._tools.get(name)
         if not tool:
             raise ValueError(f"Tool not found: {name}")
@@ -147,9 +163,9 @@ class ToolExecutor:
         def _run():
             try:
                 if isinstance(tool, Tool):
-                    q.put(("ok", tool.execute(**params)))
+                    q.put(("ok", tool.execute(**merged_params)))
                 elif callable(tool):
-                    q.put(("ok", tool(**params)))
+                    q.put(("ok", tool(**merged_params)))
                 else:
                     q.put(("err", ValueError(f"Invalid tool type: {type(tool)}")))
             except Exception as e:
@@ -211,8 +227,8 @@ class ToolExecutor:
                     contextvars.copy_context().run,
                     self.execute,
                     call["name"],
-                    timeout=timeout,
-                    **call["arguments"],
+                    timeout,
+                    arguments=call["arguments"],
                 ): idx
                 for idx, call in enumerate(calls)
             }

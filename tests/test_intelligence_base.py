@@ -306,6 +306,45 @@ class TestToolExecutor(unittest.TestCase):
 
         self.assertEqual(executor.execute("add", a=2, b=3), 5)
 
+    def test_execute_tool_param_named_name_via_arguments(self):
+        """A tool parameter called `name` must not collide with execute()'s own.
+
+        Regression: custom_function.run_function(name, kwargs_json) raised
+        "ToolExecutor.execute() got multiple values for argument 'name'".
+        """
+        executor = ToolExecutor()
+        executor.register("describe", lambda name: name.upper())
+
+        self.assertEqual(executor.execute("describe", arguments={"name": "add"}), "ADD")
+
+    def test_execute_tool_param_named_name_via_kwargs(self):
+        """Legacy kwargs style also works: execute()'s `name` is positional-only."""
+        executor = ToolExecutor()
+        executor.register("describe", lambda name: name.upper())
+
+        self.assertEqual(executor.execute("describe", **{"name": "add"}), "ADD")
+
+    def test_execute_tool_param_named_timeout_via_arguments(self):
+        """A tool parameter called `timeout` reaches the tool, not the executor."""
+        executor = ToolExecutor()
+        executor.register("cfg", lambda timeout: {"tool_saw_timeout": timeout})
+
+        result = executor.execute("cfg", arguments={"timeout": 5})
+
+        self.assertEqual(result, {"tool_saw_timeout": 5})
+
+    def test_execute_parallel_tool_param_named_name(self):
+        """execute_parallel must pass colliding-named args through cleanly."""
+        executor = ToolExecutor()
+        executor.register("describe", lambda name: name.upper())
+
+        results = executor.execute_parallel(
+            [{"id": "c1", "name": "describe", "arguments": {"name": "add"}}]
+        )
+
+        self.assertIsNone(results[0]["error"])
+        self.assertEqual(results[0]["result"], "ADD")
+
 
 class MockLLMProvider(LLMProvider):
     """Mock LLM provider for testing."""

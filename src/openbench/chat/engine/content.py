@@ -79,6 +79,29 @@ class _A2UIContentMixin:
 
         return main_components + extra_components, data_model
 
+    def _build_surface_record(
+        self,
+        surface_id: str,
+        components: list[A2UIComponent],
+        data_model: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build the persistable snapshot of a rendered A2UI surface.
+
+        Stored in ``ChatMessage.surfaces`` so reloaded sessions can replay
+        rich content (charts, dashboards, files) instead of dropping it.
+        ``components`` uses the exact A2UI wire format the frontend streams
+        into its Map (flat ``{id, component, ...properties}`` dicts), so
+        rehydration needs no transformation beyond array → Map.
+        """
+        record: dict[str, Any] = {
+            "surfaceId": surface_id,
+            "catalogId": self.builder.catalog_id,
+            "components": [c.to_dict() for c in components],
+        }
+        if data_model:
+            record["dataModel"] = data_model
+        return record
+
     def _build_error_components(
         self, error_message: str, error_title: str = "Agent execution failed"
     ) -> list[A2UIComponent]:

@@ -26,4 +26,4 @@ Write-Host "Registry: disabled for this dedicated MCP run"
 Write-Host "Uploads: $env:SAM_SEGMENTATION_MCP_UPLOADS_PATH -> /general-chat/uploads"
 Write-Host "Debug  : $env:SAM_SEGMENTATION_MCP_DEBUG_PATH -> /general-chat/uploads/_sam_debug"
 Write-Host "Weights: baked into openbench/sam-segmentation-mcp:cpu at /models/sam3.pt"
-uvicorn server:app --port 8005 --reload
+uvicorn server:app --port 8005 --reload --reload-dir src

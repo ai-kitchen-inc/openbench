@@ -291,6 +291,10 @@ def _placeholder_record(
     object_name: str,
     bucket: str,
 ) -> SourceRecord:
+    # The worker has no request identity, so a fallback-created record gets
+    # owner="" and is invisible to every user. In practice unreachable:
+    # /chat/uploads/initiate pre-creates the owner-stamped record, and the
+    # worker's unscoped upsert never overwrites an existing row's owner.
     return SourceRecord.create(
         session_id=session_id,
         name=Path(filename).name or "unnamed",
