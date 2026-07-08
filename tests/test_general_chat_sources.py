@@ -1208,6 +1208,58 @@ class TestGeneralChatSources(unittest.TestCase):
             if tmpdir.exists():
                 tmpdir.rmdir()
 
+    def test_source_store_for_owner_isolates_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = SourceStore(tmp)
+            alice = base.for_owner("alice@example.com")
+            bob = base.for_owner("bob@example.com")
+
+            record = SourceRecord.create(
+                session_id="thread-x",
+                name="alpha.txt",
+                kind="text",
+                mime_type="text/plain",
+                size_bytes=10,
+                text="Alpha secret",
+                metadata={"fileId": "file-alpha"},
+            )
+            alice.add(record)
+
+            # Records land in a per-owner subdirectory and get stamped.
+            owner_file = Path(tmp) / "sources" / "alice_example_com" / "thread-x.json"
+            self.assertTrue(owner_file.exists())
+            self.assertEqual(alice.list("thread-x")[0].owner, "alice@example.com")
+
+            # The other owner sees nothing — list, search, and file-id lookup.
+            self.assertEqual(bob.list("thread-x"), [])
+            self.assertEqual(bob.search("thread-x", "Alpha"), [])
+            self.assertIsNone(bob.find_by_upload_file_id("file-alpha"))
+            self.assertIsNotNone(alice.find_by_upload_file_id("file-alpha"))
+
+            # The unscoped store (worker path) still sees everything and
+            # writes updates back to the record's owner file.
+            found = base.find_by_upload_file_id("file-alpha")
+            self.assertIsNotNone(found)
+            found.status = "failed"
+            base.upsert(found)
+            self.assertEqual(alice.list("thread-x")[0].status, "failed")
+            self.assertEqual(alice.list("thread-x")[0].owner, "alice@example.com")
+
+    def test_source_record_owner_round_trips(self):
+        record = SourceRecord.create(
+            session_id="s1",
+            name="a.txt",
+            kind="text",
+            mime_type="text/plain",
+            size_bytes=1,
+            text="x",
+            owner="alice@example.com",
+        )
+        payload = record.to_dict(include_text=True)
+        self.assertEqual(payload["owner"], "alice@example.com")
+        restored = SourceRecord.from_dict(record.to_dict(include_text=True))
+        self.assertEqual(restored.owner, "alice@example.com")
+
     def test_discovery_endpoint_ignores_empty_query(self):
         client = self._build_test_client()
         response = client.get("/chat/sources/discover?q=   ")

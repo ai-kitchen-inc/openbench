@@ -14,6 +14,9 @@ from openbench.integrations.firebase_auth import (
     InvalidTokenError,
 )
 
+LOCAL_OWNER = "local"
+"""Sentinel data owner used when auth is disabled (single-user local dev)."""
+
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
     raw = os.getenv(name)
@@ -115,3 +118,25 @@ async def require_firebase_user(request: Request) -> FirebaseUser:
 
     request.state.firebase_user = user
     return user
+
+
+def current_owner(request: Request) -> str:
+    """Return the data-owner key for this request.
+
+    The owner scopes all per-user data (sessions, sources, uploads).
+    Lowercased email of the verified Firebase user, or ``LOCAL_OWNER``
+    when auth is disabled. The 401 branch is defensive — the auth
+    middleware already rejects unauthenticated requests on every
+    protected prefix before a handler runs.
+    """
+    user = getattr(request.state, "firebase_user", None)
+    email = getattr(user, "email", None) if user is not None else None
+    if email:
+        return str(email).strip().lower()
+    if not auth_enabled():
+        return LOCAL_OWNER
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )

@@ -139,6 +139,11 @@ def _sanitize_json_value(value: Any) -> Any:
     return value
 
 
+def _safe_path_component(value: str) -> str:
+    """Sanitize a session id or owner key into a filesystem-safe name."""
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in value)
+
+
 def _source_record_payload(record: SourceRecord) -> dict[str, Any]:
     return _sanitize_json_value(asdict(record))
 
@@ -222,6 +227,7 @@ class SourceRecord:
     url: str | None
     text: str
     metadata: dict[str, Any] | None = None
+    owner: str = ""
 
     def to_dict(self, *, include_text: bool = True) -> dict[str, Any]:
         data = asdict(self)
@@ -267,6 +273,7 @@ class SourceRecord:
         status: str = "ready",
         error: str | None = None,
         metadata: dict[str, Any] | None = None,
+        owner: str = "",
     ) -> SourceRecord:
         return cls(
             id=f"source-{uuid.uuid4().hex[:10]}",
@@ -281,35 +288,57 @@ class SourceRecord:
             url=url,
             text=_without_nul(text),
             metadata=_sanitize_json_value(metadata),
+            owner=owner,
         )
 
 
 class SourceStore:
-    """JSON-backed per-session source store."""
+    """JSON-backed per-session source store.
 
-    def __init__(self, root: str | Path):
-        self.root = Path(root).expanduser().resolve() / "sources"
+    Layout: with a non-empty ``record.owner``, a session's records live
+    in ``sources/<owner>/<session>.json``; legacy/ownerless records use
+    the flat ``sources/<session>.json``.
+
+    Scoping: a store built with ``owner=...`` (via :meth:`for_owner`)
+    reads and writes only that owner's directory and stamps every saved
+    record — request handlers use this so users never see each other's
+    sources. An unscoped store (``owner=None``) sees *all* records and
+    routes writes by ``record.owner`` — background workers and tests
+    use this; it preserves each record's existing owner.
+    """
+
+    def __init__(self, root: str | Path, owner: str | None = None):
+        self._base_root = Path(root).expanduser().resolve()
+        self.owner = owner
+        self._sources_root = self._base_root / "sources"
+        self.root = self._sources_root
+        if owner is not None:
+            self.root = self.root / _safe_path_component(owner)
         self.root.mkdir(parents=True, exist_ok=True)
 
+    def for_owner(self, owner: str) -> SourceStore:
+        """Return a view of this store scoped to ``owner``."""
+        return SourceStore(self._base_root, owner=owner)
+
     def list(self, session_id: str) -> list[SourceRecord]:
-        path = self._path(session_id)
-        if not path.exists():
-            return []
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            logger.warning("Failed to load source store for session %s", session_id)
-            return []
-        return [SourceRecord.from_dict(item) for item in data.get("sources", [])]
+        if self.owner is not None:
+            return self._read(self._path(session_id))
+        # Unscoped: merge the flat legacy file with every owner subdir.
+        records = self._read(self._path(session_id))
+        safe_name = f"{_safe_path_component(session_id)}.json"
+        for entry in sorted(self._sources_root.iterdir()):
+            if entry.is_dir():
+                records.extend(self._read(entry / safe_name))
+        return records
 
     def add(self, record: SourceRecord) -> SourceRecord:
-        records = self.list(record.session_id)
-        records.append(record)
-        self.save(record.session_id, records)
-        return record
+        return self.upsert(record)
 
     def upsert(self, record: SourceRecord) -> SourceRecord:
-        records = self.list(record.session_id)
+        if self.owner is not None:
+            record.owner = self.owner
+        path = self._path_for_record(record)
+        records = self._read(path)
         replaced = False
         for i, existing in enumerate(records):
             if existing.id == record.id:
@@ -318,32 +347,46 @@ class SourceStore:
                 break
         if not replaced:
             records.append(record)
-        self.save(record.session_id, records)
+        self._write(path, record.session_id, records)
         return record
 
     def save(self, session_id: str, records: list[SourceRecord]) -> None:
-        path = self._path(session_id)
-        payload = {
-            "sessionId": session_id,
-            "sources": [_source_record_payload(record) for record in records],
-        }
-        path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        if self.owner is not None:
+            for record in records:
+                record.owner = self.owner
+            self._write(self._path(session_id), session_id, records)
+            return
+        # Unscoped: replace each owner group in its own file, clearing
+        # groups that no longer have records.
+        groups: dict[str, list[SourceRecord]] = {}
+        for record in records:
+            groups.setdefault(record.owner or "", []).append(record)
+        existing_owners = {record.owner or "" for record in self.list(session_id)}
+        for owner_key in existing_owners | set(groups):
+            path = self._path(session_id, owner=owner_key)
+            group = groups.get(owner_key, [])
+            if group:
+                self._write(path, session_id, group)
+            elif path.exists():
+                path.unlink()
 
     def delete(self, session_id: str, source_id: str) -> bool:
-        records = self.list(session_id)
-        next_records = [record for record in records if record.id != source_id]
-        if len(next_records) == len(records):
-            return False
-        self.save(session_id, next_records)
-        return True
+        for path in self._session_paths(session_id):
+            records = self._read(path)
+            next_records = [record for record in records if record.id != source_id]
+            if len(next_records) == len(records):
+                continue
+            if next_records:
+                self._write(path, session_id, next_records)
+            else:
+                path.unlink()
+            return True
+        return False
 
     def clear(self, session_id: str) -> None:
-        path = self._path(session_id)
-        if path.exists():
-            path.unlink()
+        for path in self._session_paths(session_id):
+            if path.exists():
+                path.unlink()
 
     def find_by_upload_file_id(
         self,
@@ -385,20 +428,58 @@ class SourceStore:
                 break
         return results
 
-    def _path(self, session_id: str) -> Path:
-        safe = "".join(
-            ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in session_id
+    def _path(self, session_id: str, *, owner: str | None = None) -> Path:
+        """Session file path. ``owner`` overrides only for unscoped stores."""
+        base = self.root
+        if self.owner is None and owner:
+            base = self._sources_root / _safe_path_component(owner)
+            base.mkdir(parents=True, exist_ok=True)
+        return base / f"{_safe_path_component(session_id)}.json"
+
+    def _path_for_record(self, record: SourceRecord) -> Path:
+        if self.owner is not None:
+            return self._path(record.session_id)
+        return self._path(record.session_id, owner=record.owner or None)
+
+    def _session_paths(self, session_id: str) -> list[Path]:
+        """All files that may hold this session's records, in read order."""
+        paths = [self.root / f"{_safe_path_component(session_id)}.json"]
+        if self.owner is None:
+            safe_name = f"{_safe_path_component(session_id)}.json"
+            paths.extend(
+                entry / safe_name
+                for entry in sorted(self._sources_root.iterdir())
+                if entry.is_dir()
+            )
+        return [path for path in paths if path.exists()] or paths[:1]
+
+    @staticmethod
+    def _read(path: Path) -> list[SourceRecord]:
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Failed to load source store file %s", path)
+            return []
+        return [SourceRecord.from_dict(item) for item in data.get("sources", [])]
+
+    @staticmethod
+    def _write(path: Path, session_id: str, records: list[SourceRecord]) -> None:
+        payload = {
+            "sessionId": session_id,
+            "sources": [_source_record_payload(record) for record in records],
+        }
+        path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
         )
-        return self.root / f"{safe}.json"
 
     def _list_all(self) -> list[SourceRecord]:
+        pattern = "*.json" if self.owner is not None else "**/*.json"
         records: list[SourceRecord] = []
-        for path in self.root.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            records.extend(SourceRecord.from_dict(item) for item in data.get("sources", []))
+        for path in sorted(self.root.glob(pattern)):
+            records.extend(self._read(path))
         return records
 
 
@@ -411,23 +492,40 @@ class PostgresSourceStore:
         *,
         conn: Any | None = None,
         table_name: str = "openbench_sources",
+        owner: str | None = None,
     ):
         if conn is None and not database_url:
             raise ValueError("Either database_url= or conn= must be provided.")
         self.database_url = database_url
         self._conn = conn
         self.table_name = table_name
+        self.owner = owner
         self._init_db()
 
+    def for_owner(self, owner: str) -> PostgresSourceStore:
+        """Return a view of this store scoped to ``owner``."""
+        return PostgresSourceStore(
+            self.database_url,
+            conn=self._conn,
+            table_name=self.table_name,
+            owner=owner,
+        )
+
+    def _owner_clause(self) -> tuple[str, tuple]:
+        if self.owner is None:
+            return "", ()
+        return " AND owner = %s", (self.owner,)
+
     def list(self, session_id: str) -> list[SourceRecord]:
+        clause, extra = self._owner_clause()
         with self._connection() as conn, conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT data FROM {self.table_name}
-                WHERE session_id = %s
+                WHERE session_id = %s{clause}
                 ORDER BY created_at
                 """,
-                (session_id,),
+                (session_id, *extra),
             )
             rows = cur.fetchall()
         return [self._record_from_data(row[0]) for row in rows]
@@ -436,19 +534,32 @@ class PostgresSourceStore:
         return self.upsert(record)
 
     def upsert(self, record: SourceRecord) -> SourceRecord:
+        if self.owner is not None:
+            record.owner = self.owner
         payload = json.dumps(_source_record_payload(record), ensure_ascii=False)
         with self._connection() as conn:
             with conn.cursor() as cur:
+                # Unscoped upsert (worker path) keeps the row's existing
+                # owner so background updates can't strip ownership.
+                owner_update = (
+                    "" if self.owner is None else ", owner = EXCLUDED.owner"
+                )
+                owner_guard = (
+                    ""
+                    if self.owner is None
+                    else f" WHERE {self.table_name}.owner = EXCLUDED.owner"
+                )
                 cur.execute(
                     f"""
                     INSERT INTO {self.table_name}
-                        (session_id, source_id, status, file_id, created_at, updated_at, data)
-                    VALUES (%s, %s, %s, %s, %s, now(), %s::jsonb)
+                        (session_id, source_id, status, file_id, created_at,
+                         updated_at, data, owner)
+                    VALUES (%s, %s, %s, %s, %s, now(), %s::jsonb, %s)
                     ON CONFLICT(session_id, source_id) DO UPDATE SET
                         status = EXCLUDED.status,
                         file_id = EXCLUDED.file_id,
                         updated_at = now(),
-                        data = EXCLUDED.data
+                        data = EXCLUDED.data{owner_update}{owner_guard}
                     """,
                     (
                         record.session_id,
@@ -457,25 +568,30 @@ class PostgresSourceStore:
                         self._file_id_for(record),
                         record.created_at,
                         payload,
+                        record.owner or "",
                     ),
                 )
             conn.commit()
         return record
 
     def save(self, session_id: str, records: list[SourceRecord]) -> None:
+        clause, extra = self._owner_clause()
         with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"DELETE FROM {self.table_name} WHERE session_id = %s",
-                    (session_id,),
+                    f"DELETE FROM {self.table_name} WHERE session_id = %s{clause}",
+                    (session_id, *extra),
                 )
                 for record in records:
+                    if self.owner is not None:
+                        record.owner = self.owner
                     payload = json.dumps(_source_record_payload(record), ensure_ascii=False)
                     cur.execute(
                         f"""
                         INSERT INTO {self.table_name}
-                            (session_id, source_id, status, file_id, created_at, updated_at, data)
-                        VALUES (%s, %s, %s, %s, %s, now(), %s::jsonb)
+                            (session_id, source_id, status, file_id, created_at,
+                             updated_at, data, owner)
+                        VALUES (%s, %s, %s, %s, %s, now(), %s::jsonb, %s)
                         """,
                         (
                             record.session_id,
@@ -484,30 +600,33 @@ class PostgresSourceStore:
                             self._file_id_for(record),
                             record.created_at,
                             payload,
+                            record.owner or "",
                         ),
                     )
             conn.commit()
 
     def delete(self, session_id: str, source_id: str) -> bool:
+        clause, extra = self._owner_clause()
         with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
                     DELETE FROM {self.table_name}
-                    WHERE session_id = %s AND source_id = %s
+                    WHERE session_id = %s AND source_id = %s{clause}
                     """,
-                    (session_id, source_id),
+                    (session_id, source_id, *extra),
                 )
                 rowcount = cur.rowcount
             conn.commit()
         return bool(rowcount)
 
     def clear(self, session_id: str) -> None:
+        clause, extra = self._owner_clause()
         with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"DELETE FROM {self.table_name} WHERE session_id = %s",
-                    (session_id,),
+                    f"DELETE FROM {self.table_name} WHERE session_id = %s{clause}",
+                    (session_id, *extra),
                 )
             conn.commit()
 
@@ -541,26 +660,27 @@ class PostgresSourceStore:
         *,
         session_id: str | None = None,
     ) -> SourceRecord | None:
+        clause, extra = self._owner_clause()
         with self._connection() as conn, conn.cursor() as cur:
             if session_id:
                 cur.execute(
                     f"""
                     SELECT data FROM {self.table_name}
-                    WHERE session_id = %s AND file_id = %s
+                    WHERE session_id = %s AND file_id = %s{clause}
                     ORDER BY updated_at DESC
                     LIMIT 1
                     """,
-                    (session_id, file_id),
+                    (session_id, file_id, *extra),
                 )
             else:
                 cur.execute(
                     f"""
                     SELECT data FROM {self.table_name}
-                    WHERE file_id = %s
+                    WHERE file_id = %s{clause}
                     ORDER BY updated_at DESC
                     LIMIT 1
                     """,
-                    (file_id,),
+                    (file_id, *extra),
                 )
             row = cur.fetchone()
         return self._record_from_data(row[0]) if row else None
@@ -578,9 +698,14 @@ class PostgresSourceStore:
                         created_at TIMESTAMPTZ NOT NULL,
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                         data JSONB NOT NULL,
+                        owner TEXT NOT NULL DEFAULT '',
                         PRIMARY KEY (session_id, source_id)
                     )
                     """
+                )
+                cur.execute(
+                    f"ALTER TABLE {self.table_name} "
+                    "ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT ''"
                 )
                 cur.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_file "
@@ -589,6 +714,10 @@ class PostgresSourceStore:
                 cur.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_session "
                     f"ON {self.table_name} (session_id, updated_at DESC)"
+                )
+                cur.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_owner_session "
+                    f"ON {self.table_name} (owner, session_id, updated_at DESC)"
                 )
             conn.commit()
 

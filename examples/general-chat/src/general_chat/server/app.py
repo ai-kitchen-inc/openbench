@@ -24,7 +24,7 @@ from general_chat.agent import create_agent, get_persona_dir, reload_external_mc
 from general_chat.extractor import DoclingContentExtractor
 from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
-from general_chat.server.auth import auth_enabled, require_firebase_user
+from general_chat.server.auth import auth_enabled, current_owner, require_firebase_user
 from general_chat.server.custom_functions import CustomFunctionError, CustomFunctionStore
 from general_chat.server.dashboard_pdf import render_dashboard_pdf
 from general_chat.server.grafana import view_model_to_grafana
@@ -50,6 +50,7 @@ from openbench import LocalStorageBackend
 from openbench.chat import ChatEngine
 from openbench.chat import render_queue as shared_render_queue
 from openbench.chat.files import LocalFileStore
+from openbench.chat.session_store import SessionOwnershipError
 from openbench.chat.transport import AGUIActionHandler
 from openbench.chat.transport.sessions import AGUISessionHandler
 from openbench.mcp.toolhive import ToolHiveError, ToolHiveService
@@ -500,7 +501,15 @@ def create_app() -> FastAPI:
                         exc_info=True,
                     )
 
-    def _cleanup_source_uploads_after_use(records: list) -> None:
+    def _session_store_for(owner: str):
+        """Owner-scoped session store view for one request."""
+        return storage.session_store(owner=owner)
+
+    def _sources_for(owner: str):
+        """Owner-scoped source store view for one request."""
+        return source_store.for_owner(owner)
+
+    def _cleanup_source_uploads_after_use(records: list, scoped_source_store) -> None:
         records_with_uploads = [
             record
             for record in records
@@ -515,14 +524,14 @@ def create_app() -> FastAPI:
         source_ids = {record.id for record in records_with_uploads}
         session_ids = {record.session_id for record in records_with_uploads}
         for session_id in session_ids:
-            current = source_store.list(session_id)
+            current = scoped_source_store.list(session_id)
             changed = False
             for record in current:
                 if record.id in source_ids and upload_file_ids_for_source(record):
                     mark_source_upload_deleted(record)
                     changed = True
             if changed:
-                source_store.save(session_id, current)
+                scoped_source_store.save(session_id, current)
 
     def render_items_fn() -> list[dict]:
         items = shared_render_queue.get_items()
@@ -531,17 +540,23 @@ def create_app() -> FastAPI:
     def clear_render_items_fn() -> None:
         shared_render_queue.clear()
 
-    def _build_engine(session) -> ChatEngine:
+    def _build_engine(session, owner: str) -> ChatEngine:
         return ChatEngine(
             agent=agent,
             session=session,
-            session_store=storage.session_store(),
+            session_store=_session_store_for(owner),
             render_items_fn=render_items_fn,
             clear_render_items_fn=clear_render_items_fn,
         )
 
-    def _resolve_session(thread_id: str | None):
-        session_store = storage.session_store()
+    def _resolve_session(thread_id: str | None, owner: str):
+        """Load the owner's session or create-and-claim a new one.
+
+        Raises ``SessionOwnershipError`` when ``thread_id`` already
+        belongs to another owner (the load misses, so the save hits the
+        foreign row); callers map that to 404.
+        """
+        session_store = _session_store_for(owner)
         if thread_id:
             try:
                 existing = session_store.load(thread_id)
@@ -963,10 +978,18 @@ def create_app() -> FastAPI:
 
     @app.post("/chat/upload")
     async def upload_file(
+        request: Request,
         file: UploadFile = File(...),
         session_id: str | None = Form(default=None, alias="sessionId"),
     ):
-        """Store an uploaded source file and persist extracted text for a session."""
+        """Store an uploaded source file and persist extracted text for a session.
+
+        The record lands under the uploader's owner scope — uploading
+        into a foreign session_id creates data only the uploader can
+        see, so no cross-user leak is possible.
+        """
+        owner = current_owner(request)
+        srcs = _sources_for(owner)
         filename = file.filename or "unnamed"
         mime_type = _resolve_mime(filename, file.content_type or "")
         target_session_id = session_id or "default"
@@ -986,7 +1009,7 @@ def create_app() -> FastAPI:
         stored = user_file_store.store(filename, content, mime_type)
         if _gcp_enabled():
             record = _queued_gcs_upload_record(session_id=target_session_id, stored=stored)
-            source_store.upsert(record)
+            srcs.upsert(record)
             print(
                 f"  [source-upload-queued] id={record.id} session={target_session_id!r} "
                 f"name={stored.name!r} mime={mime_type} size={stored.size_bytes}B "
@@ -1004,7 +1027,7 @@ def create_app() -> FastAPI:
             parser=source_parser,
             max_bytes=max_source_bytes,
         )
-        source_store.add(record)
+        srcs.add(record)
         stored.extracted_text = record.text
 
         print(
@@ -1031,6 +1054,7 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Direct Cloud Storage uploads require GENERAL_CHAT_GCP_BUCKET.",
             )
+        owner = current_owner(request)
         body = await request.json()
         filename = str(body.get("filename") or body.get("name") or "unnamed")
         session_id = str(body.get("sessionId") or "default")
@@ -1061,8 +1085,9 @@ def create_app() -> FastAPI:
                 "uploadStatus": "reserved",
                 "parseStatus": "waiting_for_upload",
             },
+            owner=owner,
         )
-        source_store.upsert(record)
+        _sources_for(owner).upsert(record)
         return {
             **upload.to_dict(),
             "source": record.to_dict(include_text=False),
@@ -1077,6 +1102,8 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Direct Cloud Storage uploads require GENERAL_CHAT_GCP_BUCKET.",
             )
+        owner = current_owner(request)
+        srcs = _sources_for(owner)
         body = await request.json()
         file_id = str(body.get("fileId") or "")
         session_id = str(body.get("sessionId") or "default")
@@ -1089,7 +1116,7 @@ def create_app() -> FastAPI:
                 status_code=404,
                 detail="Uploaded object was not found in Cloud Storage.",
             )
-        record = source_store.find_by_upload_file_id(file_id, session_id=session_id)
+        record = srcs.find_by_upload_file_id(file_id, session_id=session_id)
         if record is None:
             record = SourceRecord.create(
                 session_id=session_id,
@@ -1101,6 +1128,7 @@ def create_app() -> FastAPI:
                 text="",
                 status="processing",
                 metadata={"fileId": file_id},
+                owner=owner,
             )
         metadata = dict(record.metadata or {})
         parse_status = str(metadata.get("parseStatus") or "")
@@ -1113,7 +1141,7 @@ def create_app() -> FastAPI:
                 }
             )
             record.metadata = metadata
-            source_store.upsert(record)
+            srcs.upsert(record)
             return {
                 "status": metadata.get("parseStatus") or record.status,
                 "fileId": file_id,
@@ -1131,7 +1159,7 @@ def create_app() -> FastAPI:
         record.size_bytes = stored.size_bytes
         record.mime_type = stored.mime_type
         record.status = "processing"
-        source_store.upsert(record)
+        srcs.upsert(record)
         return {
             "status": "queued",
             "fileId": file_id,
@@ -1140,11 +1168,13 @@ def create_app() -> FastAPI:
 
     @app.get("/chat/uploads/{file_id}")
     async def get_large_upload(
+        request: Request,
         file_id: str,
         sessionId: str | None = None,
         includeText: bool = False,
     ) -> dict:
-        record = source_store.find_by_upload_file_id(file_id, session_id=sessionId)
+        owner = current_owner(request)
+        record = _sources_for(owner).find_by_upload_file_id(file_id, session_id=sessionId)
         if record is None:
             raise HTTPException(status_code=404, detail="Upload not found.")
         file_id_value = str((record.metadata or {}).get("fileId") or file_id)
@@ -1180,12 +1210,14 @@ def create_app() -> FastAPI:
         return payload
 
     @app.get("/chat/sources/{thread_id}")
-    async def list_sources(thread_id: str) -> list[dict]:
-        return [record.to_dict(include_text=False) for record in source_store.list(thread_id)]
+    async def list_sources(thread_id: str, request: Request) -> list[dict]:
+        srcs = _sources_for(current_owner(request))
+        return [record.to_dict(include_text=False) for record in srcs.list(thread_id)]
 
     @app.post("/chat/sources/{thread_id}")
     async def store_sources(thread_id: str, request: Request):
         """Backward-compatible text-context endpoint used by older frontends."""
+        owner = current_owner(request)
         body = await request.json()
         context_text = str(body.get("context", ""))
         if context_text.strip():
@@ -1195,12 +1227,13 @@ def create_app() -> FastAPI:
                 text=context_text,
                 parser=source_parser,
             )
-            source_store.add(record)
+            _sources_for(owner).add(record)
             return record.to_dict(include_text=True)
         return {"ok": True}
 
     @app.post("/chat/sources/{thread_id}/text")
     async def add_text_source(thread_id: str, request: Request) -> dict:
+        owner = current_owner(request)
         body = await request.json()
         record = source_record_from_text(
             session_id=thread_id,
@@ -1208,11 +1241,12 @@ def create_app() -> FastAPI:
             text=str(body.get("text") or ""),
             parser=source_parser,
         )
-        source_store.add(record)
+        _sources_for(owner).add(record)
         return record.to_dict(include_text=True)
 
     @app.post("/chat/sources/{thread_id}/url")
     async def add_url_source(thread_id: str, request: Request) -> dict:
+        owner = current_owner(request)
         body = await request.json()
         record = source_record_from_url(
             session_id=thread_id,
@@ -1220,56 +1254,68 @@ def create_app() -> FastAPI:
             parser=source_parser,
             max_bytes=max_source_bytes,
         )
-        source_store.add(record)
+        _sources_for(owner).add(record)
         return record.to_dict(include_text=True)
 
     @app.get("/chat/sources/{thread_id}/search")
-    async def search_sources(thread_id: str, q: str = "", limit: int = 20) -> dict:
-        return {"query": q, "results": source_store.search(thread_id, q, limit=limit)}
+    async def search_sources(thread_id: str, request: Request, q: str = "", limit: int = 20) -> dict:
+        srcs = _sources_for(current_owner(request))
+        return {"query": q, "results": srcs.search(thread_id, q, limit=limit)}
 
     @app.delete("/chat/sources/{thread_id}/{source_id}")
-    async def delete_source(thread_id: str, source_id: str) -> dict:
-        records = source_store.list(thread_id)
+    async def delete_source(thread_id: str, source_id: str, request: Request) -> dict:
+        srcs = _sources_for(current_owner(request))
+        records = srcs.list(thread_id)
         target = next((record for record in records if record.id == source_id), None)
         if target is None:
             raise HTTPException(status_code=404, detail="Source not found")
         _delete_upload_files_for_records([target])
-        deleted = source_store.delete(thread_id, source_id)
+        deleted = srcs.delete(thread_id, source_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Source not found")
         return {"ok": True, "sourceId": source_id}
 
     @app.delete("/chat/sources/{thread_id}")
-    async def clear_sources(thread_id: str) -> dict:
+    async def clear_sources(thread_id: str, request: Request) -> dict:
         """Remove all stored sources for a session."""
-        _delete_upload_files_for_records(source_store.list(thread_id))
-        source_store.clear(thread_id)
+        srcs = _sources_for(current_owner(request))
+        _delete_upload_files_for_records(srcs.list(thread_id))
+        srcs.clear(thread_id)
         return {"ok": True}
 
     @app.post("/awp")
     async def agent_endpoint(request: Request):
         """AG-UI endpoint — streams assistant responses via SSE."""
+        owner = current_owner(request)
+        srcs = _sources_for(owner)
         body = await request.json()
         session_id = _resolve_request_session_id(body)
-        source_records = source_store.list(session_id) if session_id else []
-        session = _resolve_session(session_id)
-        engine = _build_engine(session)
+        source_records = srcs.list(session_id) if session_id else []
+        try:
+            session = _resolve_session(session_id, owner)
+        except SessionOwnershipError:
+            raise HTTPException(status_code=404, detail="Session not found") from None
+        engine = _build_engine(session, owner)
         handler = GeneralChatHandler(
             engine=engine,
             db_path=db_path,
             memory_store=chat_memory_store,
             source_records=source_records,
-            on_stream_complete=_cleanup_source_uploads_after_use,
+            on_stream_complete=lambda records: _cleanup_source_uploads_after_use(records, srcs),
             mcp_permission_coordinator=mcp_permission_coordinator,
         )
         return await handler.handle(request)
 
     @app.post("/chat/action")
     async def chat_action(request: Request):
+        owner = current_owner(request)
         body = await request.json()
         session_id = _resolve_request_session_id(body)
-        session = _resolve_session(session_id)
-        engine = _build_engine(session)
+        try:
+            session = _resolve_session(session_id, owner)
+        except SessionOwnershipError:
+            raise HTTPException(status_code=404, detail="Session not found") from None
+        engine = _build_engine(session, owner)
         handler = AGUIActionHandler(engine=engine)
 
         @handler.on("mcp_permission_decision")
@@ -1285,23 +1331,29 @@ def create_app() -> FastAPI:
         return {"actions": handler.get_registered_actions()}
 
     @app.get("/sessions")
-    async def list_sessions(limit: int = 50, offset: int = 0) -> list[dict]:
-        handler = AGUISessionHandler(session_store=storage.session_store())
+    async def list_sessions(request: Request, limit: int = 50, offset: int = 0) -> list[dict]:
+        owner = current_owner(request)
+        handler = AGUISessionHandler(session_store=_session_store_for(owner))
         return handler.list(limit=limit, offset=offset)
 
     @app.get("/sessions/{session_id}")
-    async def get_session(session_id: str):
-        handler = AGUISessionHandler(session_store=storage.session_store())
+    async def get_session(session_id: str, request: Request):
+        owner = current_owner(request)
+        handler = AGUISessionHandler(session_store=_session_store_for(owner))
         data = handler.get(session_id)
         if data is None:
             raise HTTPException(status_code=404, detail="Session not found")
         return data
 
     @app.delete("/sessions/{session_id}")
-    async def delete_session(session_id: str) -> dict:
-        handler = AGUISessionHandler(session_store=storage.session_store())
-        _delete_upload_files_for_records(source_store.list(session_id))
-        source_store.clear(session_id)
+    async def delete_session(session_id: str, request: Request) -> dict:
+        # Idempotent and fully owner-scoped: a foreign session id matches
+        # nothing in the caller's stores, so nothing foreign is touched.
+        owner = current_owner(request)
+        srcs = _sources_for(owner)
+        handler = AGUISessionHandler(session_store=_session_store_for(owner))
+        _delete_upload_files_for_records(srcs.list(session_id))
+        srcs.clear(session_id)
         handler.delete(session_id)
         return {"ok": True, "sessionId": session_id}
 
