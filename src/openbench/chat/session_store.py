@@ -28,6 +28,16 @@ if TYPE_CHECKING:
     from openbench.chat.session import ChatSession
 
 
+class SessionOwnershipError(Exception):
+    """Raised when a save would overwrite a session owned by someone else.
+
+    Only raised by owner-scoped stores (constructed with ``owner=...``):
+    the first save of a ``session_id`` claims it for that owner, and a
+    later save of the same id under a different owner is rejected so a
+    client-supplied session id can never hijack another user's session.
+    """
+
+
 @dataclass
 class SessionSummary:
     """Lightweight session metadata for list views.
@@ -71,6 +81,14 @@ class SessionStore(ABC):
     - ``load`` returns None for unknown session_id (not raise).
     - ``list`` orders by ``updated_at`` descending.
     - ``delete`` is idempotent (no-op for unknown session_id).
+
+    Owner scoping (multi-tenant deployments): implementations may accept
+    an optional ``owner`` constructor argument. ``owner=None`` (default)
+    preserves single-tenant behavior — no filtering, no ownership
+    stamping. With ``owner`` set, ``save`` stamps new sessions with the
+    owner and raises :class:`SessionOwnershipError` when the id already
+    belongs to someone else, while ``load``/``list``/``delete``/``search``
+    only see that owner's sessions (cross-owner ids behave as unknown).
     """
 
     @abstractmethod

@@ -12,6 +12,7 @@ turns), normalize to a separate ``messages`` table mirroring
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -19,7 +20,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from openbench.chat.session import ChatSession, MessageRole
-from openbench.chat.session_store import SessionStore, SessionSummary
+from openbench.chat.session_store import SessionOwnershipError, SessionStore, SessionSummary
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,14 +38,18 @@ class SQLiteSessionStore(SessionStore):
         >>> store.list(limit=10)
     """
 
-    def __init__(self, db_path: str | Path = ".openbench/sessions.db"):
+    def __init__(self, db_path: str | Path = ".openbench/sessions.db", owner: str | None = None):
         """Initialize the store, creating the database file if needed.
 
         Args:
             db_path: Path to the SQLite file. Parent directories are
                 created automatically.
+            owner: Optional owner scope. ``None`` keeps single-tenant
+                behavior; a string scopes every operation to that
+                owner's sessions (see ``SessionStore`` docstring).
         """
         self.db_path = str(db_path)
+        self.owner = owner
         parent = os.path.dirname(self.db_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
@@ -62,11 +67,20 @@ class SQLiteSessionStore(SessionStore):
                     updated_at TEXT NOT NULL,
                     message_count INTEGER NOT NULL DEFAULT 0,
                     preview TEXT NOT NULL DEFAULT '',
-                    data TEXT NOT NULL
+                    data TEXT NOT NULL,
+                    owner TEXT NOT NULL DEFAULT ''
                 )
                 """)
+            # Migrate pre-owner databases; a duplicate-column error means the
+            # column already exists (fresh table above, or migrated earlier).
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE sessions ADD COLUMN owner TEXT NOT NULL DEFAULT ''")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_owner_updated "
+                "ON sessions(owner, updated_at DESC)"
             )
             conn.commit()
         finally:
@@ -88,46 +102,84 @@ class SQLiteSessionStore(SessionStore):
         return ""
 
     def save(self, session: ChatSession) -> None:
-        """Persist a session (overwrites any existing row with same id)."""
+        """Persist a session (overwrites any existing row with same id).
+
+        Owner-scoped stores claim the id on first save and raise
+        :class:`SessionOwnershipError` if the id belongs to another
+        owner; the existing row is left untouched.
+        """
         data_json = json.dumps(session.to_dict(), ensure_ascii=False)
         preview = self._compute_preview(session)
         conn = self._connect()
         try:
-            conn.execute(
-                """
-                INSERT INTO sessions
-                    (session_id, title, created_at, updated_at,
-                     message_count, preview, data)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(session_id) DO UPDATE SET
-                    title = excluded.title,
-                    updated_at = excluded.updated_at,
-                    message_count = excluded.message_count,
-                    preview = excluded.preview,
-                    data = excluded.data
-                """,
-                (
-                    session.session_id,
-                    session.title,
-                    session.created_at.isoformat(),
-                    session.updated_at.isoformat(),
-                    len(session.messages),
-                    preview,
-                    data_json,
-                ),
-            )
+            if self.owner is None:
+                # Legacy single-tenant upsert. Never touches the owner
+                # column so an unscoped save cannot strip ownership.
+                conn.execute(
+                    """
+                    INSERT INTO sessions
+                        (session_id, title, created_at, updated_at,
+                         message_count, preview, data, owner)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, '')
+                    ON CONFLICT(session_id) DO UPDATE SET
+                        title = excluded.title,
+                        updated_at = excluded.updated_at,
+                        message_count = excluded.message_count,
+                        preview = excluded.preview,
+                        data = excluded.data
+                    """,
+                    (
+                        session.session_id,
+                        session.title,
+                        session.created_at.isoformat(),
+                        session.updated_at.isoformat(),
+                        len(session.messages),
+                        preview,
+                        data_json,
+                    ),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO sessions
+                        (session_id, title, created_at, updated_at,
+                         message_count, preview, data, owner)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(session_id) DO UPDATE SET
+                        title = excluded.title,
+                        updated_at = excluded.updated_at,
+                        message_count = excluded.message_count,
+                        preview = excluded.preview,
+                        data = excluded.data
+                    WHERE sessions.owner = excluded.owner
+                    """,
+                    (
+                        session.session_id,
+                        session.title,
+                        session.created_at.isoformat(),
+                        session.updated_at.isoformat(),
+                        len(session.messages),
+                        preview,
+                        data_json,
+                        self.owner,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    raise SessionOwnershipError(session.session_id)
             conn.commit()
         finally:
             conn.close()
 
     def load(self, session_id: str) -> ChatSession | None:
         """Load a full session by id; returns None if absent."""
+        query = "SELECT data FROM sessions WHERE session_id = ?"
+        params: tuple = (session_id,)
+        if self.owner is not None:
+            query += " AND owner = ?"
+            params = (session_id, self.owner)
         conn = self._connect()
         try:
-            row = conn.execute(
-                "SELECT data FROM sessions WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
+            row = conn.execute(query, params).fetchone()
         finally:
             conn.close()
         if row is None:
@@ -136,17 +188,23 @@ class SQLiteSessionStore(SessionStore):
 
     def list(self, limit: int = 50, offset: int = 0) -> list[SessionSummary]:
         """List session summaries, newest updated first."""
+        where = ""
+        params: tuple = (limit, offset)
+        if self.owner is not None:
+            where = "WHERE owner = ?"
+            params = (self.owner, limit, offset)
         conn = self._connect()
         try:
             rows = conn.execute(
-                """
+                f"""
                 SELECT session_id, title, created_at, updated_at,
                        message_count, preview
                 FROM sessions
+                {where}
                 ORDER BY updated_at DESC
                 LIMIT ? OFFSET ?
                 """,
-                (limit, offset),
+                params,
             ).fetchall()
         finally:
             conn.close()
@@ -164,9 +222,14 @@ class SQLiteSessionStore(SessionStore):
 
     def delete(self, session_id: str) -> None:
         """Delete a session; no-op if session_id is unknown."""
+        query = "DELETE FROM sessions WHERE session_id = ?"
+        params: tuple = (session_id,)
+        if self.owner is not None:
+            query += " AND owner = ?"
+            params = (session_id, self.owner)
         conn = self._connect()
         try:
-            conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            conn.execute(query, params)
             conn.commit()
         finally:
             conn.close()
@@ -178,18 +241,24 @@ class SQLiteSessionStore(SessionStore):
         want real full-text search should layer SQLite FTS5 on top.
         """
         pattern = f"%{query}%"
+        owner_clause = ""
+        params: tuple = (pattern, pattern, pattern, limit)
+        if self.owner is not None:
+            owner_clause = "AND owner = ?"
+            params = (pattern, pattern, pattern, self.owner, limit)
         conn = self._connect()
         try:
             rows = conn.execute(
-                """
+                f"""
                 SELECT session_id, title, created_at, updated_at,
                        message_count, preview
                 FROM sessions
-                WHERE title LIKE ? OR preview LIKE ? OR data LIKE ?
+                WHERE (title LIKE ? OR preview LIKE ? OR data LIKE ?)
+                {owner_clause}
                 ORDER BY updated_at DESC
                 LIMIT ?
                 """,
-                (pattern, pattern, pattern, limit),
+                params,
             ).fetchall()
         finally:
             conn.close()

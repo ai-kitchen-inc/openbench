@@ -54,7 +54,16 @@ class StorageBackend(Protocol):
     Default is ``"default"``.
     """
 
-    def session_store(self) -> SessionStore: ...
+    def session_store(self, *, owner: str | None = None) -> SessionStore:
+        """Store for UI-facing chat transcripts.
+
+        Args:
+            owner: Optional owner scope for multi-tenant apps. ``None``
+                (default) returns an unscoped store — today's behavior.
+                A string returns a store that only sees (and stamps)
+                that owner's sessions.
+        """
+        ...
 
     def memory_store(self) -> MemoryStore:
         """Store for LLM-internal agent conversation memory.
@@ -130,11 +139,11 @@ class LocalStorageBackend:
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def session_store(self) -> SessionStore:
+    def session_store(self, *, owner: str | None = None) -> SessionStore:
         """Return a SQLite-backed :class:`SessionStore` at ``<root>/sessions.db``."""
         from openbench.chat.stores.sqlite import SQLiteSessionStore
 
-        return SQLiteSessionStore(db_path=str(self.root / "sessions.db"))
+        return SQLiteSessionStore(db_path=str(self.root / "sessions.db"), owner=owner)
 
     def memory_store(self) -> MemoryStore:
         """Return a SQLite-backed :class:`MemoryStore` at ``<root>/memory.db``.

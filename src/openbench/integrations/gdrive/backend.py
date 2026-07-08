@@ -133,8 +133,14 @@ class GoogleDriveStorageBackend:
 
     # ------------------------------------------------------------------ Protocol
 
-    def session_store(self) -> SessionStore:
-        """Return a :class:`GoogleDriveSessionStore` rooted at ``<root>/sessions/``."""
+    def session_store(self, *, owner: str | None = None) -> SessionStore:
+        """Return a :class:`GoogleDriveSessionStore` rooted at ``<root>/sessions/``.
+
+        ``owner`` is accepted for :class:`StorageBackend` protocol
+        compatibility but not enforced — the Drive backend is
+        single-tenant (one Drive folder per deployment).
+        """
+        del owner
         from openbench.integrations.gdrive.session_store import GoogleDriveSessionStore
 
         folder_id = self._resolve_subfolder(self._SESSIONS_SUBFOLDER)
