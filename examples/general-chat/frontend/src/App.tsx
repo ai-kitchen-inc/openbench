@@ -177,7 +177,11 @@ export function findLatestDashboard(messages: ChatMessage[]): DashboardArtifact 
     const surfaces = message.surfaces ?? [];
     for (let surfaceIndex = surfaces.length - 1; surfaceIndex >= 0; surfaceIndex -= 1) {
       const surface = surfaces[surfaceIndex];
-      const components = Array.from(surface.components.values()).reverse();
+      // Persisted legacy sessions can carry surface stubs without a
+      // components Map — skip them instead of crashing the chat layout.
+      const surfaceComponents = surface?.components;
+      if (!surfaceComponents || typeof surfaceComponents.values !== "function") continue;
+      const components = Array.from(surfaceComponents.values()).reverse();
       for (const component of components) {
         if (component.component !== "ObDashboardFrame") continue;
         const url = componentString(
