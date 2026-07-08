@@ -354,10 +354,21 @@ cmd_seed_mcp_db() {
 # untouched. The API containers are stopped during the wipe and restarted.
 cmd_wipe_chat_data() {
   log "Wiping chat data (sessions, memory, sources, uploads, downloads) on the VM"
+  # The chat database referenced by GENERAL_CHAT_DATABASE_URL may not exist yet
+  # (observed in prod: URL points at db 'openbench' that was never created), so
+  # create it when missing and only then drop the chat tables.
   vm_ssh "cd $VM_DEPLOY_DIR && \
     sudo docker-compose --env-file .env.gcp -f $COMPOSE_FILE stop openbench-api openbench-worker && \
     dburl=\$(grep '^GENERAL_CHAT_DATABASE_URL=' .env.gcp | cut -d= -f2-); \
     [ -n \"\$dburl\" ] || { echo 'GENERAL_CHAT_DATABASE_URL missing in .env.gcp'; exit 1; }; \
+    dbname=\${dburl##*/}; dbname=\${dbname%%\?*}; maint=\"\${dburl%/*}/postgres\"; \
+    exists=\$(sudo docker run --rm -i $PSQL_IMAGE psql \"\$maint\" -tAc \
+      \"SELECT 1 FROM pg_database WHERE datname='\$dbname'\") || exit 1; \
+    if [ \"\$exists\" != \"1\" ]; then \
+      echo \"creating missing database \$dbname\"; \
+      sudo docker run --rm -i $PSQL_IMAGE psql \"\$maint\" -v ON_ERROR_STOP=1 \
+        -c \"CREATE DATABASE \\\"\$dbname\\\";\" || exit 1; \
+    fi; \
     sudo docker run --rm -i $PSQL_IMAGE psql \"\$dburl\" -v ON_ERROR_STOP=1 \
       -c 'DROP TABLE IF EXISTS openbench_sessions, openbench_sources, openbench_messages;' && \
     sudo rm -rf /app-data/openbench/sources /app-data/openbench/sessions.db /app-data/openbench/memory.db && \
