@@ -775,5 +775,65 @@ class TestDashboardGeneratorMetadata(unittest.TestCase):
         self.assertEqual(normalized["sections"][0]["items"][0]["chart_type"], "bar")
 
 
+class TestNormalizerWarnings(unittest.TestCase):
+    """Invalid section items must be surfaced, not silently dropped."""
+
+    def test_non_dict_section_items_produce_warnings(self):
+        from openbench.output.generators.dashboard.normalizer import (
+            normalize_dashboard_view_model,
+        )
+
+        # Regression: the LLM sometimes emits bare integers (invented dataset
+        # indices) as section items; these were dropped silently, which drove
+        # blind generate_dashboard retry loops.
+        normalized = normalize_dashboard_view_model(
+            {
+                "title": "Coffee Sales Dashboard",
+                "kpis": [{"label": "Total Revenue", "value": 115431.58}],
+                "sections": [
+                    {"title": "Sales Trends", "items": [6]},
+                    {"title": "Product Analysis", "items": [8]},
+                ],
+            }
+        )
+
+        warnings = normalized.get("normalization_warnings")
+        self.assertTrue(warnings, "expected warnings for non-dict section items")
+        self.assertEqual(len(warnings), 2)
+        self.assertIn("int", warnings[0])
+        self.assertIn("6", warnings[0])
+
+    def test_valid_view_model_has_no_warnings_key(self):
+        from openbench.output.generators.dashboard.normalizer import (
+            normalize_dashboard_view_model,
+        )
+
+        normalized = normalize_dashboard_view_model(
+            {
+                "title": "Sales Dashboard",
+                "kpis": [{"label": "Revenue", "value": 300}],
+                "sections": [
+                    {
+                        "title": "Revenue",
+                        "items": [
+                            {
+                                "type": "chart",
+                                "chart_type": "bar",
+                                "data": [
+                                    {"region": "EU", "revenue": 150},
+                                    {"region": "US", "revenue": 150},
+                                ],
+                                "x_field": "region",
+                                "y_field": "revenue",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+
+        self.assertNotIn("normalization_warnings", normalized)
+
+
 if __name__ == "__main__":
     unittest.main()
