@@ -147,7 +147,7 @@ class ChatEngine(
             # 10. Add assistant message to session
             self.session.add_assistant_message(
                 content=text_content,
-                surfaces=[{"surfaceId": surface_id}],
+                surfaces=[self._build_surface_record(surface_id, components, data_model)],
                 metadata=metadata,
             )
             self._persist_session()
@@ -234,7 +234,7 @@ class ChatEngine(
             text_content = self._extract_text_content(agent_output)
             self.session.add_assistant_message(
                 content=text_content,
-                surfaces=[{"surfaceId": surface_id}],
+                surfaces=[self._build_surface_record(surface_id, components, data_model)],
                 metadata=metadata,
             )
             self._persist_session()
@@ -330,7 +330,7 @@ class ChatEngine(
             text_content = self._extract_text_content(agent_output)
             self.session.add_assistant_message(
                 content=text_content,
-                surfaces=[{"surfaceId": surface_id}],
+                surfaces=[self._build_surface_record(surface_id, components, data_model)],
                 metadata=metadata,
             )
             self._persist_session()

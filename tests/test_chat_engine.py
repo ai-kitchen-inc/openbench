@@ -631,6 +631,28 @@ class TestChatEngineRenderItems(unittest.TestCase):
         has_text = any(c["component"] in ("ObMarkdown", "Text") for c in components)
         self.assertTrue(has_text, "Should have text alongside chart")
 
+    def test_invoke_persists_full_surface_snapshot(self):
+        """Session history keeps the full surface (components), not an id stub."""
+        chart_item = {
+            "type": "bar",
+            "title": "Sales",
+            "data": [{"name": "Q1", "value": 100}],
+        }
+        engine = ChatEngine(
+            agent=MockAgent("Here's the chart:"),
+            render_items_fn=lambda: [chart_item],
+        )
+        result = engine.invoke("Show sales chart")
+
+        record = result["session"].messages[-1].surfaces[0]
+        self.assertEqual(
+            record["surfaceId"],
+            result["messages"][0]["createSurface"]["surfaceId"],
+        )
+        self.assertEqual(record["catalogId"], engine.builder.catalog_id)
+        ids = {c["id"] for c in record["components"]}
+        self.assertIn("root", ids)
+
     def test_invoke_with_form_render_item(self):
         """render_items_fn returning form dict should produce form components."""
         form_item = {

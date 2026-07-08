@@ -1039,5 +1039,88 @@ class TestAGUIHandlerSessionPersistence(unittest.TestCase):
         self.assertEqual(handler.hook_calls, ["loaded-id"])
 
 
+class TestSurfaceSnapshotPersistence(TestAGUIHandlerSessionPersistence):
+    """Rich A2UI surfaces persist as full snapshots, not id-only stubs.
+
+    Regression: surfaces were stored as ``[{"surfaceId": ...}]`` only, so
+    reloading a session dropped all rich content and crashed frontends
+    that dereferenced ``surface.components``.
+    """
+
+    _CHART_ITEM = {
+        "title": "Sales",
+        "data": [{"x": "Q1", "y": 100}],
+        "chart_type": "bar",
+    }
+
+    def _stream_with_items(self, items, response="Here are the results"):
+        store = self._make_store()
+        engine = ChatEngine(
+            agent=MockAgent(response=response),
+            session_store=store,
+            render_items_fn=lambda: items,
+        )
+        handler = AGUIHandler(engine=engine)
+        body = {"content": "Show chart", "forwardedProps": {"sessionId": "s-rich"}}
+        events = _run(_collect_events(handler, body))
+        return store.saved[-1], events
+
+    def test_rich_run_persists_full_surface_snapshot(self):
+        session, events = self._stream_with_items([dict(self._CHART_ITEM)])
+
+        assistant = session.messages[-1]
+        self.assertEqual(str(assistant.role.value), "assistant")
+        self.assertIsNotNone(assistant.surfaces)
+        record = assistant.surfaces[0]
+
+        create_events = [
+            e["value"]["createSurface"]
+            for e in events
+            if e.get("type") == "CUSTOM"
+            and e.get("name") == "a2ui"
+            and "createSurface" in e.get("value", {})
+        ]
+        self.assertEqual(record["surfaceId"], create_events[0]["surfaceId"])
+        self.assertEqual(record["catalogId"], create_events[0]["catalogId"])
+
+        components = record["components"]
+        self.assertIsInstance(components, list)
+        self.assertTrue(components)
+        ids = {c["id"] for c in components}
+        self.assertIn("root", ids)
+        for component in components:
+            self.assertIn("id", component)
+            self.assertIn("component", component)
+
+    def test_text_only_run_persists_no_surface(self):
+        session, _events = self._stream_with_items(None)
+        self.assertIsNone(session.messages[-1].surfaces)
+
+    def test_surface_snapshot_round_trips_through_session_dict(self):
+        from openbench.chat.session import ChatSession
+
+        session, _events = self._stream_with_items([dict(self._CHART_ITEM)])
+
+        payload = json.dumps(session.to_dict())
+        restored = ChatSession.from_dict(json.loads(payload))
+        self.assertEqual(
+            restored.messages[-1].surfaces,
+            session.messages[-1].surfaces,
+        )
+
+    def test_form_run_persists_data_model(self):
+        form_item = {
+            "fields": [
+                {"name": "email", "label": "Email", "type": "text", "value": ""},
+            ],
+            "title": "Contact",
+        }
+        session, _events = self._stream_with_items([form_item])
+
+        record = session.messages[-1].surfaces[0]
+        self.assertIn("dataModel", record)
+        self.assertIsInstance(record["dataModel"], dict)
+
+
 if __name__ == "__main__":
     unittest.main()
