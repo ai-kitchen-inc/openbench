@@ -98,6 +98,7 @@ def test_dashboard_service_generates_with_uploaded_template(
     monkeypatch.setenv("OPENBENCH_EXPORT_DIR", str(tmp_path))
     monkeypatch.setenv("OPENBENCH_EXPORT_URL_BASE", "/downloads")
     monkeypatch.setenv("DASHBOARD_RENDER_ADAPTER", "default")
+    monkeypatch.setenv("OPENBENCH_DASHBOARD_STATE_PATH", str(tmp_path / "dashboard_state.json"))
 
     result = get_service().generate_dashboard(
         {
@@ -173,4 +174,162 @@ def test_dashboard_service_hydrates_cached_aggregate_dataset_refs(
     assert result["kpis"][0]["label"] == "Total Revenue"
     assert "Revenue by Coffee" in html
     assert "Latte" in html
+    assert "No chart data available." not in html
+
+
+def test_dashboard_service_hydrates_placeholder_charts_from_cached_aggregates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    pytest.importorskip("pandas")
+
+    from app.service import get_service
+
+    source = tmp_path / "coffee.csv"
+    source.write_text(
+        "coffee_name,month,money\nLatte,Jan,10\nLatte,Feb,15\nEspresso,Jan,5\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENBENCH_EXPORT_DIR", str(tmp_path))
+    monkeypatch.setenv("OPENBENCH_EXPORT_URL_BASE", "/downloads")
+    monkeypatch.setenv("DASHBOARD_RENDER_ADAPTER", "default")
+
+    service = get_service()
+    aggregate = service.aggregate_data(
+        str(source),
+        [
+            {
+                "name": "revenue_by_coffee_type",
+                "sql": (
+                    "SELECT coffee_name, SUM(money) AS revenue "
+                    "FROM data GROUP BY coffee_name ORDER BY revenue DESC"
+                ),
+            },
+            {
+                "name": "monthly_sales",
+                "sql": "SELECT month, SUM(money) AS sales FROM data GROUP BY month ORDER BY month",
+            },
+        ],
+    )
+    assert aggregate["errors"] == []
+
+    result = service.generate_dashboard(
+        {
+            "title": "Coffee Sales Executive Dashboard",
+            "kpis": [{"label": "Total Revenue", "value": 30}],
+            "sections": [
+                {
+                    "title": "Dashboard",
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "title": "Revenue by Coffee Type",
+                            "data": [],
+                            "x_field": "name",
+                            "y_field": "value",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "line",
+                            "title": "Monthly Sales Trend",
+                            "data": [],
+                            "x_field": "name",
+                            "y_field": "value",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    html = Path(result["path"]).read_text(encoding="utf-8")
+    items = result["viewModel"]["sections"][0]["items"]
+    assert items[0]["dataset"] == "revenue_by_coffee_type"
+    assert items[0]["x_field"] == "coffee_name"
+    assert items[0]["y_field"] == "revenue"
+    assert items[1]["dataset"] == "monthly_sales"
+    assert items[1]["x_field"] == "month"
+    assert items[1]["y_field"] == "sales"
+    assert "Latte" in html
+    assert "Jan" in html
+    assert "No chart data available." not in html
+
+
+def test_dashboard_service_hydrates_placeholder_charts_from_last_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    pytest.importorskip("pandas")
+
+    from app import dashboard_tools
+    from app.service import get_service
+
+    source = tmp_path / "coffee.csv"
+    source.write_text(
+        "sale_date,coffee_name,Time_of_Day,cash_type,money\n"
+        "2026-01-01,Latte,Morning,card,10\n"
+        "2026-01-01,Espresso,Night,cash,5\n"
+        "2026-01-02,Latte,Night,card,15\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENBENCH_EXPORT_DIR", str(tmp_path))
+    monkeypatch.setenv("OPENBENCH_EXPORT_URL_BASE", "/downloads")
+    monkeypatch.setenv("DASHBOARD_RENDER_ADAPTER", "default")
+
+    service = get_service()
+    metadata = service.extract_metadata(str(source))
+    assert "error" not in metadata
+    dashboard_tools._LAST_AGGREGATE_DATASETS.clear()
+    dashboard_tools._LAST_SOURCE_CONTEXT.clear()
+
+    result = service.generate_dashboard(
+        {
+            "title": "Coffee Sales Executive Dashboard",
+            "kpis": [{"label": "Total Revenue", "value": 30}],
+            "datasets": {},
+            "sections": [
+                {
+                    "title": "Dashboard",
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "line",
+                            "title": "Daily Sales Trend",
+                            "data": [],
+                            "x_field": "name",
+                            "y_field": "value",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "pie",
+                            "title": "Sales by Coffee Type",
+                            "data": [],
+                            "x_field": "name",
+                            "y_field": "value",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "pie",
+                            "title": "Sales by Payment Method",
+                            "data": [],
+                            "x_field": "name",
+                            "y_field": "value",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    html = Path(result["path"]).read_text(encoding="utf-8")
+    by_title = {
+        item["title"]: item
+        for item in result["viewModel"]["sections"][0]["items"]
+    }
+    assert by_title["Daily Sales Trend"]["x_field"] == "sale_date"
+    assert by_title["Sales by Coffee Type"]["x_field"] == "coffee_name"
+    assert by_title["Sales by Payment Method"]["x_field"] == "cash_type"
+    assert len(result["viewModel"]["datasets"]) >= 3
+    assert "Latte" in html
+    assert "card" in html
+    assert "2026-01-01" in html
     assert "No chart data available." not in html

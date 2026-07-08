@@ -13,7 +13,8 @@ Added to the framework:
 - `src/openbench/skills/dashboard-generator/`
   - `extract_metadata(path, sheet=None, sample_rows=5)`
   - `aggregate_data(path, query, sheet=None, dataset_id=None)`
-  - `generate_dashboard(view_model, filename=None, output_dir=None, template_path=None, template_text=None, template_format=None)`
+  - `load_dashboard_memory(dashboard_id=None, source_path=None, source_signature=None, ...)`
+  - `generate_dashboard(view_model, filename=None, output_dir=None, template_path=None, template_text=None, template_format=None, source_path=None, previous_dashboard_id=None, revision_notes=None)`
   - `adapters.py` registry plus separate adapter modules:
     `adapter_base.py`, `default_adapter.py`, and `stitch_adapter.py`
 - `DashboardGenerator` in `src/openbench/output/generators.py`
@@ -90,21 +91,29 @@ When the user asks for a dashboard from CSV/XLSX data, the agent should follow
 this order:
 
 1. Locate the uploaded file path from attachments or source metadata.
-2. Call `extract_metadata(path=...)`.
+2. Call `extract_metadata(path=...)` and inspect `dashboard_memory.matches`.
 3. Use only the metadata response to understand columns, roles, and SQL hints.
 4. Write read-only SQLite `SELECT` or `WITH` queries against table `data`.
    Quote column names with double quotes when they contain spaces or
    punctuation, alias output columns clearly, and add `LIMIT` for large chart
    or table datasets.
 5. Call `aggregate_data(path=..., query="...", dataset_id="...")`.
-6. Build a declarative ViewModel. Treat this as A2UI-style data, not UI code.
-7. Optionally pass a user-uploaded template with
+6. When regenerating the same dashboard or applying a revision, call
+   `load_dashboard_memory` and use the stored `viewModel` as the layout base.
+7. Build a declarative ViewModel. Treat this as A2UI-style data, not UI code.
+   For revisions, send only the changed panel and pass `previous_dashboard_id`
+   plus `revision_panel_titles` to `generate_dashboard`; unspecified panels and
+   their top-level datasets are preserved.
+8. Optionally pass a user-uploaded template with
    `generate_dashboard(view_model=..., template_path="...")`.
-8. Call `generate_dashboard(view_model=...)`.
-9. Return the generated link and a short explanation.
+9. Call `generate_dashboard(view_model=..., source_path=...)`.
+10. Return the generated link and a short explanation.
 
 Step 6 must not include raw HTML, CSS, JavaScript, or renderer instructions.
 The `generate_dashboard` tool owns the visual stitching.
+
+For details on cross-session layout reuse and panel-level revision merging, see
+[`DASHBOARD_PERSISTENCE_MEMORY.md`](DASHBOARD_PERSISTENCE_MEMORY.md).
 
 ## User-Uploaded Templates
 
@@ -193,12 +202,13 @@ Stitch reference instead of treating the successful MCP response as a failure.
 
 ## MCP Exposure
 
-`OpenBenchMCPServer` auto-discovers SDK skill tools, so the three dashboard
+`OpenBenchMCPServer` auto-discovers SDK skill tools, so the dashboard
 tools become MCP-callable through the normal OpenBench MCP tool registry.
 Policy classification:
 
 - `extract_metadata`: read
 - `aggregate_data`: read
+- `load_dashboard_memory`: read
 - `generate_dashboard`: artifact write
 
 ## SQL Aggregation Contract

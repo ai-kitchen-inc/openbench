@@ -90,6 +90,7 @@ The other variables in `.env` are optional overrides:
 | `GENERAL_CHAT_DOWNLOAD_DIR` | `downloads/` | Where generated exports go |
 | `GENERAL_CHAT_STORAGE_ROOT` | `.openbench/` | Session + source JSON storage |
 | `GENERAL_CHAT_MEMORY_DB` | `general_chat_memory.db` | SQLite persistent memory |
+| `GENERAL_CHAT_DASHBOARD_MEMORY_DB` | `.openbench/dashboard_memory.db` | SQLite dashboard ViewModel memory for consistent regenerated/revised dashboards |
 | `GENERAL_CHAT_MAX_SOURCE_BYTES` | `26214400` (25 MB) | Max size per uploaded source |
 | `GENERAL_CHAT_DISCOVERY_PROVIDER` | `tavily` | Primary internet search provider |
 | `GENERAL_CHAT_DISCOVERY_PROVIDERS` | `tavily` | Ordered fallback provider list |
@@ -362,6 +363,15 @@ The result appears as a chat link and in the right-side dashboard artifact
 window. Generated HTML files are written to `downloads/` and served from
 `/downloads/...`.
 
+Successful dashboards are also saved to dashboard persistence memory. On later
+turns or sessions, `extract_metadata` can match a refreshed CSV/XLSX with the
+same functional schema even if new rows were added, and the agent can call
+`load_dashboard_memory` before regenerating the dashboard. For revision prompts,
+the agent passes `previous_dashboard_id` and `revision_panel_titles` to
+`generate_dashboard`; only the requested panel patch is changed and unspecified
+panels plus their datasets are preserved. See
+[Dashboard Persistence Memory](../../docs/DASHBOARD_PERSISTENCE_MEMORY.md).
+
 To test the standalone MCP version only:
 
 ```powershell
@@ -375,6 +385,7 @@ to the agent:
 
 - `dashboard_generator_extract_metadata`
 - `dashboard_generator_aggregate_data`
+- `dashboard_generator_load_dashboard_memory`
 - `dashboard_generator_generate_dashboard`
 
 In the web UI, open the MCP Servers panel, confirm the `dashboard_generator`

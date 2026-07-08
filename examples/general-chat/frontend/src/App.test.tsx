@@ -673,7 +673,7 @@ describe("SourcePanel discovery flow", () => {
 });
 
 describe("DashboardArtifactPanel", () => {
-  it("renders the A2UI dashboard surface when ViewModel and dashboardUrl both exist", () => {
+  it("renders the exported HTML dashboard preview when ViewModel and dashboardUrl both exist", () => {
     const viewModel = {
       title: "Sales Dashboard",
       description: "Native dashboard data.",
@@ -711,11 +711,13 @@ describe("DashboardArtifactPanel", () => {
     );
 
     expect(screen.getAllByText("Sales Dashboard").length).toBeGreaterThan(0);
-    expect(container.querySelector('[data-dashboard-renderer="a2ui"]')).not.toBeNull();
-    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector('[data-dashboard-renderer="html-export"]')).not.toBeNull();
+    const iframe = container.querySelector("iframe");
+    expect(iframe).not.toBeNull();
+    expect(iframe?.getAttribute("src")).toBe("/downloads/sales.html");
   });
 
-  it("renders the A2UI dashboard surface when ViewModel is inside legacy properties", () => {
+  it("renders the exported HTML dashboard preview when ViewModel is inside legacy properties", () => {
     const viewModel = {
       title: "Dashboard Penjualan Kopi",
       description: "Native dashboard data.",
@@ -753,7 +755,9 @@ describe("DashboardArtifactPanel", () => {
     );
 
     expect(screen.getAllByText("Dashboard Penjualan Kopi").length).toBeGreaterThan(0);
-    expect(container.querySelector('[data-dashboard-renderer="a2ui"]')).not.toBeNull();
-    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector('[data-dashboard-renderer="html-export"]')).not.toBeNull();
+    const iframe = container.querySelector("iframe");
+    expect(iframe).not.toBeNull();
+    expect(iframe?.getAttribute("src")).toBe("/downloads/kopi.html");
   });
 });

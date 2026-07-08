@@ -56,10 +56,11 @@ def normalize_dashboard_view_model(content: dict[str, Any], *, title: str | None
     top_level_items: list[Any] = []
     for key in ("items", "components", "widgets", "panels", "cards", "charts"):
         top_level_items.extend(_as_list(content.get(key)))
-    skip_wrapped_sections = bool(top_level_items) and _sections_contain_component_containers(
-        content.get("sections")
+    skip_raw_sections = bool(top_level_items) and (
+        _sections_contain_component_containers(content.get("sections"))
+        or _sections_have_only_empty_charts(content.get("sections"))
     )
-    if not skip_wrapped_sections:
+    if not skip_raw_sections:
         for section in _as_list(content.get("sections")):
             normalized_items = _normalize_items(_section_items(section), datasets, kpis)
             if normalized_items:
@@ -68,6 +69,8 @@ def normalize_dashboard_view_model(content: dict[str, Any], *, title: str | None
     if _is_visual_item(content):
         top_level_items.append(content)
     panels.extend(_normalize_items(top_level_items, datasets, kpis))
+    if not panels and _should_synthesize_panels_from_datasets(datasets):
+        panels.extend(_panels_from_datasets(datasets))
 
     if not kpis:
         for item in _as_list(content.get("metrics")) + _as_list(content.get("stats")):
@@ -75,7 +78,11 @@ def normalize_dashboard_view_model(content: dict[str, Any], *, title: str | None
             if kpi:
                 kpis.append(kpi)
 
-    canonical = dict(content)
+    canonical = {
+        key: value
+        for key, value in content.items()
+        if key not in {"components", "items", "widgets", "panels", "cards", "charts"}
+    }
     canonical["title"] = str(title or content.get("title") or "OpenBench Dashboard")
     canonical["description"] = str(content.get("description") or "")
     canonical["datasets"] = datasets
@@ -146,6 +153,22 @@ def _sections_contain_component_containers(value: Any) -> bool:
             if isinstance(item, dict) and _section_items(item) and _is_container(item):
                 return True
     return False
+
+
+def _sections_have_only_empty_charts(value: Any) -> bool:
+    items: list[Any] = []
+    for section in _as_list(value):
+        items.extend(_section_items(section))
+    if not items:
+        return False
+    for item in items:
+        if not isinstance(item, dict):
+            return False
+        if _component_kind(item) not in _CHART_TYPES:
+            return False
+        if _records_from_value(item.get("data")) or _records_from_value(item.get("records")):
+            return False
+    return True
 
 
 def _canonical_sections(raw_sections: Any, panels: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -261,10 +284,15 @@ def _normalize_kpi(item: Any, datasets: dict[str, list[dict[str, Any]]]) -> dict
 
 
 def _normalize_chart(item: dict[str, Any], datasets: dict[str, list[dict[str, Any]]]) -> dict[str, Any] | None:
-    merged = _component_payload(item)
+    merged = _with_data_controls(_component_payload(item))
     kind = _component_kind(item)
     chart_type = _chart_type(kind, merged)
     records, chartjs_x, chartjs_y = _chart_records(merged, datasets)
+    matched_dataset = ""
+    if not records and datasets:
+        matched_dataset, matched_records = _match_dataset_for_item(merged, datasets)
+        if matched_records:
+            records = matched_records
     x_field = _axis_field(
         merged,
         (
@@ -300,6 +328,11 @@ def _normalize_chart(item: dict[str, Any], datasets: dict[str, list[dict[str, An
     y_fields = merged.get("y_fields") or merged.get("yFields")
     if not y_field and isinstance(y_fields, list) and y_fields:
         y_field = _field_from_axis(y_fields[0])
+    if records:
+        if x_field and not _field_exists(records, x_field):
+            x_field = ""
+        if y_field and not _field_exists(records, y_field):
+            y_field = ""
     x_field = x_field or chartjs_x or _first_category_key(records)
     y_field = y_field or chartjs_y or _first_numeric_key(records, fallback=x_field)
     result = {
@@ -312,14 +345,14 @@ def _normalize_chart(item: dict[str, Any], datasets: dict[str, list[dict[str, An
     }
     if merged.get("description"):
         result["description"] = merged["description"]
-    dataset_key = _dataset_key(merged)
+    dataset_key = _dataset_key(merged) or matched_dataset
     if dataset_key:
         result["dataset"] = dataset_key
     return result
 
 
 def _normalize_table(item: dict[str, Any], datasets: dict[str, list[dict[str, Any]]]) -> dict[str, Any] | None:
-    merged = _component_payload(item)
+    merged = _with_data_controls(_component_payload(item))
     records = _resolve_records(merged, datasets)
     result = {
         "type": "table",
@@ -348,6 +381,21 @@ def _component_payload(component: dict[str, Any]) -> dict[str, Any]:
             merged[f"component_{key}"] = value
             continue
         merged[key] = value
+    return merged
+
+
+def _with_data_controls(item: dict[str, Any]) -> dict[str, Any]:
+    data = item.get("data")
+    if not isinstance(data, dict) or _looks_like_chartjs_data(data) or _records_from_value(data):
+        return item
+    merged = dict(item)
+    for key, value in data.items():
+        if key not in merged:
+            merged[key] = value
+    if "label" in data and not any(merged.get(key) for key in ("x", "x_field", "xField")):
+        merged["x"] = data["label"]
+    if "value" in data and not any(merged.get(key) for key in ("y", "y_field", "yField")):
+        merged["y"] = data["value"]
     return merged
 
 
@@ -432,7 +480,13 @@ def _resolve_records(
     item: dict[str, Any],
     datasets: dict[str, list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    for value in (item.get("data"), item.get("records"), item.get("values")):
+    for value in (
+        item.get("data"),
+        item.get("records"),
+        item.get("values"),
+        item.get("view_data"),
+        item.get("viewData"),
+    ):
         records = _records_from_value(value)
         if records:
             return records
@@ -466,7 +520,102 @@ def _dataset_key(item: dict[str, Any]) -> str:
     )
     if isinstance(item.get("data"), str):
         value = item["data"]
+    if not value and isinstance(item.get("data"), dict):
+        data = item["data"]
+        value = data.get("dataset_id") or data.get("datasetId") or data.get("dataset")
     return str(value) if value else ""
+
+
+def _match_dataset_for_item(
+    item: dict[str, Any],
+    datasets: dict[str, list[dict[str, Any]]],
+) -> tuple[str, list[dict[str, Any]]]:
+    title = _first_text(item, keys=("title", "label", "name")) or ""
+    title_tokens = _match_tokens(title)
+    best_id = ""
+    best_records: list[dict[str, Any]] = []
+    best_score = 0
+    for dataset_id, records in datasets.items():
+        if not records or _is_kpi_dataset_id(dataset_id):
+            continue
+        dataset_tokens = _match_tokens(dataset_id)
+        for row in records[:3]:
+            dataset_tokens.update(_match_tokens(" ".join(str(key) for key in row.keys())))
+        score = len(title_tokens & dataset_tokens)
+        if score > best_score:
+            best_id = dataset_id
+            best_records = records
+            best_score = score
+    if best_score > 0:
+        return best_id, best_records
+    viable = [
+        (dataset_id, records)
+        for dataset_id, records in datasets.items()
+        if records and not _is_kpi_dataset_id(dataset_id)
+    ]
+    if len(viable) == 1:
+        return viable[0]
+    return "", []
+
+
+def _match_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.split(r"[^a-z0-9]+", value.lower())
+        if len(token) > 1 and token not in {"chart", "sales", "trend", "total"}
+    }
+
+
+def _field_exists(records: list[dict[str, Any]], field: str) -> bool:
+    return any(field in row for row in records[:10])
+
+
+def _panels_from_datasets(datasets: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    panels: list[dict[str, Any]] = []
+    for dataset_id, records in datasets.items():
+        if not records or _is_kpi_dataset_id(dataset_id):
+            continue
+        x_field = _first_category_key(records)
+        y_field = _first_numeric_key(records, fallback=x_field)
+        if not x_field or not y_field or x_field == y_field:
+            continue
+        panels.append(
+            {
+                "type": "chart",
+                "chart_type": "line" if _looks_time_like_field(x_field) else "bar",
+                "title": _titleize(dataset_id),
+                "data": records,
+                "dataset": dataset_id,
+                "x_field": x_field,
+                "y_field": y_field,
+            }
+        )
+        if len(panels) >= 4:
+            break
+    return panels
+
+
+def _should_synthesize_panels_from_datasets(datasets: dict[str, list[dict[str, Any]]]) -> bool:
+    viable = 0
+    for dataset_id, records in datasets.items():
+        if not records or _is_kpi_dataset_id(dataset_id):
+            continue
+        x_field = _first_category_key(records)
+        y_field = _first_numeric_key(records, fallback=x_field)
+        if x_field and y_field and x_field != y_field:
+            viable += 1
+        if viable >= 2:
+            return True
+    return False
+
+
+def _is_kpi_dataset_id(dataset_id: str) -> bool:
+    return dataset_id.lower() in {"kpis", "kpi", "metrics", "stats"}
+
+
+def _looks_time_like_field(value: str) -> bool:
+    lowered = value.lower()
+    return any(token in lowered for token in ("date", "month", "year", "week", "day", "time"))
 
 
 def _axis_field(item: dict[str, Any], keys: tuple[str, ...], option_keys: tuple[str, ...]) -> str:
@@ -510,8 +659,13 @@ def _field_from_axis(value: Any) -> str:
 
 
 def _looks_like_chartjs_data(value: Any) -> bool:
-    return isinstance(value, dict) and isinstance(value.get("labels"), list) and isinstance(
-        value.get("datasets"), list
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("labels"), list)
+        and (
+            isinstance(value.get("datasets"), list)
+            or isinstance(value.get("values"), list)
+        )
     )
 
 
@@ -519,6 +673,13 @@ def _chartjs_records(value: Any) -> tuple[list[dict[str, Any]], str, str]:
     if not _looks_like_chartjs_data(value):
         return [], "label", "value"
     labels = value.get("labels") or []
+    if isinstance(value.get("values"), list) and not isinstance(value.get("datasets"), list):
+        values = value["values"]
+        rows = [
+            {"label": label, "value": values[index] if index < len(values) else None}
+            for index, label in enumerate(labels)
+        ]
+        return rows, "label", "value"
     datasets = [dataset for dataset in value.get("datasets") or [] if isinstance(dataset, dict)]
     if not datasets:
         return [], "label", "value"

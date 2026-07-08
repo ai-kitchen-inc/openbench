@@ -11,6 +11,7 @@ Verifies that every SDK skill:
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import tempfile
@@ -325,6 +326,18 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
             import pandas  # noqa: F401
         except ImportError:
             self.skipTest("pandas is not installed")
+        self._memory_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._memory_dir.cleanup)
+        self._old_dashboard_memory_db = os.environ.get("OPENBENCH_DASHBOARD_MEMORY_DB")
+        self._old_dashboard_memory_enabled = os.environ.get("OPENBENCH_DASHBOARD_MEMORY_ENABLED")
+        self._old_dashboard_state_path = os.environ.get("OPENBENCH_DASHBOARD_STATE_PATH")
+        os.environ["OPENBENCH_DASHBOARD_MEMORY_DB"] = str(
+            Path(self._memory_dir.name) / "dashboard_memory.db"
+        )
+        os.environ["OPENBENCH_DASHBOARD_STATE_PATH"] = str(
+            Path(self._memory_dir.name) / "dashboard_generator_state.json"
+        )
+        os.environ["OPENBENCH_DASHBOARD_MEMORY_ENABLED"] = "1"
         self.skill = Skill.from_dir(SDK_SKILLS_DIR / "dashboard-generator")
         self.tools = {name: fn for name, fn, _ in self.skill.tools}
         self.tool_schemas = {name: schema for name, _, schema in self.skill.tools}
@@ -334,7 +347,25 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
 
         module = sys.modules.get("openbench_skill_dashboard_generator")
         if module is not None and hasattr(module, "bind"):
-            module.bind(dashboard_adapter=None, dashboard_adapter_factory=None)
+            module.bind(
+                dashboard_adapter=None,
+                dashboard_adapter_factory=None,
+                dashboard_memory_db_path=None,
+            )
+        if self._old_dashboard_memory_db is None:
+            os.environ.pop("OPENBENCH_DASHBOARD_MEMORY_DB", None)
+        else:
+            os.environ["OPENBENCH_DASHBOARD_MEMORY_DB"] = self._old_dashboard_memory_db
+        if self._old_dashboard_memory_enabled is None:
+            os.environ.pop("OPENBENCH_DASHBOARD_MEMORY_ENABLED", None)
+        else:
+            os.environ["OPENBENCH_DASHBOARD_MEMORY_ENABLED"] = (
+                self._old_dashboard_memory_enabled
+            )
+        if self._old_dashboard_state_path is None:
+            os.environ.pop("OPENBENCH_DASHBOARD_STATE_PATH", None)
+        else:
+            os.environ["OPENBENCH_DASHBOARD_STATE_PATH"] = self._old_dashboard_state_path
 
     def _write_csv(self, directory: str) -> str:
         path = Path(directory) / "sales.csv"
@@ -350,7 +381,12 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
     def test_expected_tools_present(self):
         self.assertEqual(
             set(self.tools),
-            {"extract_metadata", "aggregate_data", "generate_dashboard"},
+            {
+                "extract_metadata",
+                "aggregate_data",
+                "generate_dashboard",
+                "load_dashboard_memory",
+            },
         )
         aggregate_parameters = self.tool_schemas["aggregate_data"]["function"]["parameters"]
         self.assertIn("query", aggregate_parameters["properties"])
@@ -363,6 +399,12 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         self.assertIn(
             "x_field",
             generate_schema["parameters"]["properties"]["view_model"]["description"],
+        )
+        self.assertIn("previous_dashboard_id", generate_schema["parameters"]["properties"])
+        self.assertIn("revision_panel_titles", generate_schema["parameters"]["properties"])
+        self.assertIn(
+            "source_signature",
+            self.tool_schemas["load_dashboard_memory"]["function"]["parameters"]["properties"],
         )
 
     def test_extract_metadata_profiles_csv_columns(self):
@@ -377,6 +419,8 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         self.assertEqual(columns["revenue"]["role_hint"], "metric")
         self.assertIn("region", columns)
         self.assertIn("sample", result)
+        self.assertIn("source_signature", result)
+        self.assertEqual(result["dashboard_memory"]["matches"], [])
         self.assertEqual(result["sql"]["dialect"], "sqlite")
         self.assertEqual(result["sql"]["table"], "data")
 
@@ -475,6 +519,8 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         self.assertEqual(result["sections"][0]["title"], "Revenue")
         self.assertEqual(result["sectionCount"], 1)
         self.assertEqual(result["kpiCount"], 1)
+        self.assertIn("dashboardId", result)
+        self.assertTrue(result["memory"]["persisted"])
         self.assertIn("Sales Dashboard", html_text)
         queued = render_queue.get_items()
         self.assertEqual(len(queued), 1)
@@ -484,6 +530,603 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         self.assertEqual(queued[0]["datasets"], result["datasets"])
         self.assertEqual(queued[0]["sections"], result["sections"])
         render_queue.clear()
+
+    def test_dashboard_memory_loads_previous_dashboard_for_same_schema(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_csv(tmp)
+            metadata = self.tools["extract_metadata"](path=path)
+            result = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                source_path=path,
+                view_model={
+                    "title": "Consistent Sales Dashboard",
+                    "sections": [
+                        {
+                            "title": "Revenue",
+                            "items": [
+                                {
+                                    "type": "chart",
+                                    "chart_type": "bar",
+                                    "title": "Revenue by Region",
+                                    "data": [{"region": "EU", "revenue": 150}],
+                                    "x_field": "region",
+                                    "y_field": "revenue",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+
+            loaded = self.tools["load_dashboard_memory"](source_path=path)
+            metadata_after = self.tools["extract_metadata"](path=path)
+
+        self.assertEqual(metadata["source_signature"], loaded["source_signature"])
+        self.assertEqual(loaded["count"], 1)
+        self.assertEqual(loaded["records"][0]["dashboard_id"], result["dashboardId"])
+        self.assertEqual(
+            loaded["records"][0]["viewModel"]["sections"][0]["items"][0]["title"],
+            "Revenue by Region",
+        )
+        self.assertEqual(
+            metadata_after["dashboard_memory"]["matches"][0]["dashboard_id"],
+            result["dashboardId"],
+        )
+
+    def test_dashboard_revision_preserves_unspecified_panels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                view_model={
+                    "title": "Sales Dashboard",
+                    "sections": [
+                        {
+                            "title": "Dashboard",
+                            "items": [
+                                {
+                                    "type": "chart",
+                                    "chart_type": "pie",
+                                    "title": "Revenue Share",
+                                    "data": [{"region": "EU", "revenue": 150}],
+                                    "x_field": "region",
+                                    "y_field": "revenue",
+                                },
+                                {
+                                    "type": "chart",
+                                    "chart_type": "line",
+                                    "title": "Revenue Trend",
+                                    "data": [{"date": "2026-01-01", "revenue": 100}],
+                                    "x_field": "date",
+                                    "y_field": "revenue",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+            revised = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                previous_dashboard_id=first["dashboardId"],
+                revision_notes="Change Revenue Share from pie to bar.",
+                revision_panel_titles=["Revenue Share"],
+                view_model={
+                    "title": "Sales Dashboard",
+                    "sections": [
+                        {
+                            "title": "Dashboard",
+                            "items": [
+                                {
+                                    "type": "chart",
+                                    "chart_type": "bar",
+                                    "title": "Revenue Share",
+                                },
+                                {
+                                    "type": "chart",
+                                    "chart_type": "bar",
+                                    "title": "Revenue Trend",
+                                    "data": [{"date": "2026-02-01", "revenue": 999}],
+                                    "x_field": "date",
+                                    "y_field": "revenue",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+
+        items = revised["viewModel"]["sections"][0]["items"]
+        self.assertEqual(len(items), 2)
+        by_title = {item["title"]: item for item in items}
+        self.assertEqual(by_title["Revenue Share"]["chart_type"], "bar")
+        self.assertEqual(by_title["Revenue Share"]["x_field"], "region")
+        self.assertEqual(by_title["Revenue Trend"]["chart_type"], "line")
+        self.assertEqual(by_title["Revenue Trend"]["data"][0]["revenue"], 100)
+        self.assertEqual(revised["revisionOf"], first["dashboardId"])
+        self.assertEqual(revised["revisionMerge"]["applied_keys"], ["revenue share"])
+
+    def test_dashboard_revision_rejects_ambiguous_multi_panel_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                view_model={
+                    "title": "Sales Dashboard",
+                    "sections": [
+                        {
+                            "title": "Dashboard",
+                            "items": [
+                                {
+                                    "type": "chart",
+                                    "chart_type": "pie",
+                                    "title": "Revenue Share",
+                                    "data": [{"region": "EU", "revenue": 150}],
+                                    "x_field": "region",
+                                    "y_field": "revenue",
+                                },
+                                {
+                                    "type": "chart",
+                                    "chart_type": "line",
+                                    "title": "Revenue Trend",
+                                    "data": [{"date": "2026-01-01", "revenue": 100}],
+                                    "x_field": "date",
+                                    "y_field": "revenue",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+            revised = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                previous_dashboard_id=first["dashboardId"],
+                revision_notes="Change one chart as requested.",
+                view_model={
+                    "title": "Sales Dashboard",
+                    "sections": [
+                        {
+                            "title": "Dashboard",
+                            "items": [
+                                {
+                                    "type": "chart",
+                                    "chart_type": "bar",
+                                    "title": "Revenue Share",
+                                },
+                                {
+                                    "type": "chart",
+                                    "chart_type": "bar",
+                                    "title": "Revenue Trend",
+                                    "data": [{"date": "2026-02-01", "revenue": 999}],
+                                    "x_field": "date",
+                                    "y_field": "revenue",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+
+        by_title = {
+            item["title"]: item
+            for item in revised["viewModel"]["sections"][0]["items"]
+        }
+        self.assertEqual(by_title["Revenue Share"]["chart_type"], "pie")
+        self.assertEqual(by_title["Revenue Trend"]["chart_type"], "line")
+        self.assertEqual(revised["revisionMerge"]["applied_keys"], [])
+        self.assertTrue(revised["revisionMerge"]["strict_panel_merge"])
+
+    def test_dashboard_revision_preserves_unrelated_top_level_datasets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                view_model={
+                    "title": "Sales Dashboard",
+                    "datasets": {
+                        "share": [{"region": "EU", "revenue": 150}],
+                        "trend": [{"date": "2026-01-01", "revenue": 100}],
+                    },
+                    "sections": [
+                        {
+                            "title": "Dashboard",
+                            "items": [
+                                {
+                                    "type": "chart",
+                                    "chart_type": "pie",
+                                    "title": "Revenue Share",
+                                    "dataset": "share",
+                                    "x_field": "region",
+                                    "y_field": "revenue",
+                                },
+                                {
+                                    "type": "chart",
+                                    "chart_type": "line",
+                                    "title": "Revenue Trend",
+                                    "dataset": "trend",
+                                    "x_field": "date",
+                                    "y_field": "revenue",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+            revised = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                previous_dashboard_id=first["dashboardId"],
+                revision_notes="Change Revenue Share from pie to bar.",
+                revision_panel_titles=["Revenue Share"],
+                view_model={
+                    "title": "Sales Dashboard",
+                    "datasets": {
+                        "share": [{"region": "EU", "revenue": 200}],
+                        "trend": [{"date": "2026-02-01", "revenue": 999}],
+                    },
+                    "sections": [
+                        {
+                            "title": "Dashboard",
+                            "items": [
+                                {
+                                    "type": "chart",
+                                    "chart_type": "bar",
+                                    "title": "Revenue Share",
+                                    "dataset": "share",
+                                },
+                                {
+                                    "type": "chart",
+                                    "chart_type": "bar",
+                                    "title": "Revenue Trend",
+                                    "dataset": "trend",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+
+        self.assertEqual(revised["datasets"]["share"][0]["revenue"], 200)
+        self.assertEqual(revised["datasets"]["trend"][0]["revenue"], 100)
+        by_title = {
+            item["title"]: item
+            for item in revised["viewModel"]["sections"][0]["items"]
+        }
+        self.assertEqual(by_title["Revenue Share"]["chart_type"], "bar")
+        self.assertEqual(by_title["Revenue Trend"]["chart_type"], "line")
+
+    def test_dashboard_auto_revision_preserves_unrequested_noncanonical_panel_changes(self):
+        title = "Coffee Sales Performance Dashboard"
+        original = {
+            "title": title,
+            "datasets": {
+                "coffee_sales": [{"coffee_name": "Latte", "revenue": 27866.3}],
+                "time_of_day_sales": [{"Time_of_Day": "Night", "revenue": 39033.34}],
+            },
+            "sections": [
+                {
+                    "title": "Dashboard",
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "title": "Revenue by Coffee Name",
+                            "dataset": "coffee_sales",
+                            "x_field": "coffee_name",
+                            "y_field": "revenue",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "pie",
+                            "title": "Revenue by Time of Day",
+                            "dataset": "time_of_day_sales",
+                            "x_field": "Time_of_Day",
+                            "y_field": "revenue",
+                        },
+                    ],
+                }
+            ],
+        }
+        noncanonical_revision = {
+            "title": title,
+            "components": [
+                {
+                    "type": "pie_chart",
+                    "content": {
+                        "title": "Revenue by Coffee Name",
+                        "dataset_id": "coffee_sales",
+                        "label_column": "coffee_name",
+                        "value_column": "revenue",
+                    },
+                },
+                {
+                    "type": "bar_chart",
+                    "content": {
+                        "title": "Revenue by Time of Day",
+                        "dataset_id": "time_of_day_sales",
+                        "x_axis_column": "Time_of_Day",
+                        "y_axis_column": "revenue",
+                    },
+                },
+            ],
+            "datasets": original["datasets"],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            self.tools["generate_dashboard"](output_dir=tmp, view_model=original)
+            revised = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                view_model=noncanonical_revision,
+            )
+
+        by_title = {
+            item["title"]: item
+            for item in revised["viewModel"]["sections"][0]["items"]
+        }
+        self.assertEqual(by_title["Revenue by Coffee Name"]["chart_type"], "pie")
+        self.assertEqual(by_title["Revenue by Time of Day"]["chart_type"], "pie")
+        self.assertTrue(revised["revisionMerge"]["auto_revision"])
+        self.assertEqual(
+            revised["revisionMerge"]["applied_keys"],
+            ["revenue by coffee name"],
+        )
+
+    def test_dashboard_auto_revision_can_recover_when_latest_memory_record_already_drifted(self):
+        title = "Coffee Sales Performance Dashboard"
+        original = {
+            "title": title,
+            "datasets": {
+                "coffee_sales": [{"coffee_name": "Latte", "revenue": 27866.3}],
+                "time_of_day_sales": [{"Time_of_Day": "Night", "revenue": 39033.34}],
+            },
+            "sections": [
+                {
+                    "title": "Dashboard",
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "title": "Revenue by Coffee Name",
+                            "dataset": "coffee_sales",
+                            "x_field": "coffee_name",
+                            "y_field": "revenue",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "pie",
+                            "title": "Revenue by Time of Day",
+                            "dataset": "time_of_day_sales",
+                            "x_field": "Time_of_Day",
+                            "y_field": "revenue",
+                        },
+                    ],
+                }
+            ],
+        }
+        drifted = copy.deepcopy(original)
+        drifted["sections"][0]["items"][0]["chart_type"] = "pie"
+        drifted["sections"][0]["items"][1]["chart_type"] = "bar"
+        with tempfile.TemporaryDirectory() as tmp:
+            self.tools["generate_dashboard"](output_dir=tmp, view_model=original)
+            self.tools["generate_dashboard"](
+                output_dir=tmp,
+                view_model=drifted,
+                preserve_unspecified=False,
+            )
+            revised = self.tools["generate_dashboard"](output_dir=tmp, view_model=drifted)
+
+        by_title = {
+            item["title"]: item
+            for item in revised["viewModel"]["sections"][0]["items"]
+        }
+        self.assertEqual(by_title["Revenue by Coffee Name"]["chart_type"], "pie")
+        self.assertEqual(by_title["Revenue by Time of Day"]["chart_type"], "pie")
+
+    def test_dashboard_revision_note_preserves_unrequested_panel_when_title_changes(self):
+        original = {
+            "title": "Coffee Sales Performance Dashboard",
+            "datasets": {
+                "coffee_sales": [{"coffee_name": "Latte", "revenue": 27866.3}],
+                "time_of_day_sales": [{"Time_of_Day": "Night", "revenue": 39033.34}],
+            },
+            "sections": [
+                {
+                    "title": "Dashboard",
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "title": "Revenue by Coffee Name",
+                            "dataset": "coffee_sales",
+                            "x_field": "coffee_name",
+                            "y_field": "revenue",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "pie",
+                            "title": "Revenue by Time of Day",
+                            "dataset": "time_of_day_sales",
+                            "x_field": "Time_of_Day",
+                            "y_field": "revenue",
+                        },
+                    ],
+                }
+            ],
+        }
+        regenerated = copy.deepcopy(original)
+        regenerated["title"] = "Updated Coffee Dashboard"
+        regenerated["sections"][0]["items"][0]["chart_type"] = "pie"
+        regenerated["sections"][0]["items"][1]["chart_type"] = "bar"
+        with tempfile.TemporaryDirectory() as tmp:
+            self.tools["generate_dashboard"](output_dir=tmp, view_model=original)
+            revised = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                revision_notes="chart Revenue by Coffee Name diganti pie chart aja",
+                view_model=regenerated,
+            )
+
+        by_title = {
+            item["title"]: item
+            for item in revised["viewModel"]["sections"][0]["items"]
+        }
+        self.assertEqual(by_title["Revenue by Coffee Name"]["chart_type"], "pie")
+        self.assertEqual(by_title["Revenue by Time of Day"]["chart_type"], "pie")
+        self.assertEqual(
+            revised["revisionMerge"]["applied_keys"],
+            ["revenue by coffee name"],
+        )
+
+    def test_dashboard_revision_prefers_clean_base_over_source_scoped_drifted_memory(self):
+        original = {
+            "title": "Coffee Sales Dashboard",
+            "description": "",
+            "datasets": {},
+            "kpis": [
+                {"label": "Total Sales", "value": 115431.58},
+                {"label": "Total Transactions", "value": 3636},
+                {"label": "Avg Transaction Value", "value": 31.75},
+                {"label": "Top Product", "value": "Latte"},
+            ],
+            "sections": [
+                {
+                    "title": "Dashboard",
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "title": "Sales by Coffee Type",
+                            "data": [{"x": "Latte", "sales": 27866.3}],
+                            "x_field": "x",
+                            "y_field": "sales",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "line",
+                            "title": "Monthly Sales Trend",
+                            "data": [{"x": "Jan", "sales": 6398.86}],
+                            "x_field": "x",
+                            "y_field": "sales",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "pie",
+                            "title": "Sales by Time of Day",
+                            "data": [{"x": "Afternoon", "sales": 39018.04}],
+                            "x_field": "x",
+                            "y_field": "sales",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "title": "Sales by Weekday",
+                            "data": [{"x": "Mon", "sales": 17925.1}],
+                            "x_field": "x",
+                            "y_field": "sales",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "pie",
+                            "title": "Payment Method Distribution",
+                            "data": [{"x": "Card", "sales": 112245.58}],
+                            "x_field": "x",
+                            "y_field": "sales",
+                        },
+                    ],
+                }
+            ],
+        }
+        drifted = {
+            "title": "Coffee Sales Dashboard",
+            "datasets": {
+                "sales_by_coffee": [{"coffee_name": "Latte", "sales": 27866.3}],
+                "sales_by_payment": [{"cash_type": "card", "sales": 112245.58}],
+                "sales_by_month": [{"Month_name": "Jan", "Monthsort": 1, "sales": 6398.86}],
+                "sales_by_weekday": [{"Weekday": "Mon", "Weekdaysort": 1, "sales": 17925.1}],
+                "sales_by_time": [{"Time_of_Day": "Night", "sales": 39033.34}],
+            },
+            "kpis": [
+                {"label": "Total Sales", "value": 115431.58, "format": "$,.2f"},
+                {"label": "Total Transactions", "value": 3636, "format": ",.0f"},
+                {"label": "Avg Transaction Value", "value": 31.74685918591859, "format": "$,.2f"},
+            ],
+            "sections": [
+                {
+                    "title": "Dashboard",
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "pie",
+                            "title": "Sales by Coffee Type",
+                            "dataset": "sales_by_coffee",
+                            "x_field": "coffee_name",
+                            "y_field": "sales",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "pie",
+                            "title": "Sales by Payment Method",
+                            "dataset": "sales_by_payment",
+                            "x_field": "cash_type",
+                            "y_field": "sales",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "line",
+                            "title": "Monthly Sales Trend",
+                            "dataset": "sales_by_month",
+                            "x_field": "Month_name",
+                            "y_field": "Monthsort",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "title": "Sales by Weekday",
+                            "dataset": "sales_by_weekday",
+                            "x_field": "Weekday",
+                            "y_field": "Weekdaysort",
+                        },
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "title": "Sales by Time of Day",
+                            "dataset": "sales_by_time",
+                            "x_field": "Time_of_Day",
+                            "y_field": "sales",
+                        },
+                    ],
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_csv(tmp)
+            self.tools["generate_dashboard"](output_dir=tmp, view_model=original)
+            self.tools["generate_dashboard"](
+                output_dir=tmp,
+                source_path=path,
+                preserve_unspecified=False,
+                view_model=drifted,
+            )
+            revised = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                source_path=path,
+                revision_notes="ubah chart Sales by Coffee Type jadi pie chart",
+                view_model=drifted,
+            )
+
+        self.assertEqual(len(revised["viewModel"]["kpis"]), 4)
+        self.assertEqual(revised["viewModel"]["kpis"][3]["label"], "Top Product")
+        items = revised["viewModel"]["sections"][0]["items"]
+        self.assertEqual([item["title"] for item in items], [
+            "Sales by Coffee Type",
+            "Monthly Sales Trend",
+            "Sales by Time of Day",
+            "Sales by Weekday",
+            "Payment Method Distribution",
+        ])
+        by_title = {item["title"]: item for item in items}
+        self.assertEqual(by_title["Sales by Coffee Type"]["chart_type"], "pie")
+        self.assertEqual(by_title["Sales by Time of Day"]["chart_type"], "pie")
+        self.assertEqual(by_title["Monthly Sales Trend"]["y_field"], "sales")
+        self.assertEqual(by_title["Sales by Weekday"]["y_field"], "sales")
+        self.assertEqual(by_title["Payment Method Distribution"]["chart_type"], "pie")
+        self.assertEqual(
+            revised["revisionMerge"]["applied_keys"],
+            ["sales by coffee type"],
+        )
 
     def test_generate_dashboard_accepts_uploaded_template_path(self):
         template_path = (
@@ -562,6 +1205,151 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         self.assertEqual(result["kpis"][0]["label"], "Total Revenue")
         self.assertIn("Revenue by Coffee", html_text)
         self.assertIn("Latte", html_text)
+        self.assertNotIn("No chart data available.", html_text)
+
+    def test_generate_dashboard_hydrates_placeholder_charts_from_cached_aggregates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "coffee.csv"
+            source.write_text(
+                "coffee_name,month,money\n"
+                "Latte,Jan,10\nLatte,Feb,15\nEspresso,Jan,5\n",
+                encoding="utf-8",
+            )
+            aggregate = self.tools["aggregate_data"](
+                path=str(source),
+                query=[
+                    {
+                        "name": "revenue_by_coffee_type",
+                        "sql": (
+                            "SELECT coffee_name, SUM(money) AS revenue "
+                            "FROM data GROUP BY coffee_name ORDER BY revenue DESC"
+                        ),
+                    },
+                    {
+                        "name": "monthly_sales",
+                        "sql": (
+                            "SELECT month, SUM(money) AS sales "
+                            "FROM data GROUP BY month ORDER BY month"
+                        ),
+                    },
+                ],
+            )
+            self.assertEqual(aggregate["errors"], [])
+
+            result = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                view_model={
+                    "title": "Coffee Sales Executive Dashboard",
+                    "kpis": [{"label": "Total Revenue", "value": 30}],
+                    "sections": [
+                        {
+                            "title": "Dashboard",
+                            "items": [
+                                {
+                                    "type": "chart",
+                                    "chart_type": "bar",
+                                    "title": "Revenue by Coffee Type",
+                                    "data": [],
+                                    "x_field": "name",
+                                    "y_field": "value",
+                                },
+                                {
+                                    "type": "chart",
+                                    "chart_type": "line",
+                                    "title": "Monthly Sales Trend",
+                                    "data": [],
+                                    "x_field": "name",
+                                    "y_field": "value",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+            html_text = Path(result["path"]).read_text(encoding="utf-8")
+
+        items = result["viewModel"]["sections"][0]["items"]
+        self.assertEqual(items[0]["dataset"], "revenue_by_coffee_type")
+        self.assertEqual(items[0]["x_field"], "coffee_name")
+        self.assertEqual(items[0]["y_field"], "revenue")
+        self.assertEqual(items[1]["dataset"], "monthly_sales")
+        self.assertEqual(items[1]["x_field"], "month")
+        self.assertEqual(items[1]["y_field"], "sales")
+        self.assertIn("Latte", html_text)
+        self.assertIn("Jan", html_text)
+        self.assertNotIn("No chart data available.", html_text)
+
+    def test_generate_dashboard_hydrates_placeholder_charts_from_last_source(self):
+        import sys
+
+        module = sys.modules["openbench_skill_dashboard_generator"]
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "coffee.csv"
+            source.write_text(
+                "sale_date,coffee_name,Time_of_Day,cash_type,money\n"
+                "2026-01-01,Latte,Morning,card,10\n"
+                "2026-01-01,Espresso,Night,cash,5\n"
+                "2026-01-02,Latte,Night,card,15\n",
+                encoding="utf-8",
+            )
+            metadata = self.tools["extract_metadata"](path=str(source))
+            self.assertNotIn("error", metadata)
+            module._LAST_AGGREGATE_DATASETS.clear()
+            module._LAST_SOURCE_CONTEXT.clear()
+
+            result = self.tools["generate_dashboard"](
+                output_dir=tmp,
+                view_model={
+                    "title": "Coffee Sales Executive Dashboard",
+                    "kpis": [{"label": "Total Revenue", "value": 30}],
+                    "datasets": {},
+                    "sections": [
+                        {
+                            "title": "Dashboard",
+                            "items": [
+                                {
+                                    "type": "chart",
+                                    "chart_type": "line",
+                                    "title": "Daily Sales Trend",
+                                    "data": [],
+                                    "x_field": "name",
+                                    "y_field": "value",
+                                },
+                                {
+                                    "type": "chart",
+                                    "chart_type": "pie",
+                                    "title": "Sales by Coffee Type",
+                                    "data": [],
+                                    "x_field": "name",
+                                    "y_field": "value",
+                                },
+                                {
+                                    "type": "chart",
+                                    "chart_type": "pie",
+                                    "title": "Sales by Payment Method",
+                                    "data": [],
+                                    "x_field": "name",
+                                    "y_field": "value",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+            html_text = Path(result["path"]).read_text(encoding="utf-8")
+
+        datasets = result["viewModel"]["datasets"]
+        self.assertGreaterEqual(len(datasets), 3)
+        by_title = {
+            item["title"]: item
+            for item in result["viewModel"]["sections"][0]["items"]
+        }
+        self.assertEqual(by_title["Daily Sales Trend"]["x_field"], "sale_date")
+        self.assertEqual(by_title["Sales by Coffee Type"]["x_field"], "coffee_name")
+        self.assertEqual(by_title["Sales by Payment Method"]["x_field"], "cash_type")
+        self.assertIn("Latte", html_text)
+        self.assertIn("card", html_text)
+        self.assertIn("2026-01-01", html_text)
         self.assertNotIn("No chart data available.", html_text)
 
     def test_generate_dashboard_uses_injected_adapter_factory(self):
@@ -1458,11 +2246,11 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         reg = SkillRegistry()
         reg.load_sdk_skills()
         tools = reg.collect_tools()
-        # data-context-extractor(2) + dashboard-generator(3)
+        # data-context-extractor(2) + dashboard-generator(4)
         # + data-visualization(5) + export-excel(2)
         # + pdf-tools(7) + query-explorer(5) + web-search(7)
-        # + memory-scratchpad(4) = 35 tools
-        self.assertEqual(len(tools), 35)
+        # + memory-scratchpad(4) = 36 tools
+        self.assertEqual(len(tools), 36)
 
     def test_load_skills_by_name_after_load_sdk_skills(self):
         """load_skills(['data-visualization']) must work after load_sdk_skills()."""

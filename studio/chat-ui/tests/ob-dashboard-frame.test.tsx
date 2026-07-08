@@ -400,6 +400,86 @@ describe("ObDashboardFrame", () => {
     expect(screen.queryByText("No chart data available")).toBeNull();
   });
 
+  it("renders charts whose data field contains dataset and axis config", () => {
+    const viewModel = {
+      title: "Coffee Sales Analysis Dashboard",
+      kpis: [{ label: "Total Sales", value: 115431.58 }],
+      charts: [
+        {
+          data: { x: "Month_name", y: "sales", dataset_id: "monthly_sales" },
+          type: "line",
+          title: "Monthly Sales Trend",
+        },
+        {
+          data: { dataset_id: "cash_type_sales", value: "sales", label: "cash_type" },
+          type: "pie",
+          title: "Sales by Payment Method",
+        },
+      ],
+      datasets: {
+        monthly_sales: [
+          { Month_name: "Jan", Monthsort: 1, sales: 6398.86 },
+          { Month_name: "Feb", Monthsort: 2, sales: 13215.48 },
+        ],
+        cash_type_sales: [
+          { cash_type: "card", sales: 112245.58 },
+          { cash_type: "cash", sales: 3186.0 },
+        ],
+      },
+      sections: [
+        {
+          title: "Dashboard",
+          items: [
+            { type: "chart", title: "Monthly Sales Trend", data: [], x_field: "name", y_field: "value" },
+          ],
+        },
+      ],
+    };
+
+    const { container } = render(
+      <ObDashboardFrame
+        component={{ id: "dashboard", component: "ObDashboardFrame", viewModel }}
+        surface={surface()}
+      />,
+    );
+
+    expect(screen.getByText("Monthly Sales Trend")).toBeDefined();
+    expect(screen.getByText("Sales by Payment Method")).toBeDefined();
+    expect(container.querySelectorAll(".ob-chart").length).toBe(2);
+    expect(screen.queryByText("No chart data available")).toBeNull();
+  });
+
+  it("synthesizes chart panels from datasets when sections are empty", () => {
+    const viewModel = {
+      title: "Executive Sales Dashboard",
+      kpis: [{ label: "Total Revenue", value: 32866573.74, format: "$0.2s" }],
+      datasets: {
+        kpis: [{ total_revenue: 32866573.74 }],
+        revenue_by_payment: [
+          { payment_method: "Wallet", revenue: 6678638.47 },
+          { payment_method: "UPI", revenue: 6579441.44 },
+        ],
+        revenue_by_month: [
+          { month: "2022-01", revenue: 1419751.89 },
+          { month: "2022-02", revenue: 1266714.29 },
+        ],
+      },
+      sections: [{ title: "Executive Summary", items: [] }],
+    };
+
+    const { container } = render(
+      <ObDashboardFrame
+        component={{ id: "dashboard", component: "ObDashboardFrame", viewModel }}
+        surface={surface()}
+      />,
+    );
+
+    expect(screen.getByText("Revenue By Payment")).toBeDefined();
+    expect(screen.getByText("Revenue By Month")).toBeDefined();
+    expect(container.querySelectorAll(".ob-chart").length).toBe(2);
+    expect(screen.queryByText("No chart data available")).toBeNull();
+  });
+
   it("renders table panels with object column descriptors", () => {
     const viewModel = {
       title: "Coffee Dashboard",
@@ -442,7 +522,7 @@ describe("ObDashboardFrame", () => {
     expect(screen.queryByText("[object Object]")).toBeNull();
   });
 
-  it("prefers native A2UI rendering when both ViewModel and dashboardUrl exist", () => {
+  it("renders the exported HTML preview when both ViewModel and dashboardUrl exist", () => {
     const viewModel = {
       title: "Sales Dashboard",
       datasets: {},
@@ -462,8 +542,10 @@ describe("ObDashboardFrame", () => {
       />,
     );
 
-    expect(container.querySelector('[data-dashboard-renderer="a2ui"]')).not.toBeNull();
-    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector('[data-dashboard-renderer="html-export"]')).not.toBeNull();
+    const iframe = container.querySelector("iframe");
+    expect(iframe).not.toBeNull();
+    expect(iframe?.getAttribute("src")).toBe("/downloads/dashboard.html");
   });
 
   it("marks native A2UI dashboards with uploaded template metadata", () => {
@@ -494,7 +576,7 @@ describe("ObDashboardFrame", () => {
     expect(frame?.getAttribute("data-dashboard-template-format")).toBe("markdown");
   });
 
-  it("prefers native A2UI rendering when ViewModel is inside legacy properties", () => {
+  it("renders the exported HTML preview when ViewModel is inside legacy properties", () => {
     const viewModel = {
       title: "Dashboard Penjualan Kopi",
       datasets: {},
@@ -515,11 +597,13 @@ describe("ObDashboardFrame", () => {
     );
 
     expect(screen.getByText("Dashboard Penjualan Kopi")).toBeDefined();
-    expect(container.querySelector('[data-dashboard-renderer="a2ui"]')).not.toBeNull();
-    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector('[data-dashboard-renderer="html-export"]')).not.toBeNull();
+    const iframe = container.querySelector("iframe");
+    expect(iframe).not.toBeNull();
+    expect(iframe?.getAttribute("src")).toBe("/downloads/kopi.html");
   });
 
-  it("prefers native A2UI rendering when ViewModel is a JSON string", () => {
+  it("renders the exported HTML preview when ViewModel is a JSON string", () => {
     const viewModel = JSON.stringify({
       title: "String Dashboard",
       datasets: {},
@@ -540,11 +624,13 @@ describe("ObDashboardFrame", () => {
     );
 
     expect(screen.getByText("String Dashboard")).toBeDefined();
-    expect(container.querySelector('[data-dashboard-renderer="a2ui"]')).not.toBeNull();
-    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector('[data-dashboard-renderer="html-export"]')).not.toBeNull();
+    const iframe = container.querySelector("iframe");
+    expect(iframe).not.toBeNull();
+    expect(iframe?.getAttribute("src")).toBe("/downloads/string.html");
   });
 
-  it("falls back to an iframe when no ViewModel is provided", () => {
+  it("renders the exported HTML preview when no ViewModel is provided", () => {
     const { container } = render(
       <ObDashboardFrame
         component={{
@@ -559,7 +645,7 @@ describe("ObDashboardFrame", () => {
     );
 
     expect(screen.getByText("Legacy Dashboard")).toBeDefined();
-    expect(container.querySelector('[data-dashboard-renderer="html-fallback"]')).not.toBeNull();
+    expect(container.querySelector('[data-dashboard-renderer="html-export"]')).not.toBeNull();
     const iframe = container.querySelector("iframe");
     expect(iframe).not.toBeNull();
     expect(iframe?.getAttribute("src")).toBe("/downloads/dashboard.html");

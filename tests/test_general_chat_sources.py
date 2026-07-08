@@ -41,6 +41,7 @@ if str(GENERAL_CHAT_SRC) not in sys.path:
 from general_chat.agent import (  # noqa: E402
     _DiagnosticMCPToolDescription,
     _ImageSearchRenderTool,
+    _latest_dashboard_revision_note,
     _mcp_registry_root,
     _SamSegmentationCountTool,
 )
@@ -1733,10 +1734,24 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertTrue(agent._vlm_summary["enabled"])
         self.assertEqual(agent._vlm_summary["model"], "gemini-2.5-flash")
         self.assertIsNotNone(agent._vision_agent)
-        self.assertEqual(len(agent.tools), 3)
+        self.assertEqual(len(agent.tools), 4)
         self.assertEqual(
             set(agent._dashboard_skill_tools),
-            {"aggregate_data", "extract_metadata", "generate_dashboard"},
+            {
+                "aggregate_data",
+                "extract_metadata",
+                "generate_dashboard",
+                "load_dashboard_memory",
+            },
+        )
+
+    def test_dashboard_revision_note_is_extracted_from_latest_user_goal(self):
+        agent = BaseAgent(goal="test")
+        agent.memory.add_user("Goal: chart Revenue by Coffee Name diganti pie chart aja")
+
+        self.assertEqual(
+            _latest_dashboard_revision_note(agent),
+            "chart Revenue by Coffee Name diganti pie chart aja",
         )
 
     def test_configure_general_chat_provider_does_not_persist_provider_state(self):

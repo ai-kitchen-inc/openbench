@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import importlib.util
+import json
 import logging
 import math
 import os
@@ -63,6 +64,74 @@ _ADAPTERS_MODULE: Any | None = None
 _DASHBOARD_ADAPTER: Any | None = None
 _DASHBOARD_ADAPTER_FACTORY: Any | None = None
 _LAST_AGGREGATE_DATASETS: dict[str, list[dict[str, Any]]] = {}
+_LAST_SOURCE_CONTEXT: dict[str, Any] = {}
+
+
+def _dashboard_state_path() -> Path:
+    raw = (
+        os.environ.get("OPENBENCH_DASHBOARD_STATE_PATH")
+        or os.environ.get("GENERAL_CHAT_DASHBOARD_STATE_PATH")
+    )
+    return Path(raw).expanduser().resolve() if raw else Path(".openbench/dashboard_generator_state.json").resolve()
+
+
+def _load_dashboard_state() -> dict[str, Any]:
+    path = _dashboard_state_path()
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            state = json.load(handle)
+    except Exception:
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _save_dashboard_state(state: dict[str, Any]) -> None:
+    path = _dashboard_state_path()
+    with contextlib.suppress(Exception):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(_json_value(state), handle, ensure_ascii=False, sort_keys=True)
+
+
+def _restore_dashboard_state() -> None:
+    state = _load_dashboard_state()
+    source_context = state.get("source_context")
+    if isinstance(source_context, dict) and source_context.get("path"):
+        _LAST_SOURCE_CONTEXT.update(source_context)
+    aggregate_datasets = state.get("aggregate_datasets")
+    if isinstance(aggregate_datasets, dict):
+        for dataset_id, records in aggregate_datasets.items():
+            if isinstance(records, list):
+                _LAST_AGGREGATE_DATASETS[str(dataset_id)] = [
+                    row for row in records if isinstance(row, dict)
+                ]
+
+
+def _persist_source_context(context: dict[str, Any]) -> None:
+    _LAST_SOURCE_CONTEXT.clear()
+    _LAST_SOURCE_CONTEXT.update(context)
+    state = _load_dashboard_state()
+    state["source_context"] = context
+    aggregate_datasets = state.get("aggregate_datasets")
+    state["aggregate_datasets"] = aggregate_datasets if isinstance(aggregate_datasets, dict) else {}
+    _save_dashboard_state(state)
+
+
+def _persist_aggregate_datasets() -> None:
+    state = _load_dashboard_state()
+    source_context = state.get("source_context")
+    if _LAST_SOURCE_CONTEXT:
+        state["source_context"] = _LAST_SOURCE_CONTEXT
+    elif isinstance(source_context, dict):
+        state["source_context"] = source_context
+    state["aggregate_datasets"] = {
+        dataset_id: records
+        for dataset_id, records in _LAST_AGGREGATE_DATASETS.items()
+        if isinstance(records, list)
+    }
+    _save_dashboard_state(state)
 
 
 def bind(**kwargs: Any) -> None:
@@ -231,7 +300,7 @@ def extract_metadata(path: str, sheet: str | int | None = None, sample_rows: int
 
     assert df is not None
     sample_size = max(1, min(int(sample_rows or _SAMPLE_ROWS), 20))
-    return {
+    result = {
         "source": str(p.resolve()),
         "file_name": p.name,
         "file_hash": _file_hash(p),
@@ -255,6 +324,8 @@ def extract_metadata(path: str, sheet: str | int | None = None, sample_rows: int
             ],
         },
     }
+    _persist_source_context({"path": str(p.resolve()), "sheet": _json_value(resolved_sheet)})
+    return result
 
 
 def _normalise_sql_queries(
@@ -314,6 +385,7 @@ def _remember_aggregate_datasets(datasets: list[dict[str, Any]]) -> None:
             _LAST_AGGREGATE_DATASETS[str(dataset_id)] = [
                 row for row in records if isinstance(row, dict)
             ]
+    _persist_aggregate_datasets()
 
 
 def _collect_dataset_refs(value: Any) -> set[str]:
@@ -335,16 +407,208 @@ def _collect_dataset_refs(value: Any) -> set[str]:
     return refs
 
 
-def _hydrate_cached_datasets(view_model: dict[str, Any]) -> dict[str, Any]:
-    if not _LAST_AGGREGATE_DATASETS:
-        return view_model
+def _has_empty_chart_placeholders(value: Any) -> bool:
+    return bool(_empty_chart_placeholders(value))
 
+
+def _empty_chart_placeholders(value: Any) -> list[dict[str, Any]]:
+    chart_types = {
+        "chart",
+        "bar",
+        "bar_chart",
+        "line",
+        "line_chart",
+        "area",
+        "area_chart",
+        "pie",
+        "pie_chart",
+        "scatter",
+        "scatter_chart",
+    }
+    placeholders: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        payload = _component_payload(value)
+        kind = str(
+            value.get("type")
+            or value.get("component")
+            or value.get("kind")
+            or payload.get("type")
+            or payload.get("component")
+            or payload.get("kind")
+            or ""
+        ).lower()
+        data = payload.get("data")
+        if kind in chart_types and (data is None or data == []):
+            placeholders.append(payload)
+        for item in value.values():
+            placeholders.extend(_empty_chart_placeholders(item))
+    if isinstance(value, list):
+        for item in value:
+            placeholders.extend(_empty_chart_placeholders(item))
+    return placeholders
+
+
+def _component_payload(item: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(item)
+    for key in ("props", "parameters", "content", "value"):
+        nested = item.get(key)
+        if isinstance(nested, dict):
+            payload.update(nested)
+    return payload
+
+
+def _hydrate_source_datasets(view_model: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    placeholders = _empty_chart_placeholders(view_model)
+    if not placeholders or not _LAST_SOURCE_CONTEXT:
+        return {}
+    path = _LAST_SOURCE_CONTEXT.get("path")
+    if not path:
+        return {}
+    df, _resolved_sheet, err = _read_dataframe(str(path), sheet=_LAST_SOURCE_CONTEXT.get("sheet"))
+    if err or df is None:
+        return {}
+    datasets: dict[str, list[dict[str, Any]]] = {}
+    used_ids: set[str] = set()
+    for item in placeholders:
+        dataset_id, records = _dataset_from_source_chart(df, item, used_ids)
+        if dataset_id and records:
+            datasets[dataset_id] = records
+            used_ids.add(dataset_id)
+    return datasets
+
+
+def _dataset_from_source_chart(
+    df: Any,
+    item: dict[str, Any],
+    used_ids: set[str],
+) -> tuple[str, list[dict[str, Any]]]:
+    title = str(item.get("title") or item.get("label") or item.get("name") or "chart")
+    x_field = _chart_field(item, ("x_field", "xField", "x", "x_axis", "xAxis", "label_column"))
+    y_field = _chart_field(item, ("y_field", "yField", "y", "y_axis", "yAxis", "value_column"))
+    category = _resolve_source_category_column(df, x_field, title)
+    metric = _resolve_source_metric_column(df, y_field)
+    if not category or not metric:
+        return "", []
+    pd = _load_pandas()
+    assert pd is not None
+    grouped = df.groupby(category, dropna=False)[metric].sum().reset_index()
+    output_metric = y_field if y_field and y_field not in set(map(str, df.columns)) else metric
+    if output_metric != metric:
+        grouped = grouped.rename(columns={metric: output_metric})
+    records = _records(grouped, 200)
+    return _unique_dataset_id(_slugify_id(title), used_ids), records
+
+
+def _chart_field(item: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, dict):
+            value = value.get("property") or value.get("field") or value.get("column")
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    options = item.get("options")
+    if isinstance(options, dict):
+        return _chart_field(options, keys)
+    return ""
+
+
+def _resolve_source_category_column(df: Any, requested: str, title: str) -> str:
+    columns = [str(column) for column in df.columns]
+    by_lower = {column.lower(): column for column in columns}
+    if requested and requested.lower() in by_lower:
+        return by_lower[requested.lower()]
+    preferred = _preferred_category_columns(title)
+    for token in preferred:
+        for column in columns:
+            if token in column.lower() and not _is_numeric_column(df, column):
+                return column
+    tokens = _field_tokens(f"{requested} {title}")
+    best_column = ""
+    best_score = 0
+    for column in columns:
+        score = len(tokens & _field_tokens(column))
+        if score > best_score and not _is_numeric_column(df, column):
+            best_column = column
+            best_score = score
+    if best_column:
+        return best_column
+    for column in columns:
+        if not _is_numeric_column(df, column):
+            return column
+    return ""
+
+
+def _preferred_category_columns(title: str) -> tuple[str, ...]:
+    lowered = title.lower()
+    if "payment" in lowered or "cash" in lowered:
+        return ("cash", "payment", "method", "type")
+    if "time of day" in lowered or "hour" in lowered:
+        return ("time_of_day", "time", "hour")
+    if "day of week" in lowered or "weekday" in lowered or "week day" in lowered:
+        return ("weekday", "day", "date")
+    if "monthly" in lowered or "month" in lowered:
+        return ("month", "date")
+    if "daily" in lowered or "date" in lowered:
+        return ("date", "day")
+    if "coffee" in lowered or "product" in lowered or "type" in lowered:
+        return ("coffee", "product", "name", "type")
+    return ()
+
+
+def _resolve_source_metric_column(df: Any, requested: str) -> str:
+    columns = [str(column) for column in df.columns]
+    by_lower = {column.lower(): column for column in columns}
+    if requested and requested.lower() in by_lower and _is_numeric_column(df, by_lower[requested.lower()]):
+        return by_lower[requested.lower()]
+    preferred = ("sales", "revenue", "money", "amount", "total", "value", "price")
+    for token in preferred:
+        for column in columns:
+            if token in column.lower() and _is_numeric_column(df, column):
+                return column
+    for column in columns:
+        if _is_numeric_column(df, column):
+            return column
+    return ""
+
+
+def _is_numeric_column(df: Any, column: str) -> bool:
+    pd = _load_pandas()
+    return bool(pd is not None and pd.api.types.is_numeric_dtype(df[column]))
+
+
+def _field_tokens(value: str) -> set[str]:
+    return {token for token in re.split(r"[^a-z0-9]+", value.lower()) if len(token) > 1}
+
+
+def _slugify_id(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return slug or "dataset"
+
+
+def _unique_dataset_id(base: str, used_ids: set[str]) -> str:
+    candidate = base
+    suffix = 2
+    while candidate in used_ids:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _hydrate_cached_datasets(view_model: dict[str, Any]) -> dict[str, Any]:
+    _restore_dashboard_state()
     current = view_model.get("datasets")
     datasets = dict(current) if isinstance(current, dict) else {}
     missing: dict[str, list[dict[str, Any]]] = {}
-    for dataset_id in _collect_dataset_refs(view_model):
+    dataset_refs = _collect_dataset_refs(view_model)
+    if not dataset_refs and _has_empty_chart_placeholders(view_model):
+        dataset_refs = set(_LAST_AGGREGATE_DATASETS)
+    for dataset_id in dataset_refs:
         if dataset_id not in datasets and dataset_id in _LAST_AGGREGATE_DATASETS:
             missing[dataset_id] = _LAST_AGGREGATE_DATASETS[dataset_id]
+    if not missing and _has_empty_chart_placeholders(view_model):
+        for dataset_id, records in _hydrate_source_datasets(view_model).items():
+            if dataset_id not in datasets:
+                missing[dataset_id] = records
     if not missing:
         return view_model
 
@@ -440,6 +704,7 @@ def aggregate_data(
         "datasets": datasets,
         "errors": errors,
     }
+    _persist_source_context({"path": str(p.resolve()), "sheet": _json_value(resolved_sheet)})
     _remember_aggregate_datasets(datasets)
     return result
 

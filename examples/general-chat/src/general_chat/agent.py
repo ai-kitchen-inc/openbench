@@ -118,6 +118,50 @@ def _dashboard_skill_dir() -> Path:
     return Path(openbench.__file__).resolve().parent / "skills" / _DASHBOARD_SKILL_NAME
 
 
+_DASHBOARD_REVISION_KEYWORDS = (
+    "revisi",
+    "revision",
+    "revise",
+    "ubah",
+    "diubah",
+    "ganti",
+    "diganti",
+    "change",
+    "changed",
+    "replace",
+    "update",
+    "warna",
+    "color",
+)
+
+
+def _latest_dashboard_revision_note(agent: BaseAgent) -> str | None:
+    for message in reversed(agent.memory.messages):
+        if message.role != MessageRole.USER or not message.content:
+            continue
+        content = str(message.content).strip()
+        if content.lower().startswith("goal:"):
+            content = content[5:].strip()
+        content = content.split("\n\n", 1)[0].strip()
+        lowered = content.lower()
+        if "dashboard" in lowered or "chart" in lowered or "grafik" in lowered or "panel" in lowered:
+            if any(keyword in lowered for keyword in _DASHBOARD_REVISION_KEYWORDS):
+                return content
+        return None
+    return None
+
+
+def _wrap_dashboard_generate_tool(agent: BaseAgent, tool_fn: Any) -> Any:
+    def _generate_dashboard_with_revision_context(**params: Any) -> Any:
+        if not params.get("revision_notes"):
+            note = _latest_dashboard_revision_note(agent)
+            if note:
+                params["revision_notes"] = note
+        return tool_fn(**params)
+
+    return _generate_dashboard_with_revision_context
+
+
 def _vehicle_plate_skill_dir() -> Path:
     import openbench
 
@@ -167,6 +211,8 @@ def _load_dashboard_skill(agent: BaseAgent) -> None:
             raise ValueError(
                 f"Dashboard skill tool '{tool_name}' conflicts with an existing chat tool."
             )
+        if tool_name == "generate_dashboard":
+            tool_fn = _wrap_dashboard_generate_tool(agent, tool_fn)
         agent.tools.register(tool_name, tool_fn, schema=tool_schema)
         registered.add(tool_name)
 
@@ -274,6 +320,7 @@ class _DashboardGeneratorRenderTool(Tool):
 
     def __init__(self, inner: Tool):
         self.inner = inner
+        self.revision_note_provider: Any | None = None
 
     @property
     def name(self) -> str:
@@ -306,6 +353,10 @@ class _DashboardGeneratorRenderTool(Tool):
         return getattr(self.inner, "timeout_seconds", None)
 
     def execute(self, **params: Any) -> Any:
+        if not params.get("revision_notes") and self.revision_note_provider:
+            note = self.revision_note_provider()
+            if note:
+                params["revision_notes"] = note
         payload = self.inner.execute(**params)
         if isinstance(payload, dict) and payload.get("type") == "dashboard" and not payload.get("error"):
             payload.setdefault(
@@ -318,6 +369,16 @@ class _DashboardGeneratorRenderTool(Tool):
 
     def get_schema(self) -> dict[str, Any]:
         return self.inner.get_schema()
+
+
+def _attach_dashboard_revision_context(agent: BaseAgent) -> None:
+    tools = getattr(agent, "tools", None)
+    tool_map = getattr(tools, "_tools", None)
+    if not isinstance(tool_map, dict):
+        return
+    for tool in tool_map.values():
+        if isinstance(tool, _DashboardGeneratorRenderTool):
+            tool.revision_note_provider = lambda agent=agent: _latest_dashboard_revision_note(agent)
 
 
 class _SamSegmentationCountTool(Tool):
@@ -832,6 +893,7 @@ def reload_external_mcp_tools(
         **{name: new_tool_servers[name] for name in registered if name in new_tool_servers},
     }
     agent._external_mcp_summary = summary
+    _attach_dashboard_revision_context(agent)
     logger.info(
         "mcp.chat.reload complete loaded=%d registered=%d available=%s error=%s",
         len(tools),
@@ -1009,12 +1071,16 @@ def create_agent(
             "Help users by answering questions, reasoning over optional context, "
             "using enabled tools when useful, and thinking through problems. When "
             "the user uploads a CSV/XLSX source and asks for a dashboard, follow "
-            "the dashboard-generator skill/MCP SOP: (1) extract metadata, (2) call "
+            "the dashboard-generator skill/MCP SOP: (1) extract metadata and inspect "
+            "dashboard_memory matches, (2) call load_dashboard_memory when the user "
+            "asks for the same dashboard, refreshed data, or a revision, (3) call "
             "aggregate_data ONCE, passing a list of ALL the SQL queries you need "
             "(one per chart/metric) so every dataset comes back in a single tool "
-            "call — do NOT call aggregate_data once per metric, (3) compose a "
-            "declarative ViewModel from the returned datasets, then (4) generate the "
-            "dashboard artifact. For uploaded images, use the provided visual "
+            "call — do NOT call aggregate_data once per metric, (4) compose a "
+            "declarative ViewModel from the returned datasets while preserving "
+            "previous panels unless the user asked to change them, then (5) generate "
+            "the dashboard artifact with source_path, previous_dashboard_id, and "
+            "revision_panel_titles for revisions. For uploaded images, use the provided visual "
             "observations as the source of truth for general image understanding and "
             "vehicle plate reading. For uploaded image counting, call the SAM count "
             "tool once per image/concept when that MCP tool is enabled, and answer "
@@ -1034,6 +1100,7 @@ def create_agent(
     else:
         agent._skill_registry = None  # type: ignore[attr-defined]
         agent._dashboard_skill_tools = []  # type: ignore[attr-defined]
+    _attach_dashboard_revision_context(agent)
     agent._mcp_enabled = bool(mcp_summary.get("enabled"))  # type: ignore[attr-defined]
     agent._mcp_summary = mcp_summary  # type: ignore[attr-defined]
     agent._mcp_error = mcp_error  # type: ignore[attr-defined]

@@ -38,6 +38,7 @@ READ_TOOLS = {
     "top_n_records",
     "extract_metadata",
     "aggregate_data",
+    "load_dashboard_memory",
     "read_memory",
     "list_memory_keys",
     "list_index_stats",

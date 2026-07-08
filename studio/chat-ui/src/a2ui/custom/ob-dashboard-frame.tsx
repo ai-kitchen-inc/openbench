@@ -196,6 +196,24 @@ function componentParameters(component: DashboardRecord): DashboardRecord {
   return merged;
 }
 
+function withDataControls(item: DashboardRecord): DashboardRecord {
+  const data = item.data;
+  if (!isRecord(data) || chartJsRecords(data).rows.length > 0 || recordsFromValue(data).length > 0) {
+    return item;
+  }
+  const merged: DashboardRecord = { ...item };
+  for (const [key, value] of Object.entries(data)) {
+    if (merged[key] === undefined) merged[key] = value;
+  }
+  if (data.label !== undefined && merged.x === undefined && merged.x_field === undefined) {
+    merged.x = data.label;
+  }
+  if (data.value !== undefined && merged.y === undefined && merged.y_field === undefined) {
+    merged.y = data.value;
+  }
+  return merged;
+}
+
 function normalizedChartType(value: unknown): string {
   const requested = stringValue(value, "bar").toLowerCase();
   const aliases: Record<string, string> = {
@@ -212,7 +230,7 @@ function normalizedChartType(value: unknown): string {
 
 function normalizeDashboardComponentItem(component: DashboardRecord): DashboardRecord | null {
   let rawType = stringValue(component.type ?? component.component ?? component.kind).toLowerCase();
-  const merged = componentParameters(component);
+  const merged = withDataControls(componentParameters(component));
   if (!rawType) {
     if (merged.chart_type ?? merged.chartType ?? merged.visualization) rawType = "chart";
     if ((merged.data || merged.dataset_id || merged.dataset) && merged.columns) rawType = "table";
@@ -493,6 +511,7 @@ function resolvePanelData(panel: DashboardRecord, datasets: DashboardDatasets): 
 
   const datasetKey = stringValue(
     (typeof panel.data === "string" ? panel.data : undefined) ??
+    (isRecord(panel.data) ? panel.data.dataset_id ?? panel.data.datasetId ?? panel.data.dataset : undefined) ??
     panel.dataset ??
       panel.dataset_id ??
       panel.datasetId ??
@@ -532,6 +551,67 @@ function sectionsContainComponentContainers(value: unknown): boolean {
       (item) => componentChildItems(item).length > 0 && isComponentContainer(item),
     ),
   );
+}
+
+function sectionsHaveOnlyEmptyCharts(value: unknown): boolean {
+  const sections = toRows(value);
+  const items = sections.flatMap(panelItems);
+  return (
+    items.length > 0 &&
+    items.every((item) => {
+      if (stringValue(item.type ?? item.component ?? item.kind).toLowerCase() !== "chart") return false;
+      return recordsFromValue(item.data ?? item.records).length === 0;
+    })
+  );
+}
+
+function titleFromDatasetId(value: string): string {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function panelsFromDatasets(datasets: DashboardDatasets): DashboardRecord[] {
+  const panels: DashboardRecord[] = [];
+  for (const [datasetId, records] of Object.entries(datasets)) {
+    if (
+      records.length === 0 ||
+      ["kpis", "kpi", "metrics", "stats"].includes(datasetId.toLowerCase())
+    ) {
+      continue;
+    }
+    const xField = firstCategoryKey(records);
+    const yField = firstNumericKey(records, xField);
+    if (!xField || !yField || xField === yField) continue;
+    panels.push({
+      type: "chart",
+      chart_type: /date|month|year|week|day|time/i.test(xField) ? "line" : "bar",
+      title: titleFromDatasetId(datasetId),
+      data: records,
+      dataset: datasetId,
+      x_field: xField,
+      y_field: yField,
+    });
+    if (panels.length >= 4) break;
+  }
+  return panels;
+}
+
+function shouldSynthesizePanelsFromDatasets(datasets: DashboardDatasets): boolean {
+  let viable = 0;
+  for (const [datasetId, records] of Object.entries(datasets)) {
+    if (
+      records.length === 0 ||
+      ["kpis", "kpi", "metrics", "stats"].includes(datasetId.toLowerCase())
+    ) {
+      continue;
+    }
+    const xField = firstCategoryKey(records);
+    const yField = firstNumericKey(records, xField);
+    if (xField && yField && xField !== yField) viable += 1;
+    if (viable >= 2) return true;
+  }
+  return false;
 }
 
 function panelKind(panel: DashboardRecord): string {
@@ -911,7 +991,7 @@ function OpenDashboardLink({ url }: { url: string }) {
 }
 
 /**
- * Inline preview for the html-fallback path. When ``loadHtml`` is available,
+ * Inline preview for the exported dashboard HTML. When ``loadHtml`` is available,
  * fetch the authenticated HTML and render it via a sandboxed ``srcDoc`` iframe
  * (a bare ``src`` to an auth-protected URL 401s and renders blank/black).
  */
@@ -1322,11 +1402,23 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
   const rawSectionsHaveItems = toRows(rawSections).some(
     (section) => panelItems(section).length > 0,
   );
-  const sections =
+  const normalizedSections =
     componentSections.length > 0 &&
-    (!rawSectionsHaveItems || sectionsContainComponentContainers(rawSections))
+    (!rawSectionsHaveItems ||
+      sectionsContainComponentContainers(rawSections) ||
+      sectionsHaveOnlyEmptyCharts(rawSections))
       ? componentSections
       : sectionsFrom(rawSections, rawItems);
+  const datasetFallbackPanels =
+    normalizedSections.length === 0 && shouldSynthesizePanelsFromDatasets(datasets)
+      ? panelsFromDatasets(datasets)
+      : [];
+  const sections =
+    normalizedSections.length > 0
+      ? normalizedSections
+      : datasetFallbackPanels.length > 0
+        ? [{ title: "Dashboard", items: datasetFallbackPanels }]
+        : [];
   const hasDashboardData =
     Boolean(viewModel) ||
     kpis.length > 0 ||
@@ -1355,22 +1447,24 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
   const preview = dashboardComponent.preview !== false;
   const templateFormat = templateFormatFrom(dashboardComponent);
   const templateSource = templateSourceFrom(dashboardComponent, templateFormat);
+  const exportViewModel = viewModel ?? { title, description, datasets, kpis, sections };
 
-  if (!hasDashboardData && dashboardUrl) {
+  if (dashboardUrl) {
     return (
       <section
         className="ob-dashboard-frame"
         data-component-id={dashboardComponent.id}
-        data-dashboard-renderer="html-fallback"
+        data-dashboard-renderer="html-export"
         data-dashboard-template-source={templateSource}
         data-dashboard-template-format={templateFormat || "default"}
       >
         <NativeHeader
           title={title}
-          description={summary}
+          description={description || summary}
           dashboardUrl={dashboardUrl}
           fileName={fileName}
           fileSize={fileSize}
+          viewModel={hasDashboardData ? exportViewModel : undefined}
         />
         {preview && dashboardUrl && (
           <HtmlFallbackPreview url={dashboardUrl} title={title} height={height} />
@@ -1399,10 +1493,6 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
       </section>
     );
   }
-
-  // ViewModel to hand to Publish / Export: prefer the parsed one, else
-  // reconstruct from the already-normalized props.
-  const exportViewModel = viewModel ?? { title, description, datasets, kpis, sections };
 
   return (
     <section
