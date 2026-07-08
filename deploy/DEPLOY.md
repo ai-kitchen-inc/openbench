@@ -38,6 +38,26 @@ Auth boundary: Firebase admits any Google account; **authorization** is decided
 server-side. `GENERAL_CHAT_ALLOWED_EMAILS` / `GENERAL_CHAT_ALLOWED_DOMAINS` gate
 access (403 for non-listed). The SPA shows an "Access not authorized" screen on 403.
 
+Per-user isolation: chat sessions, agent memory, and sources/uploads are scoped
+to the authenticated user's **lowercased email** (the `owner` column in
+`openbench_sessions` / `openbench_sources`; JSON sources use a per-owner
+subdirectory). Cross-user access behaves as "not found" (404 / empty list) —
+existence is never leaked. The first save of a client-generated session id
+claims it for that user; a save under a different user is rejected
+(`SessionOwnershipError` → 404). Local dev with `OPENBENCH_AUTH_DISABLED=1`
+stores everything under the sentinel owner `local`. Rollout was a clean wipe
+(`deploy.sh wipe-chat-data`) — pre-isolation rows had no owner and were dropped
+rather than migrated.
+
+Accepted residual risks (documented decisions, not bugs):
+- `/uploads`, `/downloads`, `/image-search/previews` static mounts are
+  allowlist-gated but not per-user: paths contain unguessable uuid file ids.
+- `GET /d/{id}` share links stay public by design (below).
+- Publish store, custom functions, MCP catalogs, persona, and skills are shared
+  app-level configuration visible to every allowlisted user.
+- The Pub/Sub worker updates source records without a request identity; it
+  preserves the existing row's owner and never creates user-visible rows.
+
 Public dashboard share links: `POST /dashboard/publish` (auth) persists a dashboard
 under `$GENERAL_CHAT_STORAGE_ROOT/published/` (on the persistent `/app-data/openbench`
 volume) and returns a `GET /d/{id}` URL. **`/d/{id}` is intentionally unauthenticated**
@@ -98,6 +118,7 @@ Or individually:
 | `deploy/deploy.sh remove-user EMAIL` | Remove `EMAIL` from the allowlist on the VM and restart the API (idempotent). |
 | `deploy/deploy.sh init-appdb` | Create the `appdata` DB + `mart` schema + `mcp_app` role on Cloud SQL (idempotent). |
 | `deploy/deploy.sh seed-mcp-db FILE.sql` | Load a `.sql` file into the `appdata` Postgres DB (the `db_server` data). |
+| `deploy/deploy.sh wipe-chat-data` | **DESTRUCTIVE**: drop all chat sessions/memory/sources and clear uploads/downloads on the VM (leaves published dashboards, MCP registry, functions, Grafana intact). Used once for the user-isolation rollout. |
 | `deploy/deploy.sh verify` | Probe health/auth/hardening/network on the live deployment. |
 
 All identifiers are defaults in `deploy.sh`; override any via env or a gitignored

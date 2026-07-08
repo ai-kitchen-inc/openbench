@@ -21,6 +21,7 @@
 #   remove-user EMAIL Remove an email from the backend allowlist and restart the API
 #   init-appdb     Create the appdata DB + mart schema + mcp_app role on Cloud SQL
 #   seed-mcp-db FILE  Load a .sql file into the appdata Postgres DB (db_server data)
+#   wipe-chat-data DESTRUCTIVE: drop all chat sessions/memory/sources/uploads
 #   verify         Probe the live deployment (health/auth/hardening/network)
 #   all            backend → frontend → verify
 #   help           Print this help + the resource inventory
@@ -344,6 +345,29 @@ cmd_seed_mcp_db() {
   ok "appdata seeded — db_server reads it live"
 }
 
+# --- wipe-chat-data ------------------------------------------------------------
+# One-time destructive reset of all per-user chat data (sessions, agent memory,
+# sources, uploads, downloads). Used for the user-isolation rollout: the old
+# rows have no owner column values and would be invisible/unmigrated, so they
+# are dropped instead (decision: wipe, no migration). Leaves published
+# dashboards, MCP registry, custom functions, Grafana and image-search data
+# untouched. The API containers are stopped during the wipe and restarted.
+cmd_wipe_chat_data() {
+  log "Wiping chat data (sessions, memory, sources, uploads, downloads) on the VM"
+  vm_ssh "cd $VM_DEPLOY_DIR && \
+    sudo docker-compose --env-file .env.gcp -f $COMPOSE_FILE stop openbench-api openbench-worker && \
+    dburl=\$(grep '^GENERAL_CHAT_DATABASE_URL=' .env.gcp | cut -d= -f2-); \
+    [ -n \"\$dburl\" ] || { echo 'GENERAL_CHAT_DATABASE_URL missing in .env.gcp'; exit 1; }; \
+    sudo docker run --rm -i $PSQL_IMAGE psql \"\$dburl\" -v ON_ERROR_STOP=1 \
+      -c 'DROP TABLE IF EXISTS openbench_sessions, openbench_sources, openbench_messages;' && \
+    sudo rm -rf /app-data/openbench/sources /app-data/openbench/sessions.db /app-data/openbench/memory.db && \
+    sudo find /app-data/uploads -mindepth 1 -maxdepth 1 -exec rm -rf {} + && \
+    sudo find /app-data/downloads -mindepth 1 -maxdepth 1 -exec rm -rf {} + && \
+    sudo docker-compose --env-file .env.gcp -f $COMPOSE_FILE up -d && echo WIPED" \
+    || die "wipe-chat-data failed"
+  ok "chat data wiped — tables recreate with the owner column on next boot"
+}
+
 # --- verify ------------------------------------------------------------------
 cmd_verify() {
   log "Verifying live deployment"
@@ -396,8 +420,9 @@ case "${1:-help}" in
   remove-user) shift; cmd_remove_user "${1:-}" ;;
   init-appdb) cmd_init_appdb ;;
   seed-mcp-db) shift; cmd_seed_mcp_db "${1:-}" ;;
+  wipe-chat-data) cmd_wipe_chat_data ;;
   verify)   cmd_verify ;;
   all)      cmd_backend; cmd_frontend; cmd_verify ;;
   help|-h|--help) cmd_help ;;
-  *) die "unknown command '$1' (try: backend|frontend|mcp-image|fn-image|grafana|nginx|add-user|remove-user|init-appdb|seed-mcp-db|verify|all|help)" ;;
+  *) die "unknown command '$1' (try: backend|frontend|mcp-image|fn-image|grafana|nginx|add-user|remove-user|init-appdb|seed-mcp-db|wipe-chat-data|verify|all|help)" ;;
 esac
