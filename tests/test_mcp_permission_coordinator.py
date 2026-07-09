@@ -26,12 +26,15 @@ from general_chat.server.mcp_permissions import (  # noqa: E402
 )
 
 
-def _request(tool_name: str = "aggregate_data") -> MCPPermissionRequest:
+def _request(
+    tool_name: str = "aggregate_data",
+    risk: RiskLevel = RiskLevel.WRITE,
+) -> MCPPermissionRequest:
     return MCPPermissionRequest(
         tool_name=tool_name,
         purpose="run an aggregation",
         arguments={"query": "SELECT 1"},
-        risk=RiskLevel.READ,
+        risk=risk,
         action=f"run {tool_name}",
     )
 
@@ -182,6 +185,71 @@ class TestRunScopedAllowAll(unittest.TestCase):
         # Oldest evicted, newest retained.
         self.assertNotIn("run-0", coord._allow_all_runs)
         self.assertIn(f"run-{_ALLOW_ALL_RUNS_CAP + 49}", coord._allow_all_runs)
+
+
+class TestRiskGate(unittest.TestCase):
+    """Trivial (non-mutating) tools run without a prompt; mutating tools ask."""
+
+    def test_read_tool_auto_approved_without_prompt(self):
+        coord = GeneralChatMCPPermissionCoordinator(timeout_seconds=0.05)
+        loop = MagicMock()
+
+        result = coord.request_permission(
+            session_id="sA",
+            run_id="run-1",
+            request=_request("read_csv_file", risk=RiskLevel.READ),
+            queue=MagicMock(),
+            loop=loop,
+        )
+
+        self.assertEqual(result, "yes")
+        loop.call_soon_threadsafe.assert_not_called()  # no surface emitted
+        self.assertEqual(coord._pending, {})
+
+    def test_external_network_tool_auto_approved_without_prompt(self):
+        coord = GeneralChatMCPPermissionCoordinator(timeout_seconds=0.05)
+        loop = MagicMock()
+
+        result = coord.request_permission(
+            session_id="sA",
+            run_id="run-1",
+            request=_request("web_search", risk=RiskLevel.EXTERNAL_NETWORK),
+            queue=MagicMock(),
+            loop=loop,
+        )
+
+        self.assertEqual(result, "yes")
+        loop.call_soon_threadsafe.assert_not_called()
+
+    def test_write_tool_prompts(self):
+        coord = GeneralChatMCPPermissionCoordinator(timeout_seconds=0.05)
+        loop = MagicMock()
+
+        result = coord.request_permission(
+            session_id="sA",
+            run_id="run-1",
+            request=_request("write_memory", risk=RiskLevel.WRITE),
+            queue=MagicMock(),
+            loop=loop,
+        )
+
+        self.assertIsNone(result)  # timed out waiting for a click
+        loop.call_soon_threadsafe.assert_called()  # a surface WAS emitted
+
+    def test_destructive_tool_prompts(self):
+        coord = GeneralChatMCPPermissionCoordinator(timeout_seconds=0.05)
+        loop = MagicMock()
+
+        result = coord.request_permission(
+            session_id="sA",
+            run_id="run-1",
+            request=_request("remove_image", risk=RiskLevel.DESTRUCTIVE),
+            queue=MagicMock(),
+            loop=loop,
+        )
+
+        self.assertIsNone(result)
+        loop.call_soon_threadsafe.assert_called()
 
 
 if __name__ == "__main__":

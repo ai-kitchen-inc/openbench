@@ -14,6 +14,7 @@ from openbench.chat.a2ui.schema import A2UIComponent
 from openbench.chat.transport.agui import A2UIStreamMessage
 from openbench.chat.transport.agui_actions import ActionData
 from openbench.mcp.permissions import MCPPermissionRequest
+from openbench.mcp.policy import RiskLevel
 
 
 @dataclass
@@ -31,6 +32,12 @@ class PendingMCPPermission:
 
 # Max number of run ids to remember as "allow all" before evicting the oldest.
 _ALLOW_ALL_RUNS_CAP = 1000
+
+# Only mutating actions (change/create/delete) ask the user. Read and
+# external-network (e.g. web search) tools run without a prompt.
+_RISKS_NEEDING_APPROVAL = frozenset(
+    {RiskLevel.WRITE, RiskLevel.ARTIFACT_WRITE, RiskLevel.DESTRUCTIVE}
+)
 
 
 class GeneralChatMCPPermissionCoordinator:
@@ -65,6 +72,11 @@ class GeneralChatMCPPermissionCoordinator:
         with self._lock:
             if run_id and run_id in self._allow_all_runs:
                 return "yes"
+
+        # Trivial actions (read, external network) run without a prompt; only
+        # mutating actions ask the user.
+        if request.risk not in _RISKS_NEEDING_APPROVAL:
+            return "yes"
 
         request_id = f"mcp-perm-{uuid.uuid4().hex[:12]}"
         surface_id = f"s-{request_id}"
