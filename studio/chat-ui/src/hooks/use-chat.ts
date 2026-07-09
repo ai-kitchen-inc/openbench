@@ -228,6 +228,11 @@ export function useChat(config: ChatConfig): UseChatReturn {
 
           // Start independent stream — does NOT cancel other active streams
           await streamManager.startStream(sessionId, assistantId, content, serverAttachments);
+          const loaded = await transport.loadSession(sessionId);
+          const currentTitle = store.getState().sessions.find((s) => s.id === sessionId)?.title;
+          if (loaded?.title && loaded.title !== currentTitle) {
+            store.getState().renameSession(sessionId, loaded.title);
+          }
         } catch (err) {
           console.error("[useChat] Upload/stream error:", err);
         }
@@ -349,8 +354,13 @@ export function useChat(config: ChatConfig): UseChatReturn {
   );
 
   const renameSession = useCallback(
-    (id: string, newTitle: string) => store.getState().renameSession(id, newTitle),
-    [store],
+    (id: string, newTitle: string) => {
+      store.getState().renameSession(id, newTitle);
+      transport.renameSession(id, newTitle).catch((err) => {
+        console.error("[useChat] renameSession server sync failed:", err);
+      });
+    },
+    [store, transport],
   );
   const setSidebarOpen = useCallback(
     (open: boolean) => store.getState().setSidebarOpen(open),

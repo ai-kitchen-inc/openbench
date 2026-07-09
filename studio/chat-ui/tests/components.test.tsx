@@ -726,6 +726,16 @@ describe("SessionSidebar", () => {
     expect(input.value).toBe("New Chat");
   });
 
+  it("rename icon shows input with current title", async () => {
+    render(<SessionSidebar />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Rename New Chat" }));
+
+    const input = screen.getByLabelText("Rename session") as HTMLInputElement;
+    expect(input).toBeDefined();
+    expect(input.value).toBe("New Chat");
+  });
+
   it("Enter commits rename", async () => {
     render(<SessionSidebar />);
 

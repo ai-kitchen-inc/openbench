@@ -159,8 +159,33 @@ export function SessionSidebar({ className = "" }: SessionSidebarProps) {
                     </span>
                   </button>
                 )}
+                {editingId !== session.id && (
+                  <button
+                    className="chat-sidebar__item-action chat-sidebar__item-rename"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startEditing(session);
+                    }}
+                    type="button"
+                    aria-label={`Rename ${session.title}`}
+                    title="Rename chat"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M12 20h9" />
+                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                    </svg>
+                  </button>
+                )}
                 <button
-                  className="chat-sidebar__item-delete"
+                  className="chat-sidebar__item-action chat-sidebar__item-delete"
                   onClick={(e) => {
                     e.stopPropagation();
                     deleteSession(session.id);

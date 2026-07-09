@@ -746,6 +746,25 @@ describe("AGUITransport sessions", () => {
     const t = new AGUITransport(config);
     await expect(t.deleteSession("x")).rejects.toThrow();
   });
+
+  it("renameSession issues PATCH request", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 200));
+    const t = new AGUITransport(config);
+    await t.renameSession("s-1", "Book Dashboard Generation");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/sessions/s-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ title: "Book Dashboard Generation" }),
+      }),
+    );
+  });
+
+  it("renameSession swallows 501", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 501));
+    const t = new AGUITransport(config);
+    await expect(t.renameSession("s-1", "Local Only")).resolves.toBeUndefined();
+  });
 });
 
 // ── Authorization header (Firebase ID token) ──

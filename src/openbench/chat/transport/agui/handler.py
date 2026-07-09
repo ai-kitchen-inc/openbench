@@ -79,6 +79,10 @@ class AGUIHandler(_SessionLifecycleMixin, _EventStreamMixin, _ContentExtractionM
         """Return an optional MCP permission context for this run."""
         return None
 
+    def _after_user_message(self, session: ChatSession, content: str) -> None:
+        """Hook for apps that need to update session metadata after input."""
+        return None
+
     async def handle(self, request: Any) -> Any:
         """Handle an incoming request and return an SSE StreamingResponse.
 

@@ -383,6 +383,27 @@ export class AGUITransport {
     if (!response.ok) throw new Error(`deleteSession failed: ${response.status}`);
   }
 
+  /**
+   * Rename a persisted session.
+   *
+   * A 404/501 is tolerated so hosts without full session CRUD keep the local
+   * rename affordance functional.
+   */
+  async renameSession(sessionId: string, title: string): Promise<void> {
+    const base = this.config.sessionsUrl ?? "/sessions";
+    const url = `${base}/${encodeURIComponent(sessionId)}`;
+    const response = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...(await this._authHeaders()),
+      },
+      body: JSON.stringify({ title }),
+    });
+    if (response.status === 404 || response.status === 501) return;
+    if (!response.ok) throw new Error(`renameSession failed: ${response.status}`);
+  }
+
   /** Cancel any in-flight AG-UI stream. */
   cancel(): void {
     this.activeSub?.unsubscribe();

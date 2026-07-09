@@ -84,6 +84,7 @@ class _EventStreamMixin:
             # ── Step 1: Processing input ──
             yield encoder.encode(StepStartedEvent(step_name="Processing input"))
             session.add_user_message(content, attachments=attachments)
+            self._after_user_message(session, content)
             self._persist_session(session)
             yield encoder.encode(StepFinishedEvent(step_name="Processing input"))
 
