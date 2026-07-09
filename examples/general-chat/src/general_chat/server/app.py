@@ -1345,6 +1345,22 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Session not found")
         return data
 
+    @app.patch("/sessions/{session_id}")
+    async def rename_session(session_id: str, request: Request) -> dict:
+        owner = current_owner(request)
+        body = await request.json()
+        title = str(body.get("title") or "").strip()
+        title = re.sub(r"\s+", " ", title)[:64].strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="title is required")
+        session_store = _session_store_for(owner)
+        session = session_store.load(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        session.title = title
+        session_store.save(session)
+        return {"ok": True, "sessionId": session_id, "title": title}
+
     @app.delete("/sessions/{session_id}")
     async def delete_session(session_id: str, request: Request) -> dict:
         # Idempotent and fully owner-scoped: a foreign session id matches

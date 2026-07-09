@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from openbench.chat.session import Attachment
+from openbench.chat.session import Attachment, ChatSession
 from openbench.chat.transport import AGUIHandler
 from openbench.core.abstractions import ExecutionContext, LLMProvider, LLMResponse
 from openbench.intelligence.base import AgentMemory, BaseAgent, Message, MessageRole
@@ -40,6 +40,49 @@ _VEHICLE_PLATE_TERMS = (
     "number plate",
     "vehicle plate",
 )
+_DEFAULT_SESSION_TITLE = "New Chat"
+
+
+def _fallback_session_title(content: str) -> str:
+    words = re.findall(r"[A-Za-z0-9]+", content.strip())
+    if not words:
+        return _DEFAULT_SESSION_TITLE
+    title_words = words[:5]
+    return " ".join(word[:1].upper() + word[1:24].lower() for word in title_words)
+
+
+def _clean_session_title(value: str, fallback: str) -> str:
+    title = value.strip().strip("\"'` ")
+    title = re.sub(r"^(title|chat title)\s*:\s*", "", title, flags=re.IGNORECASE).strip()
+    title = re.sub(r"[\r\n]+", " ", title)
+    title = re.sub(r"\s+", " ", title)
+    title = re.sub(r"[.!?;:]+$", "", title).strip()
+    if not title:
+        title = fallback
+    words = title.split()
+    if len(words) > 6:
+        title = " ".join(words[:6])
+    return title[:64].strip() or fallback
+
+
+def _generate_session_title(agent: Any, content: str) -> str:
+    fallback = _fallback_session_title(content)
+    if not isinstance(agent, BaseAgent):
+        return fallback
+    prompt = (
+        "Generate a concise English chat session title from the user's first message.\n"
+        "Rules: 2 to 5 words, Title Case, no quotes, no punctuation, no explanations.\n\n"
+        f"User message:\n{content[:1200]}"
+    )
+    try:
+        response = agent._get_llm().generate(
+            prompt=prompt,
+            model=agent.model,
+            temperature=0.1,
+        )
+    except Exception:
+        return fallback
+    return _clean_session_title(getattr(response, "text", ""), fallback)
 
 
 def _example_root() -> Path:
@@ -605,6 +648,14 @@ class GeneralChatHandler(AGUIHandler):
 
     def _on_session_resolved(self, session_id):
         self._local.session_id = session_id
+
+    def _after_user_message(self, session: ChatSession, content: str) -> None:
+        if len(session.messages) != 1:
+            return
+        if session.title.strip() != _DEFAULT_SESSION_TITLE:
+            return
+        session.title = _generate_session_title(self.engine.agent, content)
+        session.updated_at = datetime.now(timezone.utc)
 
     def _create_permission_context(
         self,
