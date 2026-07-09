@@ -2164,7 +2164,13 @@ class TestGeneralChatSources(unittest.TestCase):
 
         self.assertEqual(result["warnings"], warnings)
         self.assertIn("invalid", result["final_answer_hint"])
-        self.assertIn("ONCE", result["final_answer_hint"])
+        # The hint must NOT demand an unconditional retry (that drove the
+        # 20x generate_dashboard loop); it tells the model not to repeat the
+        # same ViewModel.
+        self.assertIn(
+            "Do NOT re-call generate_dashboard with the same ViewModel",
+            result["final_answer_hint"],
+        )
 
     def test_sam_segmentation_count_tool_defaults_and_caches_success(self):
         class FakeSamCountTool(Tool):

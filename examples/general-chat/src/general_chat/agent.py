@@ -389,12 +389,15 @@ class _DashboardGeneratorRenderTool(Tool):
             warnings = payload.get("warnings") or []
             if warnings:
                 result["final_answer_hint"] = (
-                    "Dashboard artifact was created but some section items were invalid "
-                    "and dropped (see warnings). If charts are missing, call "
-                    "generate_dashboard ONCE more with sections[].items as full inline "
-                    "objects: {type:'chart', chart_type, title, data:[rows], x_field, "
-                    "y_field} — never bare numbers or dataset indices. Do not paste the "
-                    "full ViewModel in your reply."
+                    "Dashboard artifact was created and its KPIs rendered, but some "
+                    "section items were invalid and were dropped (see warnings), so "
+                    "charts may be missing. Do NOT re-call generate_dashboard with the "
+                    "same ViewModel — that just repeats the error. Either present the "
+                    "dashboard as-is and tell the user (in their language) that charts "
+                    "need proper chart objects, or call it again ONLY if you supply "
+                    "corrected sections[].items as full inline objects: {type:'chart', "
+                    "chart_type, title, data:[rows], x_field, y_field} — never bare "
+                    "numbers or dataset indices. Do not paste the full ViewModel."
                 )
             else:
                 result["final_answer_hint"] = (
