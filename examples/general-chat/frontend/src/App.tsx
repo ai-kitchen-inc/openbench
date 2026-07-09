@@ -13,7 +13,7 @@ import {
   type SurfaceFooterRenderer,
 } from "@openbench/chat-ui";
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from "firebase/auth";
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "@openbench/chat-ui/styles/chat-ui.css";
 import "@openbench/chat-ui/styles/bundle.css";
 import { apiFetch, apiPath, authHeaders, setAuthTokenProvider, transcribeAudio } from "./api";
@@ -77,19 +77,6 @@ export type SourceItem = {
   metadata?: Record<string, unknown> | null;
 };
 
-export type DiscoveryResult = {
-  id: string;
-  title: string;
-  url: string;
-  domain: string;
-  snippet: string;
-  faviconUrl?: string | null;
-};
-
-type UploadingState = {
-  name: string;
-  progress: number;
-} | null;
 
 type DirectUploadInitiateResponse = {
   fileId: string;
@@ -791,20 +778,9 @@ export function SourcePanel({
   refreshToken?: number;
 }) {
   const toast = useToast();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [sources, setSources] = useState<SourceItem[]>([]);
   const [isLoadingSources, setIsLoadingSources] = useState(false);
   const [isMutating, setIsMutating] = useState(false);
-  const [urlInput, setUrlInput] = useState("");
-  const [textInput, setTextInput] = useState("");
-  const [discoveryQuery, setDiscoveryQuery] = useState("");
-  const [submittedQuery, setSubmittedQuery] = useState("");
-  const [discoveryResults, setDiscoveryResults] = useState<DiscoveryResult[]>([]);
-  const [selectedResultIds, setSelectedResultIds] = useState<string[]>([]);
-  const [discoveryError, setDiscoveryError] = useState("");
-  const [discoveryLoading, setDiscoveryLoading] = useState(false);
-  const [hasSearchedDiscovery, setHasSearchedDiscovery] = useState(false);
-  const [uploading, setUploading] = useState<UploadingState>(null);
 
   const loadSources = useCallback(
     async (targetSessionId: string): Promise<SourceItem[]> => {
@@ -838,140 +814,6 @@ export function SourcePanel({
     onAttachmentsChange(sources.map(sourceToAttachment).filter(Boolean) as Attachment[]);
   }, [onAttachmentsChange, sources]);
 
-  const handleUploadClick = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
-
-  const pollProcessingSource = useCallback(
-    async (fileId: string, targetSessionId: string): Promise<SourceItem | null> => {
-      for (let attempt = 0; attempt < DIRECT_UPLOAD_MAX_POLLS; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, DIRECT_UPLOAD_POLL_INTERVAL_MS));
-        const status = await fetchUploadStatus(fileId, targetSessionId);
-        setSources((current) => {
-          const withoutSource = current.filter((item) => item.id !== status.source.id);
-          return [status.source, ...withoutSource];
-        });
-        if (status.source.status !== "processing") return status.source;
-      }
-      return null;
-    },
-    [],
-  );
-
-  const handleFileSelection = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
-      if (!sessionId) return;
-      const files = Array.from(event.target.files ?? []);
-      if (files.length === 0) return;
-
-      try {
-        setIsMutating(true);
-        let shouldReloadAfterUploads = false;
-        for (const file of files) {
-          setUploading({ name: file.name, progress: 0 });
-          const record = await uploadSourceFile(file, sessionId, (fraction) => {
-            setUploading({ name: file.name, progress: fraction });
-          });
-          if (record.status === "processing") {
-            setSources((current) => {
-              const withoutRecord = current.filter((item) => item.id !== record.id);
-              return [record, ...withoutRecord];
-            });
-            toast.show(`Queued source: ${record.name}`, "success");
-            const fileId = typeof record.metadata?.fileId === "string" ? record.metadata.fileId : "";
-            if (fileId) {
-              void pollProcessingSource(fileId, sessionId)
-                .then((finalRecord) => {
-                  if (finalRecord?.status === "ready") {
-                    toast.show(`Source ready: ${finalRecord.name}`, "success");
-                  } else if (finalRecord?.status === "failed") {
-                    toast.show(
-                      `Source failed: ${finalRecord.name} - ${finalRecord.error ?? "Unknown error"}`,
-                      "error",
-                    );
-                  }
-                })
-                .catch((error) => {
-                  toast.show(`Could not refresh source status: ${readErrorMessage(error)}`, "error");
-                });
-            }
-            continue;
-          }
-          const message =
-            record.status === "ready"
-              ? `Added source: ${record.name}`
-              : `Source failed: ${record.name} - ${record.error ?? "Unknown error"}`;
-          toast.show(message, record.status === "ready" ? "success" : "error");
-          shouldReloadAfterUploads = true;
-        }
-        if (shouldReloadAfterUploads) {
-          await loadSources(sessionId);
-        }
-      } catch (error) {
-        toast.show(`Upload failed: ${readErrorMessage(error)}`, "error");
-      } finally {
-        setUploading(null);
-        setIsMutating(false);
-        event.target.value = "";
-      }
-    },
-    [loadSources, pollProcessingSource, sessionId, toast],
-  );
-
-  const handleAddUrl = useCallback(async () => {
-    if (!sessionId) return;
-    const url = urlInput.trim();
-    if (!url) return;
-    setIsMutating(true);
-    try {
-      const response = await apiFetch(apiPath(`/chat/sources/${encodeURIComponent(sessionId)}/url`), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-      const record = await parseJsonResponse<SourceItem>(response);
-      setUrlInput("");
-      await loadSources(sessionId);
-      toast.show(
-        record.status === "ready"
-          ? `Added source: ${record.name}`
-          : `Source failed: ${record.error ?? "Unknown error"}`,
-        record.status === "ready" ? "success" : "error",
-      );
-    } catch (error) {
-      toast.show(`Could not add website source: ${readErrorMessage(error)}`, "error");
-    } finally {
-      setIsMutating(false);
-    }
-  }, [loadSources, sessionId, toast, urlInput]);
-
-  const handleAddText = useCallback(async () => {
-    if (!sessionId) return;
-    const text = textInput.trim();
-    if (!text) return;
-    setIsMutating(true);
-    try {
-      const response = await apiFetch(apiPath(`/chat/sources/${encodeURIComponent(sessionId)}/text`), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Pasted text", text }),
-      });
-      const record = await parseJsonResponse<SourceItem>(response);
-      setTextInput("");
-      await loadSources(sessionId);
-      toast.show(
-        record.status === "ready"
-          ? `Added source: ${record.name}`
-          : `Source failed: ${record.error ?? "Unknown error"}`,
-        record.status === "ready" ? "success" : "error",
-      );
-    } catch (error) {
-      toast.show(`Could not add pasted text: ${readErrorMessage(error)}`, "error");
-    } finally {
-      setIsMutating(false);
-    }
-  }, [loadSources, sessionId, textInput, toast]);
-
   const handleDeleteSource = useCallback(
     async (sourceId: string) => {
       if (!sessionId) return;
@@ -992,237 +834,12 @@ export function SourcePanel({
     [loadSources, sessionId, toast],
   );
 
-  const handleDiscoverySubmit = useCallback(
-    async (event?: FormEvent<HTMLFormElement>) => {
-      event?.preventDefault();
-      const query = discoveryQuery.trim();
-      if (!query) return;
-      if (query === submittedQuery && hasSearchedDiscovery && !discoveryError) return;
-
-      setDiscoveryLoading(true);
-      setDiscoveryError("");
-      setHasSearchedDiscovery(true);
-      setSelectedResultIds([]);
-
-      try {
-        const response = await apiFetch(apiPath(`/chat/sources/discover?q=${encodeURIComponent(query)}`));
-        const payload = await parseJsonResponse<{ query: string; results: DiscoveryResult[] }>(response);
-        setSubmittedQuery(payload.query);
-        setDiscoveryResults(payload.results);
-      } catch (error) {
-        setDiscoveryError(readErrorMessage(error));
-      } finally {
-        setDiscoveryLoading(false);
-      }
-    },
-    [discoveryError, discoveryQuery, hasSearchedDiscovery, submittedQuery],
-  );
-
-  const toggleDiscoverySelection = useCallback((resultId: string) => {
-    setSelectedResultIds((current) =>
-      current.includes(resultId)
-        ? current.filter((item) => item !== resultId)
-        : [...current, resultId],
-    );
-  }, []);
-
-  const handleAddSelectedSources = useCallback(async () => {
-    if (!sessionId || selectedResultIds.length === 0) return;
-    const selected = discoveryResults.filter((result) => selectedResultIds.includes(result.id));
-    if (selected.length === 0) return;
-
-    setIsMutating(true);
-    try {
-      const records = await Promise.all(
-        selected.map(async (result) => {
-          const response = await apiFetch(apiPath(`/chat/sources/${encodeURIComponent(sessionId)}/url`), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: result.url }),
-          });
-          return parseJsonResponse<SourceItem>(response);
-        }),
-      );
-
-      const readyCount = records.filter((record) => record.status === "ready").length;
-      const failedCount = records.length - readyCount;
-      await loadSources(sessionId);
-      setSelectedResultIds([]);
-      toast.show(
-        failedCount === 0
-          ? `Added ${readyCount} web source${readyCount === 1 ? "" : "s"}`
-          : `Added ${readyCount}, failed ${failedCount}`,
-        failedCount === 0 ? "success" : "error",
-      );
-    } catch (error) {
-      toast.show(`Could not add selected links: ${readErrorMessage(error)}`, "error");
-    } finally {
-      setIsMutating(false);
-    }
-  }, [discoveryResults, loadSources, selectedResultIds, sessionId, toast]);
-
   return (
     <div className="source-panel">
       <div className="source-panel__header">
         <div className="source-panel__title">Sources</div>
-        <button
-          type="button"
-          className="source-panel__add-btn"
-          onClick={handleUploadClick}
-          disabled={!sessionId || isMutating}
-        >
-          Upload
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept={SOURCE_ACCEPT}
-          onChange={handleFileSelection}
-          hidden
-        />
       </div>
 
-      <div className="source-panel__controls">
-        <div className="source-panel__inline">
-          <input
-            className="source-panel__input"
-            type="url"
-            placeholder="Add website URL"
-            value={urlInput}
-            onChange={(event) => setUrlInput(event.target.value)}
-          />
-          <button
-            type="button"
-            className="source-panel__mini-btn"
-            onClick={() => void handleAddUrl()}
-            disabled={!sessionId || isMutating || !urlInput.trim()}
-          >
-            Add
-          </button>
-        </div>
-
-        <textarea
-          className="source-panel__textarea"
-          placeholder="Paste text source"
-          value={textInput}
-          onChange={(event) => setTextInput(event.target.value)}
-        />
-        <button
-          type="button"
-          className="source-panel__wide-btn"
-          onClick={() => void handleAddText()}
-          disabled={!sessionId || isMutating || !textInput.trim()}
-        >
-          Add text source
-        </button>
-      </div>
-
-      <form className="source-panel__discovery" onSubmit={(event) => void handleDiscoverySubmit(event)}>
-        <div className="source-panel__title source-panel__title--section">Discover sources</div>
-        <div className="source-panel__inline">
-          <input
-            className="source-panel__input"
-            type="search"
-            placeholder="Search the web for sources"
-            value={discoveryQuery}
-            onChange={(event) => setDiscoveryQuery(event.target.value)}
-          />
-          <button
-            type="submit"
-            className="source-panel__mini-btn"
-            disabled={discoveryLoading || !discoveryQuery.trim()}
-          >
-            Search
-          </button>
-        </div>
-
-        {discoveryLoading && <div className="source-panel__state">Searching the web...</div>}
-        {!discoveryLoading && discoveryError && (
-          <div className="source-panel__state source-panel__state--error">{discoveryError}</div>
-        )}
-        {!discoveryLoading &&
-          !discoveryError &&
-          hasSearchedDiscovery &&
-          submittedQuery &&
-          discoveryResults.length === 0 && (
-            <div className="source-panel__state">No results for "{submittedQuery}".</div>
-          )}
-
-        {discoveryResults.length > 0 && (
-          <>
-            <div className="source-panel__results source-panel__results--discovery">
-              {discoveryResults.map((result) => {
-                const isSelected = selectedResultIds.includes(result.id);
-                return (
-                  <label
-                    key={result.id}
-                    className={`source-panel__discovery-result${isSelected ? " source-panel__discovery-result--selected" : ""}`}
-                  >
-                    <input
-                      type="checkbox"
-                      className="source-panel__checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleDiscoverySelection(result.id)}
-                    />
-                    <div className="source-panel__discovery-body">
-                      <div className="source-panel__discovery-meta">
-                        {result.faviconUrl ? (
-                          <img
-                            className="source-panel__favicon"
-                            src={result.faviconUrl}
-                            alt=""
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <span className="source-panel__favicon source-panel__favicon--placeholder" />
-                        )}
-                        <span className="source-panel__discovery-domain">{result.domain}</span>
-                      </div>
-                      <a
-                        href={result.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="source-panel__discovery-link"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        {result.title}
-                      </a>
-                      <div className="source-panel__discovery-url">{result.url}</div>
-                      <div className="source-panel__result-snippet">{result.snippet}</div>
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
-            <button
-              type="button"
-              className="source-panel__wide-btn"
-              onClick={() => void handleAddSelectedSources()}
-              disabled={!sessionId || isMutating || selectedResultIds.length === 0}
-            >
-              Add selected sources
-            </button>
-          </>
-        )}
-      </form>
-
-      {uploading && (
-        <div className="source-panel__uploading">
-          <span className="source-panel__uploading-name">{uploading.name}</span>
-          <div className="source-panel__progress-track" aria-hidden="true">
-            <div
-              className="source-panel__progress-fill"
-              style={{ width: `${Math.round(uploading.progress * 100)}%` }}
-            />
-          </div>
-          <span className="source-panel__progress-pct">
-            {Math.round(uploading.progress * 100)}%
-          </span>
-        </div>
-      )}
-
-      <div className="source-panel__title source-panel__title--section">Added sources</div>
       {isLoadingSources ? (
         <div className="source-panel__state">Loading sources...</div>
       ) : sources.length === 0 ? (
