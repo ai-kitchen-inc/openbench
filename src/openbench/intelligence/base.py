@@ -58,6 +58,18 @@ from openbench.intelligence.tool_executor import (
 logger = logging.getLogger(__name__)
 
 
+def _tool_call_signature(tc: dict[str, Any]) -> str:
+    """Stable signature for a tool call (name + canonical arguments).
+
+    Used to detect a model re-emitting the exact same call within one
+    reasoning turn so the loop can short-circuit the thrash instead of
+    re-executing it until ``max_iterations``.
+    """
+    return tc["name"] + "\x00" + json.dumps(
+        tc.get("arguments") or {}, sort_keys=True, default=str
+    )
+
+
 class BaseAgent(_AgentRAGMixin, Agent):
     """
     Framework-agnostic base agent implementation.
@@ -545,6 +557,15 @@ Provide clear, actionable responses."""
         _MAX_EMPTY_RETRIES = 2
         _empty_retries = 0
 
+        # Repeated-tool-call guard: if the model re-emits a tool call with
+        # arguments identical to one already executed THIS turn, we don't run
+        # it again — we feed back a "duplicate" note instead. An iteration that
+        # produces no fresh call is a strike; after this many consecutive
+        # strikes we stop the loop rather than thrash to max_iterations.
+        _MAX_TOOL_REPEATS = 2
+        executed_tool_signatures: set[str] = set()
+        repeat_strikes = 0
+
         # Determine if we can stream
         use_stream = on_chunk is not None
 
@@ -692,28 +713,62 @@ Provide clear, actionable responses."""
                     tool_names = [tc["name"] for tc in tool_calls]
                     _emit_progress(on_progress, f"Running {', '.join(tool_names)}")
 
+                    # Partition into fresh calls (not yet run this turn) and
+                    # duplicates (identical name+args already executed). Duplicates
+                    # are NOT re-executed — they get a "duplicate" note so the model
+                    # stops repeating instead of thrashing to max_iterations.
+                    duplicate_note = _tool_result_to_json(
+                        {
+                            "duplicate_call_skipped": True,
+                            "note": (
+                                "You already called this tool with identical "
+                                "arguments this turn; the result is unchanged. Do "
+                                "not repeat it — use the previous result or give "
+                                "your final answer."
+                            ),
+                        }
+                    )
+                    fresh_calls: list[dict[str, Any]] = []
+                    is_duplicate: dict[str, bool] = {}
+                    for tc in tool_calls:
+                        signature = _tool_call_signature(tc)
+                        if signature in executed_tool_signatures:
+                            is_duplicate[tc["id"]] = True
+                        else:
+                            executed_tool_signatures.add(signature)
+                            is_duplicate[tc["id"]] = False
+                            fresh_calls.append(tc)
+
                     try:
-                        if self.parallel_tool_execution and len(tool_calls) > 1:
-                            # Parallel execution for multiple tool calls
-                            results = self.tools.execute_parallel(tool_calls)
+                        results_by_id: dict[str, str] = {}
+                        if self.parallel_tool_execution and len(fresh_calls) > 1:
+                            # Parallel execution for multiple fresh tool calls
+                            results = self.tools.execute_parallel(fresh_calls)
                             for r in results:
                                 tc = r["call"]
                                 if r["error"] is not None:
-                                    result_str = f"Error: {r['error']}"
+                                    results_by_id[tc["id"]] = f"Error: {r['error']}"
                                 else:
-                                    result_str = _tool_result_to_json(r["result"])
-                                self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                                    results_by_id[tc["id"]] = _tool_result_to_json(r["result"])
                         else:
                             # Sequential execution (default)
-                            for tc in tool_calls:
+                            for tc in fresh_calls:
                                 try:
                                     result = self.tools.execute(
                                         tc["name"], arguments=tc["arguments"]
                                     )
-                                    result_str = _tool_result_to_json(result)
+                                    results_by_id[tc["id"]] = _tool_result_to_json(result)
                                 except Exception as e:
-                                    result_str = f"Error: {e!s}"
-                                self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                                    results_by_id[tc["id"]] = f"Error: {e!s}"
+                        # Append a result for EVERY call id (fresh + duplicate) in
+                        # order — Gemini requires one response per function call.
+                        for tc in tool_calls:
+                            result_str = (
+                                duplicate_note
+                                if is_duplicate[tc["id"]]
+                                else results_by_id.get(tc["id"], duplicate_note)
+                            )
+                            self.memory.add_tool_result(tc["id"], tc["name"], result_str)
                     except Exception:
                         # Tool execution loop itself blew up (e.g. memory.add_tool_result
                         # raised on SQLite error). Roll back the half-written turn so
@@ -725,6 +780,21 @@ Provide clear, actionable responses."""
                         # the next session load and retriggers the same Gemini error.
                         self.memory.truncate_to(pre_tools_len)
                         raise
+
+                    # Thrash guard: an iteration that ran no fresh call means the
+                    # model only repeated calls it already made. Count consecutive
+                    # strikes and stop rather than loop to max_iterations.
+                    if fresh_calls:
+                        repeat_strikes = 0
+                    else:
+                        repeat_strikes += 1
+                        if repeat_strikes >= _MAX_TOOL_REPEATS:
+                            logger.warning(
+                                "Agent stopped after %d consecutive iterations with "
+                                "only duplicate tool calls (no progress).",
+                                repeat_strikes,
+                            )
+                            break
 
             total_duration = round(time.monotonic() - start_time, 3)
             metrics.inc("agent.execute")

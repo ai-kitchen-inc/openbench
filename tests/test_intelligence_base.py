@@ -445,6 +445,96 @@ class TestBaseAgentEmptyResponseRetry(unittest.TestCase):
         self.assertEqual(provider.call_count, 1 + _MAX_EMPTY_RETRIES)
 
 
+class CountingTool(MockTool):
+    """Mock tool that records how many times it was executed."""
+
+    def __init__(self):
+        super().__init__("mock_tool")
+        self.execute_count = 0
+
+    def execute(self, **params) -> Any:
+        self.execute_count += 1
+        return {"result": "mock", "params": params}
+
+
+class RepeatSameToolLLMProvider(LLMProvider):
+    """Always returns the same tool call with identical arguments (thrash)."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    @property
+    def provider_name(self) -> str:
+        return "mock-repeat"
+
+    def generate(self, prompt: Any, model: str, **params) -> LLMResponse:
+        self.call_count += 1
+        response = LLMResponse(text="", model=model, tokens_used=10, cost=0.0)
+        response.tool_calls = [{"name": "mock_tool", "arguments": {"query": "x"}}]
+        return response
+
+
+class VaryingToolThenAnswerLLMProvider(LLMProvider):
+    """Emits N tool calls with DISTINCT args, then a final text answer."""
+
+    def __init__(self, n: int):
+        self.n = n
+        self.call_count = 0
+
+    @property
+    def provider_name(self) -> str:
+        return "mock-vary"
+
+    def generate(self, prompt: Any, model: str, **params) -> LLMResponse:
+        self.call_count += 1
+        if self.call_count <= self.n:
+            response = LLMResponse(text="", model=model, tokens_used=10, cost=0.0)
+            response.tool_calls = [
+                {"name": "mock_tool", "arguments": {"query": f"q{self.call_count}"}}
+            ]
+            return response
+        return LLMResponse(text="done", model=model, tokens_used=10, cost=0.0)
+
+
+class TestBaseAgentRepeatedToolGuard(unittest.TestCase):
+    """The reasoning loop must not re-run identical tool calls forever."""
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_repeated_identical_tool_call_stops_loop(self, mock_get_service):
+        provider = RepeatSameToolLLMProvider()
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = provider
+        mock_get_service.return_value = mock_service
+
+        tool = CountingTool()
+        agent = BaseAgent(goal="Test", tools=[tool], max_iterations=20)
+        agent.execute(ExecutionContext(goal="hi"))
+
+        # The tool ran exactly once; every later identical call was skipped.
+        self.assertEqual(tool.execute_count, 1)
+        # iter 1 (fresh) + 2 duplicate-only strikes = 3 LLM calls, well under 20.
+        self.assertEqual(provider.call_count, 3)
+        joined = " ".join(
+            str(getattr(m, "content", "")) for m in agent.memory.messages
+        )
+        self.assertIn("duplicate_call_skipped", joined)
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_distinct_tool_calls_are_not_deduplicated(self, mock_get_service):
+        provider = VaryingToolThenAnswerLLMProvider(3)
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = provider
+        mock_get_service.return_value = mock_service
+
+        tool = CountingTool()
+        agent = BaseAgent(goal="Test", tools=[tool], max_iterations=20)
+        result = agent.execute(ExecutionContext(goal="hi"))
+
+        # Each distinct-argument call executed; no false-positive dedup.
+        self.assertEqual(tool.execute_count, 3)
+        self.assertEqual(result.output, "done")
+
+
 class TestBaseAgent(unittest.TestCase):
     """Test BaseAgent."""
 
