@@ -10,6 +10,7 @@ import {
   type AttachmentUploadOptions,
   type ChatConfig,
   type ChatMessage,
+  type SurfaceFooterRenderer,
 } from "@openbench/chat-ui";
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
@@ -117,7 +118,10 @@ function normalizeDirectUploadStatus(payload: DirectUploadStatusResponse | Sourc
 }
 
 type DashboardArtifact = {
+  key: string;
   messageId: string;
+  surfaceId: string;
+  componentId: string;
   title: string;
   url?: string;
   fileName: string;
@@ -162,7 +166,7 @@ function dashboardArtifactSurface(
 ): A2UISurface {
   const rootComponent = { ...component, id: "root" };
   return {
-    surfaceId: `${messageId}-dashboard-artifact`,
+    surfaceId: `${messageId}-${sourceSurface.surfaceId}-${component.id}-dashboard-artifact`,
     catalogId: sourceSurface.catalogId,
     components: new Map([["root", rootComponent]]),
     dataModel: sourceSurface.dataModel ?? {},
@@ -189,7 +193,10 @@ export function findLatestDashboard(messages: ChatMessage[]): DashboardArtifact 
         );
         if (!url && !hasDashboardData(component)) continue;
         return {
+          key: `${message.id}:${surface.surfaceId}:${component.id}`,
           messageId: message.id,
+          surfaceId: surface.surfaceId,
+          componentId: component.id,
           title: componentString(componentValue(component, "title")) || "Dashboard",
           url: url || undefined,
           fileName: componentString(componentValue(component, "fileName")) || "dashboard.html",
@@ -205,6 +212,48 @@ export function findLatestDashboard(messages: ChatMessage[]): DashboardArtifact 
   return null;
 }
 
+function dashboardArtifactsForSurface(
+  message: ChatMessage,
+  surface: A2UISurface,
+): DashboardArtifact[] {
+  const surfaceComponents = surface?.components;
+  if (!surfaceComponents || typeof surfaceComponents.values !== "function") return [];
+  const artifacts: DashboardArtifact[] = [];
+  for (const component of surfaceComponents.values()) {
+    if (component.component !== "ObDashboardFrame") continue;
+    const url = componentString(
+      componentValue(component, "dashboardUrl") ?? componentValue(component, "url"),
+    );
+    if (!url && !hasDashboardData(component)) continue;
+    artifacts.push({
+      key: `${message.id}:${surface.surfaceId}:${component.id}`,
+      messageId: message.id,
+      surfaceId: surface.surfaceId,
+      componentId: component.id,
+      title: componentString(componentValue(component, "title")) || "Dashboard",
+      url: url || undefined,
+      fileName: componentString(componentValue(component, "fileName")) || "dashboard.html",
+      summary: componentString(
+        componentValue(component, "summary") ?? componentValue(component, "description"),
+      ),
+      fileSize: componentNumber(componentValue(component, "fileSize")),
+      surface: dashboardArtifactSurface(message.id, surface, component),
+    });
+  }
+  return artifacts;
+}
+
+export function findDashboardArtifacts(messages: ChatMessage[]): DashboardArtifact[] {
+  const artifacts: DashboardArtifact[] = [];
+  for (const message of messages) {
+    const surfaces = message.surfaces ?? [];
+    for (const surface of surfaces) {
+      artifacts.push(...dashboardArtifactsForSurface(message, surface));
+    }
+  }
+  return artifacts;
+}
+
 function formatArtifactSize(value: number | undefined): string {
   if (value == null) return "";
   if (value < 1024) return `${value} B`;
@@ -214,14 +263,21 @@ function formatArtifactSize(value: number | undefined): string {
 
 export function DashboardArtifactPanel({
   artifact,
+  isMaximized = false,
+  onToggleMaximized,
   onClose,
 }: {
   artifact: DashboardArtifact;
+  isMaximized?: boolean;
+  onToggleMaximized?: () => void;
   onClose: () => void;
 }) {
   const sizeText = formatArtifactSize(artifact.fileSize);
   return (
-    <aside className="dashboard-artifact" aria-label="Dashboard artifact">
+    <aside
+      className={`dashboard-artifact${isMaximized ? " dashboard-artifact--maximized" : ""}`}
+      aria-label="Dashboard artifact"
+    >
       <div className="dashboard-artifact__header">
         <div className="dashboard-artifact__title-wrap">
           <div className="dashboard-artifact__eyebrow">Dashboard</div>
@@ -247,6 +303,29 @@ export function DashboardArtifactPanel({
             </svg>
           </a>
         )}
+        <button
+          type="button"
+          className="dashboard-artifact__icon-btn"
+          onClick={onToggleMaximized}
+          aria-label={isMaximized ? "Minimize dashboard panel" : "Maximize dashboard panel"}
+          title={isMaximized ? "Minimize dashboard" : "Maximize dashboard"}
+        >
+          {isMaximized ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M8 3v5H3" />
+              <path d="M21 8h-5V3" />
+              <path d="M16 21v-5h5" />
+              <path d="M3 16h5v5" />
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M15 3h6v6" />
+              <path d="M9 21H3v-6" />
+              <path d="M21 3 14 10" />
+              <path d="M3 21l7-7" />
+            </svg>
+          )}
+        </button>
         <button
           type="button"
           className="dashboard-artifact__icon-btn"
@@ -1205,22 +1284,93 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
   const [dark, toggleDark] = useDarkMode();
   const [mcpCatalogOpen, setMcpCatalogOpen] = useState(false);
   const [functionsOpen, setFunctionsOpen] = useState(false);
-  const latestDashboard = useMemo(() => findLatestDashboard(messages), [messages]);
+  const dashboardArtifacts = useMemo(() => findDashboardArtifacts(messages), [messages]);
+  const latestDashboard =
+    dashboardArtifacts.length > 0 ? dashboardArtifacts[dashboardArtifacts.length - 1] : null;
+  const [selectedDashboardKey, setSelectedDashboardKey] = useState<string | null>(null);
   const [dismissedDashboardKey, setDismissedDashboardKey] = useState<string | null>(null);
-  const dashboardKey = latestDashboard
-    ? `${latestDashboard.messageId}:${latestDashboard.url ?? latestDashboard.title}`
+  const [isDashboardMaximized, setIsDashboardMaximized] = useState(false);
+  const previousLatestDashboardKeyRef = useRef<string | null>(null);
+  const latestDashboardKey = latestDashboard?.key ?? null;
+  const selectedDashboard = selectedDashboardKey
+    ? dashboardArtifacts.find((artifact) => artifact.key === selectedDashboardKey) ?? null
     : null;
+  const activeDashboard = selectedDashboard ?? latestDashboard;
+  const activeDashboardKey = activeDashboard?.key ?? null;
   const showDashboard =
-    latestDashboard !== null && dashboardKey !== null && dashboardKey !== dismissedDashboardKey;
+    activeDashboard !== null &&
+    activeDashboardKey !== null &&
+    activeDashboardKey !== dismissedDashboardKey;
 
   useEffect(() => {
-    if (dashboardKey && dismissedDashboardKey && dashboardKey !== dismissedDashboardKey) {
+    if (latestDashboardKey && previousLatestDashboardKeyRef.current !== latestDashboardKey) {
+      previousLatestDashboardKeyRef.current = latestDashboardKey;
+      setSelectedDashboardKey(null);
+      setDismissedDashboardKey(null);
+    } else if (!latestDashboardKey) {
+      previousLatestDashboardKeyRef.current = null;
+      setSelectedDashboardKey(null);
       setDismissedDashboardKey(null);
     }
-  }, [dashboardKey, dismissedDashboardKey]);
+  }, [latestDashboardKey]);
+
+  useEffect(() => {
+    if (!showDashboard) setIsDashboardMaximized(false);
+  }, [showDashboard]);
+
+  const handleOpenDashboard = useCallback(
+    (artifact: DashboardArtifact) => {
+      setSelectedDashboardKey(artifact.key === latestDashboardKey ? null : artifact.key);
+      setDismissedDashboardKey(null);
+    },
+    [latestDashboardKey],
+  );
+
+  const renderDashboardSurfaceFooter = useCallback<SurfaceFooterRenderer>(
+    ({ message, surface }) => {
+      const surfaceArtifacts = dashboardArtifactsForSurface(message, surface);
+      if (surfaceArtifacts.length === 0) return null;
+      return (
+        <div className="dashboard-artifact-open-row">
+          {surfaceArtifacts.map((artifact) => {
+            const isActive = artifact.key === activeDashboardKey && showDashboard;
+            return (
+              <button
+                key={artifact.key}
+                type="button"
+                className={`dashboard-artifact-open${isActive ? " dashboard-artifact-open--active" : ""}`}
+                onClick={() => handleOpenDashboard(artifact)}
+                aria-label={`Open ${artifact.title} in artifact panel`}
+                title="Open in artifact panel"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <path d="M9 4v16" />
+                  <path d="M13 9h4" />
+                  <path d="M13 13h4" />
+                </svg>
+                <span>Open</span>
+              </button>
+            );
+          })}
+        </div>
+      );
+    },
+    [activeDashboardKey, handleOpenDashboard, showDashboard],
+  );
 
   return (
-    <div className="chat-layout">
+    <div className={`chat-layout${showDashboard && isDashboardMaximized ? " chat-layout--artifact-maximized" : ""}`}>
       {sidebarOpen && (
         <div className="lci-mini-sidebar">
           <SessionSidebar />
@@ -1271,6 +1421,7 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
           acceptedFileTypes={SOURCE_ACCEPT}
           onAttachmentError={(message) => toast.show(message, "error")}
           onTranscribe={transcribeAudio}
+          renderSurfaceFooter={renderDashboardSurfaceFooter}
           headerRight={
             <div className="chat-header-actions">
               <span className="auth-user" title={user.email ?? user.displayName ?? user.uid}>
@@ -1292,10 +1443,12 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
           }
         />
       </div>
-      {showDashboard && latestDashboard && (
+      {showDashboard && activeDashboard && (
         <DashboardArtifactPanel
-          artifact={latestDashboard}
-          onClose={() => setDismissedDashboardKey(dashboardKey)}
+          artifact={activeDashboard}
+          isMaximized={isDashboardMaximized}
+          onToggleMaximized={() => setIsDashboardMaximized((value) => !value)}
+          onClose={() => setDismissedDashboardKey(activeDashboardKey)}
         />
       )}
       <McpCatalogPanel open={mcpCatalogOpen} onClose={() => setMcpCatalogOpen(false)} />

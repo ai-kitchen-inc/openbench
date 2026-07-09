@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import {
   DashboardArtifactPanel,
   DIRECT_UPLOAD_THRESHOLD_BYTES,
+  findDashboardArtifacts,
   findLatestDashboard,
   SOURCE_ACCEPT,
   SourcePanel,
@@ -729,6 +730,63 @@ describe("findLatestDashboard", () => {
     expect(artifact?.surface.components.get("root")).toBeDefined();
   });
 
+  it("keeps every dashboard artifact addressable by a stable key", () => {
+    const messages = [
+      {
+        ...baseMessage,
+        id: "m-1",
+        surfaces: [
+          {
+            surfaceId: "s-1",
+            catalogId: "openbench",
+            components: new Map([
+              [
+                "root",
+                {
+                  id: "root",
+                  component: "ObDashboardFrame",
+                  title: "First Dashboard",
+                  dashboardUrl: "/downloads/first.html",
+                },
+              ],
+            ]),
+            dataModel: {},
+          },
+        ],
+      },
+      {
+        ...baseMessage,
+        id: "m-2",
+        surfaces: [
+          {
+            surfaceId: "s-2",
+            catalogId: "openbench",
+            components: new Map([
+              [
+                "root",
+                {
+                  id: "root",
+                  component: "ObDashboardFrame",
+                  title: "Second Dashboard",
+                  dashboardUrl: "/downloads/second.html",
+                },
+              ],
+            ]),
+            dataModel: {},
+          },
+        ],
+      },
+    ];
+
+    const artifacts = findDashboardArtifacts(messages);
+    expect(artifacts.map((artifact) => artifact.title)).toEqual([
+      "First Dashboard",
+      "Second Dashboard",
+    ]);
+    expect(artifacts[0]?.key).toBe("m-1:s-1:root");
+    expect(findLatestDashboard(messages)?.title).toBe("Second Dashboard");
+  });
+
   it("returns null when no dashboard components exist", () => {
     const messages = [
       {
@@ -761,7 +819,10 @@ describe("DashboardArtifactPanel", () => {
       datasets: {},
     };
     const artifact = {
+      key: "msg-1:surface-1:root",
       messageId: "msg-1",
+      surfaceId: "surface-1",
+      componentId: "root",
       title: "Sales Dashboard",
       url: "/downloads/sales.html",
       fileName: "sales.html",
@@ -796,6 +857,61 @@ describe("DashboardArtifactPanel", () => {
     expect(iframe?.getAttribute("src")).toBe("/downloads/sales.html");
   });
 
+  it("renders maximize and minimize controls without replacing the open-in-new-tab link", async () => {
+    const onToggleMaximized = vi.fn();
+    const artifact = {
+      key: "msg-1:surface-1:root",
+      messageId: "msg-1",
+      surfaceId: "surface-1",
+      componentId: "root",
+      title: "Sales Dashboard",
+      url: "/downloads/sales.html",
+      fileName: "sales.html",
+      summary: "",
+      surface: {
+        surfaceId: "msg-1-dashboard-artifact",
+        catalogId: "openbench",
+        components: new Map([
+          [
+            "root",
+            {
+              id: "root",
+              component: "ObDashboardFrame",
+              title: "Sales Dashboard",
+              dashboardUrl: "/downloads/sales.html",
+            },
+          ],
+        ]),
+        dataModel: {},
+      },
+    };
+
+    const { rerender } = render(
+      <DashboardArtifactPanel
+        artifact={artifact}
+        onClose={vi.fn()}
+        onToggleMaximized={onToggleMaximized}
+      />,
+    );
+
+    expect(screen.getByLabelText("Open dashboard export in a new tab")).toHaveAttribute(
+      "href",
+      "/downloads/sales.html",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Maximize dashboard panel" }));
+    expect(onToggleMaximized).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <DashboardArtifactPanel
+        artifact={artifact}
+        isMaximized
+        onClose={vi.fn()}
+        onToggleMaximized={onToggleMaximized}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Minimize dashboard panel" })).toBeInTheDocument();
+  });
+
   it("renders the exported HTML dashboard preview when ViewModel is inside legacy properties", () => {
     const viewModel = {
       title: "Dashboard Penjualan Kopi",
@@ -805,7 +921,10 @@ describe("DashboardArtifactPanel", () => {
       datasets: {},
     };
     const artifact = {
+      key: "msg-1:surface-1:root",
       messageId: "msg-1",
+      surfaceId: "surface-1",
+      componentId: "root",
       title: "Dashboard Penjualan Kopi",
       url: "/downloads/kopi.html",
       fileName: "kopi.html",

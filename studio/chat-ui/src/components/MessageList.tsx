@@ -8,7 +8,7 @@
 
 import { useEffect, useRef } from "react";
 import type { A2UIAction, ChatMessage } from "../types";
-import { MessageBubble } from "./MessageBubble";
+import { MessageBubble, type SurfaceFooterRenderer } from "./MessageBubble";
 
 export interface MessageListProps {
   messages: ChatMessage[];
@@ -18,6 +18,8 @@ export interface MessageListProps {
   uploadProgress?: Record<string, number>;
   /** Retry handler forwarded to aborted placeholder messages. */
   onRetry?: (message: ChatMessage) => void;
+  /** Optional host-rendered footer shown below each A2UI surface. */
+  renderSurfaceFooter?: SurfaceFooterRenderer;
 }
 
 export function MessageList({
@@ -26,6 +28,7 @@ export function MessageList({
   onAction,
   uploadProgress,
   onRetry,
+  renderSurfaceFooter,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -65,6 +68,7 @@ export function MessageList({
           onAction={onAction}
           uploadProgress={uploadProgress}
           onRetry={onRetry}
+          renderSurfaceFooter={renderSurfaceFooter}
         />
       ))}
     </div>

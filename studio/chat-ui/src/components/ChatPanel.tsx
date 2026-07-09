@@ -5,6 +5,7 @@
 import { ChatInput } from "./ChatInput";
 import { useChatContext } from "./ChatProvider";
 import { MessageList } from "./MessageList";
+import type { SurfaceFooterRenderer } from "./MessageBubble";
 import { WelcomeScreen } from "./WelcomeScreen";
 import type { Attachment } from "../types";
 
@@ -31,6 +32,8 @@ export interface ChatPanelProps {
   maxUploadSize?: number;
   /** Fallback audio transcriber for browsers without the Web Speech API. */
   onTranscribe?: (audio: Blob) => Promise<string>;
+  /** Optional host-rendered footer shown below each A2UI surface. */
+  renderSurfaceFooter?: SurfaceFooterRenderer;
 }
 
 export function ChatPanel({
@@ -45,6 +48,7 @@ export function ChatPanel({
   onAttachmentError,
   maxUploadSize,
   onTranscribe,
+  renderSurfaceFooter,
 }: ChatPanelProps) {
   const {
     messages,
@@ -138,6 +142,7 @@ export function ChatPanel({
             onAction={sendAction}
             uploadProgress={uploadProgress}
             onRetry={retryMessage}
+            renderSurfaceFooter={renderSurfaceFooter}
           />
         )}
       </div>

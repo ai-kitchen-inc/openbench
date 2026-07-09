@@ -3,15 +3,22 @@
  */
 
 import ReactMarkdown from "react-markdown";
+import type { ReactNode } from "react";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { SurfaceRenderer } from "../a2ui/surface-renderer";
 import { formatTime } from "../core/utils";
-import type { A2UIAction, Attachment, ChatMessage } from "../types";
+import type { A2UIAction, A2UISurface, Attachment, ChatMessage } from "../types";
 import { StepIndicator } from "./StepIndicator";
 import { StreamingIndicator } from "./StreamingIndicator";
+
+export type SurfaceFooterRenderer = (params: {
+  message: ChatMessage;
+  surface: A2UISurface;
+  surfaceIndex: number;
+}) => ReactNode;
 
 export interface MessageBubbleProps {
   message: ChatMessage;
@@ -30,6 +37,8 @@ export interface MessageBubbleProps {
    * is hidden.
    */
   onRetry?: (message: ChatMessage) => void;
+  /** Optional host-rendered footer shown below each A2UI surface. */
+  renderSurfaceFooter?: SurfaceFooterRenderer;
 }
 
 function formatFileSize(bytes: number | undefined): string {
@@ -96,7 +105,13 @@ function MessageAttachment({
   );
 }
 
-export function MessageBubble({ message, onAction, uploadProgress, onRetry }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  onAction,
+  uploadProgress,
+  onRetry,
+  renderSurfaceFooter,
+}: MessageBubbleProps) {
   const isStreaming = message.status === "streaming";
   const isError = message.status === "error";
   const isAborted = message.metadata?.aborted === true;
@@ -144,11 +159,15 @@ export function MessageBubble({ message, onAction, uploadProgress, onRetry }: Me
             wrapper div would still take up layout space. */}
         {message.surfaces
           ?.filter((s) => s && typeof (s as { components?: unknown }).components !== "undefined")
-          .map((surface) => (
-            <div key={surface.surfaceId} className="chat-message__surface">
-              <SurfaceRenderer surface={surface} onAction={onAction} />
-            </div>
-          ))}
+          .map((surface, surfaceIndex) => {
+            const footer = renderSurfaceFooter?.({ message, surface, surfaceIndex });
+            return (
+              <div key={surface.surfaceId} className="chat-message__surface">
+                <SurfaceRenderer surface={surface} onAction={onAction} />
+                {footer && <div className="chat-message__surface-footer">{footer}</div>}
+              </div>
+            );
+          })}
 
         {/* Step indicators — always at the bottom */}
         {hasSteps && (

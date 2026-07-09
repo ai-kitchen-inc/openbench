@@ -577,6 +577,32 @@ describe("MessageBubble", () => {
     const retryBtn = screen.getByRole("button", { name: /retry/i });
     expect(retryBtn.getAttribute("title")).toBe("Gemini 500");
   });
+
+  it("renders a host-provided footer below A2UI surfaces", () => {
+    const surfaceMessage: ChatMessage = {
+      ...assistantMessage,
+      id: "msg-surface",
+      surfaces: [
+        {
+          surfaceId: "surface-1",
+          catalogId: "openbench",
+          components: new Map([["root", { id: "root", component: "Text", text: "Rich surface" }]]),
+          dataModel: {},
+        },
+      ],
+    };
+
+    render(
+      <MessageBubble
+        message={surfaceMessage}
+        renderSurfaceFooter={({ message, surface }) => (
+          <button type="button">{`${message.id}:${surface.surfaceId}:Open`}</button>
+        )}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "msg-surface:surface-1:Open" })).toBeDefined();
+  });
 });
 
 // ── MessageList ──

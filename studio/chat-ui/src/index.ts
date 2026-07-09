@@ -31,7 +31,7 @@ export { ChatPanel } from "./components/ChatPanel";
 export type { ChatProviderProps } from "./components/ChatProvider";
 // ── Components (drop-in ready) ──
 export { ChatProvider, useChatContext, useChatContextOptional } from "./components/ChatProvider";
-export type { MessageBubbleProps } from "./components/MessageBubble";
+export type { MessageBubbleProps, SurfaceFooterRenderer } from "./components/MessageBubble";
 export { MessageBubble } from "./components/MessageBubble";
 export type { MessageListProps } from "./components/MessageList";
 export { MessageList } from "./components/MessageList";
