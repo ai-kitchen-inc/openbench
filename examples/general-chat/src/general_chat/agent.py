@@ -56,6 +56,9 @@ def _example_root() -> Path:
 
 
 def get_persona_dir() -> Path:
+    override = os.getenv("GENERAL_CHAT_SOUL_DIR", "").strip()
+    if override:
+        return Path(override).resolve()
     return (_example_root() / "soul").resolve()
 
 
