@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import "@openbench/chat-ui/styles/chat-ui.css";
 import "@openbench/chat-ui/styles/bundle.css";
 import { fetchMe, logout, type AuthUser } from "./api";
+import { ControlPanel } from "./control-panel/ControlPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LoginGate } from "./LoginGate";
 import { ToastProvider } from "./Toast";
@@ -50,6 +51,13 @@ function AuthRoot() {
 }
 
 function SignedInApp({ user, onSignOut }: { user: AuthUser; onSignOut: () => void }) {
+  if (user.role === "admin") {
+    return (
+      <ErrorBoundary region="the control panel">
+        <ControlPanel user={user} onSignOut={onSignOut} />
+      </ErrorBoundary>
+    );
+  }
   return (
     <div className="app-loading">
       Signed in as {user.username} ({user.role}).
