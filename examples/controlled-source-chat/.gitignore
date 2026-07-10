@@ -1,0 +1,7 @@
+.env
+.openbench/
+uploads/
+downloads/
+profiles/
+*.db
+prompt-debug/
