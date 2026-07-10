@@ -42,6 +42,8 @@ def _source_context_label() -> str:
     return os.getenv("GENERAL_CHAT_SOURCE_CONTEXT_LABEL", "").strip() or (
         _DEFAULT_SOURCE_CONTEXT_LABEL
     )
+
+
 _IMAGE_MCP_FILE_PATH_RE = re.compile(r"/general-chat/uploads/file-[^/\"'\s]+/[^\r\n\"']+")
 _VISION_ATTACHMENT_ID = "general-chat-vision-observation"
 _VEHICLE_PLATE_TERMS = (
