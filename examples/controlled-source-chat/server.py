@@ -21,7 +21,7 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 _EXAMPLE_ROOT = Path(__file__).resolve().parent
 _GENERAL_CHAT_SRC = _EXAMPLE_ROOT.parent / "general-chat" / "src"
@@ -31,6 +31,19 @@ sys.path.insert(0, str(_GENERAL_CHAT_SRC))
 
 # .env first so it wins over the setdefault() baseline below.
 load_dotenv(_EXAMPLE_ROOT / ".env")
+
+# API-key fallback: reuse the sibling general-chat example's .env so this
+# demo runs without any manual `export GOOGLE_API_KEY=...`. Only the keys
+# listed here are imported — inheriting general-chat's full .env could
+# override this example's storage/persona isolation.
+_FALLBACK_ENV_FILE = _EXAMPLE_ROOT.parent / "general-chat" / ".env"
+_FALLBACK_API_KEYS = ("GOOGLE_API_KEY", "TAVILY_API_KEY")
+if _FALLBACK_ENV_FILE.is_file():
+    _fallback_values = dotenv_values(_FALLBACK_ENV_FILE)
+    for _key in _FALLBACK_API_KEYS:
+        _value = (_fallback_values.get(_key) or "").strip()
+        if _value and not os.getenv(_key):
+            os.environ[_key] = _value
 
 _STRICT_GOAL = (
     "Answer the user's question strictly from the curated source context and "

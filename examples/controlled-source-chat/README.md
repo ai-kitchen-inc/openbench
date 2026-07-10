@@ -7,9 +7,13 @@ A thin wrapper around the [general-chat](../general-chat) backend: an **admin** 
 ## Run
 
 ```bash
-export GOOGLE_API_KEY=...        # PowerShell: $env:GOOGLE_API_KEY="..."
 openbench demo run controlled-source-chat
 ```
+
+`GOOGLE_API_KEY` resolves in this order: shell env → this example's `.env` →
+the sibling [general-chat](../general-chat) example's `.env` (API keys only —
+no other settings are inherited). If you already run general-chat locally,
+nothing to configure.
 
 Backend starts on `:8006`, the Vite frontend on `:5173`. Manual alternative:
 
@@ -53,7 +57,7 @@ token (survives `--reload` restarts). No Firebase, no GCP.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `GOOGLE_API_KEY` | — (required) | Gemini API key |
+| `GOOGLE_API_KEY` | falls back to `../general-chat/.env` | Gemini API key |
 | `CONTROLLED_CHAT_ADMIN_PASSWORD` | `admin123` | Admin password override |
 | `CONTROLLED_CHAT_GUEST_PASSWORD` | `guest123` | Guest password override |
 | `CONTROLLED_CHAT_AUTH_SECRET` | generated | Token signing secret (else persisted under `.openbench/`) |
