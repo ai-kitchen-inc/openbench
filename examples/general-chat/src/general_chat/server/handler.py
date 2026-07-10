@@ -27,9 +27,23 @@ if TYPE_CHECKING:
 
 
 _SOURCE_CONTEXT_ID = "general-chat-source-context"
+_DEFAULT_SOURCE_CONTEXT_LABEL = "Optional context extracted from this user-added source."
 _REDACTED_ATTACHMENT_CONTEXT = (
     "Context data: [previous General Chat source attachment content redacted]"
 )
+
+
+def _source_context_label() -> str:
+    """Framing line prepended to every injected source's text.
+
+    Overridable so wrapper deployments can reframe sources as mandatory
+    grounding (e.g. controlled-source mode) instead of optional context.
+    """
+    return os.getenv("GENERAL_CHAT_SOURCE_CONTEXT_LABEL", "").strip() or (
+        _DEFAULT_SOURCE_CONTEXT_LABEL
+    )
+
+
 _IMAGE_MCP_FILE_PATH_RE = re.compile(r"/general-chat/uploads/file-[^/\"'\s]+/[^\r\n\"']+")
 _VISION_ATTACHMENT_ID = "general-chat-vision-observation"
 _VEHICLE_PLATE_TERMS = (
@@ -179,7 +193,7 @@ def _source_context_attachments(doc_context: str) -> list[Attachment]:
                 url="",
                 mime_type="text/markdown",
                 extracted_text=(
-                    "Optional context extracted from the user's uploaded source files.\n\n"
+                    f"{_source_context_label()}\n\n"
                     f"{doc_context}"
                 ),
             )
@@ -200,7 +214,7 @@ def _source_context_attachments(doc_context: str) -> list[Attachment]:
                 mime_type="text/markdown",
                 extracted_text=(
                     f"Source filename: {name}\n\n"
-                    "Optional context extracted from this uploaded source file.\n\n"
+                    f"{_source_context_label()}\n\n"
                     f"## {name}\n\n{text}"
                 ),
             )
@@ -461,7 +475,7 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
                 f"Source type: {record.kind}\n"
                 f"Source URL: {record.url or '(none)'}\n\n"
                 f"{extra_lines}"
-                "Optional context extracted from this user-added source.\n\n"
+                f"{_source_context_label()}\n\n"
                 f"## {record.name}\n\n"
                 "Spreadsheet raw rows are intentionally omitted from the chat prompt. "
                 "Use Aggregate Data MCP for table-only aggregation. Use "
@@ -480,7 +494,7 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
                 f"Source type: {record.kind}\n"
                 f"Source URL: {record.url or '(none)'}\n\n"
                 f"{extra_lines}"
-                "Optional context extracted from this user-added source.\n\n"
+                f"{_source_context_label()}\n\n"
                 f"## {record.name}\n\n{record.text}"
             )
         else:
@@ -489,7 +503,7 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
                 f"Source type: {record.kind}\n"
                 f"Source URL: {record.url or '(none)'}\n\n"
                 f"{extra_lines}"
-                "Optional context extracted from this user-added source.\n\n"
+                f"{_source_context_label()}\n\n"
                 f"## {record.name}\n\n{record.text}"
             )
         attachments.append(

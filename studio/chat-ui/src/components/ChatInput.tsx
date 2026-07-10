@@ -18,6 +18,12 @@ export interface ChatInputProps {
   onAttachmentError?: (message: string, files: File[]) => void;
   /** Whether users can attach more than one file. Defaults to true. */
   multiple?: boolean;
+  /**
+   * Whether users can attach files at all. Defaults to true. When false the
+   * attach button, file input, drop zone, and attachment previews are removed
+   * — for deployments where chat context is centrally curated.
+   */
+  allowAttachments?: boolean;
   /** Max size per file in bytes. Files larger than this are rejected. */
   maxUploadSize?: number;
   /**
@@ -35,6 +41,7 @@ export function ChatInput({
   acceptedFileTypes,
   onAttachmentError,
   multiple = true,
+  allowAttachments = true,
   maxUploadSize,
   onTranscribe,
 }: ChatInputProps) {
@@ -198,6 +205,7 @@ export function ChatInput({
   );
 
   const addFiles = useCallback((files: FileList | File[]) => {
+    if (!allowAttachments) return;
     const asArray = Array.from(files as FileList);
     if (asArray.length === 0) return;
     const selectedFiles = multiple ? asArray : asArray.slice(0, 1);
@@ -227,7 +235,7 @@ export function ChatInput({
       file: file,
     }));
     setAttachments((prev) => [...prev, ...newAttachments]);
-  }, [acceptedFileTypes, maxUploadSize, multiple, onAttachmentError]);
+  }, [acceptedFileTypes, allowAttachments, maxUploadSize, multiple, onAttachmentError]);
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -299,38 +307,42 @@ export function ChatInput({
   return (
     <div
       className={`chat-input ${isDragging ? "chat-input--dragging" : ""}`}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
+      onDragEnter={allowAttachments ? handleDragEnter : undefined}
+      onDragLeave={allowAttachments ? handleDragLeave : undefined}
+      onDragOver={allowAttachments ? handleDragOver : undefined}
+      onDrop={allowAttachments ? handleDrop : undefined}
     >
-      {isDragging && (
+      {allowAttachments && isDragging && (
         <div className="chat-input__dropzone" aria-hidden="true">
           <span>Drop files to attach</span>
         </div>
       )}
-      <AttachmentPreview attachments={attachments} onRemove={handleRemoveAttachment} />
+      {allowAttachments && (
+        <AttachmentPreview attachments={attachments} onRemove={handleRemoveAttachment} />
+      )}
       {voiceState === "idle" ? (
         <div className="chat-input__row">
-          <button
-            className="chat-input__attach-btn"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={disabled}
-            type="button"
-            aria-label="Attach file"
-          >
-            <svg
-              aria-hidden="true"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
+          {allowAttachments && (
+            <button
+              className="chat-input__attach-btn"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={disabled}
+              type="button"
+              aria-label="Attach file"
             >
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-            </svg>
-          </button>
+              <svg
+                aria-hidden="true"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+              </svg>
+            </button>
+          )}
           {micAvailable && (
             <button
               className="chat-input__mic-btn"
@@ -400,14 +412,16 @@ export function ChatInput({
           />
         </div>
       )}
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple={multiple}
-        accept={acceptedFileTypes}
-        onChange={handleFileSelect}
-        style={{ display: "none" }}
-      />
+      {allowAttachments && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple={multiple}
+          accept={acceptedFileTypes}
+          onChange={handleFileSelect}
+          style={{ display: "none" }}
+        />
+      )}
     </div>
   );
 }

@@ -30,6 +30,8 @@ export interface ChatPanelProps {
   onAttachmentError?: (message: string, files: File[]) => void;
   /** Max size per file in bytes, forwarded to the composer. */
   maxUploadSize?: number;
+  /** Whether the composer accepts file attachments (default true). */
+  allowAttachments?: boolean;
   /** Fallback audio transcriber for browsers without the Web Speech API. */
   onTranscribe?: (audio: Blob) => Promise<string>;
   /** Optional host-rendered footer shown below each A2UI surface. */
@@ -47,6 +49,7 @@ export function ChatPanel({
   acceptedFileTypes,
   onAttachmentError,
   maxUploadSize,
+  allowAttachments,
   onTranscribe,
   renderSurfaceFooter,
 }: ChatPanelProps) {
@@ -155,6 +158,7 @@ export function ChatPanel({
           acceptedFileTypes={acceptedFileTypes}
           onAttachmentError={onAttachmentError}
           maxUploadSize={maxUploadSize}
+          allowAttachments={allowAttachments}
           onTranscribe={onTranscribe}
         />
       </div>

@@ -124,11 +124,17 @@ def current_owner(request: Request) -> str:
     """Return the data-owner key for this request.
 
     The owner scopes all per-user data (sessions, sources, uploads).
-    Lowercased email of the verified Firebase user, or ``LOCAL_OWNER``
-    when auth is disabled. The 401 branch is defensive — the auth
-    middleware already rejects unauthenticated requests on every
-    protected prefix before a handler runs.
+    A wrapper app may pre-assign ``request.state.owner_override`` (e.g.
+    a local-auth middleware mapping its own accounts to owners); that
+    wins over Firebase resolution. Otherwise: lowercased email of the
+    verified Firebase user, or ``LOCAL_OWNER`` when auth is disabled.
+    The 401 branch is defensive — the auth middleware already rejects
+    unauthenticated requests on every protected prefix before a handler
+    runs.
     """
+    override = getattr(request.state, "owner_override", None)
+    if override:
+        return str(override).strip().lower()
     user = getattr(request.state, "firebase_user", None)
     email = getattr(user, "email", None) if user is not None else None
     if email:
