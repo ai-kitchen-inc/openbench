@@ -1290,7 +1290,19 @@ def create_app() -> FastAPI:
         srcs = _sources_for(owner)
         body = await request.json()
         session_id = _resolve_request_session_id(body)
-        source_records = srcs.list(session_id) if session_id else []
+        # Shared-sources mode: every chat turn is grounded on one curated
+        # owner/thread instead of the request session's own sources. Curated
+        # sources are persistent, so the one-shot upload cleanup (which would
+        # delete the curator's files through another owner's scoped store)
+        # must not run.
+        shared_owner = os.getenv("GENERAL_CHAT_SHARED_SOURCES_OWNER", "").strip().lower()
+        shared_thread = os.getenv("GENERAL_CHAT_SHARED_SOURCES_THREAD", "").strip()
+        if shared_owner and shared_thread:
+            source_records = _sources_for(shared_owner).list(shared_thread)
+            on_stream_complete = None
+        else:
+            source_records = srcs.list(session_id) if session_id else []
+            on_stream_complete = lambda records: _cleanup_source_uploads_after_use(records, srcs)
         try:
             session = _resolve_session(session_id, owner)
         except SessionOwnershipError:
@@ -1301,7 +1313,7 @@ def create_app() -> FastAPI:
             db_path=db_path,
             memory_store=chat_memory_store,
             source_records=source_records,
-            on_stream_complete=lambda records: _cleanup_source_uploads_after_use(records, srcs),
+            on_stream_complete=on_stream_complete,
             mcp_permission_coordinator=mcp_permission_coordinator,
         )
         return await handler.handle(request)
