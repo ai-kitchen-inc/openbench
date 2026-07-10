@@ -110,6 +110,59 @@ class TestAgentGoalOverride(unittest.TestCase):
         self.assertEqual(goal, "Answer only from curated sources.")
 
 
+class TestSourceContextLabelOverride(unittest.TestCase):
+    def _record(self):
+        from general_chat.sources import SourceRecord
+
+        return SourceRecord.create(
+            session_id="thread-1",
+            name="kb-doc",
+            kind="text",
+            mime_type="text/plain",
+            size_bytes=5,
+            url="",
+            text="hello",
+            status="ready",
+        )
+
+    def test_default_label_is_unchanged(self):
+        from general_chat.server.handler import _source_record_attachments
+
+        environ.pop("GENERAL_CHAT_SOURCE_CONTEXT_LABEL", None)
+        attachments = _source_record_attachments([self._record()])
+        self.assertIn(
+            "Optional context extracted from this user-added source.",
+            attachments[0].extracted_text,
+        )
+
+    def test_env_label_overrides_default(self):
+        from general_chat.server.handler import _source_record_attachments
+
+        with patch.dict(
+            environ,
+            {"GENERAL_CHAT_SOURCE_CONTEXT_LABEL": "Authoritative knowledge-base source."},
+            clear=False,
+        ):
+            attachments = _source_record_attachments([self._record()])
+        text = attachments[0].extracted_text
+        self.assertIn("Authoritative knowledge-base source.", text)
+        self.assertNotIn("Optional context", text)
+
+    def test_stale_context_redaction_still_fires_with_custom_label(self):
+        from general_chat.server.handler import _redact_stale_source_context
+        from openbench.intelligence.base import Message, MessageRole
+
+        content = (
+            "Goal: hi\n\nContext data: "
+            '{"attachments": [{"name": "kb-doc", "content": "Authoritative source."}]}'
+        )
+        redacted, changed = _redact_stale_source_context(
+            [Message(role=MessageRole.USER, content=content)]
+        )
+        self.assertTrue(changed)
+        self.assertNotIn("kb-doc", redacted[0].content)
+
+
 class TestSharedSourcesMode(unittest.TestCase):
     """GENERAL_CHAT_SHARED_SOURCES_* pins /awp grounding to one curated thread."""
 
