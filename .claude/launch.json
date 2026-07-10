@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "controlled-source-chat",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "openbench.cli.main", "demo", "run", "controlled-source-chat"],
+      "port": 5173
+    }
+  ]
+}
