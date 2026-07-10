@@ -3,10 +3,12 @@ import { useDarkMode, ThemeIcon } from "../theme";
 import type { AuthUser } from "../api";
 import { McpCatalogPanel } from "../mcp-catalog/McpCatalogPanel";
 import { SourcesSection } from "./SourcesSection";
+import { TestChatDrawer } from "./TestChatDrawer";
 
 export function ControlPanel({ user, onSignOut }: { user: AuthUser; onSignOut: () => void }) {
   const [dark, toggleDark] = useDarkMode();
   const [mcpCatalogOpen, setMcpCatalogOpen] = useState(false);
+  const [testChatOpen, setTestChatOpen] = useState(false);
 
   return (
     <div className="control-panel">
@@ -16,6 +18,13 @@ export function ControlPanel({ user, onSignOut }: { user: AuthUser; onSignOut: (
           <span className="control-panel__brand-sub">Admin control panel</span>
         </div>
         <div className="control-panel__actions">
+          <button
+            type="button"
+            className="panel-button panel-button--primary"
+            onClick={() => setTestChatOpen(true)}
+          >
+            Test chat
+          </button>
           <span className="auth-user" title={user.username}>
             {user.username}
           </span>
@@ -58,6 +67,7 @@ export function ControlPanel({ user, onSignOut }: { user: AuthUser; onSignOut: (
         </section>
       </main>
       <McpCatalogPanel open={mcpCatalogOpen} onClose={() => setMcpCatalogOpen(false)} />
+      <TestChatDrawer open={testChatOpen} onClose={() => setTestChatOpen(false)} />
     </div>
   );
 }
