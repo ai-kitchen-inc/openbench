@@ -13,8 +13,6 @@ if str(_MCP_ROOT) not in sys.path:
 from app.service import bind as _bind_service  # noqa: E402
 from app.service import get_service  # noqa: E402
 from app.tool_schemas import (  # noqa: E402,F401
-    AGGREGATE_DATA_SCHEMA,
-    EXTRACT_METADATA_SCHEMA,
     GENERATE_DASHBOARD_SCHEMA,
 )
 
@@ -22,34 +20,6 @@ from app.tool_schemas import (  # noqa: E402,F401
 def bind(**kwargs: Any) -> None:
     """Inject dashboard rendering dependencies."""
     _bind_service(**kwargs)
-
-
-def extract_metadata(
-    path: str,
-    sheet: str | int | None = None,
-    sample_rows: int = 5,
-) -> dict[str, Any]:
-    """Return compact metadata for a CSV/XLSX dashboard source."""
-    return get_service().extract_metadata(path=path, sheet=sheet, sample_rows=sample_rows)
-
-
-def aggregate_data(
-    path: str,
-    query: str | dict[str, Any] | list[Any],
-    sheet: str | int | None = None,
-    table_name: str = "data",
-    dataset_id: str | None = None,
-    max_rows: int = 1000,
-) -> dict[str, Any]:
-    """Execute read-only SQL aggregation queries against a CSV/XLSX file."""
-    return get_service().aggregate_data(
-        path=path,
-        query=query,
-        sheet=sheet,
-        table_name=table_name,
-        dataset_id=dataset_id,
-        max_rows=max_rows,
-    )
 
 
 def generate_dashboard(

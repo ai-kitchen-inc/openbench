@@ -1,0 +1,25 @@
+mcp:
+  policy:
+    allow_remote_servers: false
+    allowed_servers:
+      - aggregate_data
+    max_timeout_seconds: 30
+
+  servers:
+    aggregate_data:
+      transport: stdio
+      command: ${AGGREGATE_DATA_MCP_PYTHON:-python}
+      args:
+        - -m
+        - app.mcp_server
+        - --transport
+        - stdio
+      cwd: ../../mcp/aggregate-data-mcp
+      env:
+        PYTHONPATH: ${AGGREGATE_DATA_MCP_PYTHONPATH}
+        OPENBENCH_DASHBOARD_STATE_PATH: ${OPENBENCH_DASHBOARD_STATE_PATH:-../../examples/general-chat/.openbench/dashboard_generator_state.json}
+      namespace: aggregate_data
+      allowed: true
+      discovery_timeout_seconds: 20
+      timeout_seconds: 30
+      retries: 0

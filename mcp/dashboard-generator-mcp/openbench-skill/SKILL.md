@@ -2,21 +2,19 @@
 
 Generate data dashboards from uploaded CSV/XLSX files using a strict,
 metadata-first workflow. This skill keeps large tabular data out of the LLM
-context: inspect metadata first, ask the model to write read-only SQL
-aggregation queries, run those queries with tools, then create a declarative
-dashboard ViewModel that A2UI renders as native dashboard components.
+context: inspect metadata first, use the separate Aggregate Data MCP for
+read-only SQL aggregation, then create a declarative dashboard ViewModel that
+A2UI renders as native dashboard components.
 
 ## Triggers
 
 - User uploads a `.csv` or `.xlsx` file and asks for a dashboard
 - User says "buatkan dashboard", "create a dashboard", "show KPI/charts", or similar
 - Agent needs a multi-panel artifact from tabular data
-- Agent needs aggregated datasets for charts without reading the whole file into context
+- Agent has or can obtain aggregated datasets for charts without reading the whole file into context
 
 ## Tools
 
-- extract_metadata: inspect CSV/XLSX columns, dtypes, row counts, samples, ranges, and cardinality
-- aggregate_data: execute read-only SQLite SQL queries over the source file
 - generate_dashboard: publish a dashboard ViewModel to the chat artifact queue and keep HTML only as fallback/export
 
 ## Adapter Architecture
@@ -45,7 +43,7 @@ steps exactly.
 
 1. Locate the uploaded file path from attachment metadata. Prefer the `path`
    field when available. Do not paste the whole dataset into the prompt.
-2. Call `extract_metadata(path=...)` first. If the workbook has multiple sheets,
+2. Call `aggregate_data.extract_metadata(path=...)` first. If the workbook has multiple sheets,
    choose the most relevant sheet from metadata or ask the user when the choice
    is ambiguous.
 3. Use the metadata response to infer column roles:
@@ -57,10 +55,11 @@ steps exactly.
    file is loaded as table `data`; use only `SELECT` or `WITH`, quote column
    names with double quotes when needed, and add `LIMIT` for large chart/table
    outputs.
-5. Call `aggregate_data(path=..., query="...", dataset_id="...")`. Use the
-   returned datasets as the only source for dashboard panels unless a small
-   table preview is needed. For multiple dashboard datasets, call
-   `aggregate_data` multiple times or pass a list of query objects.
+5. Call the separate Aggregate Data MCP tool
+   `aggregate_data.aggregate_data(path=..., query=[...])`. Use the returned
+   datasets as the only source for dashboard panels unless a small table
+   preview is needed. For multiple dashboard datasets, pass a list of query
+   objects in one call.
 6. Build a dashboard ViewModel as declarative JSON. Treat this step as A2UI-style
    ViewModel composition only:
    - use the canonical ViewModel shape below exactly

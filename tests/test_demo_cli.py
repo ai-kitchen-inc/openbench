@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -92,6 +93,38 @@ def test_general_chat_image_search_env_creates_expected_paths(tmp_path, monkeypa
     assert (root / "mcp" / "image-search-mcp" / "data" / "previews").is_dir()
     assert (root / "mcp" / "image-search-mcp" / "models").is_dir()
     assert (home_dir / ".cache" / "huggingface").is_dir()
+
+
+def test_general_chat_dashboard_generator_env_uses_split_aggregate_mcp(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "repo"
+    demo_dir = root / "examples" / "general-chat"
+    demo_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(demo_module, "_find_project_root", lambda: root)
+
+    env = demo_module._general_chat_mcp_env("dashboard-generator", demo_dir)
+
+    assert env["GENERAL_CHAT_MCP_ENABLED"] == "1"
+    assert env["GENERAL_CHAT_MCP_MODE"] == "external"
+    assert env["GENERAL_CHAT_MCP_CONFIG"] == "mcp/dashboard-generator-stdio.yaml"
+    assert env["GENERAL_CHAT_MCP_APPROVED_TOOLS"] == (
+        "aggregate_data.extract_metadata,"
+        "aggregate_data.aggregate_data,"
+        "dashboard_generator.generate_dashboard"
+    )
+    assert "dashboard_generator.extract_metadata" not in env["GENERAL_CHAT_MCP_APPROVED_TOOLS"]
+    assert Path(env["DASHBOARD_GENERATOR_MCP_PYTHONPATH"].split(os.pathsep)[-1]) == (
+        root / "mcp" / "dashboard-generator-mcp"
+    ).resolve()
+    assert Path(env["AGGREGATE_DATA_MCP_PYTHONPATH"].split(os.pathsep)[-1]) == (
+        root / "mcp" / "aggregate-data-mcp"
+    ).resolve()
+    assert Path(env["OPENBENCH_DASHBOARD_STATE_PATH"]).parent == (
+        demo_dir / ".openbench"
+    ).resolve()
+    assert (demo_dir / ".openbench").is_dir()
 
 
 def test_general_chat_sam_env_creates_expected_upload_path(tmp_path, monkeypatch):

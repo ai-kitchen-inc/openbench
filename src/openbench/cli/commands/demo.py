@@ -214,21 +214,30 @@ def _general_chat_mcp_env(variant: str, demo_dir: Path) -> dict[str, str]:
 
     if variant == "dashboard-generator":
         dashboard_mcp_root = root / "mcp" / "dashboard-generator-mcp"
+        aggregate_mcp_root = root / "mcp" / "aggregate-data-mcp"
+        dashboard_state_dir = _ensure_dir(demo_dir / ".openbench")
         return {
             **common,
             "GENERAL_CHAT_MCP_CONFIG": "mcp/dashboard-generator-stdio.yaml",
             "GENERAL_CHAT_MCP_APPROVED_TOOLS": (
-                "dashboard_generator.extract_metadata,"
-                "dashboard_generator.aggregate_data,"
+                "aggregate_data.extract_metadata,"
+                "aggregate_data.aggregate_data,"
                 "dashboard_generator.generate_dashboard"
             ),
             "GENERAL_CHAT_DASHBOARD_SKILL_ENABLED": "0",
             "OPENBENCH_EXPORT_DIR": str(downloads_dir.resolve()),
             "OPENBENCH_EXPORT_URL_BASE": "/downloads",
+            "OPENBENCH_DASHBOARD_STATE_PATH": str(
+                (dashboard_state_dir / "dashboard_generator_state.json").resolve()
+            ),
             "DASHBOARD_GENERATOR_MCP_PYTHON": sys.executable,
+            "AGGREGATE_DATA_MCP_PYTHON": sys.executable,
             "DASHBOARD_RENDER_ADAPTER": os.getenv("DASHBOARD_RENDER_ADAPTER", "default"),
             "DASHBOARD_GENERATOR_MCP_PYTHONPATH": os.pathsep.join(
                 [str((root / "src").resolve()), str(dashboard_mcp_root.resolve())]
+            ),
+            "AGGREGATE_DATA_MCP_PYTHONPATH": os.pathsep.join(
+                [str((root / "src").resolve()), str(aggregate_mcp_root.resolve())]
             ),
         }
 

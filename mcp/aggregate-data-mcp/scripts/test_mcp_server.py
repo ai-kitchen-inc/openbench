@@ -1,13 +1,11 @@
-"""Standalone MCP protocol smoke tester for dashboard-generator-mcp."""
+"""Standalone MCP protocol smoke tester for aggregate-data-mcp."""
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 MCP_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = MCP_ROOT.parents[1]
@@ -25,7 +23,8 @@ from openbench.mcp.config import (  # noqa: E402
 )
 
 EXPECTED_TOOLS = {
-    "dashboard_generator.generate_dashboard",
+    "aggregate_data.extract_metadata",
+    "aggregate_data.aggregate_data",
 }
 
 
@@ -36,14 +35,9 @@ def _local_server() -> MCPServerConnectionConfig:
         cwd=str(MCP_ROOT),
         env={
             "PYTHONPATH": os.pathsep.join([str(SRC_ROOT), str(MCP_ROOT)]),
-            "OPENBENCH_EXPORT_DIR": os.getenv(
-                "OPENBENCH_EXPORT_DIR",
-                str(MCP_ROOT / "outputs"),
-            ),
-            "OPENBENCH_EXPORT_URL_BASE": os.getenv("OPENBENCH_EXPORT_URL_BASE", "/outputs"),
-            "DASHBOARD_RENDER_ADAPTER": os.getenv("DASHBOARD_RENDER_ADAPTER", "default"),
+            "OPENBENCH_DASHBOARD_STATE_PATH": os.getenv("OPENBENCH_DASHBOARD_STATE_PATH", ""),
         },
-        namespace="dashboard_generator",
+        namespace="aggregate_data",
         allowed=True,
         timeout_seconds=60.0,
         retries=0,
@@ -53,34 +47,19 @@ def _local_server() -> MCPServerConnectionConfig:
 def _docker_server(image: str) -> MCPServerConnectionConfig:
     return MCPServerConnectionConfig(
         command="docker",
-        args=[
-            "run",
-            "-i",
-            "--rm",
-            "-e",
-            "OPENBENCH_EXPORT_DIR=/outputs",
-            "-e",
-            "OPENBENCH_EXPORT_URL_BASE=/outputs",
-            "-e",
-            f"DASHBOARD_RENDER_ADAPTER={os.getenv('DASHBOARD_RENDER_ADAPTER', 'default')}",
-            image,
-        ],
-        namespace="dashboard_generator",
+        args=["run", "-i", "--rm", image],
+        namespace="aggregate_data",
         allowed=True,
         timeout_seconds=60.0,
         retries=0,
     )
 
 
-def _format(value: Any) -> str:
-    return json.dumps(value, indent=2, sort_keys=True, default=str)
-
-
 def run(mode: str, image: str) -> int:
     server = _docker_server(image) if mode == "docker" else _local_server()
     client = MCPClient(
         MCPClientConfig(
-            servers={"dashboard_generator": server},
+            servers={"aggregate_data": server},
             policy=MCPPolicyConfig(max_timeout_seconds=60.0),
         )
     )
@@ -107,7 +86,7 @@ def run(mode: str, image: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=["local", "docker"], default="local")
-    parser.add_argument("--image", default="openbench/dashboard-generator-mcp:cpu")
+    parser.add_argument("--image", default="openbench/aggregate-data-mcp:cpu")
     args = parser.parse_args()
     return run(args.mode, args.image)
 

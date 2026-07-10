@@ -1,10 +1,9 @@
 # Dashboard Generator MCP
 
-Standalone FastMCP server for the OpenBench dashboard-generator workflow. It
-exposes the same three tools as the SDK skill:
+Standalone FastMCP server for the OpenBench dashboard-generator workflow.
+Metadata extraction and aggregation are provided by the separate Aggregate Data
+MCP, so this server focuses on dashboard rendering:
 
-- `extract_metadata`: inspect CSV/XLSX columns, types, samples, and SQL hints
-- `aggregate_data`: run read-only SQLite `SELECT`/`WITH` queries over the file
 - `generate_dashboard`: render a declarative dashboard ViewModel as an A2UI
   dashboard artifact with an HTML export, optionally using a user-uploaded
   `.html` template or `design.md` design brief
@@ -73,10 +72,11 @@ openbench demo run general-chat-dashboard-generator
 ```
 
 The dedicated runner disables the legacy SDK dashboard skill for that session
-with `GENERAL_CHAT_DASHBOARD_SKILL_ENABLED=0`, then loads the MCP tools as:
+with `GENERAL_CHAT_DASHBOARD_SKILL_ENABLED=0`, then loads dashboard rendering
+tools plus the separate Aggregate Data MCP:
 
-- `dashboard_generator.extract_metadata`
-- `dashboard_generator.aggregate_data`
+- `aggregate_data.extract_metadata`
+- `aggregate_data.aggregate_data`
 - `dashboard_generator.generate_dashboard`
 
 Generated dashboard exports are written to `examples/general-chat/downloads/`
@@ -88,6 +88,9 @@ Uploaded templates are optional. In General Chat, upload a spreadsheet plus
 `dashboard_generator.generate_dashboard(template_path=...)`. Without it, the
 server uses the configured `default`/`stitch`/`auto` adapter as before.
 
-When using the dedicated launcher, General Chat keeps the dashboard stdio MCP
-process open across the metadata, aggregation, and render calls. This avoids
-Windows stdio cleanup delays from being reported as dashboard tool timeouts.
+For dashboard requests, call `aggregate_data.extract_metadata`, then call
+`aggregate_data.aggregate_data` once with all SQL queries needed for datasets,
+then call `dashboard_generator.generate_dashboard`. The aggregate MCP writes
+datasets into the shared dashboard state file so `generate_dashboard` can
+hydrate referenced datasets even though metadata/aggregation and rendering live
+in separate MCP servers.

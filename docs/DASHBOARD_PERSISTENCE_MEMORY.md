@@ -25,14 +25,14 @@ The stored record contains:
 
 ## Functional Data Matching
 
-`extract_metadata(path=...)` computes `source_signature` from the source format,
-sheet, column names, dtypes, and role hints. It intentionally does not include
-row count, file hash, or sample values.
+`aggregate_data.extract_metadata(path=...)` computes `source_signature` from
+the source format, sheet, column names, dtypes, and role hints. It intentionally
+does not include row count, file hash, or sample values.
 
 That means a table uploaded on day two with the same columns but additional rows
 matches the dashboard generated on day one. The agent should:
 
-1. Call `extract_metadata`.
+1. Call `aggregate_data.extract_metadata`.
 2. Inspect `dashboard_memory.matches`.
 3. Call `load_dashboard_memory` for the matched `dashboard_id` or `source_path`.
 4. Run fresh `aggregate_data` queries on the new file.
@@ -95,11 +95,12 @@ agent = BaseAgent(skills=["dashboard-generator"])
 MCP path:
 
 ```text
-dashboard_generator.extract_metadata
-dashboard_generator.aggregate_data
-dashboard_generator.load_dashboard_memory
+aggregate_data.extract_metadata
+aggregate_data.aggregate_data
 dashboard_generator.generate_dashboard
 ```
 
-Both routes call the same `tools.py` functions and write to the same dashboard
-memory database, as long as they share the same environment/path configuration.
+The MCP route is split: Aggregate Data MCP writes named aggregate datasets to
+the shared dashboard state file, and Dashboard Generator MCP reads those
+datasets when rendering. Both routes need the same environment/path
+configuration for persistence and state sharing.

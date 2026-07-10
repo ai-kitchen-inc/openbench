@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "dev.openbench/dashboard-generator-mcp",
   "title": "OpenBench Dashboard Generator MCP",
-  "description": "Metadata-first CSV/XLSX dashboard generation with SQLite aggregation and A2UI dashboard artifacts.",
+  "description": "Metadata-first CSV/XLSX dashboard planning and A2UI dashboard artifact generation.",
   "version": "0.1.0",
   "packages": [
     {
@@ -34,8 +34,6 @@
     "io.modelcontextprotocol.registry/publisher-provided": {
       "dev.openbench": {
         "tools": [
-          "extract_metadata",
-          "aggregate_data",
           "generate_dashboard"
         ],
         "permissions": {

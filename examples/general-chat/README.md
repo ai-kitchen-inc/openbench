@@ -160,7 +160,7 @@ This starts General Chat with only the standardized
 `mcp/dashboard-generator-mcp` server enabled. The legacy SDK dashboard skill is
 disabled for that run, so a successful dashboard proves the MCP path is working.
 After upload, ask `buatkan dashboard dari data ini`; the progress should move
-from `dashboard_generator_extract_metadata` to aggregation and then
+from `aggregate_data_extract_metadata` to aggregation and then
 `dashboard_generator_generate_dashboard`.
 
 Useful options:
@@ -343,7 +343,7 @@ The agent follows the dashboard SOP from the skill:
 
 1. Read file metadata with `extract_metadata`.
 2. Write read-only SQLite SQL queries against table `data`.
-3. Run `aggregate_data` with the SQL query.
+3. Run `aggregate_data.aggregate_data` with the SQL query.
 4. Build a declarative ViewModel (A2UI-style JSON, not raw UI code).
 5. Render the artifact with `generate_dashboard`.
 
@@ -380,17 +380,17 @@ cd examples\general-chat
 ```
 
 This starts General Chat with `GENERAL_CHAT_DASHBOARD_SKILL_ENABLED=0`, loads
-`mcp/dashboard-generator-mcp` over stdio, and exposes these provider-safe tools
-to the agent:
+`mcp/dashboard-generator-mcp` and `mcp/aggregate-data-mcp` over stdio, and
+exposes these provider-safe tools to the agent:
 
-- `dashboard_generator_extract_metadata`
-- `dashboard_generator_aggregate_data`
-- `dashboard_generator_load_dashboard_memory`
+- `aggregate_data_extract_metadata`
+- `aggregate_data_aggregate_data`
 - `dashboard_generator_generate_dashboard`
 
 In the web UI, open the MCP Servers panel, confirm the `dashboard_generator`
-server/tools are loaded if you are using registry mode, upload the spreadsheet
-through the paperclip/Sources area, then ask `buatkan dashboard dari data ini`.
+and `aggregate_data` server/tools are loaded if you are using registry mode,
+upload the spreadsheet through the paperclip/Sources area, then ask
+`buatkan dashboard dari data ini`.
 The dashboard should appear in the right-side artifact panel.
 
 Dashboard rendering uses the OpenBench dashboard adapter layer. By default,

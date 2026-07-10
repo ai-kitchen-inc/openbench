@@ -13,9 +13,9 @@ OpenBench `dashboard-generator` SDK skill or the standardized
 4. Ask: `buatkan dashboard dari data ini` or
    `buatkan dashboard dari data ini pakai template yang saya upload`.
 5. The agent calls:
-   - `extract_metadata`
-   - `aggregate_data` with read-only SQLite SQL
-   - `generate_dashboard`, with `template_path=...` when an uploaded template
+   - `aggregate_data.extract_metadata`
+   - `aggregate_data.aggregate_data` with read-only SQLite SQL
+   - `dashboard_generator.generate_dashboard`, with `template_path=...` when an uploaded template
      source is present and requested
 6. The dashboard appears as a link in chat and as a side-by-side A2UI artifact
    panel.
@@ -27,8 +27,8 @@ openbench demo run general-chat-dashboard-generator
 ```
 
 That run disables the default SDK dashboard skill and loads the MCP tools as
-`dashboard_generator.extract_metadata`, `dashboard_generator.aggregate_data`,
-and `dashboard_generator.generate_dashboard`.
+`aggregate_data.extract_metadata`, `aggregate_data.aggregate_data`, and
+`dashboard_generator.generate_dashboard`.
 
 Equivalent manual fallback:
 
@@ -106,8 +106,8 @@ Run mode differences:
   UI, but no dedicated dashboard MCP server is forced on.
 - `openbench demo run general-chat-dashboard-generator`: MCP-only dashboard
   test. It disables the SDK dashboard skill and exposes only
-  `dashboard_generator.extract_metadata`, `dashboard_generator.aggregate_data`,
-  and `dashboard_generator.generate_dashboard`.
+  `aggregate_data.extract_metadata`, `aggregate_data.aggregate_data`, and
+  `dashboard_generator.generate_dashboard`.
 - `openbench demo run general-chat-all`: registry-mode General Chat with all
   bundled MCP integrations seeded together, including dashboard generator plus
   the other MCP demos when their dependencies are available.
@@ -125,8 +125,8 @@ uploaded template.
 Expected MCP progress for the dedicated dashboard run:
 
 ```text
-Running dashboard_generator_extract_metadata
-Running dashboard_generator_aggregate_data
+Running aggregate_data_extract_metadata
+Running aggregate_data_aggregate_data
 Running dashboard_generator_generate_dashboard
 ```
 

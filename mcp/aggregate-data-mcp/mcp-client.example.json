@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "aggregate_data": {
+      "command": "python",
+      "args": ["-m", "app.mcp_server", "--transport", "stdio"],
+      "cwd": "mcp/aggregate-data-mcp",
+      "env": {
+        "OPENBENCH_DASHBOARD_STATE_PATH": ".openbench/dashboard_generator_state.json"
+      }
+    }
+  }
+}

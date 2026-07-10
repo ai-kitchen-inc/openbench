@@ -451,7 +451,10 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
         if record.kind == "spreadsheet" and dashboard_tool_path:
             extra_lines += (
                 f"Dashboard source path: {dashboard_tool_path}\n"
-                "For dashboard requests, call extract_metadata with this path first.\n\n"
+                "For general tabular aggregation, call aggregate_data.extract_metadata "
+                "when needed and aggregate_data.aggregate_data with this path.\n"
+                "For dashboard requests, call aggregate_data.extract_metadata "
+                "with this path first.\n\n"
             )
             extracted_text = (
                 f"Source name: {record.name}\n"
@@ -461,8 +464,9 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
                 "Optional context extracted from this user-added source.\n\n"
                 f"## {record.name}\n\n"
                 "Spreadsheet raw rows are intentionally omitted from the chat prompt. "
-                "Use extract_metadata, aggregate_data, and generate_dashboard for "
-                "dashboard requests."
+                "Use Aggregate Data MCP for table-only aggregation. Use "
+                "aggregate_data.extract_metadata, aggregate_data.aggregate_data, "
+                "and dashboard_generator.generate_dashboard for dashboard requests."
             )
         elif record.kind == "dashboard_template" and template_tool_path:
             extra_lines += (

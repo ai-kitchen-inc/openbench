@@ -217,8 +217,11 @@ def _is_mcp_sdk_shutdown_noise(exc: BaseException) -> bool:
     message = str(exc)
     if name == "GeneratorExit":
         return True
+    if name == "CancelledError" and "cancel scope" in message:
+        return True
     if (
         "Attempted to exit cancel scope in a different task" in message
+        or "isn't the current tasks's current cancel scope" in message
         or "athrow(): asynchronous generator is already running" in message
     ):
         return True

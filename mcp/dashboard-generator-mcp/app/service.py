@@ -10,39 +10,7 @@ from app import dashboard_tools
 
 @dataclass(frozen=True)
 class DashboardGeneratorService:
-    """Metadata-first dashboard workflow shared by MCP and OpenBench skill tools."""
-
-    def extract_metadata(
-        self,
-        path: str,
-        sheet: str | int | None = None,
-        sample_rows: int = 5,
-    ) -> dict[str, Any]:
-        """Return compact CSV/XLSX metadata for dashboard planning."""
-        return dashboard_tools.extract_metadata(
-            path=path,
-            sheet=sheet,
-            sample_rows=sample_rows,
-        )
-
-    def aggregate_data(
-        self,
-        path: str,
-        query: str | dict[str, Any] | list[Any],
-        sheet: str | int | None = None,
-        table_name: str = "data",
-        dataset_id: str | None = None,
-        max_rows: int = 1000,
-    ) -> dict[str, Any]:
-        """Run read-only SQLite aggregations over the dashboard source file."""
-        return dashboard_tools.aggregate_data(
-            path=path,
-            query=query,
-            sheet=sheet,
-            table_name=table_name,
-            dataset_id=dataset_id,
-            max_rows=max_rows,
-        )
+    """Dashboard rendering workflow shared by MCP and OpenBench skill tools."""
 
     def generate_dashboard(
         self,

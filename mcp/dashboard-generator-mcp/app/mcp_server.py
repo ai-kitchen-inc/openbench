@@ -33,68 +33,6 @@ def build_mcp():
     mcp = FastMCP("dashboard_generator_mcp")
 
     @mcp.tool(
-        name="extract_metadata",
-        annotations={
-            "title": "Extract Dashboard Metadata",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
-    )
-    def extract_metadata(
-        path: str,
-        sheet: str | None = None,
-        sample_rows: int = 5,
-    ) -> dict[str, Any]:
-        """Inspect a CSV/XLSX file and return compact dashboard planning metadata."""
-        try:
-            return _run_tool(
-                lambda: get_service().extract_metadata(
-                    path=path,
-                    sheet=sheet,
-                    sample_rows=sample_rows,
-                )
-            )
-        except Exception as exc:
-            LOGGER.exception("extract_metadata failed")
-            return _tool_error(exc)
-
-    @mcp.tool(
-        name="aggregate_data",
-        annotations={
-            "title": "Aggregate Dashboard Data",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
-    )
-    def aggregate_data(
-        path: str,
-        query: str | dict[str, Any] | list[Any],
-        sheet: str | None = None,
-        table_name: str = "data",
-        dataset_id: str | None = None,
-        max_rows: int = 1000,
-    ) -> dict[str, Any]:
-        """Execute read-only SQLite aggregation queries against a CSV/XLSX file."""
-        try:
-            return _run_tool(
-                lambda: get_service().aggregate_data(
-                    path=path,
-                    query=query,
-                    sheet=sheet,
-                    table_name=table_name,
-                    dataset_id=dataset_id,
-                    max_rows=max_rows,
-                )
-            )
-        except Exception as exc:
-            LOGGER.exception("aggregate_data failed")
-            return _tool_error(exc)
-
-    @mcp.tool(
         name="generate_dashboard",
         annotations={
             "title": "Generate Dashboard",

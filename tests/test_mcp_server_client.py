@@ -22,11 +22,26 @@ from openbench.mcp.config import (
 from openbench.mcp.errors import MCPPolicyDeniedError
 from openbench.mcp.permissions import MCPPermissionSession
 from openbench.mcp.server import OpenBenchMCPServer
-from openbench.mcp.transports import InMemoryMCPTransport, MCPTransport, StreamableHTTPTransport
+from openbench.mcp.transports import (
+    InMemoryMCPTransport,
+    MCPTransport,
+    StreamableHTTPTransport,
+    _is_mcp_sdk_shutdown_noise,
+)
 
 
 def approve_mcp(_request):
     return "yes"
+
+
+def test_mcp_sdk_shutdown_noise_matches_anyio_cancel_scope_variant():
+    runtime_exc = RuntimeError(
+        "Attempted to exit a cancel scope that isn't the current tasks's current cancel scope"
+    )
+    cancelled_exc = asyncio.CancelledError("Cancelled via cancel scope 123")
+
+    assert _is_mcp_sdk_shutdown_noise(runtime_exc) is True
+    assert _is_mcp_sdk_shutdown_noise(cancelled_exc) is True
 
 
 class LoopBoundTransport(MCPTransport):

@@ -26,6 +26,7 @@ def test_generate_dashboard_schema_prefers_canonical_view_model():
 def test_dashboard_service_generates_a2ui_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     pytest.importorskip("pandas")
 
+    from app import dashboard_tools
     from app.service import get_service
 
     source = tmp_path / "sales.csv"
@@ -40,10 +41,10 @@ def test_dashboard_service_generates_a2ui_artifact(tmp_path: Path, monkeypatch: 
     monkeypatch.setenv("DASHBOARD_RENDER_ADAPTER", "default")
 
     service = get_service()
-    metadata = service.extract_metadata(str(source))
+    metadata = dashboard_tools.extract_metadata(str(source))
     assert metadata["row_count"] == 2
 
-    aggregate = service.aggregate_data(
+    aggregate = dashboard_tools.aggregate_data(
         str(source),
         'SELECT "tanggal", SUM("pendapatan") AS pendapatan '
         'FROM data GROUP BY "tanggal" ORDER BY pendapatan DESC',
@@ -86,6 +87,7 @@ def test_dashboard_service_generates_with_uploaded_template(
 ):
     pytest.importorskip("pandas")
 
+    from app import dashboard_tools
     from app.service import get_service
 
     template = (
@@ -135,7 +137,7 @@ def test_dashboard_service_hydrates_cached_aggregate_dataset_refs(
     monkeypatch.setenv("DASHBOARD_RENDER_ADAPTER", "default")
 
     service = get_service()
-    aggregate = service.aggregate_data(
+    aggregate = dashboard_tools.aggregate_data(
         str(source),
         [
             {
@@ -182,6 +184,7 @@ def test_dashboard_service_hydrates_placeholder_charts_from_cached_aggregates(
 ):
     pytest.importorskip("pandas")
 
+    from app import dashboard_tools
     from app.service import get_service
 
     source = tmp_path / "coffee.csv"
@@ -194,7 +197,7 @@ def test_dashboard_service_hydrates_placeholder_charts_from_cached_aggregates(
     monkeypatch.setenv("DASHBOARD_RENDER_ADAPTER", "default")
 
     service = get_service()
-    aggregate = service.aggregate_data(
+    aggregate = dashboard_tools.aggregate_data(
         str(source),
         [
             {
@@ -276,7 +279,7 @@ def test_dashboard_service_hydrates_placeholder_charts_from_last_source(
     monkeypatch.setenv("DASHBOARD_RENDER_ADAPTER", "default")
 
     service = get_service()
-    metadata = service.extract_metadata(str(source))
+    metadata = dashboard_tools.extract_metadata(str(source))
     assert "error" not in metadata
     dashboard_tools._LAST_AGGREGATE_DATASETS.clear()
     dashboard_tools._LAST_SOURCE_CONTEXT.clear()

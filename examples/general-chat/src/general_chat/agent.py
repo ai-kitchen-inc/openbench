@@ -29,6 +29,7 @@ _SAM_COUNT_TOOL = "sam_segmentation.count_objects_with_sam3"
 _SAM_SERVICE_INFO_TOOL = "sam_segmentation.service_info"
 _DASHBOARD_TOOL_PREFIX = "dashboard_generator."
 _DASHBOARD_GENERATE_TOOL = "dashboard_generator.generate_dashboard"
+_AGGREGATE_TOOL_PREFIX = "aggregate_data."
 _PROVIDER_NAME = "gemini-general-chat"
 _VLM_PROVIDER_NAME = "general-chat-vlm"
 _DASHBOARD_SKILL_NAME = "dashboard-generator"
@@ -602,20 +603,28 @@ class _DiagnosticMCPToolDescription(Tool):
 
 
 def _wrap_chat_mcp_tool(tool: Any) -> Any:
+    namespaced_name = getattr(tool, "namespaced_name", None)
     if (
-        getattr(tool, "namespaced_name", None) == _DASHBOARD_GENERATE_TOOL
+        isinstance(namespaced_name, str)
+        and namespaced_name.startswith((_DASHBOARD_TOOL_PREFIX, _AGGREGATE_TOOL_PREFIX))
+        and hasattr(tool, "close_after_execute")
+    ):
+        # Keep stdio MCP processes alive across multi-step metadata -> aggregate -> render flows.
+        tool.close_after_execute = False
+    if (
+        namespaced_name == _DASHBOARD_GENERATE_TOOL
         and isinstance(tool, Tool)
     ):
         return _DashboardGeneratorRenderTool(tool)
     if (
-        getattr(tool, "namespaced_name", None) == _IMAGE_SEARCH_SIMILAR_TOOL
+        namespaced_name == _IMAGE_SEARCH_SIMILAR_TOOL
         and isinstance(tool, Tool)
     ):
         return _ImageSearchRenderTool(tool)
-    if getattr(tool, "namespaced_name", None) == _SAM_COUNT_TOOL and isinstance(tool, Tool):
+    if namespaced_name == _SAM_COUNT_TOOL and isinstance(tool, Tool):
         return _SamSegmentationCountTool(tool)
     if (
-        getattr(tool, "namespaced_name", None) == _SAM_SERVICE_INFO_TOOL
+        namespaced_name == _SAM_SERVICE_INFO_TOOL
         and isinstance(tool, Tool)
     ):
         return _DiagnosticMCPToolDescription(tool)
@@ -664,9 +673,11 @@ def _load_mcp_tools_for_chat(
     else:
         for adapter in load_mcp_tools(config, permission_session=permission_session):
             if adapter.namespaced_name in allowed_names:
-                if adapter.namespaced_name.startswith(_DASHBOARD_TOOL_PREFIX):
-                    # Keep the dashboard stdio MCP process alive across the
-                    # metadata -> aggregate -> render workflow. On Windows,
+                if adapter.namespaced_name.startswith(
+                    (_DASHBOARD_TOOL_PREFIX, _AGGREGATE_TOOL_PREFIX)
+                ):
+                    # Keep these stdio MCP processes alive across the metadata
+                    # -> aggregate -> render workflow. On Windows,
                     # closing stdio/AnyIO immediately after each call can hang
                     # long enough for the outer tool timeout to fire even when
                     # the dashboard tool itself has already completed.
@@ -1112,16 +1123,22 @@ def create_agent(
         goal=(
             "Help users by answering questions, reasoning over optional context, "
             "using enabled tools when useful, and thinking through problems. When "
+            "the user uploads a CSV/XLSX source and asks for a table, average, "
+            "sum, count, group-by, top-N, or other non-dashboard aggregate answer, "
+            "use the Aggregate Data MCP: call aggregate_data.extract_metadata when "
+            "you need column names, then aggregate_data.aggregate_data with read-only "
+            "SQLite against table `data`, and answer from the returned records. When "
             "the user uploads a CSV/XLSX source and asks for a dashboard, follow "
-            "the dashboard-generator skill/MCP SOP: (1) extract metadata and inspect "
+            "the dashboard-generator skill/MCP SOP: (1) call aggregate_data.extract_metadata and inspect "
             "dashboard_memory matches, (2) call load_dashboard_memory when the user "
             "asks for the same dashboard, refreshed data, or a revision, (3) call "
-            "aggregate_data ONCE, passing a list of ALL the SQL queries you need "
+            "aggregate_data.aggregate_data ONCE, passing a list of ALL the SQL queries you need "
             "(one per chart/metric) so every dataset comes back in a single tool "
             "call — do NOT call aggregate_data once per metric, (4) compose a "
             "declarative ViewModel from the returned datasets while preserving "
             "previous panels unless the user asked to change them, then (5) generate "
-            "the dashboard artifact with source_path, previous_dashboard_id, and "
+            "the dashboard artifact with dashboard_generator.generate_dashboard, "
+            "source_path, previous_dashboard_id, and "
             "revision_panel_titles for revisions. For uploaded images, use the provided visual "
             "observations as the source of truth for general image understanding and "
             "vehicle plate reading. For uploaded image counting, call the SAM count "

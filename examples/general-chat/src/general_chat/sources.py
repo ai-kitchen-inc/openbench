@@ -862,8 +862,9 @@ class SourceParserRegistry:
                 "spreadsheetContextMode": "metadata-first",
                 "spreadsheetContextNote": (
                     "Raw spreadsheet rows are intentionally omitted from chat "
-                    "context. Use dashboard-generator tools to inspect metadata "
-                    "and aggregate data from the local file path."
+                    "context. Use aggregate-data tools for general tabular "
+                    "aggregation. Use dashboard-generator tools only when the user "
+                    "asks for a dashboard."
                 ),
             },
         )
@@ -1612,11 +1613,14 @@ def dashboard_source_text(stored_file: StoredFile, *, parsed_text: str) -> str:
         f"Dashboard source path: {metadata['localFilePath']}",
         "",
         (
-            "For dashboard requests, call extract_metadata with "
-            f"path=\"{metadata['localFilePath']}\" first. Then write read-only "
-            "SQLite SQL against table `data`, call aggregate_data with the SQL "
-            "query, build a declarative dashboard ViewModel, and call "
-            "generate_dashboard."
+            "For general table/metric aggregation requests, call "
+            "aggregate_data.extract_metadata if you need column names, then write "
+            "read-only SQLite SQL against table `data` and call "
+            f"aggregate_data.aggregate_data with path=\"{metadata['localFilePath']}\". "
+            "For dashboard requests, call aggregate_data.extract_metadata "
+            "first, call aggregate_data.aggregate_data for all dashboard datasets, "
+            "build a declarative dashboard ViewModel, and call "
+            "dashboard_generator.generate_dashboard."
         ),
         "",
         "Raw spreadsheet rows are not included in the chat prompt.",
@@ -1673,7 +1677,8 @@ def dashboard_template_text(stored_file: StoredFile) -> str:
             "For dashboard requests that mention this template, call "
             f"generate_dashboard with template_path=\"{template_path}\" after "
             "building the declarative OpenBench ViewModel. Still use "
-            "extract_metadata and aggregate_data for uploaded spreadsheet data."
+            "aggregate_data.extract_metadata and aggregate_data.aggregate_data "
+            "for uploaded spreadsheet data."
         ),
         (
             "Do not paste or rewrite the template into the ViewModel. The dashboard "
