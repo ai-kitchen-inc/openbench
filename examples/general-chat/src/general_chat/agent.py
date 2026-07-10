@@ -1112,7 +1112,8 @@ def create_agent(
     # send the full history (old behavior).
     _history_budget = _env_int("GENERAL_CHAT_HISTORY_TOKEN_BUDGET", 16000)
     agent = BaseAgent(
-        goal=(
+        goal=os.getenv("GENERAL_CHAT_AGENT_GOAL", "").strip()
+        or (
             "Help users by answering questions, reasoning over optional context, "
             "using enabled tools when useful, and thinking through problems. When "
             "the user uploads a CSV/XLSX source and asks for a dashboard, follow "
