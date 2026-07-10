@@ -4,6 +4,7 @@ import "@openbench/chat-ui/styles/bundle.css";
 import { fetchMe, logout, type AuthUser } from "./api";
 import { ControlPanel } from "./control-panel/ControlPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { GuestChat } from "./guest/GuestChat";
 import { LoginGate } from "./LoginGate";
 import { ToastProvider } from "./Toast";
 import "./global.css";
@@ -59,11 +60,8 @@ function SignedInApp({ user, onSignOut }: { user: AuthUser; onSignOut: () => voi
     );
   }
   return (
-    <div className="app-loading">
-      Signed in as {user.username} ({user.role}).
-      <button type="button" className="auth-signout" onClick={onSignOut}>
-        Sign out
-      </button>
-    </div>
+    <ErrorBoundary region="chat">
+      <GuestChat user={user} onSignOut={onSignOut} />
+    </ErrorBoundary>
   );
 }
