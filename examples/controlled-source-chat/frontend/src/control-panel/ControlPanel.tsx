@@ -4,6 +4,7 @@ import type { AuthUser } from "../api";
 import { McpCatalogPanel } from "../mcp-catalog/McpCatalogPanel";
 import { SourcesSection } from "./SourcesSection";
 import { TestChatDrawer } from "./TestChatDrawer";
+import { UsersSection } from "./UsersSection";
 
 export function ControlPanel({ user, onSignOut }: { user: AuthUser; onSignOut: () => void }) {
   const [dark, toggleDark] = useDarkMode();
@@ -65,6 +66,7 @@ export function ControlPanel({ user, onSignOut }: { user: AuthUser; onSignOut: (
             </button>
           </div>
         </section>
+        <UsersSection currentUsername={user.username} />
       </main>
       <McpCatalogPanel open={mcpCatalogOpen} onClose={() => setMcpCatalogOpen(false)} />
       <TestChatDrawer open={testChatOpen} onClose={() => setTestChatOpen(false)} />

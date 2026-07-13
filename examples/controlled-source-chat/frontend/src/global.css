@@ -2008,6 +2008,8 @@ body {
 
 .sources-form input[type="text"],
 .sources-form input[type="url"],
+.sources-form input[type="password"],
+.sources-form select,
 .sources-form textarea {
   padding: 6px 10px;
   border: 1px solid var(--ob-border, rgba(0, 0, 0, 0.12));
