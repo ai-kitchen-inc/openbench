@@ -3,28 +3,35 @@ import { useDarkMode, ThemeIcon } from "../theme";
 import type { AuthUser } from "../api";
 import { McpCatalogPanel } from "../mcp-catalog/McpCatalogPanel";
 import { SourcesSection } from "./SourcesSection";
-import { TestChatDrawer } from "./TestChatDrawer";
+import { TestChatDock } from "./TestChatDock";
 import { UsersSection } from "./UsersSection";
 
 export function ControlPanel({ user, onSignOut }: { user: AuthUser; onSignOut: () => void }) {
   const [dark, toggleDark] = useDarkMode();
   const [mcpCatalogOpen, setMcpCatalogOpen] = useState(false);
-  const [testChatOpen, setTestChatOpen] = useState(false);
+  // Open by default so the admin lands with a live preview of the guest experience;
+  // it docks beside the settings (not a modal), so it never blocks editing.
+  const [testChatOpen, setTestChatOpen] = useState(true);
 
   return (
     <div className="control-panel">
       <header className="control-panel__header">
         <div className="control-panel__brand">
-          <span>Controlled Source Chat</span>
-          <span className="control-panel__brand-sub">Admin control panel</span>
+          <span className="control-panel__brand-icon">
+            <BrandIcon />
+          </span>
+          <span className="control-panel__brand-text">
+            <span>Controlled Source Chat</span>
+            <span className="control-panel__brand-sub">Admin control panel</span>
+          </span>
         </div>
         <div className="control-panel__actions">
           <button
             type="button"
-            className="panel-button panel-button--primary"
-            onClick={() => setTestChatOpen(true)}
+            className={`panel-button${testChatOpen ? "" : " panel-button--primary"}`}
+            onClick={() => setTestChatOpen((open) => !open)}
           >
-            Test chat
+            {testChatOpen ? "Hide test chat" : "Test chat"}
           </button>
           <span className="auth-user" title={user.username}>
             {user.username}
@@ -43,34 +50,62 @@ export function ControlPanel({ user, onSignOut }: { user: AuthUser; onSignOut: (
           </button>
         </div>
       </header>
-      <main className="control-panel__body">
-        <SourcesSection />
-        <section className="panel-section" aria-label="MCP servers">
-          <div className="panel-section__header">
-            <div>
-              <div className="panel-section__title">
-                <McpIcon />
-                MCP servers
+      <div className="control-panel__main">
+        <main className="control-panel__body">
+          <SourcesSection />
+          <section className="panel-section" aria-label="MCP servers">
+            <div className="panel-section__header">
+              <div>
+                <div className="panel-section__title">
+                  <McpIcon />
+                  MCP servers
+                </div>
+                <div className="panel-section__subtitle">
+                  Tools the assistant may call during chats. Tool results count as citable
+                  sources.
+                </div>
               </div>
-              <div className="panel-section__subtitle">
-                Tools the assistant may call during chats. Tool results count as citable
-                sources.
-              </div>
+              <button
+                type="button"
+                className="panel-button"
+                onClick={() => setMcpCatalogOpen(true)}
+              >
+                Manage MCP servers
+              </button>
             </div>
-            <button
-              type="button"
-              className="panel-button"
-              onClick={() => setMcpCatalogOpen(true)}
-            >
-              Manage MCP servers
-            </button>
-          </div>
-        </section>
-        <UsersSection currentUsername={user.username} />
-      </main>
+          </section>
+          <UsersSection currentUsername={user.username} />
+        </main>
+        {testChatOpen && <TestChatDock onClose={() => setTestChatOpen(false)} />}
+      </div>
       <McpCatalogPanel open={mcpCatalogOpen} onClose={() => setMcpCatalogOpen(false)} />
-      <TestChatDrawer open={testChatOpen} onClose={() => setTestChatOpen(false)} />
     </div>
+  );
+}
+
+function BrandIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="21" y1="4" x2="14" y2="4" />
+      <line x1="10" y1="4" x2="3" y2="4" />
+      <line x1="21" y1="12" x2="12" y2="12" />
+      <line x1="8" y1="12" x2="3" y2="12" />
+      <line x1="21" y1="20" x2="16" y2="20" />
+      <line x1="12" y1="20" x2="3" y2="20" />
+      <line x1="14" y1="2" x2="14" y2="6" />
+      <line x1="8" y1="10" x2="8" y2="14" />
+      <line x1="16" y1="18" x2="16" y2="22" />
+    </svg>
   );
 }
 

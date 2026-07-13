@@ -81,7 +81,13 @@ export function UsersSection({ currentUsername }: { currentUsername: string }) {
           <div className="sources-list">
             {users.map((user) => (
               <div key={user.username} className="source-row">
-                <div className="source-row__badge">{user.role}</div>
+                <div
+                  className={`source-row__badge${
+                    user.role === "admin" ? " source-row__badge--filled" : ""
+                  }`}
+                >
+                  {user.role}
+                </div>
                 <div className="source-row__main">
                   <div className="source-row__name">
                     {user.username}
