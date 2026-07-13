@@ -11,6 +11,8 @@ and layers on top:
   source/tool management endpoints.
 - ``GET /controlled/sources`` — read-only view of the admin-curated
   source list so guests can fact-check citations.
+- ``GET/POST/DELETE /controlled/users`` — admin-only user management
+  backed by the persistent user store.
 
 Firebase auth stays disabled (``OPENBENCH_AUTH_DISABLED=1``); this
 middleware is the only gatekeeper.
@@ -24,10 +26,18 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from controlled_source_chat.auth import (
+    ROLE_ADMIN,
     ROLE_GUEST,
+    Account,
     resolve_bearer,
     issue_token,
     verify_credentials,
+)
+from controlled_source_chat.users import (
+    BuiltinUserError,
+    DuplicateUserError,
+    UnknownUserError,
+    get_user_store,
 )
 from general_chat.server.app import _requires_auth_path, create_app
 from general_chat.sources import build_source_store
@@ -49,6 +59,7 @@ _GUEST_BLOCKED: tuple[tuple[frozenset[str] | None, str], ...] = (
     (None, "/persona"),
     (None, "/skills"),
     (None, "/image-search"),
+    (None, "/controlled/users"),
 )
 
 
@@ -60,6 +71,20 @@ def shared_sources_thread() -> str:
     return os.getenv("GENERAL_CHAT_SHARED_SOURCES_THREAD", "controlled-sources").strip() or (
         "controlled-sources"
     )
+
+
+def _require_admin(request: Request) -> Account:
+    """Resolve the bearer token and require the admin role (401/403)."""
+    account = resolve_bearer(request.headers.get("authorization", ""))
+    if account is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if account.role != ROLE_ADMIN:
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return account
 
 
 def _is_guest_blocked(method: str, path: str) -> bool:
@@ -124,6 +149,41 @@ def build_app() -> FastAPI:
             item["textTruncated"] = len(text) > _PREVIEW_CHARS
             payload.append(item)
         return payload
+
+    @app.get("/controlled/users")
+    async def list_users(request: Request) -> list[dict]:
+        """Admin-only user list (built-ins plus admin-created accounts)."""
+        _require_admin(request)
+        return [record.to_public_dict() for record in get_user_store().list_users()]
+
+    @app.post("/controlled/users", status_code=201)
+    async def add_user(request: Request) -> dict:
+        _require_admin(request)
+        body = await request.json()
+        try:
+            record = get_user_store().add(
+                str(body.get("username") or ""),
+                str(body.get("password") or ""),
+                str(body.get("role") or ""),
+            )
+        except DuplicateUserError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return record.to_public_dict()
+
+    @app.delete("/controlled/users/{username}")
+    async def delete_user(username: str, request: Request) -> dict:
+        account = _require_admin(request)
+        if (username or "").strip().lower() == account.username:
+            raise HTTPException(status_code=400, detail="You cannot delete your own account.")
+        try:
+            get_user_store().remove(username)
+        except BuiltinUserError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except UnknownUserError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        return {"ok": True}
 
     @app.middleware("http")
     async def local_auth_middleware(request: Request, call_next):
