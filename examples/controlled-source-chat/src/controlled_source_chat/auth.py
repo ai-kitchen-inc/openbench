@@ -1,10 +1,13 @@
-"""Local two-account auth for Controlled Source Chat.
+"""Local auth for Controlled Source Chat.
 
-No cloud dependency: two fixed accounts (``admin`` and ``guest``) with
-env-overridable passwords, and stateless HMAC-signed bearer tokens
-(``username.expiry.signature``). Stateless tokens survive uvicorn
-``--reload`` restarts, which the demo runner uses — an in-memory token
-table would log everyone out on every source-code edit.
+No cloud dependency: accounts live in the persistent user store (see
+:mod:`controlled_source_chat.users`) — built-in ``admin`` and ``guest``
+with env-overridable passwords plus any admin-created users — and
+stateless HMAC-signed bearer tokens (``username.expiry.signature``).
+Stateless tokens survive uvicorn ``--reload`` restarts, which the demo
+runner uses — an in-memory token table would log everyone out on every
+source-code edit. Token verification re-checks the store, so removing
+a user revokes their unexpired tokens immediately.
 """
 
 from __future__ import annotations
@@ -18,8 +21,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-ROLE_ADMIN = "admin"
-ROLE_GUEST = "guest"
+from controlled_source_chat.users import ROLE_ADMIN, ROLE_GUEST, get_user_store, verify_password
 
 _TOKEN_TTL_SECONDS = 24 * 60 * 60
 _SECRET_FILENAME = "controlled-auth-secret.txt"
@@ -30,11 +32,6 @@ class Account:
     username: str
     role: str
 
-
-_ACCOUNTS: dict[str, str] = {
-    "admin": ROLE_ADMIN,
-    "guest": ROLE_GUEST,
-}
 
 _PASSWORD_ENV = {
     "admin": ("CONTROLLED_CHAT_ADMIN_PASSWORD", "admin123"),
@@ -81,13 +78,19 @@ def _sign(payload: str) -> str:
 def verify_credentials(username: str, password: str) -> Account | None:
     """Return the account when the username/password pair is valid."""
     normalized = (username or "").strip().lower()
-    role = _ACCOUNTS.get(normalized)
-    expected = _password_for(normalized)
-    if role is None or expected is None:
+    record = get_user_store().get(normalized)
+    if record is None:
         return None
-    if not hmac.compare_digest((password or "").encode("utf-8"), expected.encode("utf-8")):
+    if record.password_hash is None:
+        # Built-in account: password comes from env override or default.
+        expected = _password_for(normalized)
+        if expected is None or not hmac.compare_digest(
+            (password or "").encode("utf-8"), expected.encode("utf-8")
+        ):
+            return None
+    elif not verify_password(password or "", record.password_hash):
         return None
-    return Account(username=normalized, role=role)
+    return Account(username=normalized, role=record.role)
 
 
 def issue_token(account: Account, *, ttl_seconds: int = _TOKEN_TTL_SECONDS) -> str:
@@ -112,10 +115,12 @@ def verify_token(token: str) -> Account | None:
         return None
     if expiry < time.time():
         return None
-    role = _ACCOUNTS.get(username)
-    if role is None:
+    # Store lookup is the revocation point: a removed user's unexpired
+    # token dies here, and role changes take effect immediately.
+    record = get_user_store().get(username)
+    if record is None:
         return None
-    return Account(username=username, role=role)
+    return Account(username=username, role=record.role)
 
 
 def resolve_bearer(authorization_header: str) -> Account | None:
