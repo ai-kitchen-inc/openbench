@@ -51,6 +51,18 @@ Thumbs.db
 .firebase/
 *.bak
 *.orig
+*.stackdump
+.mypy_cache/
+prompt-debug/
+general_chat_memory.db
+
+# Standalone MCP server projects (~2.3 GB with models). Not part of any API
+# image — they build separately (deploy.sh mcp-image/fn-image submit their own
+# subdirectory, so this root ignore does not affect those builds). Runtime MCP
+# config paths resolve to examples/general-chat/mcp/, not this directory.
+# Leading slash anchors to repo root: src/openbench/mcp and
+# examples/general-chat/mcp must stay in the context.
+/mcp/
 
 # Build artifacts (paths that should NOT enter image)
 examples/lci-mini/uploads/
@@ -69,6 +81,12 @@ examples/general-chat/.openbench/
 examples/general-chat/.firebase/
 examples/general-chat/general_chat_memory.db
 examples/general-chat/frontend/dist/
+examples/controlled-source-chat/uploads/
+examples/controlled-source-chat/downloads/
+examples/controlled-source-chat/profiles/
+examples/controlled-source-chat/.openbench/
+examples/controlled-source-chat/controlled_source_chat_memory.db
+examples/controlled-source-chat/frontend/dist/
 examples/image-search-mcp/.venv/
 examples/image-search-mcp/data/
 examples/image-search-mcp/models/

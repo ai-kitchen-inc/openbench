@@ -367,3 +367,10 @@ PDFs), so per-file CPU time is low and stays well under the 60s deadline.
 
 `examples/lci-mini` (a separate example using Cloud Run, project `openbench-lci`)
 is unrelated and untouched by this runbook.
+
+`examples/controlled-source-chat` deploys to **Cloud Run** in this same project
+(service `controlled-source-chat`, its own `controlled_chat` database on the
+shared `openbench-postgres` instance) with local username/password auth instead
+of Firebase. Its runbook is
+[`examples/controlled-source-chat/DEPLOY.md`](../examples/controlled-source-chat/DEPLOY.md);
+nothing in this file applies to it except the shared Cloud SQL instance.

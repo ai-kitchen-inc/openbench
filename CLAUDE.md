@@ -39,6 +39,14 @@ bash deploy/deploy.sh verify         # probe the live deployment
 Secrets live only in the VM's `.env.gcp` (never in the repo). `examples/lci-mini`
 uses Cloud Run and is unrelated.
 
+The `controlled-source-chat` example is deployed separately to **Cloud Run**
+(same GCP project, single container serving API + SPA, state in the
+`controlled_chat` database on the shared Cloud SQL instance, local
+username/password auth — no Firebase). **Read
+[examples/controlled-source-chat/DEPLOY.md](examples/controlled-source-chat/DEPLOY.md)
+before touching its deployment**; deploy via
+`bash examples/controlled-source-chat/deploy.sh all|image|run|verify`.
+
 ## Project Overview
 
 **OpenBench** - Open-source Python SDK for composable AI workflows.
