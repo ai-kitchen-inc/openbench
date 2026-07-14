@@ -72,10 +72,6 @@ export function LoginGate({ onLogin }: { onLogin: (user: AuthUser) => void }) {
         <button className="login-card__submit" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Signing in..." : "Sign in"}
         </button>
-        <div className="login-card__hint">
-          Demo accounts: <code>admin / admin123</code> (control panel) ·{" "}
-          <code>guest / guest123</code> (chat)
-        </div>
       </form>
     </div>
   );
