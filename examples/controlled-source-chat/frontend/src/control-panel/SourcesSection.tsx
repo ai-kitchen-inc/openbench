@@ -18,7 +18,10 @@ const PROCESSING_POLL_MS = 2500;
 type AddMode = "none" | "text" | "url";
 
 export function SourcesSection() {
-  const toast = useToast();
+  // Only the stable show() callback — depending on the whole context object
+  // (which changes with every toast) would re-create refresh and retrigger
+  // the load effect in a feedback loop.
+  const { show: showToast } = useToast();
   const [sources, setSources] = useState<SourceItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isMutating, setIsMutating] = useState(false);
@@ -30,11 +33,11 @@ export function SourcesSection() {
     try {
       setSources(await listSources());
     } catch (error) {
-      toast.show(`Could not load sources: ${readErrorMessage(error)}`, "error");
+      showToast(`Could not load sources: ${readErrorMessage(error)}`, "error");
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, [showToast]);
 
   useEffect(() => {
     void refresh();
@@ -56,12 +59,12 @@ export function SourcesSection() {
         await mutation();
         await refresh();
       } catch (error) {
-        toast.show(readErrorMessage(error), "error");
+        showToast(readErrorMessage(error), "error");
       } finally {
         setIsMutating(false);
       }
     },
-    [refresh, toast],
+    [refresh, showToast],
   );
 
   const handleFiles = useCallback(
@@ -72,18 +75,18 @@ export function SourcesSection() {
         for (const file of Array.from(files)) {
           setUploadProgress(0);
           await uploadSourceFile(file, setUploadProgress);
-          toast.show(`Uploaded: ${file.name}`, "success");
+          showToast(`Uploaded: ${file.name}`, "success");
         }
         await refresh();
       } catch (error) {
-        toast.show(`Upload failed: ${readErrorMessage(error)}`, "error");
+        showToast(`Upload failed: ${readErrorMessage(error)}`, "error");
       } finally {
         setUploadProgress(null);
         setIsMutating(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
     },
-    [refresh, toast],
+    [refresh, showToast],
   );
 
   return (

@@ -5,7 +5,10 @@ import { readErrorMessage } from "./sourcesApi";
 import { addUser, deleteUser, listUsers, type UserItem } from "./usersApi";
 
 export function UsersSection({ currentUsername }: { currentUsername: string }) {
-  const toast = useToast();
+  // Only the stable show() callback — depending on the whole context object
+  // (which changes with every toast) would re-create refresh and retrigger
+  // the load effect in a feedback loop.
+  const { show: showToast } = useToast();
   const [users, setUsers] = useState<UserItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isMutating, setIsMutating] = useState(false);
@@ -15,11 +18,11 @@ export function UsersSection({ currentUsername }: { currentUsername: string }) {
     try {
       setUsers(await listUsers());
     } catch (error) {
-      toast.show(`Could not load users: ${readErrorMessage(error)}`, "error");
+      showToast(`Could not load users: ${readErrorMessage(error)}`, "error");
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, [showToast]);
 
   useEffect(() => {
     void refresh();
@@ -32,12 +35,12 @@ export function UsersSection({ currentUsername }: { currentUsername: string }) {
         await mutation();
         await refresh();
       } catch (error) {
-        toast.show(readErrorMessage(error), "error");
+        showToast(readErrorMessage(error), "error");
       } finally {
         setIsMutating(false);
       }
     },
-    [refresh, toast],
+    [refresh, showToast],
   );
 
   return (
@@ -69,7 +72,7 @@ export function UsersSection({ currentUsername }: { currentUsername: string }) {
               void runMutation(async () => {
                 await addUser(username, password, role);
                 setAddOpen(false);
-                toast.show(`User added: ${username}`, "success");
+                showToast(`User added: ${username}`, "success");
               })
             }
           />

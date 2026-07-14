@@ -211,4 +211,22 @@ def build_app() -> FastAPI:
             )
         return await call_next(request)
 
+    _move_spa_catchall_last(app)
     return app
+
+
+def _move_spa_catchall_last(app: FastAPI) -> None:
+    """Re-append the SPA catch-all so this wrapper's GET routes match first.
+
+    When GENERAL_CHAT_STATIC_DIR is set, create_app() registers a
+    ``GET /{full_path:path}`` route that serves the SPA — and it is registered
+    *before* the routes this wrapper adds. FastAPI matches routes in
+    registration order, so ``GET /auth/me`` and ``GET /controlled/*`` would be
+    swallowed by the SPA handler. Moving the catch-all to the end restores it
+    to lowest precedence. No-op when the static dir is not configured (dev).
+    """
+    routes = app.router.routes
+    for index, route in enumerate(routes):
+        if getattr(route, "path", "") == "/{full_path:path}":
+            routes.append(routes.pop(index))
+            break
