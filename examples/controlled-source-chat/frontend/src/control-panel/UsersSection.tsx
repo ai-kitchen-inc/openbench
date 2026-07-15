@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { UsersIcon, XIcon } from "../brand/icons";
 import { useToast } from "../Toast";
 import type { Role } from "../api";
 import { readErrorMessage } from "./sourcesApi";
@@ -18,7 +19,7 @@ export function UsersSection({ currentUsername }: { currentUsername: string }) {
     try {
       setUsers(await listUsers());
     } catch (error) {
-      showToast(`Could not load users: ${readErrorMessage(error)}`, "error");
+      showToast(`Gagal memuat pengguna: ${readErrorMessage(error)}`, "error");
     } finally {
       setIsLoading(false);
     }
@@ -44,15 +45,15 @@ export function UsersSection({ currentUsername }: { currentUsername: string }) {
   );
 
   return (
-    <section className="panel-section" aria-label="User accounts">
+    <section className="panel-section" aria-label="Akun pengguna">
       <div className="panel-section__header">
         <div>
           <div className="panel-section__title">
             <UsersIcon />
-            Users
+            Daftar Pengguna
           </div>
           <div className="panel-section__subtitle">
-            Accounts that can sign in. Admins manage sources and tools; guests only chat.
+            Kelola akun yang dapat masuk beserta perannya.
           </div>
         </div>
         <button
@@ -61,7 +62,7 @@ export function UsersSection({ currentUsername }: { currentUsername: string }) {
           onClick={() => setAddOpen(!addOpen)}
           disabled={isMutating}
         >
-          Add user
+          Tambah Pengguna
         </button>
       </div>
       <div className="panel-section__body">
@@ -72,14 +73,14 @@ export function UsersSection({ currentUsername }: { currentUsername: string }) {
               void runMutation(async () => {
                 await addUser(username, password, role);
                 setAddOpen(false);
-                showToast(`User added: ${username}`, "success");
+                showToast(`Pengguna ditambahkan: ${username}`, "success");
               })
             }
           />
         )}
 
         {isLoading ? (
-          <div className="sources-list__empty">Loading users...</div>
+          <div className="sources-list__empty">Memuat pengguna...</div>
         ) : (
           <div className="sources-list">
             {users.map((user) => (
@@ -89,36 +90,24 @@ export function UsersSection({ currentUsername }: { currentUsername: string }) {
                     user.role === "admin" ? " source-row__badge--filled" : ""
                   }`}
                 >
-                  {user.role}
+                  {user.role === "admin" ? "Admin" : "Tamu"}
                 </div>
                 <div className="source-row__main">
                   <div className="source-row__name">
                     {user.username}
-                    {user.username === currentUsername ? " (you)" : ""}
+                    {user.username === currentUsername ? " (Anda)" : ""}
                   </div>
-                  {user.builtin && <div className="source-row__meta">Built-in account</div>}
+                  {user.builtin && <div className="source-row__meta">Akun bawaan</div>}
                 </div>
                 {!user.builtin && user.username !== currentUsername && (
                   <button
                     type="button"
                     className="source-row__remove"
-                    aria-label={`Remove ${user.username}`}
+                    aria-label={`Hapus ${user.username}`}
                     disabled={isMutating}
                     onClick={() => void runMutation(() => deleteUser(user.username))}
                   >
-                    <svg
-                      aria-hidden="true"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    >
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
+                    <XIcon size={14} />
                   </button>
                 )}
               </div>
@@ -151,7 +140,7 @@ function AddUserForm({
     <form className="sources-form" onSubmit={handleSubmit}>
       <input
         type="text"
-        placeholder="Username (lowercase letters, digits, . _ -)"
+        placeholder="Nama pengguna (huruf kecil, angka, . _ -)"
         value={username}
         onChange={(event) => setUsername(event.target.value)}
         autoComplete="off"
@@ -159,7 +148,7 @@ function AddUserForm({
       />
       <input
         type="password"
-        placeholder="Password (at least 6 characters)"
+        placeholder="Kata sandi (minimal 6 karakter)"
         value={password}
         onChange={(event) => setPassword(event.target.value)}
         autoComplete="new-password"
@@ -167,35 +156,14 @@ function AddUserForm({
         required
       />
       <select value={role} onChange={(event) => setRole(event.target.value as Role)}>
-        <option value="guest">Guest — chat only</option>
-        <option value="admin">Admin — full control panel</option>
+        <option value="guest">Tamu — hanya chat</option>
+        <option value="admin">Admin — panel kendali penuh</option>
       </select>
       <div className="sources-form__row">
         <button type="submit" className="panel-button panel-button--primary" disabled={disabled}>
-          Add user
+          Tambah Pengguna
         </button>
       </div>
     </form>
-  );
-}
-
-function UsersIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
   );
 }

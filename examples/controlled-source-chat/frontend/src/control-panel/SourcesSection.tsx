@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { BookIcon, XIcon } from "../brand/icons";
 import { useToast } from "../Toast";
 import { SOURCE_ACCEPT } from "../constants";
 import {
@@ -33,7 +34,7 @@ export function SourcesSection() {
     try {
       setSources(await listSources());
     } catch (error) {
-      showToast(`Could not load sources: ${readErrorMessage(error)}`, "error");
+      showToast(`Gagal memuat sumber: ${readErrorMessage(error)}`, "error");
     } finally {
       setIsLoading(false);
     }
@@ -75,11 +76,11 @@ export function SourcesSection() {
         for (const file of Array.from(files)) {
           setUploadProgress(0);
           await uploadSourceFile(file, setUploadProgress);
-          showToast(`Uploaded: ${file.name}`, "success");
+          showToast(`Berhasil diunggah: ${file.name}`, "success");
         }
         await refresh();
       } catch (error) {
-        showToast(`Upload failed: ${readErrorMessage(error)}`, "error");
+        showToast(`Gagal mengunggah: ${readErrorMessage(error)}`, "error");
       } finally {
         setUploadProgress(null);
         setIsMutating(false);
@@ -90,16 +91,15 @@ export function SourcesSection() {
   );
 
   return (
-    <section className="panel-section" aria-label="Knowledge base sources">
+    <section className="panel-section" aria-label="Sumber basis pengetahuan">
       <div className="panel-section__header">
         <div>
           <div className="panel-section__title">
-            <SourcesIcon />
-            Sources
+            <BookIcon />
+            Daftar Sumber
           </div>
           <div className="panel-section__subtitle">
-            Everything users can ask about. The assistant answers only from these sources and
-            cites them by name.
+            Unggah dokumen, tempel teks, atau tambahkan URL sebagai sumber resmi.
           </div>
         </div>
       </div>
@@ -112,8 +112,8 @@ export function SourcesSection() {
             disabled={isMutating}
           >
             {uploadProgress !== null
-              ? `Uploading ${Math.round(uploadProgress * 100)}%`
-              : "Upload document"}
+              ? `Mengunggah ${Math.round(uploadProgress * 100)}%`
+              : "Unggah Dokumen"}
           </button>
           <button
             type="button"
@@ -121,7 +121,7 @@ export function SourcesSection() {
             onClick={() => setAddMode(addMode === "text" ? "none" : "text")}
             disabled={isMutating}
           >
-            Paste text
+            Tempel Teks
           </button>
           <button
             type="button"
@@ -129,7 +129,7 @@ export function SourcesSection() {
             onClick={() => setAddMode(addMode === "url" ? "none" : "url")}
             disabled={isMutating}
           >
-            Add URL
+            Tambah URL
           </button>
           <input
             ref={fileInputRef}
@@ -165,16 +165,16 @@ export function SourcesSection() {
         )}
 
         {isLoading ? (
-          <div className="sources-list__empty">Loading sources...</div>
+          <div className="sources-list__empty">Memuat sumber...</div>
         ) : sources.length === 0 ? (
           <div className="panel-empty">
             <span className="panel-empty__icon">
-              <EmptyIcon />
+              <BookIcon size={20} />
             </span>
-            <div className="panel-empty__title">No sources yet</div>
+            <div className="panel-empty__title">Belum ada sumber</div>
             <div className="panel-empty__hint">
-              Users cannot get answers until you add at least one source. Upload a document,
-              paste text, or add a URL.
+              Pengguna belum bisa mendapatkan jawaban sebelum Anda menambahkan minimal satu
+              sumber. Unggah dokumen, tempel teks, atau tambahkan URL.
             </div>
           </div>
         ) : (
@@ -192,30 +192,18 @@ export function SourcesSection() {
                   )}
                   {source.status === "failed" && (
                     <div className="source-row__error">
-                      {source.error ?? "Source processing failed"}
+                      {source.error ?? "Pemrosesan sumber gagal"}
                     </div>
                   )}
                 </div>
                 <button
                   type="button"
                   className="source-row__remove"
-                  aria-label={`Remove ${source.name}`}
+                  aria-label={`Hapus ${source.name}`}
                   disabled={isMutating}
                   onClick={() => void runMutation(() => deleteSource(source.id))}
                 >
-                  <svg
-                    aria-hidden="true"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                  >
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
+                  <XIcon size={14} />
                 </button>
               </div>
             ))}
@@ -239,26 +227,26 @@ function TextSourceForm({
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
     if (!text.trim()) return;
-    onSubmit(name.trim() || "Pasted text", text);
+    onSubmit(name.trim() || "Teks tempel", text);
   };
 
   return (
     <form className="sources-form" onSubmit={handleSubmit}>
       <input
         type="text"
-        placeholder="Source name (e.g. Company FAQ)"
+        placeholder="Nama sumber (mis. FAQ Layanan Publik)"
         value={name}
         onChange={(event) => setName(event.target.value)}
       />
       <textarea
-        placeholder="Paste the source text users can ask about..."
+        placeholder="Tempel teks sumber yang dapat ditanyakan pengguna..."
         value={text}
         onChange={(event) => setText(event.target.value)}
         required
       />
       <div className="sources-form__row">
         <button type="submit" className="panel-button panel-button--primary" disabled={disabled}>
-          Add text source
+          Tambah Sumber Teks
         </button>
       </div>
     </form>
@@ -284,54 +272,16 @@ function UrlSourceForm({
     <form className="sources-form" onSubmit={handleSubmit}>
       <input
         type="url"
-        placeholder="https://example.com/page-to-ingest"
+        placeholder="https://contoh.go.id/halaman-yang-diambil"
         value={url}
         onChange={(event) => setUrl(event.target.value)}
         required
       />
       <div className="sources-form__row">
         <button type="submit" className="panel-button panel-button--primary" disabled={disabled}>
-          Add URL source
+          Tambah Sumber URL
         </button>
       </div>
     </form>
-  );
-}
-
-function EmptyIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
-      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
-    </svg>
-  );
-}
-
-function SourcesIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-    </svg>
   );
 }

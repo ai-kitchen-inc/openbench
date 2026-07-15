@@ -1,5 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { login, type AuthUser } from "./api";
+import { BrandMark } from "./brand/BrandMark";
+import { CheckIcon } from "./brand/icons";
+import { APP_NAME, APP_TAGLINE, FOOTER_ATTRIBUTION } from "./i18n/id";
+
+const VALUE_POINTS = [
+  "Jawaban hanya bersumber dari basis pengetahuan resmi yang dikurasi",
+  "Setiap jawaban disertai kutipan sumber yang dapat diverifikasi",
+  "Kontrol penuh administrator atas sumber, pengguna, dan perangkat",
+];
 
 export function LoginGate({ onLogin }: { onLogin: (user: AuthUser) => void }) {
   const [username, setUsername] = useState("");
@@ -15,7 +24,7 @@ export function LoginGate({ onLogin }: { onLogin: (user: AuthUser) => void }) {
     try {
       onLogin(await login(username.trim(), password));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed.");
+      setError(err instanceof Error ? err.message : "Gagal masuk.");
     } finally {
       setIsSubmitting(false);
     }
@@ -23,56 +32,75 @@ export function LoginGate({ onLogin }: { onLogin: (user: AuthUser) => void }) {
 
   return (
     <div className="login-screen">
-      <form className="login-card" onSubmit={handleSubmit}>
-        <div className="login-card__icon" aria-hidden="true">
-          <svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <rect x="3" y="11" width="18" height="11" rx="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-        </div>
-        <h1 className="login-card__title">Controlled Source Chat</h1>
-        <p className="login-card__subtitle">
-          Answers come only from the curated knowledge base, with citations.
-        </p>
-        <label className="login-card__field">
-          <span>Username</span>
-          <input
-            type="text"
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            autoComplete="username"
-            autoFocus
-            required
-          />
-        </label>
-        <label className="login-card__field">
-          <span>Password</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete="current-password"
-            required
-          />
-        </label>
-        {error && (
-          <div className="login-card__error" role="alert">
-            {error}
+      <aside className="login-hero">
+        <div className="login-hero__brand">
+          <BrandMark size={44} />
+          <div>
+            <div className="login-hero__brand-name">{APP_NAME}</div>
+            <div className="login-hero__brand-tagline">{APP_TAGLINE}</div>
           </div>
-        )}
-        <button className="login-card__submit" type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Signing in..." : "Sign in"}
-        </button>
-      </form>
+        </div>
+        <div className="login-hero__body">
+          <h1 className="login-hero__title">
+            Layanan informasi resmi yang <em>akurat</em>, <em>terkurasi</em>, dan{" "}
+            <em>tepercaya</em>.
+          </h1>
+          <ul className="login-hero__points">
+            {VALUE_POINTS.map((point) => (
+              <li key={point}>
+                <CheckIcon size={18} />
+                <span>{point}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="login-hero__footer">{FOOTER_ATTRIBUTION}</div>
+      </aside>
+      <div className="login-form-side">
+        <form className="login-card" onSubmit={handleSubmit}>
+          <div className="login-card__brand">
+            <BrandMark size={40} />
+            <div>
+              <div className="login-card__brand-name">{APP_NAME}</div>
+              <div className="login-card__brand-tagline">{APP_TAGLINE}</div>
+            </div>
+          </div>
+          <h2 className="login-card__title">Masuk</h2>
+          <p className="login-card__subtitle">
+            Gunakan akun yang diberikan oleh administrator untuk mengakses layanan.
+          </p>
+          <label className="login-card__field">
+            <span>Nama Pengguna</span>
+            <input
+              type="text"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="username"
+              autoFocus
+              required
+            />
+          </label>
+          <label className="login-card__field">
+            <span>Kata Sandi</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </label>
+          {error && (
+            <div className="login-card__error" role="alert">
+              {error}
+            </div>
+          )}
+          <button className="login-card__submit" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Sedang masuk..." : "Masuk"}
+          </button>
+          <div className="login-card__footer">{FOOTER_ATTRIBUTION}</div>
+        </form>
+      </div>
     </div>
   );
 }

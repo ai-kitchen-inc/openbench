@@ -119,11 +119,11 @@ export function uploadSourceFile(
 
 export function sourceKindLabel(source: SourceItem): string {
   if (source.kind === "url") return "WEB";
-  if (source.kind === "text") return "TEXT";
+  if (source.kind === "text") return "TEKS";
   if (source.kind === "spreadsheet") {
     return source.name.toLowerCase().endsWith(".csv") ? "CSV" : "XLSX";
   }
-  if (source.kind === "image") return "IMAGE";
+  if (source.kind === "image") return "GAMBAR";
   return source.kind.toUpperCase();
 }
 
@@ -131,7 +131,7 @@ export function formatSourceMeta(source: SourceItem): string | null {
   const metadata = source.metadata ?? {};
   if (source.status === "processing") {
     const parseStatus = typeof metadata.parseStatus === "string" ? metadata.parseStatus : "";
-    return parseStatus ? `Processing: ${parseStatus}` : "Processing source";
+    return parseStatus ? `Memproses: ${parseStatus}` : "Memproses sumber";
   }
   if (source.url) return source.url;
   return null;

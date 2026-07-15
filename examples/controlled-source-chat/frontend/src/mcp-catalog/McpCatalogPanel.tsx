@@ -7,6 +7,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { XIcon } from "../brand/icons";
 import { useToast } from "../Toast";
 import {
   discoverServer,
@@ -81,11 +82,11 @@ function buildSecretPayload(rows: SecretRow[]): Record<string, string> | undefin
 }
 
 function toolHiveModeLabel(status: ToolHiveStatus | null): string {
-  if (!status) return "unchecked";
+  if (!status) return "belum diperiksa";
   if (status.managementMode === "api") return "API";
   if (status.managementMode === "ui-cli") return "ToolHive UI CLI";
   if (status.managementMode === "cli") return "CLI";
-  return "unavailable";
+  return "tidak tersedia";
 }
 
 function Dialog({
@@ -129,8 +130,8 @@ function Dialog({
       >
         <div className="mcp-dialog__header">
           <h2>{title}</h2>
-          <button type="button" className="mcp-icon-btn" onClick={onClose} aria-label="Close dialog">
-            <span aria-hidden="true">x</span>
+          <button type="button" className="mcp-icon-btn" onClick={onClose} aria-label="Tutup dialog">
+            <XIcon size={14} />
           </button>
         </div>
         {children}
@@ -172,10 +173,10 @@ function ImportDialog({
   };
 
   return (
-    <Dialog title="Add MCP servers" onClose={onClose} initialFocusRef={inputRef}>
+    <Dialog title="Tambah Server MCP" onClose={onClose} initialFocusRef={inputRef}>
       <form className="mcp-dialog__body" onSubmit={(event) => void handleSubmit(event)}>
         <label className="mcp-field">
-          <span>MCP JSON config</span>
+          <span>Konfigurasi JSON MCP</span>
           <textarea
             ref={inputRef}
             value={config}
@@ -186,18 +187,18 @@ function ImportDialog({
           />
         </label>
         <div className="mcp-warning">
-          Validation checks the JSON shape only. OpenBench starts command-based MCP servers only when you load tools or use chat.
+          Validasi hanya memeriksa bentuk JSON. OpenBench menjalankan server MCP berbasis perintah hanya saat Anda memuat alat atau menggunakan chat.
         </div>
         <div className="mcp-config-list">
-          <h3>Docker env</h3>
+          <h3>Env Docker</h3>
           <div className="mcp-warning">
-            Docker env values entered here or pasted in JSON <code>env</code> are encrypted before saving and only injected at runtime. Use <code>{'${ENV_VAR}'}</code> to read from your local environment instead.
+            Nilai env Docker yang dimasukkan di sini atau ditempel pada JSON <code>env</code> dienkripsi sebelum disimpan dan hanya disuntikkan saat runtime. Gunakan <code>{'${ENV_VAR}'}</code> untuk membaca dari environment lokal Anda.
           </div>
           <div className="mcp-config-list">
             {secretRows.map((row) => (
               <div key={row.id} className="mcp-detail-grid mcp-detail-grid--forms">
                 <label className="mcp-field">
-                  <span>Key</span>
+                  <span>Kunci</span>
                   <input
                     value={row.key}
                     placeholder="GRAFANA_API_KEY"
@@ -211,12 +212,12 @@ function ImportDialog({
                   />
                 </label>
                 <label className="mcp-field">
-                  <span>Value</span>
+                  <span>Nilai</span>
                   <input
                     type="password"
                     value={row.value}
                     autoComplete="off"
-                    placeholder="Docker env value"
+                    placeholder="Nilai env Docker"
                     onChange={(event) =>
                       setSecretRows((current) =>
                         current.map((item) =>
@@ -233,7 +234,7 @@ function ImportDialog({
                     setSecretRows((current) => current.filter((item) => item.id !== row.id))
                   }
                 >
-                  Remove
+                  Hapus
                 </button>
               </div>
             ))}
@@ -247,7 +248,7 @@ function ImportDialog({
               setSecretRows((current) => [...current, { id, key: "", value: "" }]);
             }}
           >
-            Add env
+            Tambah Env
           </button>
         </div>
         {error && (
@@ -257,10 +258,10 @@ function ImportDialog({
         )}
         <div className="mcp-dialog__actions">
           <button type="button" className="mcp-btn" onClick={onClose}>
-            Cancel
+            Batal
           </button>
           <button type="submit" className="mcp-btn mcp-btn--primary" disabled={!config.trim() || isSubmitting}>
-            {isSubmitting ? "Registering..." : "Register servers"}
+            {isSubmitting ? "Mendaftarkan..." : "Daftarkan Server"}
           </button>
         </div>
       </form>
@@ -282,14 +283,14 @@ function providerLabel(server: RegisteredMCPServer): string {
 function parameterSummary(schema: Record<string, unknown>): string {
   const properties = schema.properties;
   if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
-    return "No parameters";
+    return "Tanpa parameter";
   }
   const required = Array.isArray(schema.required) ? schema.required : [];
   const parts = Object.entries(properties as Record<string, Record<string, unknown>>).map(([name, value]) => {
     const type = typeof value?.type === "string" ? value.type : "value";
-    return `${name}: ${type}${required.includes(name) ? " required" : ""}`;
+    return `${name}: ${type}${required.includes(name) ? " wajib" : ""}`;
   });
-  return parts.length ? parts.join(", ") : "No parameters";
+  return parts.length ? parts.join(", ") : "Tanpa parameter";
 }
 
 function ConfigPreview({ config }: { config: Record<string, unknown> }) {
@@ -378,9 +379,9 @@ function ToolHiveSection({
     try {
       const payload = await importRunningToolHiveWorkloads([name]);
       onImported(payload);
-      toast.show("ToolHive server imported", "success");
+      toast.show("Server ToolHive berhasil diimpor", "success");
     } catch (error) {
-      toast.show(`Could not add ToolHive server: ${readErrorMessage(error)}`, "error");
+      toast.show(`Gagal menambahkan server ToolHive: ${readErrorMessage(error)}`, "error");
     } finally {
       setIsMutating(false);
     }
@@ -397,9 +398,9 @@ function ToolHiveSection({
       });
       await load();
       await handleImportWorkload(result.workload.name);
-      toast.show("ToolHive workload started", "success");
+      toast.show("Workload ToolHive dimulai", "success");
     } catch (error) {
-      toast.show(`Could not start ToolHive workload: ${readErrorMessage(error)}`, "error");
+      toast.show(`Gagal memulai workload ToolHive: ${readErrorMessage(error)}`, "error");
     } finally {
       setIsMutating(false);
     }
@@ -414,16 +415,17 @@ function ToolHiveSection({
       const payload = await importMCPConfig({ config: buildUrlConfig(name, url) });
       onImported(payload);
       setDirectUrl("");
-      toast.show("ToolHive URL registered", "success");
+      toast.show("URL ToolHive terdaftar", "success");
     } catch (error) {
-      toast.show(`Could not register ToolHive URL: ${readErrorMessage(error)}`, "error");
+      toast.show(`Gagal mendaftarkan URL ToolHive: ${readErrorMessage(error)}`, "error");
     } finally {
       setIsMutating(false);
     }
   };
 
   const handleWorkloadAction = async (action: "stop" | "restart" | "delete", name: string) => {
-    if (action === "delete" && !window.confirm(`Delete ToolHive workload ${name}? This stops and removes the ToolHive workload, not just the OpenBench reference.`)) {
+    const actionLabels = { stop: "penghentian", restart: "mulai ulang", delete: "penghapusan" } as const;
+    if (action === "delete" && !window.confirm(`Hapus workload ToolHive ${name}? Tindakan ini menghentikan dan menghapus workload ToolHive, bukan hanya referensinya di OpenBench.`)) {
       return;
     }
     setIsMutating(true);
@@ -432,9 +434,9 @@ function ToolHiveSection({
       if (action === "restart") await restartToolHiveWorkload(name);
       if (action === "delete") await deleteToolHiveWorkload(name);
       await load();
-      toast.show(`ToolHive workload ${action} request sent`, "success");
+      toast.show(`Permintaan ${actionLabels[action]} workload ToolHive terkirim`, "success");
     } catch (error) {
-      toast.show(`ToolHive ${action} failed: ${readErrorMessage(error)}`, "error");
+      toast.show(`Gagal ${actionLabels[action]} workload ToolHive: ${readErrorMessage(error)}`, "error");
     } finally {
       setIsMutating(false);
     }
@@ -455,15 +457,15 @@ function ToolHiveSection({
           <p>
             {status?.available
               ? `${status.version ?? "ToolHive"} via ${toolHiveModeLabel(status)}`
-              : "Use ToolHive UI servers in OpenBench"}
+              : "Gunakan server ToolHive UI di OpenBench"}
           </p>
         </div>
         <button type="button" className="mcp-btn" onClick={() => void load()} disabled={isLoading}>
-          Refresh running servers
+          Segarkan Server Berjalan
         </button>
       </div>
 
-      {isLoading && <div className="mcp-state">Checking ToolHive...</div>}
+      {isLoading && <div className="mcp-state">Memeriksa ToolHive...</div>}
       {!isLoading && error && (
         <div className="mcp-state mcp-state--error" role="alert">
           {error}
@@ -471,44 +473,45 @@ function ToolHiveSection({
       )}
       {!isLoading && status && !status.available && (
         <div className="mcp-warning">
-          {status.setupHint || "Install ToolHive, verify with thv version, then start the local API with thv serve."}
+          {status.setupHint || "Pasang ToolHive, verifikasi dengan thv version, lalu jalankan API lokal dengan thv serve."}
         </div>
       )}
       {!isLoading && status?.available && !status.apiAvailable && (
         <div className="mcp-warning">
-          ToolHive API is not running. OpenBench can still import running servers through the
-          {status.uiCliDetected ? " ToolHive UI bundled CLI" : " ToolHive CLI"}, but registry browsing and local controls need <code>thv serve</code>.
+          API ToolHive tidak berjalan. OpenBench tetap dapat mengimpor server berjalan melalui
+          {status.uiCliDetected ? " CLI bawaan ToolHive UI" : " CLI ToolHive"}, tetapi penelusuran registry dan kontrol lokal memerlukan <code>thv serve</code>.
         </div>
       )}
 
       <div className="mcp-warning mcp-toolhive-companion">
-        <strong>Manage servers in ToolHive UI</strong>
+        <strong>Kelola server di ToolHive UI</strong>
         <p>
-          Start, configure, and inspect MCP servers in the ToolHive desktop app. Then refresh here
-          and import the running server into OpenBench for tool discovery and chat use.
+          Mulai, konfigurasikan, dan periksa server MCP di aplikasi desktop ToolHive. Kemudian
+          segarkan di sini dan impor server yang berjalan ke OpenBench untuk penemuan alat dan
+          penggunaan chat.
         </p>
         <div className="mcp-links">
           <a href="https://docs.stacklok.com/toolhive/guides-ui/" target="_blank" rel="noreferrer">
-            ToolHive UI guide
+            Panduan ToolHive UI
           </a>
           <a href="https://docs.stacklok.com/toolhive/guides-ui/client-configuration" target="_blank" rel="noreferrer">
-            Copy MCP server URL
+            Salin URL server MCP
           </a>
         </div>
-        {status?.cliPath && <code className="mcp-inline-code">Detected CLI: {status.cliPath}</code>}
+        {status?.cliPath && <code className="mcp-inline-code">CLI terdeteksi: {status.cliPath}</code>}
       </div>
 
       <div className="mcp-config-list">
-        <h3>Running ToolHive servers</h3>
+        <h3>Server ToolHive Berjalan</h3>
         {workloads.length === 0 ? (
-          <div className="mcp-state">No running ToolHive MCP servers found. Start one in ToolHive UI, then refresh.</div>
+          <div className="mcp-state">Tidak ada server MCP ToolHive yang berjalan. Mulai lewat ToolHive UI, lalu segarkan.</div>
         ) : (
           <div className="mcp-catalog-list">
             {workloads.map((workload) => (
               <div key={workload.name} className="mcp-catalog-row">
                 <div>
                   <strong>{workload.name}</strong>
-                  <span>{workload.url || "No proxy URL discovered"}</span>
+                  <span>{workload.url || "URL proxy tidak ditemukan"}</span>
                   <div className="mcp-source-line">
                     <span className="mcp-pill">{workload.transport || "unknown"}</span>
                     <span className="mcp-pill">{workload.status}</span>
@@ -516,7 +519,7 @@ function ToolHiveSection({
                 </div>
                 <div className="mcp-catalog-row__actions">
                   <button type="button" className="mcp-btn" onClick={() => void handleImportWorkload(workload.name)} disabled={isMutating || !workload.url}>
-                    Import into OpenBench
+                    Impor ke OpenBench
                   </button>
                 </div>
               </div>
@@ -527,68 +530,68 @@ function ToolHiveSection({
 
       <div className="mcp-detail-grid mcp-detail-grid--forms">
         <label className="mcp-field">
-          <span>Copied ToolHive MCP URL</span>
+          <span>URL MCP ToolHive yang disalin</span>
           <input value={directUrl} onChange={(event) => setDirectUrl(event.target.value)} placeholder="http://127.0.0.1:19767/mcp" />
         </label>
         <label className="mcp-field">
-          <span>Server name</span>
+          <span>Nama server</span>
           <input value={directName} onChange={(event) => setDirectName(event.target.value)} />
         </label>
         <button type="button" className="mcp-btn" onClick={() => void handleRegisterUrl()} disabled={isMutating || !directUrl.trim()}>
-          Register copied URL
+          Daftarkan URL Tersalin
         </button>
       </div>
 
       <details className="mcp-advanced-controls">
-        <summary>Advanced local controls</summary>
+        <summary>Kontrol lokal lanjutan</summary>
         <div className="mcp-advanced-controls__body">
           <div className="mcp-detail-grid mcp-detail-grid--forms">
             <label className="mcp-field">
-              <span>Registry server</span>
+              <span>Server registry</span>
               <input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="toolhive-doc-mcp" />
             </label>
             <label className="mcp-field">
-              <span>Workload name</span>
-              <input value={workloadName} onChange={(event) => setWorkloadName(event.target.value)} placeholder="Optional" />
+              <span>Nama workload</span>
+              <input value={workloadName} onChange={(event) => setWorkloadName(event.target.value)} placeholder="Opsional" />
             </label>
             <button type="button" className="mcp-btn mcp-btn--primary" onClick={() => void handleStart(target, workloadName)} disabled={isMutating || !target.trim()}>
-              Start registry server
+              Mulai Server Registry
             </button>
           </div>
 
           <div className="mcp-detail-grid mcp-detail-grid--forms">
             <label className="mcp-field">
-              <span>Remote MCP URL for ToolHive to proxy</span>
+              <span>URL MCP remote untuk diproksikan ToolHive</span>
               <input value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} placeholder="https://example.com/mcp" />
             </label>
             <label className="mcp-toggle mcp-toggle--field">
               <input type="checkbox" checked={allowRemote} onChange={() => setAllowRemote((current) => !current)} />
-              <span>User approved remote URL</span>
+              <span>URL remote disetujui pengguna</span>
             </label>
             <button type="button" className="mcp-btn" onClick={() => void handleStart(remoteUrl, workloadName, allowRemote)} disabled={isMutating || !remoteUrl.trim()}>
-              Start remote proxy
+              Mulai Proxy Remote
             </button>
           </div>
 
           {workloads.length > 0 && (
             <div className="mcp-config-list">
-              <h3>Workload controls</h3>
+              <h3>Kontrol Workload</h3>
               <div className="mcp-catalog-list">
                 {workloads.map((workload) => (
                   <div key={workload.name} className="mcp-catalog-row">
                     <div>
                       <strong>{workload.name}</strong>
-                      <span>{workload.url || "No proxy URL discovered"}</span>
+                      <span>{workload.url || "URL proxy tidak ditemukan"}</span>
                     </div>
                     <div className="mcp-catalog-row__actions">
                       <button type="button" className="mcp-btn" onClick={() => void handleWorkloadAction("restart", workload.name)} disabled={isMutating}>
-                        Restart
+                        Mulai Ulang
                       </button>
                       <button type="button" className="mcp-btn" onClick={() => void handleWorkloadAction("stop", workload.name)} disabled={isMutating}>
-                        Stop
+                        Hentikan
                       </button>
                       <button type="button" className="mcp-btn" onClick={() => void handleWorkloadAction("delete", workload.name)} disabled={isMutating}>
-                        Delete
+                        Hapus
                       </button>
                     </div>
                   </div>
@@ -598,13 +601,13 @@ function ToolHiveSection({
           )}
 
           <div className="mcp-config-list">
-            <h3>ToolHive registry</h3>
+            <h3>Registry ToolHive</h3>
             <label className="mcp-search">
-              <span>Search ToolHive registry</span>
-              <input value={query} type="search" placeholder="Search registry servers" onChange={(event) => setQuery(event.target.value)} />
+              <span>Cari registry ToolHive</span>
+              <input value={query} type="search" placeholder="Cari server registry" onChange={(event) => setQuery(event.target.value)} />
             </label>
             {visibleRegistry.length === 0 ? (
-              <div className="mcp-state">No registry servers loaded. Start thv serve to browse the ToolHive registry.</div>
+              <div className="mcp-state">Belum ada server registry yang dimuat. Jalankan thv serve untuk menelusuri registry ToolHive.</div>
             ) : (
               <div className="mcp-catalog-list">
                 {visibleRegistry.map((server) => (
@@ -615,12 +618,12 @@ function ToolHiveSection({
                       <div className="mcp-source-line">
                         <span className="mcp-pill">{server.transport || "transport"}</span>
                         {server.tier && <span className="mcp-pill">{server.tier}</span>}
-                        {server.tools.length > 0 && <span>{server.tools.length} tools listed</span>}
+                        {server.tools.length > 0 && <span>{server.tools.length} alat terdaftar</span>}
                       </div>
                     </div>
                     <div className="mcp-catalog-row__actions">
                       <button type="button" className="mcp-btn" onClick={() => void handleStart(server.name)} disabled={isMutating}>
-                        Start
+                        Mulai
                       </button>
                     </div>
                   </div>
@@ -642,7 +645,7 @@ function ToolList({
   onToggleTool: (server: RegisteredMCPServer, tool: MCPDiscoveredTool) => void;
 }) {
   if (server.tools.length === 0) {
-    return <div className="mcp-state">Load tools to discover what this server exposes.</div>;
+    return <div className="mcp-state">Muat alat untuk melihat apa saja yang disediakan server ini.</div>;
   }
 
   return (
@@ -654,13 +657,13 @@ function ToolList({
               type="checkbox"
               checked={tool.enabled}
               onChange={() => onToggleTool(server, tool)}
-              aria-label={`${tool.enabled ? "Disable" : "Enable"} ${tool.name}`}
+              aria-label={`${tool.enabled ? "Nonaktifkan" : "Aktifkan"} ${tool.name}`}
             />
-            <span>{tool.enabled ? "Enabled" : "Disabled"}</span>
+            <span>{tool.enabled ? "Aktif" : "Nonaktif"}</span>
           </label>
           <div>
             <strong>{tool.name}</strong>
-            <p>{tool.description || "No description provided."}</p>
+            <p>{tool.description || "Tanpa deskripsi."}</p>
             {tool.loaded && (
               <code>{tool.registeredToolName ?? tool.registered_tool_name ?? tool.namespacedName}</code>
             )}
@@ -699,26 +702,26 @@ function ServerCard({
           </div>
           <div className="mcp-card__title">
             <h3>{server.name}</h3>
-            <p>{server.enabledToolsCount} of {server.toolsCount} tools enabled</p>
+            <p>{server.enabledToolsCount} dari {server.toolsCount} alat aktif</p>
           </div>
         </div>
         <p className="mcp-card__description">
-          {server.error || (server.toolsCount ? "Tools discovered and ready for chat." : "Registered. Load tools when you are ready to start discovery.")}
+          {server.error || (server.toolsCount ? "Alat telah ditemukan dan siap digunakan di chat." : "Terdaftar. Muat alat saat Anda siap memulai penemuan.")}
         </p>
       </button>
       <div className="mcp-card__actions">
         <button type="button" className="mcp-btn" onClick={() => onToggle(server)}>
-          {server.enabled ? "Disable" : "Enable"}
+          {server.enabled ? "Nonaktifkan" : "Aktifkan"}
         </button>
         <button type="button" className="mcp-btn" onClick={() => onDiscover(server)} disabled={!server.enabled}>
-          Load tools
+          Muat Alat
         </button>
         <button type="button" className="mcp-btn" onClick={() => onOpen(server)}>
-          Details
+          Rincian
         </button>
         {!(server.isManaged ?? server.is_managed) && (
           <button type="button" className="mcp-btn" onClick={() => onRemove(server)}>
-            Remove
+            Hapus
           </button>
         )}
       </div>
@@ -745,16 +748,16 @@ function DetailsDialog({
         <div className="mcp-detail-grid">
           <span>Transport</span>
           <strong>{server.transport}</strong>
-          <span>Provider</span>
+          <span>Penyedia</span>
           <strong>{providerLabel(server)}</strong>
           <span>Namespace</span>
           <strong>{server.serverNamespace ?? server.server_namespace ?? server.name}</strong>
           <span>Status</span>
           <strong>{server.enabled ? server.status : "disabled"}</strong>
-          <span>Tools</span>
-          <strong>{server.enabledToolsCount} enabled / {server.toolsCount} discovered</strong>
-          <span>Last discovery</span>
-          <strong>{server.lastDiscoveredAt || "Never"}</strong>
+          <span>Alat</span>
+          <strong>{server.enabledToolsCount} aktif / {server.toolsCount} ditemukan</strong>
+          <span>Penemuan terakhir</span>
+          <strong>{server.lastDiscoveredAt || "Belum pernah"}</strong>
         </div>
         {server.error && (
           <div className="mcp-state mcp-state--error" role="alert">
@@ -762,12 +765,12 @@ function DetailsDialog({
           </div>
         )}
         <div className="mcp-config-list">
-          <h3>Server configuration</h3>
+          <h3>Konfigurasi Server</h3>
           <ConfigPreview config={server.config ?? server.displayConfig} />
         </div>
         {serverSecrets(server).length > 0 && (
           <div className="mcp-config-list">
-            <h3>Managed env</h3>
+            <h3>Env Terkelola</h3>
             <div className="mcp-tool-list">
               {serverSecrets(server).map((secret) => {
                 const key = secret.secretKey ?? secret.secret_key ?? secret.envKey ?? secret.env_key ?? secret.key;
@@ -778,8 +781,8 @@ function DetailsDialog({
                     </span>
                     <div>
                       <strong>{key}</strong>
-                      <p>{secret.source === "managed" ? "Encrypted and injected at runtime" : "Local environment fallback"}</p>
-                      <code>{secret.configured ? "***REDACTED***" : "missing"}</code>
+                      <p>{secret.source === "managed" ? "Dienkripsi dan disuntikkan saat runtime" : "Cadangan environment lokal"}</p>
+                      <code>{secret.configured ? "***REDACTED***" : "belum diatur"}</code>
                     </div>
                   </div>
                 );
@@ -788,18 +791,18 @@ function DetailsDialog({
           </div>
         )}
         <div className="mcp-config-list">
-          <h3>Tools</h3>
+          <h3>Alat</h3>
           <ToolList server={server} onToggleTool={onToggleTool} />
         </div>
         <div className="mcp-dialog__actions">
           <button type="button" className="mcp-btn" onClick={onClose}>
-            Close
+            Tutup
           </button>
           <button type="button" className="mcp-btn" onClick={() => onToggleServer(server)}>
-            {server.enabled ? "Disable server" : "Enable server"}
+            {server.enabled ? "Nonaktifkan Server" : "Aktifkan Server"}
           </button>
           <button type="button" className="mcp-btn mcp-btn--primary" onClick={() => onDiscover(server)} disabled={!server.enabled}>
-            Load tools
+            Muat Alat
           </button>
         </div>
       </div>
@@ -807,7 +810,9 @@ function DetailsDialog({
   );
 }
 
-export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+/** Inline MCP catalog (formerly a full-screen modal) — rendered as the body
+ * of the "Server MCP" admin page. Import/details remain nested modals. */
+export function McpCatalog() {
   const toast = useToast();
   const [data, setData] = useState<MCPRegistryPayload>({ servers: [] });
   const [filters, setFilters] = useState<RegistryFilters>(DEFAULT_FILTERS);
@@ -829,8 +834,8 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
   }, []);
 
   useEffect(() => {
-    if (open) void load();
-  }, [load, open]);
+    void load();
+  }, [load]);
 
   const visibleServers = useMemo(() => filterServers(data.servers, filters), [data.servers, filters]);
 
@@ -845,7 +850,7 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
     try {
       setDetails(await getServer(server.id));
     } catch (error) {
-      toast.show(`Could not load server details: ${readErrorMessage(error)}`, "error");
+      toast.show(`Gagal memuat rincian server: ${readErrorMessage(error)}`, "error");
     }
   };
 
@@ -853,9 +858,9 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
     try {
       const result = await discoverServer(server.id);
       replaceServer(result.server);
-      toast.show(result.reload?.error ? `Chat runtime registration failed: ${result.reload.error}` : "MCP tools loaded", result.reload?.error ? "error" : "success");
+      toast.show(result.reload?.error ? `Registrasi runtime chat gagal: ${result.reload.error}` : "Alat MCP dimuat", result.reload?.error ? "error" : "success");
     } catch (error) {
-      toast.show(`Tool discovery failed: ${readErrorMessage(error)}`, "error");
+      toast.show(`Penemuan alat gagal: ${readErrorMessage(error)}`, "error");
       await load();
     }
   };
@@ -864,9 +869,9 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
     try {
       const result = await toggleServer(server.id, { enabled: !server.enabled });
       replaceServer(result.server);
-      toast.show(result.server.enabled ? "MCP server enabled" : "MCP server disabled", "success");
+      toast.show(result.server.enabled ? "Server MCP diaktifkan" : "Server MCP dinonaktifkan", "success");
     } catch (error) {
-      toast.show(`Could not update server: ${readErrorMessage(error)}`, "error");
+      toast.show(`Gagal memperbarui server: ${readErrorMessage(error)}`, "error");
     }
   };
 
@@ -874,9 +879,9 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
     try {
       const result = await toggleTool(server.id, tool.name, { enabled: !tool.enabled });
       replaceServer(result.server);
-      toast.show(result.reload?.error ? `Chat runtime registration failed: ${result.reload.error}` : "MCP tool updated", result.reload?.error ? "error" : "success");
+      toast.show(result.reload?.error ? `Registrasi runtime chat gagal: ${result.reload.error}` : "Alat MCP diperbarui", result.reload?.error ? "error" : "success");
     } catch (error) {
-      toast.show(`Could not update tool: ${readErrorMessage(error)}`, "error");
+      toast.show(`Gagal memperbarui alat: ${readErrorMessage(error)}`, "error");
     }
   };
 
@@ -885,101 +890,97 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
       await removeServer(server.id);
       setData((current) => ({ servers: current.servers.filter((item) => item.id !== server.id) }));
       setDetails((current) => (current?.id === server.id ? null : current));
-      toast.show("MCP server removed", "success");
+      toast.show("Server MCP dihapus", "success");
     } catch (error) {
-      toast.show(`Could not remove server: ${readErrorMessage(error)}`, "error");
+      toast.show(`Gagal menghapus server: ${readErrorMessage(error)}`, "error");
     }
   };
 
-  if (!open) return null;
-
   return (
-    <Dialog title="MCP Servers" onClose={onClose}>
-      <div className="mcp-catalog">
-        <ToolHiveSection onImported={(payload) => setData(payload)} />
-        <section className="mcp-section">
-          <div className="mcp-section__header">
-            <div>
-              <h3>Registered servers</h3>
-              <p>{data.servers.length} configured</p>
-            </div>
-            <div className="mcp-section__actions">
-              <button type="button" className="mcp-btn" onClick={() => void load()} aria-label="Refresh MCP servers">
-                Refresh
-              </button>
-              <button type="button" className="mcp-btn mcp-btn--primary" onClick={() => setImportOpen(true)}>
-                Add servers
-              </button>
-            </div>
+    <div className="mcp-catalog mcp-catalog--page">
+      <ToolHiveSection onImported={(payload) => setData(payload)} />
+      <section className="mcp-section">
+        <div className="mcp-section__header">
+          <div>
+            <h3>Server Terdaftar</h3>
+            <p>{data.servers.length} terkonfigurasi</p>
           </div>
-          <div className="mcp-toolbar">
-            <label className="mcp-search">
-              <span>Search MCP servers</span>
-              <input
-                value={filters.query}
-                type="search"
-                placeholder="Search servers and tools"
-                onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
-              />
-            </label>
-            <select
-              aria-label="Filter by server status"
-              value={filters.status}
-              onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value as StatusFilter }))}
-            >
-              <option value="all">All status</option>
-              <option value="enabled">Enabled</option>
-              <option value="disabled">Disabled</option>
-              <option value="failed">Failed</option>
-            </select>
-            <select
-              aria-label="Sort servers"
-              value={filters.sort}
-              onChange={(event) => setFilters((current) => ({ ...current, sort: event.target.value as SortMode }))}
-            >
-              <option value="name">Name</option>
-              <option value="status">Status</option>
-              <option value="tools">Tools</option>
-            </select>
+          <div className="mcp-section__actions">
+            <button type="button" className="mcp-btn" onClick={() => void load()} aria-label="Segarkan server MCP">
+              Segarkan
+            </button>
+            <button type="button" className="mcp-btn mcp-btn--primary" onClick={() => setImportOpen(true)}>
+              Tambah Server
+            </button>
           </div>
+        </div>
+        <div className="mcp-toolbar">
+          <label className="mcp-search">
+            <span>Cari server MCP</span>
+            <input
+              value={filters.query}
+              type="search"
+              placeholder="Cari server dan alat"
+              onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+            />
+          </label>
+          <select
+            aria-label="Saring status server"
+            value={filters.status}
+            onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value as StatusFilter }))}
+          >
+            <option value="all">Semua Status</option>
+            <option value="enabled">Aktif</option>
+            <option value="disabled">Nonaktif</option>
+            <option value="failed">Gagal</option>
+          </select>
+          <select
+            aria-label="Urutkan server"
+            value={filters.sort}
+            onChange={(event) => setFilters((current) => ({ ...current, sort: event.target.value as SortMode }))}
+          >
+            <option value="name">Nama</option>
+            <option value="status">Status</option>
+            <option value="tools">Alat</option>
+          </select>
+        </div>
 
-          <div aria-live="polite">
-            {isLoading && <div className="mcp-state">Loading MCP servers...</div>}
-            {!isLoading && error && (
-              <div className="mcp-state mcp-state--error" role="alert">
-                {error}
-              </div>
-            )}
-            {!isLoading && !error && data.servers.length === 0 && (
-              <div className="mcp-state">Add a ToolHive workload, ToolHive URL, or standard mcpServers JSON config.</div>
-            )}
-            {!isLoading && !error && data.servers.length > 0 && visibleServers.length === 0 && (
-              <div className="mcp-state">No MCP servers match the current filters.</div>
-            )}
-          </div>
-
-          {visibleServers.length > 0 && (
-            <div className="mcp-grid">
-              {visibleServers.map((server) => (
-                <ServerCard
-                  key={server.id}
-                  server={server}
-                  onOpen={(server) => void handleOpenServer(server)}
-                  onDiscover={(server) => void handleDiscover(server)}
-                  onToggle={(server) => void handleToggleServer(server)}
-                  onRemove={(server) => void handleRemove(server)}
-                />
-              ))}
+        <div aria-live="polite">
+          {isLoading && <div className="mcp-state">Memuat server MCP...</div>}
+          {!isLoading && error && (
+            <div className="mcp-state mcp-state--error" role="alert">
+              {error}
             </div>
           )}
-        </section>
-      </div>
+          {!isLoading && !error && data.servers.length === 0 && (
+            <div className="mcp-state">Tambahkan workload ToolHive, URL ToolHive, atau konfigurasi JSON mcpServers standar.</div>
+          )}
+          {!isLoading && !error && data.servers.length > 0 && visibleServers.length === 0 && (
+            <div className="mcp-state">Tidak ada server MCP yang cocok dengan filter.</div>
+          )}
+        </div>
+
+        {visibleServers.length > 0 && (
+          <div className="mcp-grid">
+            {visibleServers.map((server) => (
+              <ServerCard
+                key={server.id}
+                server={server}
+                onOpen={(server) => void handleOpenServer(server)}
+                onDiscover={(server) => void handleDiscover(server)}
+                onToggle={(server) => void handleToggleServer(server)}
+                onRemove={(server) => void handleRemove(server)}
+              />
+            ))}
+          </div>
+        )}
+      </section>
       {importOpen && (
         <ImportDialog
           onClose={() => setImportOpen(false)}
           onImported={(payload) => {
             setData(payload);
-            toast.show("MCP servers registered", "success");
+            toast.show("Server MCP terdaftar", "success");
           }}
         />
       )}
@@ -992,6 +993,6 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
           onToggleTool={(server, tool) => void handleToggleTool(server, tool)}
         />
       )}
-    </Dialog>
+    </div>
   );
 }

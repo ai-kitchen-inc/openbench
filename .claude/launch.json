@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "openbench.cli.main", "demo", "run", "controlled-source-chat"],
       "port": 5173
+    },
+    {
+      "name": "csc-frontend",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "examples/controlled-source-chat/frontend", "dev"],
+      "port": 5173
     }
   ]
 }

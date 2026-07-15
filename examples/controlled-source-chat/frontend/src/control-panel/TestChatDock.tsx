@@ -1,13 +1,14 @@
 import { ChatPanel, ChatProvider } from "@openbench/chat-ui";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { transcribeAudio } from "../api";
+import { XIcon } from "../brand/icons";
 import { buildChatConfig } from "../chat/config";
 import { ErrorBoundary } from "../ErrorBoundary";
 
 const TEST_SUGGESTIONS = [
-  "Summarize what the sources cover",
-  "Ask something only a source can answer",
-  "Ask something off-source to verify the refusal",
+  "Ringkas cakupan seluruh sumber",
+  "Tanyakan sesuatu yang hanya dijawab oleh sumber",
+  "Tanyakan hal di luar sumber untuk menguji penolakan",
 ];
 
 const MIN_WIDTH = 320;
@@ -32,7 +33,7 @@ function loadWidth(): number {
 
 /** In-flow docked panel (not a modal) where the admin talks to the exact chat
  * guests get — same curated grounding, same disabled composer attachments.
- * Sits beside the control panel so settings stay editable while it is open,
+ * Sits beside the admin pages so settings stay editable while it is open,
  * and its width is drag-resizable (persisted per browser). */
 export function TestChatDock({ onClose }: { onClose: () => void }) {
   const chatConfig = useMemo(buildChatConfig, []);
@@ -78,14 +79,14 @@ export function TestChatDock({ onClose }: { onClose: () => void }) {
   return (
     <aside
       className="test-chat-dock"
-      aria-label="Test chat"
+      aria-label="Uji coba chat"
       style={{ flex: `0 0 ${width}px`, width: `${width}px` }}
     >
       <div
         className="test-chat-dock__resizer"
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize test chat"
+        aria-label="Ubah lebar uji coba chat"
         tabIndex={0}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -93,31 +94,19 @@ export function TestChatDock({ onClose }: { onClose: () => void }) {
         onKeyDown={handleKeyDown}
       />
       <div className="drawer__header">
-        <div className="drawer__title">Test chat</div>
-        <button type="button" className="drawer__close" onClick={onClose} aria-label="Close">
-          <svg
-            aria-hidden="true"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
+        <div className="drawer__title">Uji Coba Chat</div>
+        <button type="button" className="drawer__close" onClick={onClose} aria-label="Tutup">
+          <XIcon size={16} />
         </button>
       </div>
       <div className="drawer__body drawer__body--chat">
-        <ErrorBoundary region="the test chat">
+        <ErrorBoundary region="uji coba chat">
           <ChatProvider config={chatConfig}>
             <ChatPanel
-              title="Test chat"
-              greeting="Test the curated knowledge base"
+              title="Uji Coba Chat"
+              greeting="Uji basis pengetahuan yang telah dikurasi"
               suggestions={TEST_SUGGESTIONS}
-              placeholder="Ask exactly what a user would ask..."
+              placeholder="Tanyakan persis seperti yang akan ditanyakan pengguna..."
               allowAttachments={false}
               onTranscribe={transcribeAudio}
             />

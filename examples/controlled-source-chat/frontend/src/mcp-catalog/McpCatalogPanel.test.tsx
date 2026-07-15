@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../Toast";
-import { McpCatalogPanel } from "./McpCatalogPanel";
+import { McpCatalog } from "./McpCatalogPanel";
 import type { MCPRegistryPayload, RegisteredMCPServer } from "./types";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -160,12 +160,12 @@ function toolHiveResponse(url: string): Response | null {
 function renderPanel() {
   return render(
     <ToastProvider durationMs={0}>
-      <McpCatalogPanel open={true} onClose={() => undefined} />
+      <McpCatalog />
     </ToastProvider>,
   );
 }
 
-describe("McpCatalogPanel", () => {
+describe("McpCatalog", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -179,11 +179,11 @@ describe("McpCatalogPanel", () => {
     renderPanel();
 
     expect(await screen.findByText("playwright")).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("Search MCP servers"), "stdio");
+    await userEvent.type(screen.getByLabelText("Cari server MCP"), "stdio");
     expect(screen.getByText("playwright")).toBeInTheDocument();
-    await userEvent.clear(screen.getByLabelText("Search MCP servers"));
-    await userEvent.type(screen.getByLabelText("Search MCP servers"), "filesystem");
-    expect(screen.getByText("No MCP servers match the current filters.")).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText("Cari server MCP"));
+    await userEvent.type(screen.getByLabelText("Cari server MCP"), "filesystem");
+    expect(screen.getByText("Tidak ada server MCP yang cocok dengan filter.")).toBeInTheDocument();
   });
 
   it("renders internal managed MCP tools in the catalog", async () => {
@@ -196,11 +196,11 @@ describe("McpCatalogPanel", () => {
     renderPanel();
 
     expect(await screen.findByText("openbench")).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("Search MCP servers"), "internal");
+    await userEvent.type(screen.getByLabelText("Cari server MCP"), "internal");
     expect(screen.getByText("openbench")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /openbench/ }));
     expect(screen.getByText("openbench_filter_records")).toBeInTheDocument();
-    expect(within(screen.getByRole("dialog", { name: "openbench" })).queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("dialog", { name: "openbench" })).queryByRole("button", { name: "Hapus" })).not.toBeInTheDocument();
   });
 
   it("imports pasted mcpServers JSON and shows validation errors", async () => {
@@ -227,31 +227,31 @@ describe("McpCatalogPanel", () => {
 
     renderPanel();
 
-    await screen.findByText("Add a ToolHive workload, ToolHive URL, or standard mcpServers JSON config.");
-    await userEvent.click(screen.getByRole("button", { name: "Add servers" }));
-    const dialog = screen.getByRole("dialog", { name: "Add MCP servers" });
-    expect((screen.getByLabelText("MCP JSON config") as HTMLTextAreaElement).value).not.toContain("HF_TOKEN");
-    expect(within(dialog).getByText("Docker env")).toBeInTheDocument();
-    expect(within(dialog).getByText(/encrypted before saving/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("MCP JSON config"), { target: { value: '{"bad":{}}' } });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Register servers" }));
+    await screen.findByText("Tambahkan workload ToolHive, URL ToolHive, atau konfigurasi JSON mcpServers standar.");
+    await userEvent.click(screen.getByRole("button", { name: "Tambah Server" }));
+    const dialog = screen.getByRole("dialog", { name: "Tambah Server MCP" });
+    expect((screen.getByLabelText("Konfigurasi JSON MCP") as HTMLTextAreaElement).value).not.toContain("HF_TOKEN");
+    expect(within(dialog).getByText("Env Docker")).toBeInTheDocument();
+    expect(within(dialog).getByText(/dienkripsi sebelum disimpan/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Konfigurasi JSON MCP"), { target: { value: '{"bad":{}}' } });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Daftarkan Server" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("mcpServers");
-    fireEvent.change(screen.getByLabelText("MCP JSON config"), {
+    fireEvent.change(screen.getByLabelText("Konfigurasi JSON MCP"), {
       target: {
         value:
           '{"mcpServers":{"playwright":{"command":"docker","env":{"PLAYWRIGHT_TOKEN":"pasted-token"}}}}',
       },
     });
-    await userEvent.type(within(dialog).getByLabelText("Key"), "REMOVED_TOKEN");
-    await userEvent.type(within(dialog).getByLabelText("Value"), "removed-token");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Add env" }));
-    const keyInputs = within(dialog).getAllByLabelText("Key");
-    const valueInputs = within(dialog).getAllByLabelText("Value");
+    await userEvent.type(within(dialog).getByLabelText("Kunci"), "REMOVED_TOKEN");
+    await userEvent.type(within(dialog).getByLabelText("Nilai"), "removed-token");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Tambah Env" }));
+    const keyInputs = within(dialog).getAllByLabelText("Kunci");
+    const valueInputs = within(dialog).getAllByLabelText("Nilai");
     await userEvent.type(keyInputs[1], "PLAYWRIGHT_TOKEN");
     await userEvent.type(valueInputs[1], "typed-token");
-    await userEvent.click(within(dialog).getAllByRole("button", { name: "Remove" })[0]);
-    await userEvent.click(within(dialog).getByRole("button", { name: "Register servers" }));
+    await userEvent.click(within(dialog).getAllByRole("button", { name: "Hapus" })[0]);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Daftarkan Server" }));
 
     expect(await screen.findByText("playwright")).toBeInTheDocument();
   });
@@ -272,12 +272,12 @@ describe("McpCatalogPanel", () => {
 
     renderPanel();
 
-    await userEvent.click(await screen.findByRole("button", { name: "Load tools" }));
-    expect(await screen.findByText("2 of 2 tools enabled")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Details" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Muat Alat" }));
+    expect(await screen.findByText("2 dari 2 alat aktif")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Rincian" }));
     expect(await screen.findByText("browser_click")).toBeInTheDocument();
-    expect(screen.getByText("selector: string required")).toBeInTheDocument();
-    expect(screen.getByText("Encrypted and injected at runtime")).toBeInTheDocument();
+    expect(screen.getByText("selector: string wajib")).toBeInTheDocument();
+    expect(screen.getByText("Dienkripsi dan disuntikkan saat runtime")).toBeInTheDocument();
     expect(screen.getByText("***REDACTED***")).toBeInTheDocument();
   });
 
@@ -311,10 +311,10 @@ describe("McpCatalogPanel", () => {
     renderPanel();
 
     await userEvent.click(await screen.findByRole("button", { name: /playwright/ }));
-    await userEvent.click(within(screen.getByRole("dialog", { name: "playwright" })).getByLabelText("Disable browser_click"));
-    expect(await screen.findByText("1 enabled / 2 discovered")).toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole("dialog", { name: "playwright" })).getByLabelText("Nonaktifkan browser_click"));
+    expect(await screen.findByText("1 aktif / 2 ditemukan")).toBeInTheDocument();
 
-    await userEvent.click(within(screen.getByRole("dialog", { name: "playwright" })).getByRole("button", { name: "Disable server" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "playwright" })).getByRole("button", { name: "Nonaktifkan Server" }));
     await waitFor(() => expect(screen.getAllByText("disabled").length).toBeGreaterThan(0));
   });
 
@@ -325,7 +325,7 @@ describe("McpCatalogPanel", () => {
     }));
 
     renderPanel();
-    await userEvent.click(await screen.findByRole("button", { name: "Add servers" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Tambah Server" }));
 
     expect(screen.queryByText("Catalog URL")).not.toBeInTheDocument();
     expect(screen.queryByText("OCI Reference")).not.toBeInTheDocument();
@@ -358,9 +358,9 @@ describe("McpCatalogPanel", () => {
 
     renderPanel();
 
-    expect(await screen.findByText("Manage servers in ToolHive UI")).toBeInTheDocument();
-    expect(await screen.findByText((_content, element) => element?.textContent === "Detected CLI: thv")).toBeInTheDocument();
-    const advanced = screen.getByText("Advanced local controls").closest("details");
+    expect(await screen.findByText("Kelola server di ToolHive UI")).toBeInTheDocument();
+    expect(await screen.findByText((_content, element) => element?.textContent === "CLI terdeteksi: thv")).toBeInTheDocument();
+    const advanced = screen.getByText("Kontrol lokal lanjutan").closest("details");
     expect(advanced).not.toBeNull();
     expect(advanced).not.toHaveAttribute("open");
   });
@@ -395,7 +395,7 @@ describe("McpCatalogPanel", () => {
     renderPanel();
 
     await screen.findAllByText("toolhive-doc-mcp");
-    await userEvent.click(screen.getByRole("button", { name: "Import into OpenBench" }));
+    await userEvent.click(screen.getByRole("button", { name: "Impor ke OpenBench" }));
     await waitFor(() => expect(screen.getAllByText("toolhive-doc-mcp").length).toBeGreaterThan(1));
   });
 
@@ -420,9 +420,9 @@ describe("McpCatalogPanel", () => {
 
     renderPanel();
 
-    await userEvent.click(await screen.findByText("Advanced local controls"));
+    await userEvent.click(await screen.findByText("Kontrol lokal lanjutan"));
     expect(await screen.findByText("ToolHive Docs")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await userEvent.click(screen.getByRole("button", { name: "Mulai" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/toolhive/workloads", expect.objectContaining({ method: "POST" })));
   });
 
@@ -449,11 +449,11 @@ describe("McpCatalogPanel", () => {
 
     renderPanel();
 
-    await screen.findByText("Manage servers in ToolHive UI");
-    await userEvent.clear(screen.getByLabelText("Server name"));
-    await userEvent.type(screen.getByLabelText("Server name"), "awsdocs");
-    await userEvent.type(screen.getByLabelText("Copied ToolHive MCP URL"), "http://127.0.0.1:19767/mcp");
-    await userEvent.click(screen.getByRole("button", { name: "Register copied URL" }));
+    await screen.findByText("Kelola server di ToolHive UI");
+    await userEvent.clear(screen.getByLabelText("Nama server"));
+    await userEvent.type(screen.getByLabelText("Nama server"), "awsdocs");
+    await userEvent.type(screen.getByLabelText("URL MCP ToolHive yang disalin"), "http://127.0.0.1:19767/mcp");
+    await userEvent.click(screen.getByRole("button", { name: "Daftarkan URL Tersalin" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
