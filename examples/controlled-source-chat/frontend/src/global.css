@@ -1547,6 +1547,166 @@ body {
   color: var(--csc-text-2);
 }
 
+/* ── Chat surface branding (overrides @openbench/chat-ui defaults) ──
+   The chat header is a constant navy band with a gold rule in BOTH themes,
+   so the guest surface carries the institutional identity instead of
+   reading as an unbranded monochrome chat. */
+
+.chat-panel__header {
+  height: 52px;
+  min-height: 52px;
+  background: linear-gradient(90deg, var(--csc-navy-900), var(--csc-navy-800));
+  border-bottom: 2px solid var(--csc-gold-500);
+}
+
+[data-theme="dark"] .chat-panel__header {
+  background: linear-gradient(90deg, #0a1626, #13294b);
+}
+
+.chat-panel__title {
+  color: #f2f5fa;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.chat-panel__sidebar-toggle {
+  color: #c6d2e4;
+}
+
+.chat-panel__sidebar-toggle:hover,
+[data-theme="dark"] .chat-panel__sidebar-toggle:hover {
+  background: rgba(226, 234, 247, 0.12);
+  color: #ffffff;
+}
+
+.chat-panel__status {
+  color: #9dacc5;
+}
+
+/* Header action cluster sits on navy — restyle for dark background. */
+.chat-header-actions .panel-button {
+  background: transparent;
+  border-color: rgba(226, 234, 247, 0.3);
+  color: #e4eaf4;
+}
+
+.chat-header-actions .panel-button:hover:not(:disabled) {
+  background: rgba(226, 234, 247, 0.12);
+  border-color: rgba(226, 234, 247, 0.55);
+}
+
+.chat-header-actions .auth-user {
+  background: rgba(226, 234, 247, 0.1);
+  border-color: transparent;
+  color: #c6d2e4;
+}
+
+.chat-header-actions .theme-toggle,
+.chat-header-actions .auth-signout {
+  color: #c6d2e4;
+}
+
+.chat-header-actions .theme-toggle:hover,
+.chat-header-actions .auth-signout:hover {
+  background: rgba(226, 234, 247, 0.12);
+  color: #ffffff;
+}
+
+/* Test-chat dock already has its own titled header — hide the embedded
+   panel's second header so the dock doesn't stack two bars. */
+.drawer__body--chat .chat-panel__header {
+  display: none;
+}
+
+/* Welcome screen: branded emblem, gold rule under the greeting,
+   navy suggestion chips. */
+.chat-welcome__icon {
+  padding: 18px;
+  border-radius: 999px;
+  background: var(--csc-wash);
+  color: var(--csc-primary);
+  opacity: 1;
+}
+
+.chat-welcome__greeting {
+  color: var(--csc-text);
+}
+
+.chat-welcome__greeting::after {
+  content: "";
+  display: block;
+  width: 48px;
+  height: 3px;
+  margin: 14px auto 0;
+  border-radius: 2px;
+  background: var(--csc-gold-500);
+}
+
+.chat-welcome__suggestion {
+  border-color: rgba(27, 58, 107, 0.32);
+  color: var(--csc-primary);
+  font-weight: 550;
+}
+
+.chat-welcome__suggestion:hover,
+[data-theme="dark"] .chat-welcome__suggestion:hover {
+  background: var(--csc-wash);
+  border-color: var(--csc-primary);
+}
+
+[data-theme="dark"] .chat-welcome__suggestion {
+  border-color: rgba(110, 150, 216, 0.42);
+}
+
+/* Session sidebar: match the admin nav language — gold group labels,
+   navy wash + gold indicator on the active item. */
+.chat-sidebar {
+  background: var(--csc-bg);
+}
+
+.chat-sidebar__group-label {
+  color: var(--csc-gold-600);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.chat-sidebar__item:hover,
+[data-theme="dark"] .chat-sidebar__item:hover {
+  background: rgba(27, 58, 107, 0.07);
+}
+
+[data-theme="dark"] .chat-sidebar__item:hover {
+  background: rgba(226, 234, 247, 0.06);
+}
+
+.chat-sidebar__item--active,
+[data-theme="dark"] .chat-sidebar__item--active {
+  background: var(--csc-wash);
+  box-shadow: inset 3px 0 0 var(--csc-gold-500);
+}
+
+.chat-sidebar__new-btn:hover,
+[data-theme="dark"] .chat-sidebar__new-btn:hover {
+  background: var(--csc-wash);
+  color: var(--csc-primary);
+}
+
+/* Composer: navy focus ring, elevated input row. */
+.chat-input__row {
+  border-color: var(--csc-border-strong);
+  box-shadow: var(--csc-shadow-1);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.chat-input__row:focus-within {
+  border-color: var(--csc-primary);
+  box-shadow: 0 0 0 3px rgba(42, 78, 133, 0.14);
+}
+
+.chat-input__mic-btn:hover:not(:disabled) {
+  color: var(--csc-primary);
+}
+
 /* ── MCP catalog ── */
 
 .mcp-dialog {
