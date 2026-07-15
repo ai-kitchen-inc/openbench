@@ -532,12 +532,23 @@ body {
 }
 
 .login-form-side {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   flex: 1 1 48%;
   padding: 32px 24px;
+}
+
+.login-theme-toggle {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--csc-border);
+  background: var(--csc-surface);
 }
 
 .login-card {

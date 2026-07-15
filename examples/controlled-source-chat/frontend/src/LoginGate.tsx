@@ -3,6 +3,7 @@ import { login, type AuthUser } from "./api";
 import { BrandMark } from "./brand/BrandMark";
 import { CheckIcon } from "./brand/icons";
 import { APP_NAME, APP_TAGLINE, FOOTER_ATTRIBUTION } from "./i18n/id";
+import { ThemeIcon, useDarkMode } from "./theme";
 
 const VALUE_POINTS = [
   "Jawaban hanya bersumber dari basis pengetahuan resmi yang dikurasi",
@@ -11,6 +12,7 @@ const VALUE_POINTS = [
 ];
 
 export function LoginGate({ onLogin }: { onLogin: (user: AuthUser) => void }) {
+  const [dark, toggleDark] = useDarkMode();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +59,15 @@ export function LoginGate({ onLogin }: { onLogin: (user: AuthUser) => void }) {
         <div className="login-hero__footer">{FOOTER_ATTRIBUTION}</div>
       </aside>
       <div className="login-form-side">
+        <button
+          type="button"
+          className="theme-toggle login-theme-toggle"
+          onClick={toggleDark}
+          title={dark ? "Beralih ke mode terang" : "Beralih ke mode gelap"}
+          aria-label={dark ? "Beralih ke mode terang" : "Beralih ke mode gelap"}
+        >
+          <ThemeIcon dark={dark} />
+        </button>
         <form className="login-card" onSubmit={handleSubmit}>
           <div className="login-card__brand">
             <BrandMark size={40} />
