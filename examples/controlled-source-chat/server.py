@@ -32,6 +32,33 @@ sys.path.insert(0, str(_GENERAL_CHAT_SRC))
 # .env first so it wins over the setdefault() baseline below.
 load_dotenv(_EXAMPLE_ROOT / ".env")
 
+
+def _drop_unreachable_cloudsql_url() -> None:
+    """Local-dev guard for the Cloud SQL database URL.
+
+    The gitignored .env keeps ``GENERAL_CHAT_DATABASE_URL`` (a Cloud SQL unix
+    socket URL) as configuration for deploy.sh, but that socket only exists
+    inside Cloud Run. When the socket directory is absent — i.e. running
+    locally — drop the variable so the source store falls back to local file
+    storage instead of crashing the server on startup.
+    """
+    url = os.getenv("GENERAL_CHAT_DATABASE_URL", "")
+    marker = "/cloudsql/"
+    if marker not in url:
+        return
+    socket_dir = url[url.index(marker) :].split("&", 1)[0].split(" ", 1)[0]
+    if Path(socket_dir).exists():
+        return
+    logging.getLogger(__name__).warning(
+        "GENERAL_CHAT_DATABASE_URL points at Cloud SQL socket %s which does not "
+        "exist on this machine — ignoring it and using local file storage.",
+        socket_dir,
+    )
+    os.environ.pop("GENERAL_CHAT_DATABASE_URL", None)
+
+
+_drop_unreachable_cloudsql_url()
+
 # API-key fallback: reuse the sibling general-chat example's .env so this
 # demo runs without any manual `export GOOGLE_API_KEY=...`. Only the keys
 # listed here are imported — inheriting general-chat's full .env could
