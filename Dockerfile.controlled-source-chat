@@ -47,7 +47,7 @@ COPY . /app
 # controlled-source-chat imports the sibling general_chat package by path,
 # so both examples must be installed alongside the SDK.
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e .[google,chat,search,gcp,mcp,epub,media] && \
+    pip install --no-cache-dir -e .[google,chat,search,gcp,mcp,epub,media,output] && \
     pip install --no-cache-dir -e ./examples/general-chat && \
     pip install --no-cache-dir -e ./examples/controlled-source-chat
 
