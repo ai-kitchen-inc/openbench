@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import "@openbench/chat-ui/styles/chat-ui.css";
 import "@openbench/chat-ui/styles/bundle.css";
 import { fetchMe, logout, type AuthUser } from "./api";
-import { ControlPanel } from "./control-panel/ControlPanel";
+import { BrandMark } from "./brand/BrandMark";
+import { AdminShell } from "./control-panel/AdminShell";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { GuestChat } from "./guest/GuestChat";
 import { LoginGate } from "./LoginGate";
@@ -12,7 +13,7 @@ import "./global.css";
 export default function App() {
   return (
     <ToastProvider>
-      <ErrorBoundary region="the app">
+      <ErrorBoundary region="aplikasi">
         <AuthRoot />
       </ErrorBoundary>
     </ToastProvider>
@@ -43,7 +44,12 @@ function AuthRoot() {
   };
 
   if (isChecking) {
-    return <div className="app-loading">Loading...</div>;
+    return (
+      <div className="app-loading">
+        <BrandMark size={48} />
+        <span>Memuat aplikasi...</span>
+      </div>
+    );
   }
   if (!user) {
     return <LoginGate onLogin={setUser} />;
@@ -54,13 +60,13 @@ function AuthRoot() {
 function SignedInApp({ user, onSignOut }: { user: AuthUser; onSignOut: () => void }) {
   if (user.role === "admin") {
     return (
-      <ErrorBoundary region="the control panel">
-        <ControlPanel user={user} onSignOut={onSignOut} />
+      <ErrorBoundary region="panel admin">
+        <AdminShell user={user} onSignOut={onSignOut} />
       </ErrorBoundary>
     );
   }
   return (
-    <ErrorBoundary region="chat">
+    <ErrorBoundary region="percakapan">
       <GuestChat user={user} onSignOut={onSignOut} />
     </ErrorBoundary>
   );

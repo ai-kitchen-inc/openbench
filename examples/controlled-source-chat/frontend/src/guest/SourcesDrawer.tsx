@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiFetch, apiPath } from "../api";
+import { XIcon } from "../brand/icons";
 import { parseJsonResponse, readErrorMessage } from "../control-panel/sourcesApi";
 
 type ControlledSource = {
@@ -11,6 +12,16 @@ type ControlledSource = {
   textPreview?: string;
   textTruncated?: boolean;
 };
+
+function kindLabel(source: ControlledSource): string {
+  if (source.kind === "url") return "WEB";
+  if (source.kind === "text") return "TEKS";
+  if (source.kind === "spreadsheet") {
+    return source.name.toLowerCase().endsWith(".csv") ? "CSV" : "XLSX";
+  }
+  if (source.kind === "image") return "GAMBAR";
+  return source.kind.toUpperCase();
+}
 
 /** Read-only view of the curated sources — lets users verify the source
  * names the assistant cites without being able to change anything. */
@@ -45,39 +56,27 @@ export function SourcesDrawer({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <>
       <div className="drawer-overlay" onClick={onClose} aria-hidden="true" />
-      <aside className="drawer" role="dialog" aria-label="Knowledge base sources">
+      <aside className="drawer" role="dialog" aria-label="Sumber basis pengetahuan">
         <div className="drawer__header">
-          <div className="drawer__title">Sources</div>
-          <button type="button" className="drawer__close" onClick={onClose} aria-label="Close">
-            <svg
-              aria-hidden="true"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+          <div className="drawer__title">Sumber Pengetahuan</div>
+          <button type="button" className="drawer__close" onClick={onClose} aria-label="Tutup">
+            <XIcon size={16} />
           </button>
         </div>
         <div className="drawer__body">
           {isLoading ? (
-            <div className="guest-sources-empty">Loading sources...</div>
+            <div className="guest-sources-empty">Memuat sumber...</div>
           ) : error ? (
             <div className="guest-sources-empty">{error}</div>
           ) : sources.length === 0 ? (
             <div className="guest-sources-empty">
-              No sources are configured yet. Ask the administrator to add some.
+              Belum ada sumber yang dikonfigurasi. Hubungi administrator untuk menambahkannya.
             </div>
           ) : (
             sources.map((source) => (
               <div key={source.id} className="guest-source-item">
                 <div className="guest-source-item__head">
-                  <span className="source-row__badge">{source.kind.toUpperCase()}</span>
+                  <span className="source-row__badge">{kindLabel(source)}</span>
                   <span className="guest-source-item__name">{source.name}</span>
                 </div>
                 {source.url && (

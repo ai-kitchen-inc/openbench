@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { XIcon } from "./brand/icons";
 
 export type ToastKind = "info" | "success" | "error";
 
@@ -56,9 +57,9 @@ export function ToastProvider({ children, durationMs = DEFAULT_DURATION_MS }: { 
                 type="button"
                 className="toast__close"
                 onClick={() => dismiss(t.id)}
-                aria-label="Dismiss"
+                aria-label="Tutup notifikasi"
               >
-                ×
+                <XIcon size={14} />
               </button>
             </div>
           ))}
