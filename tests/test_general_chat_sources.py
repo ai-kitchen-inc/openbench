@@ -1787,16 +1787,9 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertTrue(agent._vlm_summary["enabled"])
         self.assertEqual(agent._vlm_summary["model"], "gemini-2.5-flash")
         self.assertIsNotNone(agent._vision_agent)
-        self.assertEqual(len(agent.tools), 4)
-        self.assertEqual(
-            set(agent._dashboard_skill_tools),
-            {
-                "aggregate_data",
-                "extract_metadata",
-                "generate_dashboard",
-                "load_dashboard_memory",
-            },
-        )
+        self.assertEqual(len(agent.tools), 0)
+        self.assertEqual(agent._dashboard_skill_tools, [])
+        self.assertIsNone(agent._skill_registry)
 
     def test_dashboard_revision_note_is_extracted_from_latest_user_goal(self):
         agent = BaseAgent(goal="test")

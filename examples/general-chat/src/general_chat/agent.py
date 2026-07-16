@@ -14,8 +14,7 @@ from openbench.chat import render_queue as shared_render_queue
 from openbench.core.abstractions import Tool
 from openbench.core.providers import ProviderConfig, ProviderType, get_provider_service
 from openbench.intelligence import BaseAgent, Persona
-from openbench.intelligence.base import Message, MessageRole
-from openbench.intelligence.skill_registry import SkillRegistry
+from openbench.intelligence.base import MessageRole
 from openbench.mcp.permissions import MCPPermissionSession, PermissionProvider
 
 _DEFAULT_MCP_APPROVED_TOOLS = (
@@ -32,7 +31,6 @@ _DASHBOARD_GENERATE_TOOL = "dashboard_generator.generate_dashboard"
 _AGGREGATE_TOOL_PREFIX = "aggregate_data."
 _PROVIDER_NAME = "gemini-general-chat"
 _VLM_PROVIDER_NAME = "general-chat-vlm"
-_DASHBOARD_SKILL_NAME = "dashboard-generator"
 _VEHICLE_PLATE_SKILL_NAME = "vehicle-plate-reading"
 _OLLAMA_VLM_DEFAULT_BASE_URL = "http://localhost:11434/v1"
 logger = logging.getLogger(__name__)
@@ -116,12 +114,6 @@ def _mcp_registry_root() -> Path | None:
     return Path(raw).expanduser().resolve()
 
 
-def _dashboard_skill_dir() -> Path:
-    import openbench
-
-    return Path(openbench.__file__).resolve().parent / "skills" / _DASHBOARD_SKILL_NAME
-
-
 _DASHBOARD_REVISION_KEYWORDS = (
     "revisi",
     "revision",
@@ -155,17 +147,6 @@ def _latest_dashboard_revision_note(agent: BaseAgent) -> str | None:
     return None
 
 
-def _wrap_dashboard_generate_tool(agent: BaseAgent, tool_fn: Any) -> Any:
-    def _generate_dashboard_with_revision_context(**params: Any) -> Any:
-        if not params.get("revision_notes"):
-            note = _latest_dashboard_revision_note(agent)
-            if note:
-                params["revision_notes"] = note
-        return tool_fn(**params)
-
-    return _generate_dashboard_with_revision_context
-
-
 def _vehicle_plate_skill_dir() -> Path:
     import openbench
 
@@ -191,37 +172,6 @@ def _resolve_vlm_selection() -> tuple[str, str, str]:
         or ("ollama" if model.lower().startswith("gemma") else "gemini")
     )
     return provider, model, requested
-
-
-def _sync_agent_system_message(agent: BaseAgent) -> None:
-    if agent.memory.messages and agent.memory.messages[0].role == MessageRole.SYSTEM:
-        agent.memory.messages[0] = Message(role=MessageRole.SYSTEM, content=agent._system_prompt)
-    else:
-        agent.memory.add_system(agent._system_prompt)
-
-
-def _load_dashboard_skill(agent: BaseAgent) -> None:
-    """Load only the dashboard SDK skill into General Chat."""
-    registry = SkillRegistry()
-    registry.load_project_skills([_dashboard_skill_dir()])
-    skill_context = registry.compose_context()
-    if skill_context:
-        agent._system_prompt = f"{agent._system_prompt}\n\n{skill_context}"
-        _sync_agent_system_message(agent)
-
-    registered: set[str] = set()
-    for tool_name, tool_fn, tool_schema in registry.collect_tools():
-        if tool_name in agent.tools._tools:
-            raise ValueError(
-                f"Dashboard skill tool '{tool_name}' conflicts with an existing chat tool."
-            )
-        if tool_name == "generate_dashboard":
-            tool_fn = _wrap_dashboard_generate_tool(agent, tool_fn)
-        agent.tools.register(tool_name, tool_fn, schema=tool_schema)
-        registered.add(tool_name)
-
-    agent._skill_registry = registry  # type: ignore[attr-defined]
-    agent._dashboard_skill_tools = sorted(registered)  # type: ignore[attr-defined]
 
 
 def _format_score(value: Any) -> str:
@@ -1158,11 +1108,8 @@ def create_agent(
         max_iterations=_env_int("GENERAL_CHAT_MAX_ITERATIONS", 25),
         parallel_tool_execution=True,
     )
-    if _env_flag("GENERAL_CHAT_DASHBOARD_SKILL_ENABLED", default=True):
-        _load_dashboard_skill(agent)
-    else:
-        agent._skill_registry = None  # type: ignore[attr-defined]
-        agent._dashboard_skill_tools = []  # type: ignore[attr-defined]
+    agent._skill_registry = None  # type: ignore[attr-defined]
+    agent._dashboard_skill_tools = []  # type: ignore[attr-defined]
     _attach_dashboard_revision_context(agent)
     agent._mcp_enabled = bool(mcp_summary.get("enabled"))  # type: ignore[attr-defined]
     agent._mcp_summary = mcp_summary  # type: ignore[attr-defined]

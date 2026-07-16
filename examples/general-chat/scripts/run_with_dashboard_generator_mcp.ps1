@@ -18,7 +18,6 @@ $env:GENERAL_CHAT_MCP_MODE = "external"
 $env:GENERAL_CHAT_MCP_CONFIG = "mcp/dashboard-generator-stdio.yaml"
 $env:GENERAL_CHAT_MCP_APPROVED_TOOLS = "aggregate_data.extract_metadata,aggregate_data.aggregate_data,dashboard_generator.generate_dashboard"
 $env:GENERAL_CHAT_MCP_REGISTRY_ENABLED = "0"
-$env:GENERAL_CHAT_DASHBOARD_SKILL_ENABLED = "0"
 
 $env:OPENBENCH_EXPORT_DIR = (Resolve-Path $downloads).Path
 $env:OPENBENCH_EXPORT_URL_BASE = "/downloads"
@@ -34,7 +33,7 @@ Write-Host "Starting General Chat with dashboard_generator and aggregate_data MC
 Write-Host "Config : $env:GENERAL_CHAT_MCP_CONFIG"
 Write-Host "Tools  : $env:GENERAL_CHAT_MCP_APPROVED_TOOLS"
 Write-Host "Python : $env:DASHBOARD_GENERATOR_MCP_PYTHON"
-Write-Host "SDK dashboard skill: disabled for this MCP-only dashboard run"
+Write-Host "Dashboard path: MCP only"
 Write-Host "Shared dashboard state: $env:OPENBENCH_DASHBOARD_STATE_PATH"
 Write-Host "Exports: $env:OPENBENCH_EXPORT_DIR -> /downloads"
 uvicorn server:app --port 8005 --reload --reload-dir src

@@ -224,7 +224,6 @@ def _general_chat_mcp_env(variant: str, demo_dir: Path) -> dict[str, str]:
                 "aggregate_data.aggregate_data,"
                 "dashboard_generator.generate_dashboard"
             ),
-            "GENERAL_CHAT_DASHBOARD_SKILL_ENABLED": "0",
             "OPENBENCH_EXPORT_DIR": str(downloads_dir.resolve()),
             "OPENBENCH_EXPORT_URL_BASE": "/downloads",
             "OPENBENCH_DASHBOARD_STATE_PATH": str(

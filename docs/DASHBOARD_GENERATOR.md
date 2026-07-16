@@ -234,8 +234,8 @@ and destructive keywords such as `DROP`, `INSERT`, `UPDATE`, `DELETE`,
 
 ## General Chat Integration
 
-The `examples/general-chat` app loads only the `dashboard-generator` SDK skill
-by default. CSV/XLSX source uploads are stored as `kind="spreadsheet"` with a
-`localFilePath` metadata entry. The chat handler passes that path to the agent,
-and generated dashboard artifacts render as both an assistant link and a
-side-by-side artifact window.
+The `examples/general-chat` app uses the standalone dashboard MCP path for chat
+dashboard requests. CSV/XLSX source uploads are stored as `kind="spreadsheet"`
+with a `localFilePath` metadata entry. The chat handler passes that path to the
+agent, and generated dashboard MCP artifacts render as both an assistant link
+and a side-by-side artifact window.

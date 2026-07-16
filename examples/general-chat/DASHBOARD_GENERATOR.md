@@ -1,8 +1,7 @@
 # General Chat Dashboard Generator
 
 General Chat can generate dashboards from uploaded CSV/XLSX files using the
-OpenBench `dashboard-generator` SDK skill or the standardized
-`mcp/dashboard-generator-mcp` standalone server.
+standardized `mcp/dashboard-generator-mcp` standalone server.
 
 ## User Flow
 
@@ -26,9 +25,8 @@ For an MCP-only test run, start General Chat with:
 openbench demo run general-chat-dashboard-generator
 ```
 
-That run disables the default SDK dashboard skill and loads the MCP tools as
-`aggregate_data.extract_metadata`, `aggregate_data.aggregate_data`, and
-`dashboard_generator.generate_dashboard`.
+That run loads the MCP tools as `aggregate_data.extract_metadata`,
+`aggregate_data.aggregate_data`, and `dashboard_generator.generate_dashboard`.
 
 Equivalent manual fallback:
 
@@ -47,8 +45,8 @@ and request a dashboard later. They are removed when the source, source list, or
 session is deleted.
 
 Dashboard template uploads are also kept after a chat turn. The source context
-exposes `Dashboard template path:` so both SDK and MCP dashboard tools can read
-the user-provided template directly.
+exposes `Dashboard template path:` so the MCP dashboard tool can read the
+user-provided template directly.
 
 ## Environment
 
@@ -102,12 +100,11 @@ openbench demo run general-chat
 Run mode differences:
 
 - `openbench demo run general-chat`: base General Chat. Dashboard generation
-  uses the bundled SDK skill by default. MCP registry remains available in the
-  UI, but no dedicated dashboard MCP server is forced on.
+  is available when the dashboard MCP tools are loaded through the MCP registry
+  or a dedicated MCP launcher.
 - `openbench demo run general-chat-dashboard-generator`: MCP-only dashboard
-  test. It disables the SDK dashboard skill and exposes only
-  `aggregate_data.extract_metadata`, `aggregate_data.aggregate_data`, and
-  `dashboard_generator.generate_dashboard`.
+  test. It exposes only `aggregate_data.extract_metadata`,
+  `aggregate_data.aggregate_data`, and `dashboard_generator.generate_dashboard`.
 - `openbench demo run general-chat-all`: registry-mode General Chat with all
   bundled MCP integrations seeded together, including dashboard generator plus
   the other MCP demos when their dependencies are available.

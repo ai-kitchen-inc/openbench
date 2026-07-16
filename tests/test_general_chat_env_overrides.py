@@ -79,7 +79,6 @@ class TestAgentGoalOverride(unittest.TestCase):
                     # Nonexistent soul dir -> persona None (skips file reads).
                     "GENERAL_CHAT_SOUL_DIR": str(Path(tempfile.gettempdir()) / "no-such-soul"),
                     "GENERAL_CHAT_MCP_ENABLED": "0",
-                    "GENERAL_CHAT_DASHBOARD_SKILL_ENABLED": "0",
                     **extra_env,
                 },
                 clear=False,

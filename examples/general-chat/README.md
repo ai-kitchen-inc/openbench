@@ -157,8 +157,8 @@ openbench demo run general-chat-dashboard-generator
 ```
 
 This starts General Chat with only the standardized
-`mcp/dashboard-generator-mcp` server enabled. The legacy SDK dashboard skill is
-disabled for that run, so a successful dashboard proves the MCP path is working.
+`mcp/dashboard-generator-mcp` server enabled. General Chat no longer loads the
+dashboard generator SDK skill, so a successful dashboard exercises the MCP path.
 After upload, ask `buatkan dashboard dari data ini`; the progress should move
 from `aggregate_data_extract_metadata` to aggregation and then
 `dashboard_generator_generate_dashboard`.
@@ -330,26 +330,24 @@ say that no readable plate is visible instead of guessing.
 
 ## Dashboard generator
 
-General Chat loads the OpenBench `dashboard-generator` SDK skill by default, and
-the same tools are also available as the standardized
-`mcp/dashboard-generator-mcp` server. Upload a CSV/XLSX file, then ask something
-like:
+General Chat exposes dashboard generation through MCP only. Upload a CSV/XLSX
+file, then ask something like:
 
 ```text
 buatkan dashboard dari data ini
 ```
 
-The agent follows the dashboard SOP from the skill:
+The agent follows the dashboard MCP SOP:
 
-1. Read file metadata with `extract_metadata`.
+1. Read file metadata with `aggregate_data.extract_metadata`.
 2. Write read-only SQLite SQL queries against table `data`.
 3. Run `aggregate_data.aggregate_data` with the SQL query.
 4. Build a declarative ViewModel (A2UI-style JSON, not raw UI code).
-5. Render the artifact with `generate_dashboard`.
+5. Render the artifact with `dashboard_generator.generate_dashboard`.
 
 Spreadsheet rows are not pasted into the LLM prompt. General Chat passes only
-the local file path and dashboard SOP to the agent; the skill tools inspect
-metadata and run aggregations from the file.
+the local file path and dashboard SOP to the agent; MCP tools inspect metadata,
+run aggregations from the file, and render the artifact.
 
 Users may also upload their own dashboard template. `.html` / `.htm` files and
 markdown design briefs named like `design.md` or `dashboard-template.md` are
@@ -379,9 +377,9 @@ cd examples\general-chat
 .\scripts\run_with_dashboard_generator_mcp.ps1
 ```
 
-This starts General Chat with `GENERAL_CHAT_DASHBOARD_SKILL_ENABLED=0`, loads
-`mcp/dashboard-generator-mcp` and `mcp/aggregate-data-mcp` over stdio, and
-exposes these provider-safe tools to the agent:
+This starts General Chat with `mcp/dashboard-generator-mcp` and
+`mcp/aggregate-data-mcp` over stdio, and exposes these provider-safe tools to
+the agent:
 
 - `aggregate_data_extract_metadata`
 - `aggregate_data_aggregate_data`
