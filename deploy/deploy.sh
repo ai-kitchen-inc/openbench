@@ -389,7 +389,16 @@ cmd_verify() {
   check "API /persona (no token)"     "$API_URL/persona"      "401"
   check "API /account/me (no token)"  "$API_URL/account/me"   "401"
   check "API /admin/users (no token)" "$API_URL/admin/users"  "401"
-  check "API /openapi.json (hardened)" "$API_URL/openapi.json" "404"
+  # /openapi.json must not serve an API schema. With the same-origin SPA the
+  # catch-all answers unknown paths with index.html (200) — that is fine; a
+  # leaked JSON schema is not.
+  local schema_head
+  schema_head="$(curl -s --ssl-no-revoke --max-time 20 "$API_URL/openapi.json" 2>/dev/null | head -c 200 || true)"
+  if printf '%s' "$schema_head" | grep -q '"openapi"'; then
+    warn "API /openapi.json leaks the schema"; fail=1
+  else
+    ok "API /openapi.json (hardened): no schema (SPA fallback)"
+  fi
   check "Same-origin SPA (/)"          "$API_URL/"             "200"
   check "Grafana /grafana/api/health"  "$API_URL/grafana/api/health" "200"
   # 8080 must NOT be publicly reachable (expect connection failure → 000).
