@@ -32,22 +32,22 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     if (error === null) return this.props.children;
     if (this.props.fallback) return this.props.fallback(error, this._reset);
 
-    const region = this.props.region ?? "this area";
+    const region = this.props.region ?? "bagian ini";
     return (
       <div className="error-boundary" role="alert">
         <div className="error-boundary__panel">
-          <div className="error-boundary__title">Something went wrong in {region}.</div>
+          <div className="error-boundary__title">Terjadi kesalahan pada {region}.</div>
           <div className="error-boundary__detail">{error.message}</div>
           <div className="error-boundary__actions">
             <button type="button" className="error-boundary__btn" onClick={this._reset}>
-              Try again
+              Coba Lagi
             </button>
             <button
               type="button"
               className="error-boundary__btn error-boundary__btn--primary"
               onClick={() => window.location.reload()}
             >
-              Reload page
+              Muat Ulang Halaman
             </button>
           </div>
         </div>
