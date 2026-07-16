@@ -98,7 +98,10 @@ class TestCustomFunctionRoutes(unittest.TestCase):
                     "GENERAL_CHAT_UPLOAD_DIR": str(tmpdir / "uploads"),
                     "GENERAL_CHAT_DOWNLOAD_DIR": str(tmpdir / "downloads"),
                     "GENERAL_CHAT_FIREBASE_PROJECT_ID": "demo-project",
-                    "GENERAL_CHAT_ALLOWED_EMAILS": "allowed@example.com",
+                    # Custom-function CRUD is admin-gated now — seed the
+                    # test account as an admin.
+                    "GENERAL_CHAT_BOOTSTRAP_ADMIN": "allowed@example.com",
+                    "GENERAL_CHAT_ALLOWED_EMAILS": "",
                     "OPENBENCH_PROFILE_DIR": str(tmpdir / "profiles"),
                     "CUSTOM_FN_DATA_PATH": str(tmpdir / "functions"),
                 },

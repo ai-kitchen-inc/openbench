@@ -20,16 +20,32 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from general_chat.admin_store import build_settings_store, build_user_store, seed_users
 from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
+from general_chat.capabilities import CapabilityCache, blocked_flag_for
 from general_chat.extractor import DoclingContentExtractor
 from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
-from general_chat.server.auth import auth_enabled, current_owner, require_firebase_user
+from general_chat.persona_templates import (
+    DEFAULT_TEMPLATE_ID,
+    PERSONA_SETTINGS_KEY,
+    get_template,
+    persona_from_settings,
+    settings_from_template,
+)
+from general_chat.server.admin_routes import register_admin_routes, require_role
+from general_chat.server.agent_holder import AgentHolder
+from general_chat.server.auth import (
+    auth_enabled,
+    current_owner,
+    current_role,
+    require_firebase_user,
+)
 from general_chat.server.custom_functions import CustomFunctionError, CustomFunctionStore
 from general_chat.server.dashboard_pdf import render_dashboard_pdf
 from general_chat.server.grafana import view_model_to_grafana
 from general_chat.server.grafana_client import GrafanaDeployError, deploy_view_model
-from general_chat.server.handler import GeneralChatHandler
+from general_chat.server.handler import GeneralChatHandler, set_source_context_label_override
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.server.publish_store import PublishStore
 from general_chat.sources import (
@@ -134,6 +150,8 @@ _EXT_MIME_MAP = {
 }
 
 _AUTH_PROTECTED_PREFIXES = (
+    "/account",
+    "/admin",
     "/awp",
     "/chat",
     "/dashboard",
@@ -147,6 +165,12 @@ _AUTH_PROTECTED_PREFIXES = (
     "/toolhive",
     "/uploads",
 )
+
+# Owner/thread that hold the admin-curated global sources every user's
+# chat turn is grounded on. "shared" can never collide with an email
+# owner or the "local" dev sentinel.
+SHARED_SOURCES_OWNER = "shared"
+SHARED_SOURCES_THREAD = "global-sources"
 
 
 def _slugify_dashboard_title(title: str) -> str:
@@ -372,7 +396,47 @@ def create_app() -> FastAPI:
         "GENERAL_CHAT_MULTIPART_UPLOAD_MAX_BYTES",
         25 * 1024 * 1024,
     )
-    agent = create_agent()
+    user_store = build_user_store(storage_root)
+    settings_store = build_settings_store(storage_root)
+    capability_cache = CapabilityCache(settings_store)
+
+    # Seed accounts + default persona synchronously (not in the startup
+    # event, which TestClient-style consumers never fire). Both are
+    # idempotent. Persona seeding is gated on GENERAL_CHAT_BOOTSTRAP_ADMIN
+    # so wrapper deployments (controlled-source-chat) that configure the
+    # persona via env keep their behavior bit-identical.
+    if auth_enabled():
+        seed_users(user_store)
+    if os.getenv("GENERAL_CHAT_BOOTSTRAP_ADMIN", "").strip():
+        if settings_store.get(PERSONA_SETTINGS_KEY) is None:
+            default_template = get_template(DEFAULT_TEMPLATE_ID)
+            if default_template is not None:
+                settings_store.set(
+                    PERSONA_SETTINGS_KEY,
+                    settings_from_template(default_template),
+                    updated_by="bootstrap",
+                )
+                logger.info("Seeded default persona template %r", DEFAULT_TEMPLATE_ID)
+
+    def _agent_factory():
+        """Build the shared agent, honoring the admin-managed persona.
+
+        With no persona row in the settings store (fresh installs,
+        wrapper deployments like controlled-source-chat), resolution
+        falls through to the env/file path inside ``create_agent`` —
+        bit-identical to the pre-admin behavior.
+        """
+        persona, goal, source_label = persona_from_settings(
+            settings_store.get(PERSONA_SETTINGS_KEY)
+        )
+        set_source_context_label_override(source_label if persona is not None else None)
+        return create_agent(
+            persona=persona,
+            goal=goal or None,
+            enable_file_generation=capability_cache.global_enabled("file_generation"),
+        )
+
+    agent_holder = AgentHolder(_agent_factory)
     chat_memory_store = storage.memory_store() if os.getenv("GENERAL_CHAT_DATABASE_URL") else None
 
     def _storage_for_session(session_id: str):
@@ -434,7 +498,7 @@ def create_app() -> FastAPI:
         discovered_tool_count: int = 0,
         enabled_tool_count: int = 0,
     ) -> dict:
-        reload_summary = reload_external_mcp_tools(agent, server_ids=server_ids)
+        reload_summary = reload_external_mcp_tools(agent_holder.agent, server_ids=server_ids)
         diagnostics = reload_summary.get("diagnostics")
         diagnostic_text = ""
         if isinstance(diagnostics, list) and diagnostics:
@@ -542,7 +606,7 @@ def create_app() -> FastAPI:
 
     def _build_engine(session, owner: str) -> ChatEngine:
         return ChatEngine(
-            agent=agent,
+            agent=agent_holder.agent,
             session=session,
             session_store=_session_store_for(owner),
             render_items_fn=render_items_fn,
@@ -589,13 +653,29 @@ def create_app() -> FastAPI:
             and _requires_auth_path(request.url.path)
         ):
             try:
-                await require_firebase_user(request)
+                await require_firebase_user(request, user_store)
             except HTTPException as exc:
                 return JSONResponse(
                     {"detail": exc.detail},
                     status_code=exc.status_code,
                     headers=exc.headers,
                 )
+            path = request.url.path
+            if current_role(request) != "admin":
+                if path.startswith("/admin"):
+                    return JSONResponse(
+                        {"detail": "Akses ditolak: memerlukan peran admin."},
+                        status_code=status.HTTP_403_FORBIDDEN,
+                    )
+                flag = blocked_flag_for(path)
+                if flag and not capability_cache.role_allows(current_role(request), flag):
+                    return JSONResponse(
+                        {
+                            "detail": "Fitur ini tidak diaktifkan untuk akun Anda.",
+                            "capability": flag,
+                        },
+                        status_code=status.HTTP_403_FORBIDDEN,
+                    )
         return await call_next(request)
 
     @app.on_event("startup")
@@ -606,7 +686,8 @@ def create_app() -> FastAPI:
                 print(f"  MCP seed errors: {seed_summary['errors']}")
             else:
                 print(f"  MCP seeded     : {', '.join(seed_summary['seeded']) or '(none)'}")
-            reload_external_mcp_tools(agent)
+            reload_external_mcp_tools(agent_holder.agent)
+        agent = agent_holder.agent
         persona = agent._persona
         summary = persona.summary() if persona else {}
         print("\n  General Chat")
@@ -658,7 +739,7 @@ def create_app() -> FastAPI:
 
     @app.get("/persona")
     async def persona_info() -> dict:
-        persona = agent._persona
+        persona = agent_holder.agent._persona
         if not persona:
             return {"loaded": False}
         return {
@@ -671,7 +752,7 @@ def create_app() -> FastAPI:
 
     @app.get("/skills")
     async def skills_info() -> dict:
-        registry = agent._skill_registry
+        registry = agent_holder.agent._skill_registry
         if registry is None:
             return {"loaded": False, "skills": []}
         items = [
@@ -697,6 +778,7 @@ def create_app() -> FastAPI:
 
     @app.get("/mcp/tools")
     async def mcp_tools_info() -> dict:
+        agent = agent_holder.agent
         summary = getattr(agent, "_mcp_summary", None)
         external_summary = getattr(agent, "_external_mcp_summary", None)
         if not isinstance(summary, dict):
@@ -835,7 +917,7 @@ def create_app() -> FastAPI:
             mcp_registry_store.remove_server(server_id)
         except MCPRegistryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        reload_summary = reload_external_mcp_tools(agent, server_ids={server_id})
+        reload_summary = reload_external_mcp_tools(agent_holder.agent, server_ids={server_id})
         return {"ok": True, "serverId": server_id, "reload": reload_summary}
 
     @app.get("/mcp/catalogs/servers/{server_id}")
@@ -908,7 +990,7 @@ def create_app() -> FastAPI:
             mcp_registry_store.remove_server(server_id)
         except MCPRegistryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        reload_summary = reload_external_mcp_tools(agent, server_ids={server_id})
+        reload_summary = reload_external_mcp_tools(agent_holder.agent, server_ids={server_id})
         return {"ok": True, "serverId": server_id, "reload": reload_summary}
 
     @app.post("/chat/attachments/upload")
@@ -976,23 +1058,15 @@ def create_app() -> FastAPI:
                         os.unlink(path)
         return {"transcript": transcript.strip()}
 
-    @app.post("/chat/upload")
-    async def upload_file(
-        request: Request,
-        file: UploadFile = File(...),
-        session_id: str | None = Form(default=None, alias="sessionId"),
-    ):
-        """Store an uploaded source file and persist extracted text for a session.
+    async def _ingest_source_upload(owner: str, target_session_id: str, file: UploadFile):
+        """Store an uploaded source file under ``owner``/``target_session_id``.
 
-        The record lands under the uploader's owner scope — uploading
-        into a foreign session_id creates data only the uploader can
-        see, so no cross-user leak is possible.
+        Shared between the per-user ``/chat/upload`` endpoint and the
+        admin global-sources upload (owner ``shared``).
         """
-        owner = current_owner(request)
         srcs = _sources_for(owner)
         filename = file.filename or "unnamed"
         mime_type = _resolve_mime(filename, file.content_type or "")
-        target_session_id = session_id or "default"
         declared_size = getattr(file, "size", None)
         if isinstance(declared_size, int) and declared_size > multipart_upload_max_bytes:
             raise HTTPException(
@@ -1045,6 +1119,21 @@ def create_app() -> FastAPI:
         result["url"] = record.url or attachment.url
         result["type"] = attachment.type
         return result
+
+    @app.post("/chat/upload")
+    async def upload_file(
+        request: Request,
+        file: UploadFile = File(...),
+        session_id: str | None = Form(default=None, alias="sessionId"),
+    ):
+        """Store an uploaded source file and persist extracted text for a session.
+
+        The record lands under the uploader's owner scope — uploading
+        into a foreign session_id creates data only the uploader can
+        see, so no cross-user leak is possible.
+        """
+        owner = current_owner(request)
+        return await _ingest_source_upload(owner, session_id or "default", file)
 
     @app.post("/chat/uploads/initiate")
     async def initiate_large_upload(request: Request) -> dict:
@@ -1283,6 +1372,87 @@ def create_app() -> FastAPI:
         srcs.clear(thread_id)
         return {"ok": True}
 
+    # --- Global shared sources (admin-curated, visible to everyone) ---------
+
+    def _shared_sources():
+        return _sources_for(SHARED_SOURCES_OWNER)
+
+    @app.get("/account/shared-sources")
+    async def list_shared_sources_preview() -> dict:
+        """Read-only listing so users can see what grounds the assistant."""
+        records = _shared_sources().list(SHARED_SOURCES_THREAD)
+        items = []
+        for record in records:
+            payload = record.to_dict(include_text=False)
+            text = record.text or ""
+            payload["textPreview"] = text[:500]
+            payload["textTruncated"] = len(text) > 500
+            items.append(payload)
+        return {"sources": items}
+
+    @app.get("/admin/shared-sources")
+    async def list_shared_sources_admin(request: Request) -> dict:
+        require_role(request, "admin")
+        records = _shared_sources().list(SHARED_SOURCES_THREAD)
+        return {"sources": [record.to_dict(include_text=False) for record in records]}
+
+    @app.post("/admin/shared-sources/upload")
+    async def upload_shared_source(
+        request: Request,
+        file: UploadFile = File(...),
+    ):
+        require_role(request, "admin")
+        return await _ingest_source_upload(SHARED_SOURCES_OWNER, SHARED_SOURCES_THREAD, file)
+
+    @app.post("/admin/shared-sources/text")
+    async def add_shared_text_source(request: Request) -> dict:
+        require_role(request, "admin")
+        body = await request.json()
+        record = source_record_from_text(
+            session_id=SHARED_SOURCES_THREAD,
+            name=str(body.get("name") or body.get("title") or "Pasted text"),
+            text=str(body.get("text") or ""),
+            parser=source_parser,
+        )
+        _shared_sources().add(record)
+        return record.to_dict(include_text=False)
+
+    @app.post("/admin/shared-sources/url")
+    async def add_shared_url_source(request: Request) -> dict:
+        require_role(request, "admin")
+        body = await request.json()
+        record = source_record_from_url(
+            session_id=SHARED_SOURCES_THREAD,
+            url=str(body.get("url") or ""),
+            parser=source_parser,
+            max_bytes=max_source_bytes,
+        )
+        _shared_sources().add(record)
+        return record.to_dict(include_text=False)
+
+    @app.delete("/admin/shared-sources/{source_id}")
+    async def delete_shared_source(source_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        srcs = _shared_sources()
+        records = srcs.list(SHARED_SOURCES_THREAD)
+        target = next((record for record in records if record.id == source_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+        _delete_upload_files_for_records([target])
+        if not srcs.delete(SHARED_SOURCES_THREAD, source_id):
+            raise HTTPException(status_code=404, detail="Source not found")
+        return {"ok": True, "sourceId": source_id}
+
+    # Account + admin management surface (/account/*, /admin/*). Registered
+    # inside create_app() so these routes always precede the SPA catch-all.
+    register_admin_routes(
+        app,
+        user_store=user_store,
+        settings_store=settings_store,
+        capability_cache=capability_cache,
+        agent_holder=agent_holder,
+    )
+
     @app.post("/awp")
     async def agent_endpoint(request: Request):
         """AG-UI endpoint — streams assistant responses via SSE."""
@@ -1301,8 +1471,16 @@ def create_app() -> FastAPI:
             source_records = _sources_for(shared_owner).list(shared_thread)
             on_stream_complete = None
         else:
-            source_records = srcs.list(session_id) if session_id else []
-            on_stream_complete = lambda records: _cleanup_source_uploads_after_use(records, srcs)
+            # Admin-curated global sources ground every turn alongside the
+            # session's own sources. They are persistent — the one-shot
+            # upload cleanup must only ever see the session slice.
+            global_records = _sources_for(SHARED_SOURCES_OWNER).list(SHARED_SOURCES_THREAD)
+            session_records = srcs.list(session_id) if session_id else []
+            source_records = global_records + session_records
+            on_stream_complete = lambda records: _cleanup_source_uploads_after_use(
+                [record for record in records if record.owner != SHARED_SOURCES_OWNER],
+                srcs,
+            )
         try:
             session = _resolve_session(session_id, owner)
         except SessionOwnershipError:

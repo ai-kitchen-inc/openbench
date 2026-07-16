@@ -14,7 +14,8 @@ from openbench.chat import render_queue as shared_render_queue
 from openbench.core.abstractions import Tool
 from openbench.core.providers import ProviderConfig, ProviderType, get_provider_service
 from openbench.intelligence import BaseAgent, Persona
-from openbench.intelligence.base import MessageRole
+from openbench.intelligence.base import Message, MessageRole
+from openbench.intelligence.skill_registry import SkillRegistry
 from openbench.mcp.permissions import MCPPermissionSession, PermissionProvider
 
 _DEFAULT_MCP_APPROVED_TOOLS = (
@@ -114,6 +115,12 @@ def _mcp_registry_root() -> Path | None:
     return Path(raw).expanduser().resolve()
 
 
+def _sdk_skill_dir(name: str) -> Path:
+    import openbench
+
+    return Path(openbench.__file__).resolve().parent / "skills" / name
+
+
 _DASHBOARD_REVISION_KEYWORDS = (
     "revisi",
     "revision",
@@ -172,6 +179,39 @@ def _resolve_vlm_selection() -> tuple[str, str, str]:
         or ("ollama" if model.lower().startswith("gemma") else "gemini")
     )
     return provider, model, requested
+
+
+def _sync_agent_system_message(agent: BaseAgent) -> None:
+    if agent.memory.messages and agent.memory.messages[0].role == MessageRole.SYSTEM:
+        agent.memory.messages[0] = Message(role=MessageRole.SYSTEM, content=agent._system_prompt)
+    else:
+        agent.memory.add_system(agent._system_prompt)
+
+
+def _load_sdk_skills(agent: BaseAgent, skill_names: list[str]) -> None:
+    """Load a set of SDK skills (by directory name) into General Chat.
+
+    Dashboard generation is MCP-only (the dashboard-generator MCP replaces
+    the in-process SDK skill) — this loader carries the file-export skills.
+    """
+    registry = SkillRegistry()
+    registry.load_project_skills([_sdk_skill_dir(name) for name in skill_names])
+    skill_context = registry.compose_context()
+    if skill_context:
+        agent._system_prompt = f"{agent._system_prompt}\n\n{skill_context}"
+        _sync_agent_system_message(agent)
+
+    registered: set[str] = set()
+    for tool_name, tool_fn, tool_schema in registry.collect_tools():
+        if tool_name in agent.tools._tools:
+            raise ValueError(
+                f"SDK skill tool '{tool_name}' conflicts with an existing chat tool."
+            )
+        agent.tools.register(tool_name, tool_fn, schema=tool_schema)
+        registered.add(tool_name)
+
+    agent._skill_registry = registry  # type: ignore[attr-defined]
+    agent._dashboard_skill_tools = sorted(registered)  # type: ignore[attr-defined]
 
 
 def _format_score(value: Any) -> str:
@@ -1024,12 +1064,22 @@ def create_agent(
     model: str | None = None,
     temperature: float = 0.3,
     mcp_permission_provider: PermissionProvider | None = None,
+    persona: Persona | None = None,
+    goal: str | None = None,
+    enable_file_generation: bool = True,
 ) -> BaseAgent:
     """Create the general-purpose chat agent.
 
     By default this keeps General Chat tool-free. Set
     ``GENERAL_CHAT_MCP_ENABLED=1`` to load a small allowlisted set of MCP-backed
     query tools for local MCP testing.
+
+    ``persona=`` / ``goal=`` override the env/file resolution
+    (``GENERAL_CHAT_SOUL_DIR`` / ``GENERAL_CHAT_AGENT_GOAL``) — the
+    admin-managed DB persona passes them explicitly; wrapper apps that
+    configure via env pass nothing and keep the old behavior.
+    ``enable_file_generation=False`` skips the export skills (the
+    admin-controlled ``file_generation`` capability).
     """
     key = api_key or os.getenv("GOOGLE_API_KEY")
     resolved_model = model or os.getenv("GENERAL_CHAT_MODEL", "gemini-3-flash-preview")
@@ -1039,8 +1089,9 @@ def create_agent(
     _configure_general_chat_provider(key, resolved_model)
     vision_agent, vlm_summary = _create_vision_agent(key)
 
-    persona_dir = get_persona_dir()
-    persona = Persona.from_dir(persona_dir) if persona_dir.is_dir() else None
+    if persona is None:
+        persona_dir = get_persona_dir()
+        persona = Persona.from_dir(persona_dir) if persona_dir.is_dir() else None
 
     mcp_tools: list[Any] = []
     mcp_permission_session = MCPPermissionSession(mcp_permission_provider)
@@ -1073,7 +1124,8 @@ def create_agent(
     # send the full history (old behavior).
     _history_budget = _env_int("GENERAL_CHAT_HISTORY_TOKEN_BUDGET", 16000)
     agent = BaseAgent(
-        goal=os.getenv("GENERAL_CHAT_AGENT_GOAL", "").strip()
+        goal=(goal or "").strip()
+        or os.getenv("GENERAL_CHAT_AGENT_GOAL", "").strip()
         or (
             "Help users by answering questions, reasoning over optional context, "
             "using enabled tools when useful, and thinking through problems. When "
@@ -1108,8 +1160,14 @@ def create_agent(
         max_iterations=_env_int("GENERAL_CHAT_MAX_ITERATIONS", 25),
         parallel_tool_execution=True,
     )
-    agent._skill_registry = None  # type: ignore[attr-defined]
-    agent._dashboard_skill_tools = []  # type: ignore[attr-defined]
+    skill_names: list[str] = []
+    if enable_file_generation and _env_flag("GENERAL_CHAT_FILE_GENERATION_ENABLED", default=True):
+        skill_names.extend(["export-excel", "pdf-tools", "export-markdown"])
+    if skill_names:
+        _load_sdk_skills(agent, skill_names)
+    else:
+        agent._skill_registry = None  # type: ignore[attr-defined]
+        agent._dashboard_skill_tools = []  # type: ignore[attr-defined]
     _attach_dashboard_revision_context(agent)
     agent._mcp_enabled = bool(mcp_summary.get("enabled"))  # type: ignore[attr-defined]
     agent._mcp_summary = mcp_summary  # type: ignore[attr-defined]

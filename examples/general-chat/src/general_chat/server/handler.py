@@ -33,12 +33,29 @@ _REDACTED_ATTACHMENT_CONTEXT = (
 )
 
 
+_source_context_label_override: str | None = None
+
+
+def set_source_context_label_override(value: str | None) -> None:
+    """Set (or clear) the runtime source-label override.
+
+    Used by the admin-managed persona: applying a persona template with
+    a ``source_context_label`` reframes injected sources without
+    touching the process environment.
+    """
+    global _source_context_label_override
+    _source_context_label_override = (value or "").strip() or None
+
+
 def _source_context_label() -> str:
     """Framing line prepended to every injected source's text.
 
     Overridable so wrapper deployments can reframe sources as mandatory
     grounding (e.g. controlled-source mode) instead of optional context.
+    Runtime override (admin persona) wins over the env override.
     """
+    if _source_context_label_override:
+        return _source_context_label_override
     return os.getenv("GENERAL_CHAT_SOURCE_CONTEXT_LABEL", "").strip() or (
         _DEFAULT_SOURCE_CONTEXT_LABEL
     )

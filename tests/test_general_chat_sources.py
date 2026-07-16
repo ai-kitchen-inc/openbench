@@ -1787,9 +1787,24 @@ class TestGeneralChatSources(unittest.TestCase):
         self.assertTrue(agent._vlm_summary["enabled"])
         self.assertEqual(agent._vlm_summary["model"], "gemini-2.5-flash")
         self.assertIsNotNone(agent._vision_agent)
-        self.assertEqual(len(agent.tools), 0)
-        self.assertEqual(agent._dashboard_skill_tools, [])
-        self.assertIsNone(agent._skill_registry)
+        # File-export skills only — dashboard generation is MCP-only now.
+        # export-excel(2) + pdf-tools(7) + export-markdown(1) = 10 skill tools
+        self.assertEqual(len(agent.tools), 10)
+        self.assertEqual(
+            set(agent._dashboard_skill_tools),
+            {
+                "export_to_excel",
+                "export_multi_sheet_excel",
+                "pdf_metadata",
+                "read_pdf",
+                "read_pdf_page",
+                "extract_pdf_tables",
+                "merge_pdfs",
+                "split_pdf",
+                "generate_pdf",
+                "generate_markdown",
+            },
+        )
 
     def test_dashboard_revision_note_is_extracted_from_latest_user_goal(self):
         agent = BaseAgent(goal="test")
@@ -1944,7 +1959,8 @@ class TestGeneralChatSources(unittest.TestCase):
                 "openbench.top_n_records",
             },
         )
-        self.assertEqual(len(agent.tools), 7)
+        # 4 MCP query tools registered into chat + the 10 skill tools
+        self.assertEqual(len(agent.tools), 14)
 
     def test_mcp_tools_endpoint_disabled_by_default(self):
         client = self._build_test_client()

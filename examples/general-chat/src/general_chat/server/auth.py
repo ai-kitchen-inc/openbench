@@ -83,8 +83,15 @@ def _email_allowed(email: str | None, *, emails: Iterable[str], domains: Iterabl
     return bool(domain and domain in set(domains))
 
 
-async def require_firebase_user(request: Request) -> FirebaseUser:
-    """Verify the request's Firebase ID token and email allowlist."""
+async def require_firebase_user(request: Request, user_store=None) -> FirebaseUser:
+    """Verify the request's Firebase ID token and resolve access.
+
+    With ``user_store`` (the admin-managed account store), access and
+    role come from the store: unknown email -> 403, known email ->
+    ``request.state.user_role`` is set from the record. Without a
+    store, the legacy env allowlist (``GENERAL_CHAT_ALLOWED_EMAILS`` /
+    ``_DOMAINS``) applies — kept for wrapper apps and old tests.
+    """
     token = _extract_bearer_token(request)
     try:
         user = _verifier().verify(
@@ -103,6 +110,17 @@ async def require_firebase_user(request: Request) -> FirebaseUser:
             detail=str(exc),
         ) from exc
 
+    if user_store is not None:
+        record = user_store.get(user.email or "") if user.email else None
+        if record is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account is not allowed for this deployment.",
+            )
+        request.state.firebase_user = user
+        request.state.user_role = record.role
+        return user
+
     emails = allowed_emails()
     domains = allowed_domains()
     if not emails and not domains:
@@ -118,6 +136,24 @@ async def require_firebase_user(request: Request) -> FirebaseUser:
 
     request.state.firebase_user = user
     return user
+
+
+def current_role(request: Request) -> str:
+    """Return the access role for this request.
+
+    Role is stamped on ``request.state.user_role`` by
+    :func:`require_firebase_user` when a user store is in play. With
+    auth disabled (local dev) or an ``owner_override`` from a wrapper
+    app (which enforces its own guardrails outermost), the request is
+    treated as admin. Any other authenticated request defaults to the
+    least-privileged ``user`` role.
+    """
+    role = getattr(request.state, "user_role", None)
+    if role:
+        return str(role)
+    if getattr(request.state, "owner_override", None) or not auth_enabled():
+        return "admin"
+    return "user"
 
 
 def current_owner(request: Request) -> str:

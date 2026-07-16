@@ -110,6 +110,14 @@ class TestAgentGoalOverride(unittest.TestCase):
 
 
 class TestSourceContextLabelOverride(unittest.TestCase):
+    def setUp(self):
+        # The admin-persona runtime override is module state — clear it so
+        # earlier tests (persona admin suite) can't leak a label in here.
+        from general_chat.server.handler import set_source_context_label_override
+
+        set_source_context_label_override(None)
+        self.addCleanup(set_source_context_label_override, None)
+
     def _record(self):
         from general_chat.sources import SourceRecord
 
