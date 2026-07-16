@@ -59,7 +59,15 @@ function Dialog({
   );
 }
 
-export function FunctionsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function FunctionsPanel({
+  open,
+  onClose,
+  embedded = false,
+}: {
+  open: boolean;
+  onClose: () => void;
+  embedded?: boolean;
+}) {
   const toast = useToast();
   const [functions, setFunctions] = useState<CustomFunction[]>([]);
   const [loading, setLoading] = useState(false);
@@ -142,8 +150,7 @@ export function FunctionsPanel({ open, onClose }: { open: boolean; onClose: () =
     setFormError(null);
   }
 
-  return (
-    <Dialog title="Custom Functions" onClose={onClose}>
+  const content = (
       <div className="mcp-catalog">
         <section className="mcp-section">
           <div className="mcp-section__header">
@@ -268,6 +275,15 @@ export function FunctionsPanel({ open, onClose }: { open: boolean; onClose: () =
           )}
         </section>
       </div>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <Dialog title="Custom Functions" onClose={onClose}>
+      {content}
     </Dialog>
   );
 }

@@ -807,7 +807,15 @@ function DetailsDialog({
   );
 }
 
-export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function McpCatalogPanel({
+  open,
+  onClose,
+  embedded = false,
+}: {
+  open: boolean;
+  onClose: () => void;
+  embedded?: boolean;
+}) {
   const toast = useToast();
   const [data, setData] = useState<MCPRegistryPayload>({ servers: [] });
   const [filters, setFilters] = useState<RegistryFilters>(DEFAULT_FILTERS);
@@ -893,8 +901,8 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
 
   if (!open) return null;
 
-  return (
-    <Dialog title="MCP Servers" onClose={onClose}>
+  const content = (
+    <>
       <div className="mcp-catalog">
         <ToolHiveSection onImported={(payload) => setData(payload)} />
         <section className="mcp-section">
@@ -992,6 +1000,16 @@ export function McpCatalogPanel({ open, onClose }: { open: boolean; onClose: () 
           onToggleTool={(server, tool) => void handleToggleTool(server, tool)}
         />
       )}
+    </>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <Dialog title="MCP Servers" onClose={onClose}>
+      {content}
     </Dialog>
   );
 }

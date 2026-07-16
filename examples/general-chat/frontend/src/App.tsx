@@ -890,7 +890,7 @@ export function SourcePanel({
 }
 
 type SettingsView = "artifact" | "tools" | "persona";
-type ToolsView = "menu" | "mcp" | "function";
+type ToolsView = "mcp" | "function";
 
 function SidebarSettingsButton({ onClick }: { onClick: () => void }) {
   return (
@@ -917,48 +917,44 @@ function SettingsDialog({
   sessionId,
   sourceRefreshToken,
   onAttachmentsChange,
-  onOpenMcp,
-  onOpenFunctions,
 }: {
   open: boolean;
   onClose: () => void;
   sessionId: string | null;
   sourceRefreshToken: number;
   onAttachmentsChange: (attachments: Attachment[]) => void;
-  onOpenMcp: () => void;
-  onOpenFunctions: () => void;
 }) {
   const [view, setView] = useState<SettingsView>("artifact");
-  const [toolsView, setToolsView] = useState<ToolsView>("menu");
+  const [toolsView, setToolsView] = useState<ToolsView>("mcp");
 
   useEffect(() => {
     if (open) {
       setView("artifact");
-      setToolsView("menu");
+      setToolsView("mcp");
     }
   }, [open]);
 
   if (!open) return null;
 
   return (
-    <div className="settings-dialog" role="presentation" onMouseDown={onClose}>
+    <div className="settings-dialog" role="presentation">
       <div
         className="settings-dialog__panel"
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="settings-dialog__header">
           <div>
             <h2>Settings</h2>
             <p>Manage artifacts, tools, and persona.</p>
           </div>
-          <button type="button" className="settings-dialog__close" onClick={onClose} aria-label="Close settings">
+          <button type="button" className="settings-dialog__close" onClick={onClose} aria-label="Back to chat">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M18 6 6 18" />
-              <path d="m6 6 12 12" />
+              <path d="M19 12H5" />
+              <path d="m12 19-7-7 7-7" />
             </svg>
+            <span>Back to chat</span>
           </button>
         </div>
         <div className="settings-dialog__body">
@@ -989,32 +985,21 @@ function SettingsDialog({
                     className={toolsView === "mcp" ? "is-active" : ""}
                     onClick={() => setToolsView("mcp")}
                   >
-                    MCP
+                    MCP Servers
                   </button>
                   <button
                     type="button"
                     className={toolsView === "function" ? "is-active" : ""}
                     onClick={() => setToolsView("function")}
                   >
-                    Function
+                    Custom Functions
                   </button>
                 </div>
-                {toolsView === "menu" && (
-                  <div className="settings-tools__empty">Choose MCP or Function to manage available tools.</div>
-                )}
                 {toolsView === "mcp" && (
-                  <div className="settings-tools__panel">
-                    <button type="button" className="settings-tools__open" onClick={onOpenMcp}>
-                      Open MCP server manager
-                    </button>
-                  </div>
+                  <McpCatalogPanel open={true} onClose={() => undefined} embedded />
                 )}
                 {toolsView === "function" && (
-                  <div className="settings-tools__panel">
-                    <button type="button" className="settings-tools__open" onClick={onOpenFunctions}>
-                      Open custom function manager
-                    </button>
-                  </div>
+                  <FunctionsPanel open={true} onClose={() => undefined} embedded />
                 )}
               </div>
             )}
@@ -1041,8 +1026,6 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
   const { activeSessionId, sidebarOpen, setSidebarOpen, messages } = useChatContext();
   const toast = useToast();
   const [dark, toggleDark] = useDarkMode();
-  const [mcpCatalogOpen, setMcpCatalogOpen] = useState(false);
-  const [functionsOpen, setFunctionsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dashboardArtifacts = useMemo(() => findDashboardArtifacts(messages), [messages]);
   const latestDashboard =
@@ -1226,11 +1209,7 @@ function ChatLayout({ persistentAttachments, setPersistentAttachments, sourceRef
         sessionId={activeSessionId}
         sourceRefreshToken={sourceRefreshToken}
         onAttachmentsChange={setPersistentAttachments}
-        onOpenMcp={() => setMcpCatalogOpen(true)}
-        onOpenFunctions={() => setFunctionsOpen(true)}
       />
-      <McpCatalogPanel open={mcpCatalogOpen} onClose={() => setMcpCatalogOpen(false)} />
-      <FunctionsPanel open={functionsOpen} onClose={() => setFunctionsOpen(false)} />
     </div>
   );
 }
