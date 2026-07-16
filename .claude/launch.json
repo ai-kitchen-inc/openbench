@@ -4,14 +4,50 @@
     {
       "name": "controlled-source-chat",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "openbench.cli.main", "demo", "run", "controlled-source-chat"],
+      "runtimeArgs": [
+        "-m",
+        "openbench.cli.main",
+        "demo",
+        "run",
+        "controlled-source-chat"
+      ],
       "port": 5173
     },
     {
       "name": "csc-frontend",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--dir", "examples/controlled-source-chat/frontend", "dev"],
+      "runtimeArgs": [
+        "--dir",
+        "examples/controlled-source-chat/frontend",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "general-chat-backend",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "server:app",
+        "--port",
+        "8005",
+        "--app-dir",
+        "examples/general-chat"
+      ],
+      "port": 8005
+    },
+    {
+      "name": "general-chat-frontend",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "examples/general-chat/frontend",
+        "dev",
+        "--port",
+        "5174"
+      ],
+      "port": 5174
     }
   ]
 }

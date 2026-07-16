@@ -1,13 +1,14 @@
-# General Chat — Deployment Runbook
+# General Chat (SSS) — Deployment Runbook
 
-Single source of truth for deploying the `general-chat` example. A clean-memory
-agent (or human) should be able to read this file and redeploy with no other
-context. The deploy logic lives in [`deploy/deploy.sh`](deploy.sh).
+Single source of truth for deploying the `general-chat` example (product name
+**SSS**, Bahasa Indonesia UI). A clean-memory agent (or human) should be able
+to read this file and redeploy with no other context. The deploy logic lives
+in [`deploy/deploy.sh`](deploy.sh).
 
-> **TL;DR** — from the repo root, in git-bash / WSL / Cloud Shell with `gcloud`,
-> `firebase`, `pnpm` authenticated and on PATH:
+> **TL;DR** — from the repo root, in git-bash / WSL / Cloud Shell with `gcloud`
+> authenticated and on PATH:
 > ```bash
-> bash deploy/deploy.sh all      # build image + roll out VM + deploy SPA + verify
+> bash deploy/deploy.sh all      # build API+SPA image + roll out VM + verify
 > bash deploy/deploy.sh verify   # just probe the live deployment
 > bash deploy/deploy.sh help     # usage + live resource inventory
 > ```
@@ -15,28 +16,46 @@ context. The deploy logic lives in [`deploy/deploy.sh`](deploy.sh).
 ## Architecture
 
 ```
- Browser
-   │  (HTTPS)
-   ▼
- Firebase Hosting  ── serves the React SPA (examples/general-chat/frontend/dist)
-   │  https://sss-poc1-corporate.web.app
-   │
-   │  SPA calls the API cross-origin with a Firebase ID token (Bearer)
+ Browser  ── one origin for everything: https://35-188-138-52.sslip.io
+   │  (HTTPS; Firebase JS SDK handles Google sign-in, API calls carry the ID token)
    ▼
  VM nginx (TLS, Let's Encrypt)         https://35-188-138-52.sslip.io
    │  reverse_proxy → 127.0.0.1:8080   (/awp has proxy_buffering off for SSE)
    ▼
  openbench-api container  (uvicorn, 127.0.0.1:8080, bound to localhost only)
-   │  Firebase auth middleware: verifies ID token (Google JWKS) + email allowlist
-   │  on every route except /health
+   │  serves the React SPA same-origin (GENERAL_CHAT_STATIC_DIR baked into the
+   │  image) AND the API — no Firebase Hosting, no CORS in prod
+   │  Firebase auth middleware: verifies ID token (Google JWKS), resolves the
+   │  account's ROLE from the `openbench_users` table, and enforces the
+   │  admin-managed capability flags per role — on every route except /health
    ├── openbench-worker container  (Pub/Sub → GCS file processing)
-   ├── Cloud SQL (Postgres)   — persistent chat memory   (optional)
+   ├── Cloud SQL (Postgres)   — chat memory, sources, users, app settings
    └── Cloud Storage (GCS)    — uploads/outputs          (optional)
 ```
 
 Auth boundary: Firebase admits any Google account; **authorization** is decided
-server-side. `GENERAL_CHAT_ALLOWED_EMAILS` / `GENERAL_CHAT_ALLOWED_DOMAINS` gate
-access (403 for non-listed). The SPA shows an "Access not authorized" screen on 403.
+server-side by the `openbench_users` table (roles `admin` | `user`). Unknown
+accounts get 403 and the SPA shows an access-denied screen. User management
+lives in the in-app admin panel (Pengguna page) — no env allowlist, no restart.
+`GENERAL_CHAT_ALLOWED_EMAILS` remains only as a first-boot seeding input.
+
+Roles & capabilities: admins get the full control panel (global knowledge
+sources, persona templates, capability toggles, users, MCP servers, custom
+functions) and bypass all capability gates. Regular users get the chat; which
+features they can touch (attachments, per-session sources, MCP management,
+custom functions, dashboards, image search) is toggled live from the admin
+panel (Kemampuan page) and enforced by the middleware (403 with the capability
+id). The global `file_generation` flag controls whether the agent loads the
+file-export skills (Excel/PDF/Markdown deliverables).
+
+Global knowledge: admins curate shared sources (owner `shared`, thread
+`global-sources`); every user's chat turn is grounded on them *in addition to*
+the user's own session sources, and users can inspect them read-only via the
+Sumber drawer (`GET /account/shared-sources`). The assistant's grounding
+posture is an admin-selectable persona template (default `soft-grounded`:
+cite sources when relevant, answer from general knowledge otherwise; `strict`
+reproduces the controlled-source-chat behavior; `general` is the classic
+assistant). Applying/editing a persona hot-rebuilds the agent — no restart.
 
 Per-user isolation: chat sessions, agent memory, and sources/uploads are scoped
 to the authenticated user's **lowercased email** (the `owner` column in
@@ -54,7 +73,9 @@ Accepted residual risks (documented decisions, not bugs):
   allowlist-gated but not per-user: paths contain unguessable uuid file ids.
 - `GET /d/{id}` share links stay public by design (below).
 - Publish store, custom functions, MCP catalogs, persona, and skills are shared
-  app-level configuration visible to every allowlisted user.
+  app-level configuration. Editing them is now admin-gated (capability flags
+  default MCP management and custom functions off for the `user` role), which
+  retires the old "any allowlisted user can edit shared config" residual risk.
 - The Pub/Sub worker updates source records without a request identity; it
   preserves the existing row's owner and never creates user-visible rows.
 
@@ -86,36 +107,40 @@ runs in the `openbench-worker` (Pub/Sub) rather than blocking uploads.
 | Compose | [`docker-compose.gce.yml`](../docker-compose.gce.yml) — `openbench-api` (`127.0.0.1:8080`) + `openbench-worker` |
 | TLS front door | `https://35-188-138-52.sslip.io` (VM public IP `35.188.138.52` via sslip.io) |
 | Reverse proxy | host **nginx** on the VM; ref config [`deploy/nginx-openbench-api.conf`](nginx-openbench-api.conf) → `/etc/nginx/sites-available/openbench-api` |
-| Frontend (SPA) | `examples/general-chat/frontend` (Vite), Hosting config [`examples/general-chat/firebase.json`](../examples/general-chat/firebase.json) |
-| Hosting URL | `https://sss-poc1-corporate.web.app` |
-| Firebase web app id | `1:920070146333:web:1ebd29612bfe6a4d04f9f4` |
+| Frontend (SPA) | `examples/general-chat/frontend` (Vite) — built into the API image (stage 1 of [`Dockerfile.general-chat`](../Dockerfile.general-chat)), served same-origin via `GENERAL_CHAT_STATIC_DIR` |
+| Legacy Hosting URL | `https://sss-poc1-corporate.web.app` — retired; keep only as an optional redirect to the sslip origin |
+| Firebase web app id | `1:920070146333:web:1ebd29612bfe6a4d04f9f4` (sign-in only) |
+| User/role table | `openbench_users` in the chat DB (managed from the admin panel) |
+| App settings | `openbench_app_settings` in the chat DB (capabilities + persona) |
 
 ## Prerequisites (one-time)
 
 - `gcloud` authenticated, project set: `gcloud config set project sss-poc1-corporate`. Account needs Cloud Build, Compute SSH, and Artifact Registry access.
-- `firebase` CLI logged in (`firebase login`) with access to the project.
-- `pnpm` installed (frontend build).
 - The VM already exists and is bootstrapped (see [`scripts/bootstrap-gce-general-chat.sh`](../scripts/bootstrap-gce-general-chat.sh)), with `/home/Admin/openbench-deploy/.env.gcp` filled in (secrets) and host nginx serving TLS.
 - Firebase **Authentication → Google provider** enabled (see "Enable Google sign-in" below).
+- Firebase **Authentication → Settings → Authorized domains** must include
+  `35-188-138-52.sslip.io` — the SPA now runs on that origin, and
+  `signInWithPopup` fails on unlisted domains. (`firebase` CLI and `pnpm` are
+  no longer needed for deploys — the SPA builds inside the Docker image.)
 
 ## Deploy
 
 ```bash
-bash deploy/deploy.sh all        # backend → frontend → verify
+bash deploy/deploy.sh all        # backend → verify
 ```
 
 Or individually:
 
 | Command | Does |
 |---------|------|
-| `deploy/deploy.sh backend` | Cloud Build the image (async + poll), `docker pull` + `docker-compose up -d` on the VM, wait for `/health`. |
-| `deploy/deploy.sh frontend` | `pnpm build` the SPA with the right `VITE_*`, `firebase deploy --only hosting`. |
+| `deploy/deploy.sh backend` | Cloud Build the API+SPA image (SPA built in stage 1 with the `_VITE_FIREBASE_*` substitutions), `docker pull` + `docker-compose up -d` on the VM, wait for `/health`. |
+| `deploy/deploy.sh frontend` | Alias of `backend` — the SPA ships inside the API image. |
 | `deploy/deploy.sh mcp-image` | Cloud Build the forked `db_server` MCP image (`mcp-db-server:1.3.1-ob1`) and `docker pull` it on the VM. |
 | `deploy/deploy.sh fn-image` | Cloud Build the `custom_function` MCP image + `docker pull` on the VM (+ functions dir). |
 | `deploy/deploy.sh grafana` | Provision + start the self-hosted Grafana on the VM (env gen, datasources, health). |
 | `deploy/deploy.sh nginx` | scp `docker-compose.gce.yml` + nginx conf to the VM, `nginx -t` + reload. Run only when those files change. |
-| `deploy/deploy.sh add-user EMAIL` | Append `EMAIL` to the allowlist on the VM and restart the API (idempotent). |
-| `deploy/deploy.sh remove-user EMAIL` | Remove `EMAIL` from the allowlist on the VM and restart the API (idempotent). |
+| `deploy/deploy.sh add-user EMAIL [ROLE]` | **Break-glass**: upsert a row in `openbench_users` via psql (default role `admin`). Primary flow is the admin panel. |
+| `deploy/deploy.sh remove-user EMAIL` | **Break-glass**: delete the `openbench_users` row via psql. |
 | `deploy/deploy.sh init-appdb` | Create the `appdata` DB + `mart` schema + `mcp_app` role on Cloud SQL (idempotent). |
 | `deploy/deploy.sh seed-mcp-db FILE.sql` | Load a `.sql` file into the `appdata` Postgres DB (the `db_server` data). |
 | `deploy/deploy.sh wipe-chat-data` | **DESTRUCTIVE**: drop all chat sessions/memory/sources and clear uploads/downloads on the VM (leaves published dashboards, MCP registry, functions, Grafana intact). Used once for the user-isolation rollout. |
@@ -144,9 +169,10 @@ web config (`VITE_FIREBASE_*`) is baked into `deploy.sh` (it ships in the JS bun
 | `GRAFANA_PUBLIC_URL` | browser-facing Grafana base (`https://<host>/grafana`) |
 | `CUSTOM_FN_DATA_PATH` | VM dir holding user-defined functions (custom_function MCP) |
 | `GENERAL_CHAT_FIREBASE_PROJECT_ID` | enables auth; must be `sss-poc1-corporate` |
-| `GENERAL_CHAT_ALLOWED_EMAILS` | comma-separated allowlist (use `add-user`) |
-| `GENERAL_CHAT_ALLOWED_DOMAINS` | optional domain allowlist |
-| `GENERAL_CHAT_ALLOWED_ORIGINS` | CORS allowlist → the Hosting origins |
+| `GENERAL_CHAT_BOOTSTRAP_ADMIN` | comma-separated admin emails, seeded into `openbench_users` **only when the table is empty**; also gates seeding the default `soft-grounded` persona |
+| `GENERAL_CHAT_ALLOWED_EMAILS` | legacy allowlist — now only a first-boot seed (role `user`); safe to remove once users show up in the admin panel |
+| `GENERAL_CHAT_ALLOWED_DOMAINS` | no longer consulted at runtime |
+| `GENERAL_CHAT_ALLOWED_ORIGINS` | CORS allowlist — same-origin now; keep only localhost dev origins if needed |
 | `GENERAL_CHAT_GCP_BUCKET` / `GENERAL_CHAT_GCP_PUBSUB_SUBSCRIPTION` | GCS + worker |
 | `OPENBENCH_API_BIND=127.0.0.1` / `OPENBENCH_IMAGE` | keep API private; image to run |
 
@@ -166,17 +192,57 @@ curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
 # → {"enabled": true, "clientId": "..."}
 ```
 
-## Add / remove an allowed user
+## User & role management
+
+**Primary flow — the admin panel.** Sign in as an admin → **Pengguna** page:
+add an email + role (`admin` | `user`), change roles, or remove accounts.
+Changes are effective on the user's next request — no restart. Guards: the
+last admin cannot be demoted or deleted, and admins cannot delete themselves.
+
+**Break-glass (lockout recovery)** — direct `openbench_users` upsert via psql
+from the VM:
 
 ```bash
-bash deploy/deploy.sh add-user someone@gmail.com
+bash deploy/deploy.sh add-user someone@gmail.com admin
 bash deploy/deploy.sh remove-user someone@gmail.com
 ```
-Both edit `GENERAL_CHAT_ALLOWED_EMAILS` in the VM `.env.gcp` (backed up first)
-and restart the API container. They are idempotent — `add-user` is a no-op if
-the email is already present, `remove-user` a no-op if it is absent.
+
 The Firebase Console Users page only **views/disables** accounts — it does not
-grant app access (the allowlist does).
+grant app access (the `openbench_users` table does).
+
+## Persona & capability management (admin panel)
+
+- **Persona** page: pick one of three templates — `soft-grounded` (default:
+  cites curated/user sources when relevant, otherwise answers from general
+  knowledge and says so), `strict` (answers ONLY from curated sources with
+  mandatory citations — the controlled-source-chat posture), `general`
+  (classic assistant) — or edit SOUL/STYLE/AGENTS/goal text directly. Saving
+  hot-rebuilds the shared agent; on rebuild failure the old agent keeps
+  serving and the error is shown.
+- **Kemampuan** page: per-role feature toggles (attachments, session sources,
+  MCP management, custom functions, dashboards, image search) + the global
+  `file_generation` switch (loads/unloads the export-excel / pdf-tools /
+  export-markdown skills, triggering an agent rebuild).
+- **Sumber Global** page: upload files / paste text / add URLs into the shared
+  knowledge base every chat turn is grounded on. Users see a read-only list in
+  the chat's Sumber drawer.
+
+## Migration (allowlist → roles table) — one-time runbook
+
+1. Add `GENERAL_CHAT_BOOTSTRAP_ADMIN=serebrum01@serebrum.co.id` to the VM
+   `.env.gcp` (keep the existing `GENERAL_CHAT_ALLOWED_EMAILS` line for the
+   seed) and add `35-188-138-52.sslip.io` to Firebase Auth authorized domains.
+2. `bash deploy/deploy.sh all` — first boot seeds `openbench_users`
+   (bootstrap emails → `admin`, allowlist emails → `user`) and the
+   `soft-grounded` persona, then serves the SSS SPA at the sslip origin.
+3. Sign in as the bootstrap admin; verify the Pengguna page lists the seeded
+   accounts and the Persona page shows `soft-grounded` (source `db`).
+4. Remove `GENERAL_CHAT_ALLOWED_EMAILS` (and `GENERAL_CHAT_ALLOWED_DOMAINS`)
+   from `.env.gcp`; `sudo docker-compose --env-file .env.gcp -f
+   docker-compose.gce.yml up -d openbench-api` to restart. Seeding never runs
+   again while the table is non-empty.
+5. Optionally retire the Firebase Hosting site (or deploy a static redirect
+   page pointing at `https://35-188-138-52.sslip.io`).
 
 ## MCP DB server (db_server → Cloud SQL Postgres)
 

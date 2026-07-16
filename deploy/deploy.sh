@@ -1,29 +1,33 @@
 #!/usr/bin/env bash
 #
-# deploy.sh — one-stop deploy for the OpenBench `general-chat` example.
+# deploy.sh — one-stop deploy for the OpenBench `general-chat` (SSS) example.
 #
 # Architecture (see deploy/DEPLOY.md for the full runbook):
-#   browser → Firebase Hosting (SPA) → https://<sslip host> (VM nginx, TLS)
+#   browser → https://<sslip host> (VM nginx, TLS)
 #           → openbench-api container (127.0.0.1:8080) on the GCE VM
-#   auth = Firebase Google ID token + email allowlist (enforced in the API)
+#             which serves BOTH the API and the SPA (single origin,
+#             GENERAL_CHAT_STATIC_DIR baked into the image)
+#   auth = Firebase Google ID token (sign-in only) + `openbench_users`
+#          role table managed from the in-app admin panel
 #
 # Usage:
 #   bash deploy/deploy.sh <command>
 #
 # Commands:
-#   backend        Build the API image (Cloud Build) and roll it out on the VM
-#   frontend       Build the SPA and deploy it to Firebase Hosting
+#   backend        Build API+SPA image (Cloud Build) and roll it out on the VM
+#   frontend       Alias of backend — the SPA ships inside the API image
 #   mcp-image      Build the forked db_server MCP image (Cloud Build) + pull on VM
 #   fn-image       Build the custom_function MCP image (Cloud Build) + pull on VM
 #   grafana        Provision + start the self-hosted Grafana on the VM (subpath /grafana/)
 #   nginx          Sync compose + nginx reverse-proxy config to the VM, reload nginx
-#   add-user EMAIL    Add an email to the backend allowlist and restart the API
-#   remove-user EMAIL Remove an email from the backend allowlist and restart the API
+#   add-user EMAIL [ROLE]  Break-glass: upsert a user row (openbench_users) via psql.
+#                  Primary flow is the in-app admin panel (Pengguna page).
+#   remove-user EMAIL      Break-glass: delete a user row via psql
 #   init-appdb     Create the appdata DB + mart schema + mcp_app role on Cloud SQL
 #   seed-mcp-db FILE  Load a .sql file into the appdata Postgres DB (db_server data)
 #   wipe-chat-data DESTRUCTIVE: drop all chat sessions/memory/sources/uploads
 #   verify         Probe the live deployment (health/auth/hardening/network)
-#   all            backend → frontend → verify
+#   all            backend → verify
 #   help           Print this help + the resource inventory
 #
 # Requirements (on PATH): gcloud, firebase, pnpm, ssh (via gcloud). Run from
@@ -121,9 +125,15 @@ http_code() {
 
 # --- backend -----------------------------------------------------------------
 cmd_backend() {
-  log "Building API image via Cloud Build ($IMAGE)"
+  log "Building API+SPA image via Cloud Build ($IMAGE)"
+  # Firebase web config (public, not secret) is baked into the SPA bundle.
+  local subs="_VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY"
+  subs="$subs,_VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN"
+  subs="$subs,_VITE_FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID"
+  subs="$subs,_VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID"
   local build_id
   build_id="$("$GCLOUD" builds submit --async --config "$CLOUDBUILD_CONFIG" . \
+    --substitutions "$subs" \
     --format='value(id)')" || die "Cloud Build submit failed"
   [ -n "$build_id" ] || die "Could not capture Cloud Build id"
   ok "submitted build $build_id — polling"
@@ -237,22 +247,12 @@ cmd_grafana() {
 }
 
 # --- frontend ----------------------------------------------------------------
+# Single-origin: the SPA is built inside the API image (Dockerfile stage 1)
+# and served by FastAPI via GENERAL_CHAT_STATIC_DIR. Firebase Hosting is no
+# longer part of the deployment — this command simply triggers `backend`.
 cmd_frontend() {
-  log "Building workspace SDK ($CHATUI_DIR) so the SPA bundles the latest chat-ui"
-  "$PNPM" -C "$CHATUI_DIR" build || die "chat-ui build failed"
-  # pnpm caches file: deps as a store copy keyed by path, not content, so a
-  # changed dist is NOT picked up without a forced reinstall.
-  "$PNPM" -C "$FRONTEND_DIR" install --force || die "frontend dep refresh failed"
-  ok "rebuilt $CHATUI_DIR/dist and refreshed the SPA dep"
-
-  log "Building SPA ($FRONTEND_DIR) → VITE_BACKEND_URL=$VITE_BACKEND_URL"
-  "$PNPM" -C "$FRONTEND_DIR" build || die "frontend build failed"
-  ok "built $FRONTEND_DIR/dist"
-
-  log "Deploying to Firebase Hosting (project $PROJECT_ID)"
-  ( cd "$FIREBASE_DIR" && "$FIREBASE" deploy --only hosting --project "$PROJECT_ID" ) \
-    || die "firebase deploy failed"
-  ok "Hosting deployed → $HOSTING_URL"
+  warn "SPA ships inside the API image now — running 'backend' instead."
+  cmd_backend
 }
 
 # --- nginx + compose sync ----------------------------------------------------
@@ -268,40 +268,38 @@ cmd_nginx() {
 }
 
 # --- add-user ----------------------------------------------------------------
+# Break-glass user management against the `openbench_users` table (chat DB).
+# The primary flow is the in-app admin panel (Pengguna page); use this only
+# for lockout recovery (e.g. the last admin lost access). Idempotent upsert.
 cmd_add_user() {
   local email="${1:-}"
-  [ -n "$email" ] || die "usage: deploy.sh add-user EMAIL"
-  log "Adding $email to GENERAL_CHAT_ALLOWED_EMAILS on the VM"
-  # Idempotent: append only if not already present; back up .env.gcp first.
-  vm_ssh "cd $VM_DEPLOY_DIR && cp .env.gcp .env.gcp.bak-\$(date +%s) && \
-    cur=\$(grep '^GENERAL_CHAT_ALLOWED_EMAILS=' .env.gcp | cut -d= -f2-) && \
-    if echo \",\$cur,\" | grep -qi \",$email,\"; then echo ALREADY_PRESENT; \
-    else if [ -n \"\$cur\" ]; then new=\"\$cur,$email\"; else new=\"$email\"; fi; \
-      sed -i \"s|^GENERAL_CHAT_ALLOWED_EMAILS=.*|GENERAL_CHAT_ALLOWED_EMAILS=\$new|\" .env.gcp && \
-      sudo docker-compose --env-file .env.gcp -f $COMPOSE_FILE up -d openbench-api && echo ADDED; fi && \
-    grep '^GENERAL_CHAT_ALLOWED_EMAILS=' .env.gcp" \
+  local role="${2:-admin}"
+  [ -n "$email" ] || die "usage: deploy.sh add-user EMAIL [admin|user]"
+  case "$role" in admin|user) ;; *) die "role must be 'admin' or 'user'" ;; esac
+  local email_lc; email_lc="$(printf '%s' "$email" | tr '[:upper:]' '[:lower:]')"
+  log "Upserting $email_lc (role=$role) into openbench_users on Cloud SQL"
+  vm_ssh "dburl=\$(grep '^GENERAL_CHAT_DATABASE_URL=' $VM_DEPLOY_DIR/.env.gcp | cut -d= -f2-); \
+    [ -n \"\$dburl\" ] || { echo 'GENERAL_CHAT_DATABASE_URL missing in .env.gcp'; exit 1; }; \
+    sudo docker run --rm -i $PSQL_IMAGE psql \"\$dburl\" -v ON_ERROR_STOP=1 -c \
+      \"INSERT INTO openbench_users (email, role, display_name, created_at, added_by) \
+        VALUES ('$email_lc', '$role', '', now()::text, 'deploy.sh') \
+        ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role;\" && echo UPSERTED" \
     || die "add-user failed"
-  ok "allowlist updated (API restarting if changed)"
+  ok "$email_lc is now role=$role (effective immediately, no restart needed)"
 }
 
 # --- remove-user -------------------------------------------------------------
 cmd_remove_user() {
   local email="${1:-}"
   [ -n "$email" ] || die "usage: deploy.sh remove-user EMAIL"
-  log "Removing $email from GENERAL_CHAT_ALLOWED_EMAILS on the VM"
-  # Idempotent: rewrite only if present; back up .env.gcp first. Splits the
-  # list on commas and drops the matching entry (any position, no dangling
-  # commas) via a case-insensitive whole-line awk filter.
-  vm_ssh "cd $VM_DEPLOY_DIR && cp .env.gcp .env.gcp.bak-\$(date +%s) && \
-    cur=\$(grep '^GENERAL_CHAT_ALLOWED_EMAILS=' .env.gcp | cut -d= -f2-) && \
-    if echo \",\$cur,\" | grep -qi \",$email,\"; then \
-      new=\$(echo \"\$cur\" | tr ',' '\n' | awk -v e=\"$email\" 'tolower(\$0)!=tolower(e)' | paste -sd, -); \
-      sed -i \"s|^GENERAL_CHAT_ALLOWED_EMAILS=.*|GENERAL_CHAT_ALLOWED_EMAILS=\$new|\" .env.gcp && \
-      sudo docker-compose --env-file .env.gcp -f $COMPOSE_FILE up -d openbench-api && echo REMOVED; \
-    else echo NOT_PRESENT; fi && \
-    grep '^GENERAL_CHAT_ALLOWED_EMAILS=' .env.gcp" \
+  local email_lc; email_lc="$(printf '%s' "$email" | tr '[:upper:]' '[:lower:]')"
+  log "Deleting $email_lc from openbench_users on Cloud SQL"
+  vm_ssh "dburl=\$(grep '^GENERAL_CHAT_DATABASE_URL=' $VM_DEPLOY_DIR/.env.gcp | cut -d= -f2-); \
+    [ -n \"\$dburl\" ] || { echo 'GENERAL_CHAT_DATABASE_URL missing in .env.gcp'; exit 1; }; \
+    sudo docker run --rm -i $PSQL_IMAGE psql \"\$dburl\" -v ON_ERROR_STOP=1 -c \
+      \"DELETE FROM openbench_users WHERE email = '$email_lc';\" && echo DELETED" \
     || die "remove-user failed"
-  ok "allowlist updated (API restarting if changed)"
+  ok "$email_lc removed (access revoked immediately)"
 }
 
 # --- init-appdb --------------------------------------------------------------
@@ -389,8 +387,10 @@ cmd_verify() {
   }
   check "API /health (public)"        "$API_URL/health"       "200"
   check "API /persona (no token)"     "$API_URL/persona"      "401"
+  check "API /account/me (no token)"  "$API_URL/account/me"   "401"
+  check "API /admin/users (no token)" "$API_URL/admin/users"  "401"
   check "API /openapi.json (hardened)" "$API_URL/openapi.json" "404"
-  check "Hosting SPA"                  "$HOSTING_URL"          "200"
+  check "Same-origin SPA (/)"          "$API_URL/"             "200"
   check "Grafana /grafana/api/health"  "$API_URL/grafana/api/health" "200"
   # 8080 must NOT be publicly reachable (expect connection failure → 000).
   local raw; raw="$(http_code "http://$VM_PUBLIC_IP:8080/health" 8)"
@@ -414,7 +414,8 @@ Resource inventory:
   VM             $VM_NAME ($VM_ZONE), dir $VM_DEPLOY_DIR
   Compose        $COMPOSE_FILE  (openbench-api @127.0.0.1:8080 + openbench-worker)
   TLS front door $API_URL  (host nginx → 127.0.0.1:8080, Let's Encrypt)
-  Hosting SPA    $HOSTING_URL  (from $FRONTEND_DIR/dist)
+  SPA            served same-origin by the API (GENERAL_CHAT_STATIC_DIR in image)
+  Legacy Hosting $HOSTING_URL  (retired — optional redirect only)
   Runbook        deploy/DEPLOY.md
 EOF
 }
@@ -433,7 +434,7 @@ case "${1:-help}" in
   seed-mcp-db) shift; cmd_seed_mcp_db "${1:-}" ;;
   wipe-chat-data) cmd_wipe_chat_data ;;
   verify)   cmd_verify ;;
-  all)      cmd_backend; cmd_frontend; cmd_verify ;;
+  all)      cmd_backend; cmd_verify ;;
   help|-h|--help) cmd_help ;;
   *) die "unknown command '$1' (try: backend|frontend|mcp-image|fn-image|grafana|nginx|add-user|remove-user|init-appdb|seed-mcp-db|wipe-chat-data|verify|all|help)" ;;
 esac

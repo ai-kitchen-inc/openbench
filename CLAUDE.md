@@ -21,18 +21,20 @@ Guidance for Claude Code when working with this repository.
 
 ## Deployment (general-chat)
 
-The `general-chat` example is deployed to GCP. **Read [deploy/DEPLOY.md](deploy/DEPLOY.md)
-before doing any deploy/infra work** — it is the single source of truth for the
-architecture (Firebase Hosting SPA → VM nginx/TLS at `35-188-138-52.sslip.io` →
-`openbench-api` container; Firebase Google auth + email allowlist) and the full
-resource inventory. All deploy actions go through [deploy/deploy.sh](deploy/deploy.sh):
+The `general-chat` example (product name **SSS**, Bahasa Indonesia UI) is
+deployed to GCP. **Read [deploy/DEPLOY.md](deploy/DEPLOY.md) before doing any
+deploy/infra work** — it is the single source of truth for the architecture
+(single origin: VM nginx/TLS at `35-188-138-52.sslip.io` → `openbench-api`
+container serving API + SPA via `GENERAL_CHAT_STATIC_DIR`; Firebase Google
+sign-in + `openbench_users` role table with an in-app admin panel) and the
+full resource inventory. All deploy actions go through
+[deploy/deploy.sh](deploy/deploy.sh):
 
 ```bash
-bash deploy/deploy.sh all            # build image + roll out VM + deploy SPA + verify
-bash deploy/deploy.sh backend        # API image → Cloud Build → VM
-bash deploy/deploy.sh frontend       # SPA → Firebase Hosting
-bash deploy/deploy.sh add-user EMAIL    # grant a Google account access (allowlist)
-bash deploy/deploy.sh remove-user EMAIL # revoke a Google account's access (allowlist)
+bash deploy/deploy.sh all            # build API+SPA image + roll out VM + verify
+bash deploy/deploy.sh backend        # API+SPA image → Cloud Build → VM
+bash deploy/deploy.sh add-user EMAIL [ROLE]  # break-glass user upsert (psql); primary flow = admin panel
+bash deploy/deploy.sh remove-user EMAIL      # break-glass user delete (psql)
 bash deploy/deploy.sh verify         # probe the live deployment
 ```
 
