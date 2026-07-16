@@ -69,8 +69,12 @@ stores everything under the sentinel owner `local`. Rollout was a clean wipe
 rather than migrated.
 
 Accepted residual risks (documented decisions, not bugs):
-- `/uploads`, `/downloads`, `/image-search/previews` static mounts are
-  allowlist-gated but not per-user: paths contain unguessable uuid file ids.
+- `/uploads`, `/image-search/previews` static mounts are auth-gated but not
+  per-user: paths contain unguessable uuid file ids.
+- `/downloads` (agent-generated deliverables) is **public-by-URL** like
+  `/d/{id}`: download cards are plain anchor links that carry no Bearer
+  header, so the mount is unauthenticated; filenames embed a random uuid
+  suffix and the mount never lists directories.
 - `GET /d/{id}` share links stay public by design (below).
 - Publish store, custom functions, MCP catalogs, persona, and skills are shared
   app-level configuration. Editing them is now admin-gated (capability flags

@@ -149,13 +149,17 @@ _EXT_MIME_MAP = {
     ".avi": "video/x-msvideo",
 }
 
+# NOTE: /downloads is deliberately absent — agent-generated files render as
+# plain anchor links, and browser navigation carries no Bearer header.
+# Generated filenames embed a random uuid suffix and the mount never lists
+# directories, so /downloads is public-by-unguessable-URL like /d/{id}.
+# User-uploaded documents (/uploads) stay auth-gated.
 _AUTH_PROTECTED_PREFIXES = (
     "/account",
     "/admin",
     "/awp",
     "/chat",
     "/dashboard",
-    "/downloads",
     "/functions",
     "/image-search",
     "/mcp",

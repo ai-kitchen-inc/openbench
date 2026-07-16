@@ -121,6 +121,16 @@ class TestGeneralChatFirebaseAuth(unittest.TestCase):
             response = client.get(path)
             self.assertNotEqual(response.status_code, 200, f"{path} should not be served")
 
+    def test_downloads_static_mount_is_public(self):
+        """Generated-file download links are plain anchors (no Bearer header):
+        /downloads must answer without auth — 404 for a missing file, never 401."""
+        client, verifier = self._client()
+
+        response = client.get("/downloads/not-found.xlsx")
+
+        self.assertEqual(response.status_code, 404)
+        verifier.verify.assert_not_called()
+
     def test_uploads_static_mount_is_protected(self):
         client, verifier = self._client()
 
