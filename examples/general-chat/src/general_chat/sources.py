@@ -1617,10 +1617,19 @@ def dashboard_source_text(stored_file: StoredFile, *, parsed_text: str) -> str:
             "aggregate_data.extract_metadata if you need column names, then write "
             "read-only SQLite SQL against table `data` and call "
             f"aggregate_data.aggregate_data with path=\"{metadata['localFilePath']}\". "
-            "For dashboard requests, call aggregate_data.extract_metadata "
-            "first, call aggregate_data.aggregate_data for all dashboard datasets, "
-            "build a declarative dashboard ViewModel, and call "
-            "dashboard_generator.generate_dashboard."
+            "For questions like whether a dashboard has already been made from this file, "
+            "call dashboard_generator.search_dashboards with "
+            f"source_path=\"{metadata['localFilePath']}\" and answer from the match. "
+            "For previous-dashboard load requests, call dashboard_generator.search_dashboards "
+            "or dashboard_generator.load_dashboard before asking for another file. "
+            "For dashboard creation requests, call aggregate_data.extract_metadata "
+            "first, then call dashboard_generator.search_dashboards with this "
+            "source_path before any aggregation. If the search result has "
+            "reusable_match=true or exact_source_match=true and the user did not "
+            "ask for a revision, new chart type, new template, or special change, "
+            "call dashboard_generator.load_dashboard and do not regenerate. Only "
+            "aggregate and call dashboard_generator.generate_dashboard when no "
+            "reusable match exists or the user explicitly asks for changes."
         ),
         "",
         "Raw spreadsheet rows are not included in the chat prompt.",

@@ -16,6 +16,10 @@ A2UI renders as native dashboard components.
 ## Tools
 
 - generate_dashboard: publish a dashboard ViewModel to the chat artifact queue and keep HTML only as fallback/export
+- search_dashboards: search persisted dashboard memory across chat sessions by
+  title, source file, template, or natural-language query
+- load_dashboard: publish an exact previously saved dashboard artifact from
+  dashboard memory back to chat
 
 ## Adapter Architecture
 
@@ -38,6 +42,12 @@ the ViewModel as a raw HTML generation request.
 
 ## Dashboard SOP
 
+When the user asks to load a previous dashboard instead of creating a new one
+(`dashboard terakhir`, `dashboard kemarin`, `dashboard dari data A`, etc.),
+do not regenerate. Call `search_dashboards` when the target is ambiguous, then
+call `load_dashboard` with the returned `dashboard_id`; for "last/latest"
+requests, call `load_dashboard(latest=true)` directly.
+
 When the user asks for a dashboard from an uploaded CSV/XLSX file, follow these
 steps exactly.
 
@@ -46,21 +56,29 @@ steps exactly.
 2. Call `aggregate_data.extract_metadata(path=...)` first. If the workbook has multiple sheets,
    choose the most relevant sheet from metadata or ask the user when the choice
    is ambiguous.
-3. Use the metadata response to infer column roles:
+3. Before writing SQL or composing a ViewModel, call
+   `dashboard_generator.search_dashboards(source_path=...)`; include
+   `template_path=...` when the user supplied a dashboard template. If a result
+   has `reusable_match=true` or has `exact_source_match=true` with no conflicting
+   template, and the user did not explicitly request a revision, new chart type,
+   new layout, new template, or other custom change, call
+   `dashboard_generator.load_dashboard(dashboard_id=...)` and stop. Do not
+   regenerate a dashboard that already exists for the same data/template.
+4. Use the metadata response to infer column roles:
    - date/time columns for trends
    - categorical columns for group-by dimensions
    - numeric columns for metrics and KPIs
    - identifier columns only for counts/top-N when appropriate
-4. Write one or more read-only SQLite SQL queries from the metadata. The source
+5. Write one or more read-only SQLite SQL queries from the metadata. The source
    file is loaded as table `data`; use only `SELECT` or `WITH`, quote column
    names with double quotes when needed, and add `LIMIT` for large chart/table
    outputs.
-5. Call the separate Aggregate Data MCP tool
+6. Call the separate Aggregate Data MCP tool
    `aggregate_data.aggregate_data(path=..., query=[...])`. Use the returned
    datasets as the only source for dashboard panels unless a small table
    preview is needed. For multiple dashboard datasets, pass a list of query
    objects in one call.
-6. Build a dashboard ViewModel as declarative JSON. Treat this step as A2UI-style
+7. Build a dashboard ViewModel as declarative JSON. Treat this step as A2UI-style
    ViewModel composition only:
    - use the canonical ViewModel shape below exactly
    - include `title`, optional `description`, `kpis`, and `sections`
@@ -73,15 +91,19 @@ steps exactly.
    - do not include raw UI code, HTML, CSS, JavaScript, or prompt instructions
    - do not invent alternate component dialects such as `props`, nested `content`,
      `component: "row"`, Chart.js `labels/datasets`, or `components` grids
-7. If the user uploaded a dashboard template, locate its attachment/source path
+8. If the user uploaded a dashboard template, locate its attachment/source path
    from `Dashboard template path:` and pass it as
    `generate_dashboard(view_model=..., template_path=...)`. Templates are
    optional; when absent, omit all template fields so the system uses the
    configured default/Stitch adapter.
-8. Call `generate_dashboard(view_model=...)`. The tool publishes the ViewModel
+9. Call `generate_dashboard(view_model=...)`. The tool publishes the ViewModel
    as a dashboard artifact. In General Chat, A2UI renders it side-by-side; any
-   returned HTML link is only a fallback/export.
-9. In the final answer, mention the dashboard is ready and refer to the returned
+   returned HTML link is only a fallback/export. The tool automatically stores
+   the generated artifact in persistent dashboard memory. If the current source
+   data fingerprint and dashboard template fingerprint exactly match a saved
+   dashboard, the tool returns that saved artifact instead of rendering a
+   different dashboard, preserving cross-session consistency.
+10. In the final answer, mention the dashboard is ready and refer to the returned
    link. Do not dump the full ViewModel unless the user asks for implementation
    details.
 

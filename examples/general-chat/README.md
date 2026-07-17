@@ -362,13 +362,11 @@ window. Generated HTML files are written to `downloads/` and served from
 `/downloads/...`.
 
 Successful dashboards are also saved to dashboard persistence memory. On later
-turns or sessions, `extract_metadata` can match a refreshed CSV/XLSX with the
-same functional schema even if new rows were added, and the agent can call
-`load_dashboard_memory` before regenerating the dashboard. For revision prompts,
-the agent passes `previous_dashboard_id` and `revision_panel_titles` to
-`generate_dashboard`; only the requested panel patch is changed and unspecified
-panels plus their datasets are preserved. See
-[Dashboard Persistence Memory](../../docs/DASHBOARD_PERSISTENCE_MEMORY.md).
+turns or sessions, the agent can call `dashboard_generator.search_dashboards`
+and `dashboard_generator.load_dashboard` to reopen the exact saved artifact.
+When a new generation request uses the same source-data fingerprint and the
+same dashboard template fingerprint, `dashboard_generator.generate_dashboard`
+returns the saved artifact instead of rendering a different dashboard.
 
 To test the standalone MCP version only:
 

@@ -222,7 +222,9 @@ def _general_chat_mcp_env(variant: str, demo_dir: Path) -> dict[str, str]:
             "GENERAL_CHAT_MCP_APPROVED_TOOLS": (
                 "aggregate_data.extract_metadata,"
                 "aggregate_data.aggregate_data,"
-                "dashboard_generator.generate_dashboard"
+                "dashboard_generator.generate_dashboard,"
+                "dashboard_generator.search_dashboards,"
+                "dashboard_generator.load_dashboard"
             ),
             "OPENBENCH_EXPORT_DIR": str(downloads_dir.resolve()),
             "OPENBENCH_EXPORT_URL_BASE": "/downloads",

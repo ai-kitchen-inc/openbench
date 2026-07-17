@@ -7,6 +7,9 @@ MCP, so this server focuses on dashboard rendering:
 - `generate_dashboard`: render a declarative dashboard ViewModel as an A2UI
   dashboard artifact with an HTML export, optionally using a user-uploaded
   `.html` template or `design.md` design brief
+- `search_dashboards`: search persisted dashboard memory across chat sessions
+  by title, source file, template, or query text
+- `load_dashboard`: publish the exact saved dashboard artifact back to chat
 
 ## Configuration
 
@@ -17,6 +20,7 @@ MCP, so this server focuses on dashboard rendering:
 | `DASHBOARD_RENDER_ADAPTER` | `auto` | `default`, `stitch`, or `auto` |
 | `STITCH_API_KEY` | unset | Optional Stitch credential |
 | `STITCH_API_URL` | unset | Optional Stitch endpoint; `/mcp` URLs use MCP mode |
+| `OPENBENCH_DASHBOARD_STATE_PATH` | `.openbench/dashboard_generator_state.json` | Shared dashboard memory/state file |
 
 ## Run Locally
 
@@ -78,6 +82,8 @@ tools plus the separate Aggregate Data MCP:
 - `aggregate_data.extract_metadata`
 - `aggregate_data.aggregate_data`
 - `dashboard_generator.generate_dashboard`
+- `dashboard_generator.search_dashboards`
+- `dashboard_generator.load_dashboard`
 
 Generated dashboard exports are written to `examples/general-chat/downloads/`
 and served from `/downloads/...`.
@@ -93,4 +99,9 @@ For dashboard requests, call `aggregate_data.extract_metadata`, then call
 then call `dashboard_generator.generate_dashboard`. The aggregate MCP writes
 datasets into the shared dashboard state file so `generate_dashboard` can
 hydrate referenced datasets even though metadata/aggregation and rendering live
-in separate MCP servers.
+in separate MCP servers. `generate_dashboard` also saves every rendered
+dashboard into that state file and reuses a saved artifact when the current
+source-data fingerprint and template fingerprint match. For requests like
+"load dashboard terakhir" or "load dashboard yang kemarin dibuat pakai data A",
+call `dashboard_generator.search_dashboards` as needed and then
+`dashboard_generator.load_dashboard` instead of rebuilding.

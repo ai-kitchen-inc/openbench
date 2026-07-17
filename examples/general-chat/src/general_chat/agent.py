@@ -29,6 +29,7 @@ _SAM_COUNT_TOOL = "sam_segmentation.count_objects_with_sam3"
 _SAM_SERVICE_INFO_TOOL = "sam_segmentation.service_info"
 _DASHBOARD_TOOL_PREFIX = "dashboard_generator."
 _DASHBOARD_GENERATE_TOOL = "dashboard_generator.generate_dashboard"
+_DASHBOARD_LOAD_TOOL = "dashboard_generator.load_dashboard"
 _AGGREGATE_TOOL_PREFIX = "aggregate_data."
 _PROVIDER_NAME = "gemini-general-chat"
 _VLM_PROVIDER_NAME = "general-chat-vlm"
@@ -315,6 +316,7 @@ class _DashboardGeneratorRenderTool(Tool):
     def __init__(self, inner: Tool):
         self.inner = inner
         self.revision_note_provider: Any | None = None
+        self._is_generate_tool = getattr(inner, "namespaced_name", "") == _DASHBOARD_GENERATE_TOOL
 
     @property
     def name(self) -> str:
@@ -366,10 +368,11 @@ class _DashboardGeneratorRenderTool(Tool):
         "warnings",
         "templateSource",
         "templateName",
+        "memory",
     )
 
     def execute(self, **params: Any) -> Any:
-        if not params.get("revision_notes") and self.revision_note_provider:
+        if self._is_generate_tool and not params.get("revision_notes") and self.revision_note_provider:
             note = self.revision_note_provider()
             if note:
                 params["revision_notes"] = note
@@ -379,7 +382,9 @@ class _DashboardGeneratorRenderTool(Tool):
             result = {
                 key: payload[key] for key in self._AGENT_RESULT_KEYS if key in payload
             }
-            result["status"] = "created"
+            loaded = bool((payload.get("memory") or {}).get("loaded"))
+            reused = bool((payload.get("memory") or {}).get("reused"))
+            result["status"] = "loaded" if loaded else "reused" if reused else "created"
             warnings = payload.get("warnings") or []
             if warnings:
                 result["final_answer_hint"] = (
@@ -394,8 +399,9 @@ class _DashboardGeneratorRenderTool(Tool):
                     "numbers or dataset indices. Do not paste the full ViewModel."
                 )
             else:
+                action = "loaded from dashboard memory" if loaded else "ready"
                 result["final_answer_hint"] = (
-                    "Dashboard artifact is ready and has been rendered in the side panel. "
+                    f"Dashboard artifact is {action} and has been rendered in the side panel. "
                     "Do NOT call generate_dashboard again for this request. Summarize the "
                     "dashboard briefly in the user's language; do not paste the full "
                     "ViewModel."
@@ -605,7 +611,7 @@ def _wrap_chat_mcp_tool(tool: Any) -> Any:
         # Keep stdio MCP processes alive across multi-step metadata -> aggregate -> render flows.
         tool.close_after_execute = False
     if (
-        namespaced_name == _DASHBOARD_GENERATE_TOOL
+        namespaced_name in {_DASHBOARD_GENERATE_TOOL, _DASHBOARD_LOAD_TOOL}
         and isinstance(tool, Tool)
     ):
         return _DashboardGeneratorRenderTool(tool)
@@ -1129,23 +1135,39 @@ def create_agent(
         or (
             "Help users by answering questions, reasoning over optional context, "
             "using enabled tools when useful, and thinking through problems. When "
+            "the user asks whether you have ever created a dashboard, asks to load "
+            "a previous/latest dashboard, or mentions an earlier dashboard by title, "
+            "data name, or template, call dashboard_generator.search_dashboards or "
+            "dashboard_generator.load_dashboard before answering. Do not ask the user "
+            "to upload the spreadsheet again for a previous-dashboard load request. "
+            "If the user uploads a CSV/XLSX and asks whether a dashboard was already "
+            "made from that data, call dashboard_generator.search_dashboards with the "
+            "uploaded source_path and answer from the match result. When "
             "the user uploads a CSV/XLSX source and asks for a table, average, "
             "sum, count, group-by, top-N, or other non-dashboard aggregate answer, "
             "use the Aggregate Data MCP: call aggregate_data.extract_metadata when "
             "you need column names, then aggregate_data.aggregate_data with read-only "
             "SQLite against table `data`, and answer from the returned records. When "
             "the user uploads a CSV/XLSX source and asks for a dashboard, follow "
-            "the dashboard-generator skill/MCP SOP: (1) call aggregate_data.extract_metadata and inspect "
-            "dashboard_memory matches, (2) call load_dashboard_memory when the user "
-            "asks for the same dashboard, refreshed data, or a revision, (3) call "
+            "the dashboard-generator skill/MCP SOP: (1) call aggregate_data.extract_metadata, then "
+            "call dashboard_generator.search_dashboards with source_path and template_path when "
+            "a dashboard template is provided. If search_dashboards returns reusable_match=true "
+            "or exact_source_match=true with no conflicting template, and the user did not ask "
+            "for a revision, new chart type, new layout, or special change, call "
+            "dashboard_generator.load_dashboard with that dashboard_id and do not aggregate or "
+            "regenerate. (2) call dashboard_generator.load_dashboard when the user asks to load "
+            "a previous/latest dashboard or identifies a dashboard by source/template. (3) Only "
+            "when no reusable match exists, or when the user explicitly requests a revision/custom "
+            "change, call "
             "aggregate_data.aggregate_data ONCE, passing a list of ALL the SQL queries you need "
             "(one per chart/metric) so every dataset comes back in a single tool "
             "call — do NOT call aggregate_data once per metric, (4) compose a "
             "declarative ViewModel from the returned datasets while preserving "
             "previous panels unless the user asked to change them, then (5) generate "
-            "the dashboard artifact with dashboard_generator.generate_dashboard, "
-            "source_path, previous_dashboard_id, and "
-            "revision_panel_titles for revisions. For uploaded images, use the provided visual "
+            "the dashboard artifact with dashboard_generator.generate_dashboard. "
+            "generate_dashboard automatically persists the artifact and reuses a saved "
+            "dashboard when the source-data fingerprint and template fingerprint match. "
+            "For uploaded images, use the provided visual "
             "observations as the source of truth for general image understanding and "
             "vehicle plate reading. For uploaded image counting, call the SAM count "
             "tool once per image/concept when that MCP tool is enabled, and answer "

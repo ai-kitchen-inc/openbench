@@ -496,8 +496,17 @@ def _source_record_attachments(source_records: list[SourceRecord]) -> list[Attac
                 f"## {record.name}\n\n"
                 "Spreadsheet raw rows are intentionally omitted from the chat prompt. "
                 "Use Aggregate Data MCP for table-only aggregation. Use "
-                "aggregate_data.extract_metadata, aggregate_data.aggregate_data, "
-                "and dashboard_generator.generate_dashboard for dashboard requests."
+                "dashboard_generator.search_dashboards with this Dashboard source path "
+                "to answer whether this file already has a saved dashboard. Use "
+                "dashboard_generator.search_dashboards and dashboard_generator.load_dashboard "
+                "for previous-dashboard load requests before asking for another file. "
+                "For dashboard creation requests, call aggregate_data.extract_metadata, "
+                "then dashboard_generator.search_dashboards with this source path before "
+                "any aggregation. If the result has reusable_match=true or exact_source_match=true "
+                "and the user did not ask for a revision, new chart type, new template, or "
+                "special change, call dashboard_generator.load_dashboard and do not regenerate. "
+                "Only call aggregate_data.aggregate_data and dashboard_generator.generate_dashboard "
+                "when no reusable match exists or the user explicitly asks for changes."
             )
         elif record.kind == "dashboard_template" and template_tool_path:
             extra_lines += (

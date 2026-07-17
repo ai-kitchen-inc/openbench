@@ -23,6 +23,11 @@
           "isRequired": false
         },
         {
+          "name": "OPENBENCH_DASHBOARD_STATE_PATH",
+          "description": "Shared dashboard memory/state JSON path.",
+          "isRequired": false
+        },
+        {
           "name": "DASHBOARD_RENDER_ADAPTER",
           "description": "default, stitch, or auto.",
           "isRequired": false
@@ -34,7 +39,9 @@
     "io.modelcontextprotocol.registry/publisher-provided": {
       "dev.openbench": {
         "tools": [
-          "generate_dashboard"
+          "generate_dashboard",
+          "search_dashboards",
+          "load_dashboard"
         ],
         "permissions": {
           "filesystem": {

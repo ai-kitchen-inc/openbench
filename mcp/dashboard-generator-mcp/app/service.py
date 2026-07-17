@@ -31,6 +31,34 @@ class DashboardGeneratorService:
             template_format=template_format,
         )
 
+    def search_dashboards(
+        self,
+        query: str | None = None,
+        source_path: str | None = None,
+        template_path: str | None = None,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        """Search persisted dashboard memory."""
+        return dashboard_tools.search_dashboards(
+            query=query,
+            source_path=source_path,
+            template_path=template_path,
+            limit=limit,
+        )
+
+    def load_dashboard(
+        self,
+        dashboard_id: str | None = None,
+        query: str | None = None,
+        latest: bool = False,
+    ) -> dict[str, Any]:
+        """Load a persisted dashboard artifact."""
+        return dashboard_tools.load_dashboard(
+            dashboard_id=dashboard_id,
+            query=query,
+            latest=latest,
+        )
+
 
 def bind(**kwargs: Any) -> None:
     """Inject dashboard rendering dependencies for tests or embedded skill use."""

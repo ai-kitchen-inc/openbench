@@ -14,6 +14,8 @@ from app.service import bind as _bind_service  # noqa: E402
 from app.service import get_service  # noqa: E402
 from app.tool_schemas import (  # noqa: E402,F401
     GENERATE_DASHBOARD_SCHEMA,
+    LOAD_DASHBOARD_SCHEMA,
+    SEARCH_DASHBOARDS_SCHEMA,
 )
 
 
@@ -38,4 +40,32 @@ def generate_dashboard(
         template_path=template_path,
         template_text=template_text,
         template_format=template_format,
+    )
+
+
+def search_dashboards(
+    query: str | None = None,
+    source_path: str | None = None,
+    template_path: str | None = None,
+    limit: int = 5,
+) -> dict[str, Any]:
+    """Search persisted dashboard memory."""
+    return get_service().search_dashboards(
+        query=query,
+        source_path=source_path,
+        template_path=template_path,
+        limit=limit,
+    )
+
+
+def load_dashboard(
+    dashboard_id: str | None = None,
+    query: str | None = None,
+    latest: bool = False,
+) -> dict[str, Any]:
+    """Load a persisted dashboard artifact."""
+    return get_service().load_dashboard(
+        dashboard_id=dashboard_id,
+        query=query,
+        latest=latest,
     )

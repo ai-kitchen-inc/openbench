@@ -16,7 +16,7 @@ New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 $env:GENERAL_CHAT_MCP_ENABLED = "1"
 $env:GENERAL_CHAT_MCP_MODE = "external"
 $env:GENERAL_CHAT_MCP_CONFIG = "mcp/dashboard-generator-stdio.yaml"
-$env:GENERAL_CHAT_MCP_APPROVED_TOOLS = "aggregate_data.extract_metadata,aggregate_data.aggregate_data,dashboard_generator.generate_dashboard"
+$env:GENERAL_CHAT_MCP_APPROVED_TOOLS = "aggregate_data.extract_metadata,aggregate_data.aggregate_data,dashboard_generator.generate_dashboard,dashboard_generator.search_dashboards,dashboard_generator.load_dashboard"
 $env:GENERAL_CHAT_MCP_REGISTRY_ENABLED = "0"
 
 $env:OPENBENCH_EXPORT_DIR = (Resolve-Path $downloads).Path

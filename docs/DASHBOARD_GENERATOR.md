@@ -1,153 +1,73 @@
 # Dashboard Generator
 
-OpenBench includes a dashboard-generator SDK skill for metadata-first dashboard
-creation from CSV/XLSX files. The feature is designed for chat agents and MCP
-servers that need to inspect uploaded tabular data, aggregate it safely, then
-return a rendered dashboard artifact without putting a full dataset into the LLM
-context.
+OpenBench dashboard generation is a metadata-first workflow for CSV/XLSX data.
+Agents inspect file metadata, aggregate data with read-only SQL, then send a
+declarative dashboard ViewModel to the Dashboard Generator MCP.
 
-## What Changed
+## Components
 
-Added to the framework:
+- Aggregate Data MCP
+  - `aggregate_data.extract_metadata`
+  - `aggregate_data.aggregate_data`
+- Dashboard Generator MCP
+  - `dashboard_generator.generate_dashboard`
+  - `dashboard_generator.search_dashboards`
+  - `dashboard_generator.load_dashboard`
+- Rendering adapters
+  - default local HTML/A2UI export
+  - optional Stitch adapter
 
-- `src/openbench/skills/dashboard-generator/`
-  - `extract_metadata(path, sheet=None, sample_rows=5)`
-  - `aggregate_data(path, query, sheet=None, dataset_id=None)`
-  - `load_dashboard_memory(dashboard_id=None, source_path=None, source_signature=None, ...)`
-  - `generate_dashboard(view_model, filename=None, output_dir=None, template_path=None, template_text=None, template_format=None, source_path=None, previous_dashboard_id=None, revision_notes=None)`
-  - `adapters.py` registry plus separate adapter modules:
-    `adapter_base.py`, `default_adapter.py`, and `stitch_adapter.py`
-- `DashboardGenerator` in `src/openbench/output/generators.py`
-- `DashboardRenderer` in `src/openbench/chat/renderers/dashboard.py`
-- `ObDashboardFrame` in `studio/chat-ui/src/a2ui/custom/`
-- MCP risk policy entries for dashboard read and artifact tools
+The dashboard generator focuses on rendering and persistence memory. Metadata
+extraction and SQL aggregation are intentionally handled by Aggregate Data MCP.
 
-No previous dashboard framework code was removed. The old
-`DashboardGenerator` placeholder now renders local HTML dashboards from a
-declarative ViewModel.
+## Environment
 
-## Adapter Architecture
-
-Dashboard generation is split into an agentic core and a presentation layer:
-
-```text
-Dashboard(StitchAdapter(A2UI(AgenticCore(LLM, (Skills, MCP)))))
-```
-
-The agentic core is responsible for understanding the uploaded file, writing
-metadata-aware SQL aggregation queries, and producing a declarative ViewModel.
-It does not generate HTML or vendor-specific instructions. Presentation
-adapters are responsible for turning that ViewModel into an artifact.
-
-The adapter contract lives in
-`src/openbench/skills/dashboard-generator/`:
-
-- `adapter_base.py`: `BaseAdapter` and `DashboardRenderResult`
-- `default_adapter.py`: wraps OpenBench's built-in `DashboardGenerator`
-- `stitch_adapter.py`: handles Stitch-specific HTTP/MCP calls
-- `adapters.py`: small registry that selects the active adapter
-
-`tools.py` no longer branches on vendor logic inside `_write_dashboard_html`.
-It resolves an adapter and calls:
-
-```python
-adapter.render(view_model)
-```
-
-This keeps Skills/MCP/LLM orchestration independent from the presentation
-technology.
-
-## Dependency Injection
-
-Applications can choose the presentation adapter in two ways.
-
-Environment selection:
-
-| Variable | Values | Purpose |
-|----------|--------|---------|
-| `DASHBOARD_RENDER_ADAPTER` | `auto`, `default`, `stitch` | Select dashboard presentation adapter |
-| `OPENBENCH_DASHBOARD_RENDER_ADAPTER` | `auto`, `default`, `stitch` | Alternate namespaced selector |
-| `STITCH_API_MODE` | `mcp`, `direct` | Optional override; `/mcp` URLs are detected automatically |
-
-Runtime injection:
-
-```python
-skill.bind(dashboard_adapter="stitch")
-
-skill.bind(
-    dashboard_adapter_factory=lambda output_path, public_url: MyAdapter(
-        output_path=output_path,
-        public_url=public_url,
-    )
-)
-```
-
-Use `dashboard_adapter_factory` when the adapter needs per-render state such as
-the target output path.
+| Variable | Purpose |
+| --- | --- |
+| `OPENBENCH_EXPORT_DIR` | Directory for generated dashboard HTML |
+| `OPENBENCH_EXPORT_URL_BASE` | Public URL prefix returned in dashboard artifacts |
+| `OPENBENCH_DASHBOARD_STATE_PATH` | Shared state/memory JSON file |
+| `DASHBOARD_RENDER_ADAPTER` | `default`, `stitch`, or `auto` |
+| `STITCH_API_KEY` | Optional Stitch credential |
+| `STITCH_API_URL` | Optional Stitch endpoint; `/mcp` URLs use JSON-RPC MCP mode |
 
 ## Agent SOP
 
-When the user asks for a dashboard from CSV/XLSX data, the agent should follow
-this order:
+When the user asks to load a previous dashboard:
 
-1. Locate the uploaded file path from attachments or source metadata.
-2. Call `extract_metadata(path=...)` and inspect `dashboard_memory.matches`.
-3. Use only the metadata response to understand columns, roles, and SQL hints.
-4. Write read-only SQLite `SELECT` or `WITH` queries against table `data`.
-   Quote column names with double quotes when they contain spaces or
-   punctuation, alias output columns clearly, and add `LIMIT` for large chart
-   or table datasets.
-5. Call `aggregate_data(path=..., query="...", dataset_id="...")`.
-6. When regenerating the same dashboard or applying a revision, call
-   `load_dashboard_memory` and use the stored `viewModel` as the layout base.
-7. Build a declarative ViewModel. Treat this as A2UI-style data, not UI code.
-   For revisions, send only the changed panel and pass `previous_dashboard_id`
-   plus `revision_panel_titles` to `generate_dashboard`; unspecified panels and
-   their top-level datasets are preserved.
-8. Optionally pass a user-uploaded template with
-   `generate_dashboard(view_model=..., template_path="...")`.
-9. Call `generate_dashboard(view_model=..., source_path=...)`.
-10. Return the generated link and a short explanation.
+1. Use `dashboard_generator.load_dashboard(latest=true)` for "last/latest/terakhir".
+2. Use `dashboard_generator.search_dashboards(query=...)` when the user names a
+   dashboard, source file, template, or older data set.
+3. Call `dashboard_generator.load_dashboard(dashboard_id=...)` with the selected id.
+4. Do not regenerate unless no memory match exists or the user explicitly asks
+   for a new dashboard.
 
-Step 6 must not include raw HTML, CSS, JavaScript, or renderer instructions.
-The `generate_dashboard` tool owns the visual stitching.
+When the user asks for a new dashboard from CSV/XLSX data:
 
-For details on cross-session layout reuse and panel-level revision merging, see
-[`DASHBOARD_PERSISTENCE_MEMORY.md`](DASHBOARD_PERSISTENCE_MEMORY.md).
+1. Locate the uploaded spreadsheet path from source metadata.
+2. Call `aggregate_data.extract_metadata(path=...)`.
+3. Write read-only SQLite `SELECT` or `WITH` queries against table `data`.
+4. Call `aggregate_data.aggregate_data(path=..., query=[...])` once with all
+   datasets needed for KPIs/charts/tables.
+5. Build a canonical declarative ViewModel.
+6. Pass an uploaded template via `template_path` only when requested.
+7. Call `dashboard_generator.generate_dashboard(view_model=...)`.
 
-## User-Uploaded Templates
-
-Dashboard templates are optional. If no template is supplied, OpenBench keeps
-the existing adapter selection: `default`, `stitch`, or `auto`.
-
-When a user uploads a template in General Chat, the source context exposes a
-`Dashboard template path:` line. Agents should pass that value to
-`generate_dashboard(template_path=...)`. Supported uploaded template files are:
-
-- `.html` / `.htm`: may include `{{title}}`, `{{description}}`, `{{body}}`,
-  `{{openbench_css}}`, `{{dashboard_json}}`, and `{{generated_at}}`
-  placeholders.
-- `design.md` or markdown files with `design`/`template` in the name: treated
-  as design briefs. Fenced `css` blocks are applied to the HTML export.
-
-The visible chat artifact remains A2UI-first: `generate_dashboard` returns the
-canonical `viewModel`, `datasets`, `kpis`, and `sections` for
-`ObDashboardFrame`. The custom template affects the HTML export/fallback and
-provides Stitch visual guidance.
+`generate_dashboard` automatically stores successful artifacts in dashboard
+memory and returns a saved artifact instead of rendering a different dashboard
+when the source-data fingerprint and template fingerprint exactly match a prior
+dashboard.
 
 ## ViewModel Shape
+
+Prefer this canonical shape:
 
 ```json
 {
   "title": "Sales Dashboard",
   "description": "Overview of uploaded sales data.",
-  "datasets": {
-    "sales_by_region": [
-      {"region": "EU", "revenue": 1200}
-    ]
-  },
   "kpis": [
-    {"label": "Total Revenue", "value": 1200, "unit": "USD"}
+    {"label": "Total Revenue", "value": 1200, "value_format": "$0,0.00"}
   ],
   "sections": [
     {
@@ -157,9 +77,15 @@ provides Stitch visual guidance.
           "type": "chart",
           "chart_type": "bar",
           "title": "Revenue by Region",
-          "dataset": "sales_by_region",
-          "x": "region",
-          "y": "revenue"
+          "data": [{"region": "EU", "revenue": 1200}],
+          "x_field": "region",
+          "y_field": "revenue"
+        },
+        {
+          "type": "table",
+          "title": "Top Regions",
+          "data": [{"region": "EU", "revenue": 1200}],
+          "columns": ["region", "revenue"]
         }
       ]
     }
@@ -167,75 +93,37 @@ provides Stitch visual guidance.
 }
 ```
 
-Supported panel types are `chart`, `table`, `text`, and `kpi`. Supported chart
-types are `bar`, `line`, `area`, `pie`, and `scatter`.
+Agents should not include raw HTML, CSS, JavaScript, Chart.js config, or nested
+component dialects. The backend has a normalizer fallback, but deterministic
+generation depends on the canonical ViewModel.
 
-## Stitch Integration
+## Uploaded Templates
 
-`StitchAdapter` checks these environment variables:
+Dashboard templates are optional. General Chat exposes uploaded templates as
+`Dashboard template path:` in source context. Supported files:
 
-| Variable | Purpose |
-|----------|---------|
-| `STITCH_API_KEY` | Enables Stitch credentials |
-| `STITCH_API_URL` | Stitch endpoint; `https://stitch.googleapis.com/mcp` is JSON-RPC MCP |
-| `STITCH_API_MODE` | Optional `mcp` or `direct`; auto-detected from `/mcp` URLs |
-| `STITCH_PROJECT_ID` | Optional existing Stitch project id; otherwise the adapter calls `create_project` |
-| `STITCH_PROJECT_TITLE` | Optional title when creating a Stitch project |
-| `STITCH_MCP_GENERATE_TOOL` | Optional MCP generate tool name, default `generate_screen_from_text` |
-| `STITCH_DEVICE_TYPE` | Optional Stitch device type, default `DESKTOP` |
-| `STITCH_MODEL_ID` | Optional Stitch model id, default `GEMINI_3_FLASH` |
-| `STITCH_DESIGN_SYSTEM` | Optional Stitch design system asset id |
-| `STITCH_TIMEOUT_SECONDS` | Optional request timeout, default `180` |
-| `OPENBENCH_EXPORT_DIR` | Directory for generated HTML |
-| `OPENBENCH_EXPORT_URL_BASE` | Public URL prefix for generated files |
+- `.html` / `.htm`
+- markdown design briefs such as `design.md` or `dashboard-template.md`
 
-If `STITCH_API_KEY` is present but `STITCH_API_URL` is not set, OpenBench falls
-back through `DefaultGeneratorAdapter`. This avoids guessing a network endpoint
-while still keeping the key ready for environments that provide one.
+Pass the template path to:
 
-For MCP mode, the adapter does not post the ViewModel directly as HTML input.
-It calls `tools/list`, then `tools/call` for `create_project` and
-`generate_screen_from_text` (plus `get_screen` when available). If Stitch
-returns embeddable HTML, OpenBench writes that HTML. If Stitch returns only
-project/screen metadata, OpenBench writes a small HTML artifact containing the
-Stitch reference instead of treating the successful MCP response as a failure.
-
-## MCP Exposure
-
-`OpenBenchMCPServer` auto-discovers SDK skill tools, so the dashboard
-tools become MCP-callable through the normal OpenBench MCP tool registry.
-Policy classification:
-
-- `extract_metadata`: read
-- `aggregate_data`: read
-- `load_dashboard_memory`: read
-- `generate_dashboard`: artifact write
-
-## SQL Aggregation Contract
-
-`extract_metadata` returns a `sql` block with the SQLite dialect, source table
-name, identifier quote character, and available column names. `aggregate_data`
-then loads the CSV/XLSX into an in-memory SQLite table, defaulting to `data`,
-and executes the query.
-
-Allowed query forms:
-
-```sql
-SELECT region, SUM(revenue) AS revenue
-FROM data
-GROUP BY region
-ORDER BY revenue DESC
-LIMIT 10
+```text
+dashboard_generator.generate_dashboard(..., template_path="<path>")
 ```
 
-Only read-only `SELECT` or `WITH` statements are allowed. Multi-statement SQL
-and destructive keywords such as `DROP`, `INSERT`, `UPDATE`, `DELETE`,
-`CREATE`, `ALTER`, `ATTACH`, and `PRAGMA` are rejected before execution.
+Templates affect the HTML export/fallback and optional Stitch guidance. The
+interactive chat artifact remains the canonical A2UI ViewModel.
 
-## General Chat Integration
+## Persistence Memory
 
-The `examples/general-chat` app uses the standalone dashboard MCP path for chat
-dashboard requests. CSV/XLSX source uploads are stored as `kind="spreadsheet"`
-with a `localFilePath` metadata entry. The chat handler passes that path to the
-agent, and generated dashboard MCP artifacts render as both an assistant link
-and a side-by-side artifact window.
+Dashboard memory lives in the shared state JSON file configured by
+`OPENBENCH_DASHBOARD_STATE_PATH`. It stores the exact artifact plus source and
+template fingerprints. See
+[`DASHBOARD_PERSISTENCE_MEMORY.md`](DASHBOARD_PERSISTENCE_MEMORY.md).
+
+## General Chat
+
+The `examples/general-chat` app uses the standalone MCP path for dashboard
+requests. Spreadsheet uploads are stored as sources with local paths. Generated
+dashboard artifacts appear as assistant links and in the side-by-side dashboard
+artifact panel.

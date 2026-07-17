@@ -4,6 +4,18 @@ from pathlib import Path
 
 import pytest
 
+from app import dashboard_tools
+
+
+@pytest.fixture(autouse=True)
+def isolated_dashboard_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("OPENBENCH_DASHBOARD_STATE_PATH", str(tmp_path / "dashboard_state.json"))
+    dashboard_tools._LAST_AGGREGATE_DATASETS.clear()
+    dashboard_tools._LAST_SOURCE_CONTEXT.clear()
+    yield
+    dashboard_tools._LAST_AGGREGATE_DATASETS.clear()
+    dashboard_tools._LAST_SOURCE_CONTEXT.clear()
+
 
 def test_fastmcp_server_builds_when_sdk_is_installed():
     pytest.importorskip("mcp.server.fastmcp")
@@ -336,3 +348,193 @@ def test_dashboard_service_hydrates_placeholder_charts_from_last_source(
     assert "card" in html
     assert "2026-01-01" in html
     assert "No chart data available." not in html
+
+
+def test_dashboard_memory_reuses_existing_dashboard_for_same_source_and_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    pytest.importorskip("pandas")
+
+    from app.service import get_service
+
+    source = tmp_path / "coffee.csv"
+    source.write_text(
+        "coffee_name,money\nLatte,10\nEspresso,5\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENBENCH_EXPORT_DIR", str(tmp_path))
+    monkeypatch.setenv("OPENBENCH_EXPORT_URL_BASE", "/downloads")
+    monkeypatch.setenv("DASHBOARD_RENDER_ADAPTER", "default")
+
+    service = get_service()
+    aggregate = dashboard_tools.aggregate_data(
+        str(source),
+        [
+            {
+                "name": "sales_by_coffee",
+                "sql": (
+                    "SELECT coffee_name, SUM(money) AS sales "
+                    "FROM data GROUP BY coffee_name ORDER BY sales DESC"
+                ),
+            }
+        ],
+    )
+    assert aggregate["errors"] == []
+
+    first = service.generate_dashboard(
+        {
+            "title": "Coffee Memory Dashboard",
+            "datasets": {"sales_by_coffee": aggregate["datasets"][0]["records"]},
+            "sections": [
+                {
+                    "title": "Sales",
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "title": "Sales by Coffee",
+                            "dataset": "sales_by_coffee",
+                            "x_field": "coffee_name",
+                            "y_field": "sales",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    second = service.generate_dashboard(
+        {
+            "title": "Different LLM Draft",
+            "kpis": [{"label": "Should Not Replace", "value": 999}],
+            "sections": [],
+        }
+    )
+
+    assert second["title"] == first["title"]
+    assert second["path"] == first["path"]
+    assert second["viewModel"] == first["viewModel"]
+    assert second["memory"]["reused"] is True
+
+
+def test_dashboard_memory_reuses_same_source_and_template_from_new_upload_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    pytest.importorskip("pandas")
+
+    from app.service import get_service
+
+    source_a = tmp_path / "session-a" / "Coffe_sales.csv"
+    source_b = tmp_path / "session-b" / "Coffe_sales.csv"
+    template_a = tmp_path / "session-a" / "template.html"
+    template_b = tmp_path / "session-b" / "template.html"
+    source_a.parent.mkdir()
+    source_b.parent.mkdir()
+    source_text = "coffee_name,money\nLatte,10\nEspresso,5\n"
+    template_text = "<html><body>{{ dashboard }}</body></html>"
+    source_a.write_text(source_text, encoding="utf-8")
+    source_b.write_text(source_text, encoding="utf-8")
+    template_a.write_text(template_text, encoding="utf-8")
+    template_b.write_text(template_text, encoding="utf-8")
+    monkeypatch.setenv("OPENBENCH_EXPORT_DIR", str(tmp_path))
+    monkeypatch.setenv("OPENBENCH_EXPORT_URL_BASE", "/downloads")
+    monkeypatch.setenv("DASHBOARD_RENDER_ADAPTER", "default")
+
+    service = get_service()
+    dashboard_tools.extract_metadata(str(source_a))
+    first = service.generate_dashboard(
+        {
+            "title": "Coffee Stable Dashboard",
+            "kpis": [{"label": "Revenue", "value": 15}],
+            "sections": [],
+        },
+        template_path=str(template_a),
+    )
+
+    search = service.search_dashboards(
+        source_path=str(source_b),
+        template_path=str(template_b),
+    )
+    assert search["count"] == 1
+    assert search["dashboards"][0]["exact_source_match"] is True
+    assert search["dashboards"][0]["exact_template_match"] is True
+    assert search["dashboards"][0]["reusable_match"] is True
+
+    dashboard_tools.extract_metadata(str(source_b))
+    second = service.generate_dashboard(
+        {
+            "title": "Different Draft That Should Not Render",
+            "kpis": [{"label": "Different", "value": 999}],
+            "sections": [],
+        },
+        template_path=str(template_b),
+    )
+
+    assert second["title"] == first["title"]
+    assert second["path"] == first["path"]
+    assert second["viewModel"] == first["viewModel"]
+    assert second["memory"]["reused"] is True
+
+
+def test_dashboard_memory_searches_and_loads_saved_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    pytest.importorskip("pandas")
+
+    from app.service import get_service
+
+    source = tmp_path / "coffee-sales-a.csv"
+    source.write_text("product,revenue\nLatte,10\nMocha,7\n", encoding="utf-8")
+    monkeypatch.setenv("OPENBENCH_EXPORT_DIR", str(tmp_path))
+    monkeypatch.setenv("OPENBENCH_EXPORT_URL_BASE", "/downloads")
+    monkeypatch.setenv("DASHBOARD_RENDER_ADAPTER", "default")
+
+    service = get_service()
+    dashboard_tools.extract_metadata(str(source))
+    generated = service.generate_dashboard(
+        {
+            "title": "Coffee Sales A",
+            "kpis": [{"label": "Revenue", "value": 17}],
+            "sections": [],
+        }
+    )
+
+    search = service.search_dashboards(query="coffee-sales-a")
+    assert search["count"] == 1
+    dashboard_id = search["dashboards"][0]["dashboard_id"]
+
+    loaded = service.load_dashboard(dashboard_id=dashboard_id)
+    assert loaded["title"] == generated["title"]
+    assert loaded["viewModel"] == generated["viewModel"]
+    assert loaded["memory"]["loaded"] is True
+
+
+def test_dashboard_memory_backfills_existing_html_exports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from app.service import get_service
+
+    export_dir = tmp_path / "downloads"
+    export_dir.mkdir()
+    html = export_dir / "coffee-sales-dashboard.html"
+    html.write_text(
+        '<!doctype html><html><head><title>Coffee Sales Dashboard</title></head>'
+        '<body><script type="application/json" id="openbench-dashboard-view-model">'
+        "{&quot;title&quot;:&quot;Coffee Sales Dashboard&quot;,"
+        "&quot;kpis&quot;:[{&quot;label&quot;:&quot;Revenue&quot;,&quot;value&quot;:17}],"
+        "&quot;sections&quot;:[]}"
+        "</script></body></html>",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENBENCH_EXPORT_DIR", str(export_dir))
+    monkeypatch.setenv("OPENBENCH_EXPORT_URL_BASE", "/downloads")
+
+    service = get_service()
+    search = service.search_dashboards(query="coffee sales")
+    assert search["count"] == 1
+    assert search["dashboards"][0]["title"] == "Coffee Sales Dashboard"
+
+    loaded = service.load_dashboard(query="coffee sales")
+    assert loaded["title"] == "Coffee Sales Dashboard"
+    assert loaded["viewModel"]["kpis"][0]["value"] == 17
+    assert loaded["memory"]["loaded"] is True

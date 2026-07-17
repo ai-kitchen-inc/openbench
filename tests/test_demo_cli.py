@@ -112,9 +112,13 @@ def test_general_chat_dashboard_generator_env_uses_split_aggregate_mcp(
     assert env["GENERAL_CHAT_MCP_APPROVED_TOOLS"] == (
         "aggregate_data.extract_metadata,"
         "aggregate_data.aggregate_data,"
-        "dashboard_generator.generate_dashboard"
+        "dashboard_generator.generate_dashboard,"
+        "dashboard_generator.search_dashboards,"
+        "dashboard_generator.load_dashboard"
     )
     assert "dashboard_generator.extract_metadata" not in env["GENERAL_CHAT_MCP_APPROVED_TOOLS"]
+    assert "dashboard_generator.search_dashboards" in env["GENERAL_CHAT_MCP_APPROVED_TOOLS"]
+    assert "dashboard_generator.load_dashboard" in env["GENERAL_CHAT_MCP_APPROVED_TOOLS"]
     assert Path(env["DASHBOARD_GENERATOR_MCP_PYTHONPATH"].split(os.pathsep)[-1]) == (
         root / "mcp" / "dashboard-generator-mcp"
     ).resolve()

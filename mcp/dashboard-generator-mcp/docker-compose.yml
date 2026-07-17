@@ -9,6 +9,7 @@ services:
     environment:
       OPENBENCH_EXPORT_DIR: ${OPENBENCH_EXPORT_DIR:-/outputs}
       OPENBENCH_EXPORT_URL_BASE: ${OPENBENCH_EXPORT_URL_BASE:-/outputs}
+      OPENBENCH_DASHBOARD_STATE_PATH: ${OPENBENCH_DASHBOARD_STATE_PATH:-/outputs/dashboard_generator_state.json}
       DASHBOARD_RENDER_ADAPTER: ${DASHBOARD_RENDER_ADAPTER:-default}
       STITCH_API_KEY: ${STITCH_API_KEY:-}
       STITCH_API_URL: ${STITCH_API_URL:-}
@@ -28,6 +29,7 @@ services:
     environment:
       OPENBENCH_EXPORT_DIR: /outputs
       OPENBENCH_EXPORT_URL_BASE: /outputs
+      OPENBENCH_DASHBOARD_STATE_PATH: ${OPENBENCH_DASHBOARD_STATE_PATH:-/outputs/dashboard_generator_state.json}
       DASHBOARD_RENDER_ADAPTER: ${DASHBOARD_RENDER_ADAPTER:-default}
       STITCH_API_KEY: ${STITCH_API_KEY:-}
       STITCH_API_URL: ${STITCH_API_URL:-}

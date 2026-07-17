@@ -13,7 +13,9 @@ fails because optional extras are missing.
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
+import html
 import importlib.util
 import json
 import logging
@@ -23,7 +25,7 @@ import re
 import sqlite3
 import sys
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,9 +35,13 @@ __all__ = [
     "extract_metadata",
     "aggregate_data",
     "generate_dashboard",
+    "search_dashboards",
+    "load_dashboard",
     "EXTRACT_METADATA_SCHEMA",
     "AGGREGATE_DATA_SCHEMA",
     "GENERATE_DASHBOARD_SCHEMA",
+    "SEARCH_DASHBOARDS_SCHEMA",
+    "LOAD_DASHBOARD_SCHEMA",
 ]
 
 _SAMPLE_ROWS = 5
@@ -65,6 +71,12 @@ _DASHBOARD_ADAPTER: Any | None = None
 _DASHBOARD_ADAPTER_FACTORY: Any | None = None
 _LAST_AGGREGATE_DATASETS: dict[str, list[dict[str, Any]]] = {}
 _LAST_SOURCE_CONTEXT: dict[str, Any] = {}
+_MAX_DASHBOARD_MEMORY_ITEMS = 100
+_HTML_BACKFILL_SCRIPT_RE = re.compile(
+    r'<script[^>]+id=["\']openbench-dashboard-view-model["\'][^>]*>(.*?)</script>',
+    re.IGNORECASE | re.DOTALL,
+)
+_HTML_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
 def _dashboard_state_path() -> Path:
@@ -72,7 +84,9 @@ def _dashboard_state_path() -> Path:
         os.environ.get("OPENBENCH_DASHBOARD_STATE_PATH")
         or os.environ.get("GENERAL_CHAT_DASHBOARD_STATE_PATH")
     )
-    return Path(raw).expanduser().resolve() if raw else Path(".openbench/dashboard_generator_state.json").resolve()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return Path(".openbench/dashboard_generator_state.json").resolve()
 
 
 def _load_dashboard_state() -> dict[str, Any]:
@@ -255,6 +269,502 @@ def _json_value(value: Any) -> Any:
     return value
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _stable_json_hash(value: Any, length: int = 16) -> str:
+    payload = json.dumps(
+        _json_value(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:length]
+
+
+def _state_dashboards(state: dict[str, Any]) -> list[dict[str, Any]]:
+    dashboards = state.get("dashboards")
+    return [item for item in dashboards if isinstance(item, dict)] if isinstance(dashboards, list) else []
+
+
+def _source_context_from_state(state: dict[str, Any] | None = None) -> dict[str, Any]:
+    if _LAST_SOURCE_CONTEXT:
+        return dict(_LAST_SOURCE_CONTEXT)
+    loaded = state if isinstance(state, dict) else _load_dashboard_state()
+    source_context = loaded.get("source_context")
+    return dict(source_context) if isinstance(source_context, dict) else {}
+
+
+def _source_signature_from_path(raw_path: Any, *, sheet: Any = None) -> dict[str, Any]:
+    signature: dict[str, Any] = {
+        "path": str(raw_path) if raw_path else "",
+        "sheet": _json_value(sheet),
+    }
+    if not raw_path:
+        return signature
+
+    path = Path(str(raw_path))
+    signature["file_name"] = path.name
+    if not path.exists():
+        signature["missing"] = True
+        signature["source_key"] = _stable_json_hash(signature)
+        return signature
+
+    signature["path"] = str(path.resolve())
+    with contextlib.suppress(Exception):
+        signature["file_hash"] = _file_hash(path)
+
+    df, resolved_sheet, err = _read_dataframe(str(path), sheet=sheet)
+    if err or df is None:
+        signature["read_error"] = err
+        signature["source_key"] = _stable_json_hash(signature)
+        return signature
+
+    columns = [{"name": str(column), "dtype": str(df[column].dtype)} for column in df.columns]
+    signature.update(
+        {
+            "sheet": _json_value(resolved_sheet),
+            "row_count": int(len(df)),
+            "column_count": int(len(df.columns)),
+            "columns": columns,
+            "schema_hash": _stable_json_hash({"columns": columns, "row_count": int(len(df))}),
+        }
+    )
+    signature["source_key"] = _stable_json_hash(
+        {
+            "file_hash": signature.get("file_hash"),
+            "sheet": signature.get("sheet"),
+            "schema_hash": signature.get("schema_hash"),
+        }
+    )
+    return signature
+
+
+def _source_signature(state: dict[str, Any] | None = None) -> dict[str, Any]:
+    context = _source_context_from_state(state)
+    return _source_signature_from_path(context.get("path"), sheet=context.get("sheet"))
+
+
+def _template_signature(
+    *,
+    template_path: str | None = None,
+    template_text: str | None = None,
+    template_format: str | None = None,
+) -> dict[str, Any]:
+    signature: dict[str, Any] = {"format": template_format or "default", "source": "default"}
+    if template_path:
+        path = Path(template_path).expanduser()
+        signature.update({"source": "path", "path": str(path), "file_name": path.name})
+        if path.exists():
+            resolved = path.resolve()
+            signature["path"] = str(resolved)
+            with contextlib.suppress(Exception):
+                signature["file_hash"] = _file_hash(resolved)
+        if signature.get("file_hash"):
+            signature["template_key"] = _stable_json_hash(
+                {
+                    "source": "path",
+                    "file_hash": signature.get("file_hash"),
+                    "format": signature.get("format"),
+                }
+            )
+            return signature
+        signature["template_key"] = _stable_json_hash(signature)
+        return signature
+    if template_text:
+        signature.update({"source": "inline", "text_hash": _stable_json_hash(template_text, 24)})
+    signature["template_key"] = _stable_json_hash(signature)
+    return signature
+
+
+def _dashboard_match_key(source: dict[str, Any], template: dict[str, Any]) -> str:
+    if source.get("file_hash") or source.get("schema_hash"):
+        payload = {
+            "source_key": source.get("source_key"),
+            "file_hash": source.get("file_hash"),
+            "sheet": source.get("sheet"),
+            "schema_hash": source.get("schema_hash"),
+            "template_key": template.get("template_key"),
+        }
+    else:
+        payload = {
+            "source": source,
+            "template_key": template.get("template_key"),
+        }
+    return _stable_json_hash(payload, 24)
+
+
+def _dashboard_summary(
+    entry: dict[str, Any],
+    *,
+    exact_source_match: bool | None = None,
+    exact_template_match: bool | None = None,
+) -> dict[str, Any]:
+    artifact = entry.get("artifact") if isinstance(entry.get("artifact"), dict) else {}
+    source = entry.get("source") if isinstance(entry.get("source"), dict) else {}
+    template = entry.get("template") if isinstance(entry.get("template"), dict) else {}
+    summary = {
+        "dashboard_id": entry.get("id"),
+        "title": entry.get("title") or artifact.get("title"),
+        "description": entry.get("description") or artifact.get("description"),
+        "created_at": entry.get("created_at"),
+        "updated_at": entry.get("updated_at"),
+        "url": artifact.get("dashboardUrl") or artifact.get("url"),
+        "path": artifact.get("path"),
+        "source_file": source.get("file_name"),
+        "source_path": source.get("path"),
+        "source_hash": source.get("file_hash"),
+        "sheet": source.get("sheet"),
+        "template_source": template.get("source"),
+        "template_name": template.get("file_name") or artifact.get("templateName"),
+        "template_hash": template.get("file_hash"),
+        "kpi_count": artifact.get("kpiCount"),
+        "chart_count": artifact.get("chartCount"),
+        "table_count": artifact.get("tableCount"),
+    }
+    if exact_source_match is not None:
+        summary["exact_source_match"] = exact_source_match
+    if exact_template_match is not None:
+        summary["exact_template_match"] = exact_template_match
+    if exact_source_match is not None or exact_template_match is not None:
+        summary["reusable_match"] = bool(exact_source_match) and (
+            exact_template_match is not False
+        )
+    return summary
+
+
+def _dashboard_artifact_from_view_model(
+    view_model: dict[str, Any],
+    path: Path,
+    *,
+    source: dict[str, Any] | None = None,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    title = str(view_model.get("title") or _html_title(path) or path.stem)
+    datasets = view_model.get("datasets", {}) if isinstance(view_model, dict) else {}
+    kpis = view_model.get("kpis", []) if isinstance(view_model, dict) else []
+    sections = view_model.get("sections", []) if isinstance(view_model, dict) else []
+    panels = [
+        panel
+        for section in (sections if isinstance(sections, list) else [])
+        if isinstance(section, dict)
+        for panel in section.get("items", [])
+        if isinstance(panel, dict)
+    ]
+    return {
+        "type": "dashboard",
+        "title": title,
+        "description": str(view_model.get("description") or ""),
+        "render_mode": "a2ui",
+        "renderMode": "a2ui",
+        "viewModel": view_model,
+        "datasets": datasets if isinstance(datasets, dict) else {},
+        "kpis": kpis if isinstance(kpis, list) else [],
+        "sections": sections if isinstance(sections, list) else [],
+        "name": path.name,
+        "url": _public_url(path),
+        "dashboardUrl": _public_url(path),
+        "path": str(path),
+        "mimeType": "text/html",
+        "size": path.stat().st_size if path.exists() else 0,
+        "summary": str(view_model.get("description") or ""),
+        "sectionCount": len(sections) if isinstance(sections, list) else 0,
+        "kpiCount": len(kpis) if isinstance(kpis, list) else 0,
+        "chartCount": sum(1 for panel in panels if panel.get("type") == "chart"),
+        "tableCount": sum(1 for panel in panels if panel.get("type") == "table"),
+        "warnings": [],
+        "templateSource": "imported",
+        "templateFormat": "html",
+        "templateName": "html-export",
+        "source": source or {},
+        "importedAt": created_at,
+    }
+
+
+def _source_signature_from_view_model(view_model: dict[str, Any]) -> dict[str, Any]:
+    source: dict[str, Any] = {}
+    raw_source = view_model.get("source")
+    if isinstance(raw_source, dict):
+        raw_path = (
+            raw_source.get("path")
+            or raw_source.get("source_path")
+            or raw_source.get("sourcePath")
+        )
+        raw_name = raw_source.get("file_name") or raw_source.get("fileName") or raw_source.get("name")
+    elif isinstance(raw_source, str):
+        raw_path = raw_source
+        raw_name = ""
+    else:
+        raw_path = (
+            view_model.get("sourcePath")
+            or view_model.get("source_path")
+            or view_model.get("sourceLabel")
+            or view_model.get("source_label")
+        )
+        raw_name = ""
+
+    if raw_path:
+        path_text = str(raw_path)
+        source["path"] = path_text
+        source["file_name"] = raw_name or Path(path_text).name
+        path = Path(path_text)
+        if path.exists():
+            resolved = path.resolve()
+            source["path"] = str(resolved)
+            source["file_name"] = resolved.name
+            with contextlib.suppress(Exception):
+                source["file_hash"] = _file_hash(resolved)
+    elif raw_name:
+        source["file_name"] = str(raw_name)
+
+    if source:
+        source["source_key"] = _stable_json_hash(source)
+    return source
+
+
+def _html_title(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return ""
+    match = _HTML_TITLE_RE.search(text)
+    return html.unescape(re.sub(r"\s+", " ", match.group(1)).strip()) if match else ""
+
+
+def _view_model_from_html(path: Path) -> dict[str, Any] | None:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return None
+    match = _HTML_BACKFILL_SCRIPT_RE.search(text)
+    if not match:
+        return None
+    payload = html.unescape(match.group(1)).strip()
+    if not payload:
+        return None
+    try:
+        parsed = json.loads(payload)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _dashboard_entries_from_exports(state: dict[str, Any]) -> list[dict[str, Any]]:
+    export_dir = Path(os.environ.get("OPENBENCH_EXPORT_DIR") or "outputs").resolve()
+    if not export_dir.exists() or not export_dir.is_dir():
+        return []
+
+    existing_paths = set()
+    for entry in _state_dashboards(state):
+        artifact = entry.get("artifact")
+        if isinstance(artifact, dict) and artifact.get("path"):
+            existing_paths.add(str(artifact.get("path")))
+    entries: list[dict[str, Any]] = []
+    for path in sorted(export_dir.glob("*.html"), key=lambda item: item.stat().st_mtime, reverse=True):
+        resolved = str(path.resolve())
+        if resolved in existing_paths:
+            continue
+        view_model = _view_model_from_html(path)
+        if not view_model:
+            continue
+        source = _source_signature_from_view_model(view_model)
+        template = {"source": "imported", "format": "html", "template_key": _stable_json_hash("html-export")}
+        match_key = _stable_json_hash(
+            {
+                "imported_path": resolved,
+                "view_model": view_model,
+                "source_key": source.get("source_key"),
+            },
+            24,
+        )
+        created_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(
+            microsecond=0
+        ).isoformat().replace("+00:00", "Z")
+        artifact = _dashboard_artifact_from_view_model(
+            view_model,
+            path.resolve(),
+            source=source,
+            created_at=created_at,
+        )
+        entries.append(
+            {
+                "id": f"dash_{match_key}",
+                "match_key": match_key,
+                "title": artifact.get("title"),
+                "description": artifact.get("description"),
+                "created_at": created_at,
+                "updated_at": created_at,
+                "source": source,
+                "template": template,
+                "artifact": artifact,
+                "imported": True,
+            }
+        )
+    return entries
+
+
+def _ensure_export_backfill(state: dict[str, Any] | None = None) -> dict[str, Any]:
+    loaded = state if isinstance(state, dict) else _load_dashboard_state()
+    entries = _dashboard_entries_from_exports(loaded)
+    if not entries:
+        return loaded
+    dashboards = _state_dashboards(loaded)
+    known_ids = {str(entry.get("id")) for entry in dashboards}
+    for entry in entries:
+        if str(entry.get("id")) not in known_ids:
+            dashboards.append(entry)
+            known_ids.add(str(entry.get("id")))
+    dashboards.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+    loaded["dashboards"] = dashboards[:_MAX_DASHBOARD_MEMORY_ITEMS]
+    _save_dashboard_state(loaded)
+    return loaded
+
+
+def _search_text(entry: dict[str, Any]) -> str:
+    summary = _dashboard_summary(entry)
+    source = entry.get("source") if isinstance(entry.get("source"), dict) else {}
+    template = entry.get("template") if isinstance(entry.get("template"), dict) else {}
+    parts = [
+        summary.get("title"),
+        summary.get("description"),
+        summary.get("source_file"),
+        summary.get("source_path"),
+        summary.get("template_name"),
+        template.get("path"),
+        source.get("file_hash"),
+    ]
+    return " ".join(str(part).lower() for part in parts if part)
+
+
+def _score_dashboard(entry: dict[str, Any], query: str) -> int:
+    text = _search_text(entry)
+    tokens = [token for token in re.split(r"[^a-z0-9]+", query.lower()) if token]
+    if not tokens:
+        return 1
+    score = 0
+    for token in tokens:
+        if token in text:
+            score += 3
+        if token and any(part.startswith(token) for part in text.split()):
+            score += 1
+    return score
+
+
+def _source_signature_matches(saved: dict[str, Any], current: dict[str, Any]) -> bool:
+    if not current:
+        return True
+    current_hash = current.get("file_hash")
+    saved_hash = saved.get("file_hash")
+    if current_hash:
+        return saved_hash == current_hash and saved.get("sheet") == current.get("sheet")
+    current_schema = current.get("schema_hash")
+    if current_schema:
+        return saved.get("schema_hash") == current_schema and saved.get("sheet") == current.get("sheet")
+    current_key = current.get("source_key")
+    return bool(current_key and saved.get("source_key") == current_key)
+
+
+def _template_signature_matches(saved: dict[str, Any], current: dict[str, Any]) -> bool:
+    if not current:
+        return True
+    current_source = current.get("source")
+    saved_source = saved.get("source")
+    if current_source == "default":
+        return saved_source in {None, "", "default"}
+    current_hash = current.get("file_hash")
+    if current_hash:
+        return saved.get("file_hash") == current_hash
+    current_text_hash = current.get("text_hash")
+    if current_text_hash:
+        return saved.get("text_hash") == current_text_hash
+    current_key = current.get("template_key")
+    if current_key and saved.get("template_key") == current_key:
+        return True
+    current_path = current.get("path")
+    return bool(current_path and saved.get("path") == current_path)
+
+
+def _find_matching_dashboard(
+    match_key: str,
+    *,
+    source: dict[str, Any] | None = None,
+    template: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    state = _load_dashboard_state()
+    for entry in _state_dashboards(state):
+        if entry.get("match_key") == match_key:
+            return entry
+    if not source:
+        return None
+    candidates = []
+    for entry in _state_dashboards(state):
+        saved_source = entry.get("source") if isinstance(entry.get("source"), dict) else {}
+        saved_template = entry.get("template") if isinstance(entry.get("template"), dict) else {}
+        if not _source_signature_matches(saved_source, source):
+            continue
+        if template and not _template_signature_matches(saved_template, template):
+            continue
+        candidates.append(entry)
+    candidates.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+    return candidates[0] if candidates else None
+
+
+def _latest_source_dashboard(source: dict[str, Any]) -> dict[str, Any] | None:
+    state = _load_dashboard_state()
+    candidates = []
+    for entry in _state_dashboards(state):
+        saved_source = entry.get("source") if isinstance(entry.get("source"), dict) else {}
+        if _source_signature_matches(saved_source, source):
+            candidates.append(entry)
+    candidates.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+    return candidates[0] if candidates else None
+
+
+def _artifact_from_memory(entry: dict[str, Any], *, loaded: bool = False) -> dict[str, Any]:
+    artifact = copy.deepcopy(entry.get("artifact") if isinstance(entry.get("artifact"), dict) else {})
+    if not artifact:
+        return {}
+    artifact["memory"] = {
+        "dashboard_id": entry.get("id"),
+        "match_key": entry.get("match_key"),
+        "created_at": entry.get("created_at"),
+        "loaded": loaded,
+        "reused": not loaded,
+    }
+    return artifact
+
+
+def _remember_dashboard(
+    artifact: dict[str, Any],
+    *,
+    source: dict[str, Any],
+    template: dict[str, Any],
+    match_key: str,
+) -> dict[str, Any]:
+    state = _load_dashboard_state()
+    dashboards = _state_dashboards(state)
+    dashboard_id = f"dash_{match_key}"
+    now = _now_iso()
+    existing = next((entry for entry in dashboards if entry.get("id") == dashboard_id), None)
+    entry = {
+        "id": dashboard_id,
+        "match_key": match_key,
+        "title": artifact.get("title"),
+        "description": artifact.get("description") or artifact.get("summary"),
+        "created_at": existing.get("created_at") if existing else now,
+        "updated_at": now,
+        "source": source,
+        "template": template,
+        "artifact": copy.deepcopy(artifact),
+    }
+    dashboards = [item for item in dashboards if item.get("id") != dashboard_id]
+    dashboards.insert(0, entry)
+    state["dashboards"] = dashboards[:_MAX_DASHBOARD_MEMORY_ITEMS]
+    _save_dashboard_state(state)
+    return entry
+
+
 def _records(df: Any, limit: int | None = None) -> list[dict[str, Any]]:
     selected = df if limit is None else df.head(limit)
     raw = selected.to_dict(orient="records")
@@ -291,7 +801,11 @@ def _column_profile(df: Any, column: str) -> dict[str, Any]:
     return profile
 
 
-def extract_metadata(path: str, sheet: str | int | None = None, sample_rows: int = _SAMPLE_ROWS) -> dict[str, Any]:
+def extract_metadata(
+    path: str,
+    sheet: str | int | None = None,
+    sample_rows: int = _SAMPLE_ROWS,
+) -> dict[str, Any]:
     """Return compact metadata for a CSV/XLSX dashboard source."""
     p = Path(path)
     df, resolved_sheet, err = _read_dataframe(path, sheet=sheet)
@@ -794,6 +1308,34 @@ def generate_dashboard(
         return _error("dashboard", "`view_model` must be a non-empty object")
 
     view_model = _hydrate_cached_datasets(view_model)
+    state = _load_dashboard_state()
+    source_signature = _source_signature(state)
+    template_signature = _template_signature(
+        template_path=template_path,
+        template_text=template_text,
+        template_format=template_format,
+    )
+    match_key = _dashboard_match_key(source_signature, template_signature)
+    if not (source_signature.get("file_hash") or source_signature.get("schema_hash")):
+        match_key = _stable_json_hash(
+            {
+                "source_template_key": match_key,
+                "view_model": view_model,
+            },
+            24,
+        )
+    if source_signature.get("file_hash") or source_signature.get("schema_hash"):
+        existing = _find_matching_dashboard(
+            match_key,
+            source=source_signature,
+            template=template_signature,
+        )
+        if existing:
+            item = _artifact_from_memory(existing)
+            if item:
+                _push_to_render_queue(item)
+                return item
+
     title = str(view_model.get("title") or "OpenBench Dashboard")
     out_dir = Path(output_dir or os.environ.get("OPENBENCH_EXPORT_DIR") or "outputs").resolve()
     out_name = _unique_dashboard_filename(title, filename)
@@ -866,6 +1408,19 @@ def generate_dashboard(
         or (written.get("custom_template") or {}).get("source")
         or "openbench",
     }
+    entry = _remember_dashboard(
+        item,
+        source=source_signature,
+        template=template_signature,
+        match_key=match_key,
+    )
+    item["memory"] = {
+        "dashboard_id": entry.get("id"),
+        "match_key": entry.get("match_key"),
+        "created_at": entry.get("created_at"),
+        "loaded": False,
+        "reused": False,
+    }
     logger.info(
         "[dashboard] artifact created render_mode=%s template_source=%s template_format=%s "
         "template_name=%s title=%s datasets=%d kpis=%d sections=%d charts=%d tables=%d "
@@ -884,6 +1439,128 @@ def generate_dashboard(
     )
     _push_to_render_queue(item)
     return item
+
+
+def search_dashboards(
+    query: str | None = None,
+    source_path: str | None = None,
+    template_path: str | None = None,
+    limit: int = 5,
+) -> dict[str, Any]:
+    """Search persisted dashboard memory by title, data source, template, or prompt text."""
+    state = _ensure_export_backfill(_load_dashboard_state())
+    dashboards = _state_dashboards(state)
+    try:
+        max_items = max(1, min(int(limit), 25))
+    except Exception:
+        max_items = 5
+
+    source_probe: dict[str, Any] = {}
+    source_hash = ""
+    source_query = ""
+    if source_path:
+        path = Path(source_path)
+        source_query = path.stem.replace("_", " ").replace("-", " ")
+        source_probe = _source_signature_from_path(source_path)
+        if path.exists():
+            with contextlib.suppress(Exception):
+                source_hash = _file_hash(path)
+
+    template_probe: dict[str, Any] = {}
+    template_hash = ""
+    if template_path:
+        path = Path(template_path)
+        template_probe = _template_signature(template_path=template_path)
+        if path.exists():
+            with contextlib.suppress(Exception):
+                template_hash = _file_hash(path)
+
+    ranked: list[tuple[int, dict[str, Any], bool | None, bool | None]] = []
+    for entry in dashboards:
+        score = _score_dashboard(entry, query or "")
+        source = entry.get("source") if isinstance(entry.get("source"), dict) else {}
+        template = entry.get("template") if isinstance(entry.get("template"), dict) else {}
+        exact_source = None
+        exact_template = None
+        if source_path:
+            exact_source = _source_signature_matches(source, source_probe)
+            haystack = f"{source.get('path', '')} {source.get('file_name', '')}".lower()
+            if exact_source:
+                score += 20
+            elif source_hash and source.get("file_hash") == source_hash:
+                score += 15
+            elif str(source_path).lower() in haystack:
+                score += 10
+            elif not source.get("file_hash") and source_query and _score_dashboard(entry, source_query) > 0:
+                score += _score_dashboard(entry, source_query)
+            else:
+                continue
+        if template_path:
+            exact_template = _template_signature_matches(template, template_probe)
+            haystack = f"{template.get('path', '')} {template.get('file_name', '')}".lower()
+            if exact_template:
+                score += 20
+            elif template_hash and template.get("file_hash") == template_hash:
+                score += 15
+            elif str(template_path).lower() in haystack:
+                score += 10
+            else:
+                continue
+        if query and score <= 0:
+            continue
+        ranked.append((score, entry, exact_source, exact_template))
+
+    ranked.sort(key=lambda item: (item[0], item[1].get("updated_at") or ""), reverse=True)
+    selected = ranked[:max_items]
+    return {
+        "count": len(selected),
+        "dashboards": [
+            _dashboard_summary(
+                entry,
+                exact_source_match=exact_source,
+                exact_template_match=exact_template,
+            )
+            for _score, entry, exact_source, exact_template in selected
+        ],
+    }
+
+
+def load_dashboard(
+    dashboard_id: str | None = None,
+    query: str | None = None,
+    latest: bool = False,
+) -> dict[str, Any]:
+    """Load a persisted dashboard artifact and push it back to the chat render queue."""
+    state = _ensure_export_backfill(_load_dashboard_state())
+    dashboards = _state_dashboards(state)
+    if not dashboards:
+        return _error("dashboard_memory", "No dashboards have been saved yet")
+
+    entry: dict[str, Any] | None = None
+    if dashboard_id:
+        entry = next((item for item in dashboards if item.get("id") == dashboard_id), None)
+    elif latest or not query or query.lower().strip() in {"last", "latest", "terakhir"}:
+        entry = sorted(dashboards, key=lambda item: item.get("updated_at") or "", reverse=True)[0]
+    else:
+        matches = [
+            (_score_dashboard(item, query), item)
+            for item in dashboards
+            if _score_dashboard(item, query) > 0
+        ]
+        matches.sort(key=lambda item: (item[0], item[1].get("updated_at") or ""), reverse=True)
+        entry = matches[0][1] if matches else None
+
+    if not entry:
+        return {
+            "error": "Dashboard memory match not found",
+            "available": search_dashboards(limit=10).get("dashboards", []),
+        }
+
+    artifact = _artifact_from_memory(entry, loaded=True)
+    if not artifact:
+        return _error("dashboard_memory", "Saved dashboard artifact is empty or invalid")
+    _push_to_render_queue(artifact)
+    return artifact
 
 
 def _schema(name: str, description: str, properties: dict, required: list[str]) -> dict:
@@ -986,4 +1663,56 @@ GENERATE_DASHBOARD_SCHEMA = _schema(
         },
     },
     ["view_model"],
+)
+
+SEARCH_DASHBOARDS_SCHEMA = _schema(
+    "search_dashboards",
+    "Search persisted dashboard memory across chat sessions. Use this before "
+    "creating or recreating a dashboard from an uploaded CSV/XLSX. If the result "
+    "has reusable_match=true, call load_dashboard with that dashboard_id instead "
+    "of regenerating unless the user explicitly requested changes.",
+    {
+        "query": {
+            "type": "string",
+            "description": "Optional natural-language query such as a dashboard title or data file name.",
+        },
+        "source_path": {
+            "type": "string",
+            "description": (
+                "Optional CSV/XLSX path to match by file hash, sheet, row count, "
+                "column names, and column dtypes."
+            ),
+        },
+        "template_path": {
+            "type": "string",
+            "description": "Optional dashboard template path to match by file hash or path.",
+        },
+        "limit": {
+            "type": "integer",
+            "description": "Maximum dashboards to return, default 5.",
+        },
+    },
+    [],
+)
+
+LOAD_DASHBOARD_SCHEMA = _schema(
+    "load_dashboard",
+    "Load a dashboard from persisted dashboard memory and publish the exact saved "
+    "artifact back to chat. Use `latest=true` for requests like 'load dashboard "
+    "terakhir', or pass `dashboard_id` from search_dashboards.",
+    {
+        "dashboard_id": {
+            "type": "string",
+            "description": "Dashboard id returned by search_dashboards.",
+        },
+        "query": {
+            "type": "string",
+            "description": "Optional query when the user describes the dashboard/source/template.",
+        },
+        "latest": {
+            "type": "boolean",
+            "description": "Load the most recently generated dashboard.",
+        },
+    },
+    [],
 )

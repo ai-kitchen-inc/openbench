@@ -7,6 +7,7 @@
       "env": {
         "OPENBENCH_EXPORT_DIR": "examples/general-chat/downloads",
         "OPENBENCH_EXPORT_URL_BASE": "/downloads",
+        "OPENBENCH_DASHBOARD_STATE_PATH": "examples/general-chat/.openbench/dashboard_generator_state.json",
         "DASHBOARD_RENDER_ADAPTER": "default"
       }
     }

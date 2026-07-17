@@ -26,6 +26,8 @@ from openbench.mcp.config import (  # noqa: E402
 
 EXPECTED_TOOLS = {
     "dashboard_generator.generate_dashboard",
+    "dashboard_generator.load_dashboard",
+    "dashboard_generator.search_dashboards",
 }
 
 
@@ -41,6 +43,10 @@ def _local_server() -> MCPServerConnectionConfig:
                 str(MCP_ROOT / "outputs"),
             ),
             "OPENBENCH_EXPORT_URL_BASE": os.getenv("OPENBENCH_EXPORT_URL_BASE", "/outputs"),
+            "OPENBENCH_DASHBOARD_STATE_PATH": os.getenv(
+                "OPENBENCH_DASHBOARD_STATE_PATH",
+                str(MCP_ROOT / ".openbench" / "dashboard_generator_state.json"),
+            ),
             "DASHBOARD_RENDER_ADAPTER": os.getenv("DASHBOARD_RENDER_ADAPTER", "default"),
         },
         namespace="dashboard_generator",
@@ -61,6 +67,8 @@ def _docker_server(image: str) -> MCPServerConnectionConfig:
             "OPENBENCH_EXPORT_DIR=/outputs",
             "-e",
             "OPENBENCH_EXPORT_URL_BASE=/outputs",
+            "-e",
+            "OPENBENCH_DASHBOARD_STATE_PATH=/outputs/dashboard_generator_state.json",
             "-e",
             f"DASHBOARD_RENDER_ADAPTER={os.getenv('DASHBOARD_RENDER_ADAPTER', 'default')}",
             image,

@@ -1,106 +1,105 @@
 # Dashboard Persistence Memory
 
-OpenBench dashboard generation stores every successful dashboard ViewModel in a
-small SQLite persistence database. The same implementation is used by the SDK
-skill and by MCP, so dashboard consistency works the same way whether the agent
-calls local SDK tools or MCP tools.
+Dashboard Generator MCP persists every successful dashboard into the shared
+dashboard state JSON file so later chat sessions can reopen or consistently
+reuse the same artifact.
 
-## Where It Lives
+## Storage
 
-The persistence logic is in:
+The state file path is resolved from:
 
-- `src/openbench/skills/dashboard-generator/tools.py`
-- SQLite database: `OPENBENCH_DASHBOARD_MEMORY_DB`, or
-  `GENERAL_CHAT_DASHBOARD_MEMORY_DB`, or `.openbench/dashboard_memory.db`
+1. `OPENBENCH_DASHBOARD_STATE_PATH`
+2. `GENERAL_CHAT_DASHBOARD_STATE_PATH`
+3. `.openbench/dashboard_generator_state.json`
 
-Set `OPENBENCH_DASHBOARD_MEMORY_ENABLED=0` to disable persistence.
+The same file is shared with Aggregate Data MCP. Aggregate Data MCP stores the
+latest `source_context` and named `aggregate_datasets`; Dashboard Generator MCP
+stores dashboard memory under `dashboards`.
 
-The stored record contains:
+When `dashboards` is empty or incomplete, `search_dashboards` and
+`load_dashboard` also scan `OPENBENCH_EXPORT_DIR` for existing dashboard HTML
+exports that contain `openbench-dashboard-view-model`. Those exports are
+backfilled into memory so dashboards created before the memory feature can still
+be found by title/query and loaded again.
 
-- `dashboard_id`: stable reference returned as `dashboardId`
-- `source_signature`: functional schema signature for the uploaded table
-- `viewModel`: the canonical rendered dashboard ViewModel
-- artifact metadata such as URL, path, template info, and render mode
-- revision metadata such as `revision_of` and `revision_notes`
+Each dashboard memory record contains:
 
-## Functional Data Matching
+- `id`: stable dashboard id, returned as `memory.dashboard_id`
+- `match_key`: fingerprint key used for exact reuse
+- `source`: source path, file name, file hash, sheet, row count, and column dtype signature
+- `template`: template path/hash, inline template hash, or default template signature
+- `artifact`: the exact saved dashboard artifact, including `viewModel`, datasets, URL, and path
+- `created_at` / `updated_at`
 
-`aggregate_data.extract_metadata(path=...)` computes `source_signature` from
-the source format, sheet, column names, dtypes, and role hints. It intentionally
-does not include row count, file hash, or sample values.
+## Matching Rules
 
-That means a table uploaded on day two with the same columns but additional rows
-matches the dashboard generated on day one. The agent should:
+For CSV/XLSX dashboards, `generate_dashboard` computes a source fingerprint from
+the current shared `source_context`:
 
-1. Call `aggregate_data.extract_metadata`.
-2. Inspect `dashboard_memory.matches`.
-3. Call `load_dashboard_memory` for the matched `dashboard_id` or `source_path`.
-4. Run fresh `aggregate_data` queries on the new file.
-5. Reuse the previous layout while replacing panel data with new aggregate rows.
-6. Call `generate_dashboard(..., source_path=...)` to persist the refreshed result.
+- file hash
+- sheet
+- row count
+- column names and dtypes
 
-## Revisions Without Losing Panels
+It also computes a template fingerprint from `template_path`, `template_text`,
+and `template_format`. If a saved dashboard has the same source fingerprint and
+template fingerprint, `generate_dashboard` returns the saved artifact instead of
+rendering a different dashboard. This preserves consistency when the same data
+and template are used in a different chat session.
 
-For a dashboard with five panels, a user may ask to revise only one panel. The
-agent should load the old dashboard and send a small patch:
+Dashboards without a source fingerprint are still saved, but their fallback key
+includes the rendered ViewModel so unrelated source-less dashboards do not
+overwrite each other.
 
-```json
-{
-  "previous_dashboard_id": "dash-abc123",
-  "revision_notes": "Change Revenue Share from pie to bar.",
-  "revision_panel_titles": ["Revenue Share"],
-  "view_model": {
-    "title": "Sales Dashboard",
-    "sections": [
-      {
-        "title": "Dashboard",
-        "items": [
-          {"title": "Revenue Share", "type": "chart", "chart_type": "bar"}
-        ]
-      }
-    ]
-  }
-}
+## Tools
+
+Dashboard Generator MCP exposes:
+
+- `generate_dashboard`: render a new dashboard or reuse a saved exact
+  source/template match; saves every successful artifact
+- `search_dashboards`: search saved dashboards by title, source file/path,
+  template file/path, source hash, or query text
+- `load_dashboard`: publish a saved artifact back to chat by `dashboard_id`,
+  `query`, or `latest=true`
+
+## Agent Flow
+
+For "load dashboard terakhir", call:
+
+```text
+dashboard_generator.load_dashboard(latest=true)
 ```
 
-`generate_dashboard` merges the patch into the stored ViewModel. Sections,
-panels, and KPIs are matched by `id`, `panel_id`, `panelId`, `title`, or
-`label`. Only items listed in `revision_panel_titles`, or clearly inferable from
-`revision_notes`, are updated. All unspecified panels remain unchanged.
+For "load dashboard yang kemarin pakai data A", call:
 
-If a revision payload includes multiple changed panels but does not clearly name
-which panel the user requested, OpenBench preserves the old dashboard panels
-instead of accepting ambiguous drift. Top-level `datasets` are also merged
-selectively: only datasets referenced by revised panels are replaced, while
-datasets used by preserved panels stay unchanged.
-
-If an agent sends a full regenerated dashboard without `previous_dashboard_id`
-but the title matches dashboard memory, `generate_dashboard` still performs an
-auto-revision pass. Non-canonical payloads such as `components` are normalized
-for comparison, the prior matching dashboard is loaded, and only the first
-semantically changed panel is applied. Other panels keep their stored chart type,
-data bindings, and datasets so accidental model drift does not rewrite the
-whole dashboard.
-
-## SDK and MCP Behavior
-
-SDK path:
-
-```python
-from openbench.intelligence import BaseAgent
-
-agent = BaseAgent(skills=["dashboard-generator"])
+```text
+dashboard_generator.search_dashboards(query="data A")
+dashboard_generator.load_dashboard(dashboard_id="<matched id>")
 ```
 
-MCP path:
+For a dashboard request with an uploaded CSV/XLSX, keep the metadata-first flow
+but search memory before aggregating:
 
 ```text
 aggregate_data.extract_metadata
+dashboard_generator.search_dashboards(source_path="...", template_path="...")
+```
+
+If the search result has `reusable_match=true`, or `exact_source_match=true`
+with no conflicting template and the user did not request changes, load the
+saved dashboard:
+
+```text
+dashboard_generator.load_dashboard(dashboard_id="<matched id>")
+```
+
+Only aggregate and generate when no reusable dashboard exists, or when the user
+explicitly asks for a revision, chart/template/layout change, or another custom
+change:
+
+```text
 aggregate_data.aggregate_data
 dashboard_generator.generate_dashboard
 ```
 
-The MCP route is split: Aggregate Data MCP writes named aggregate datasets to
-the shared dashboard state file, and Dashboard Generator MCP reads those
-datasets when rendering. Both routes need the same environment/path
-configuration for persistence and state sharing.
+`generate_dashboard` handles exact source/template reuse automatically.

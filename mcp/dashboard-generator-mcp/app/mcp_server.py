@@ -66,6 +66,64 @@ def build_mcp():
             LOGGER.exception("generate_dashboard failed")
             return _tool_error(exc)
 
+    @mcp.tool(
+        name="search_dashboards",
+        annotations={
+            "title": "Search Dashboard Memory",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    def search_dashboards(
+        query: str | None = None,
+        source_path: str | None = None,
+        template_path: str | None = None,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        """Search persisted dashboard memory across chat sessions."""
+        try:
+            return _run_tool(
+                lambda: get_service().search_dashboards(
+                    query=query,
+                    source_path=source_path,
+                    template_path=template_path,
+                    limit=limit,
+                )
+            )
+        except Exception as exc:
+            LOGGER.exception("search_dashboards failed")
+            return _tool_error(exc)
+
+    @mcp.tool(
+        name="load_dashboard",
+        annotations={
+            "title": "Load Dashboard",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    def load_dashboard(
+        dashboard_id: str | None = None,
+        query: str | None = None,
+        latest: bool = False,
+    ) -> dict[str, Any]:
+        """Load a persisted dashboard artifact and publish it back to chat."""
+        try:
+            return _run_tool(
+                lambda: get_service().load_dashboard(
+                    dashboard_id=dashboard_id,
+                    query=query,
+                    latest=latest,
+                )
+            )
+        except Exception as exc:
+            LOGGER.exception("load_dashboard failed")
+            return _tool_error(exc)
+
     return mcp
 
 

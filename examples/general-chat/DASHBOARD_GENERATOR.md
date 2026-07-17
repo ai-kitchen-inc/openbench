@@ -13,9 +13,13 @@ standardized `mcp/dashboard-generator-mcp` standalone server.
    `buatkan dashboard dari data ini pakai template yang saya upload`.
 5. The agent calls:
    - `aggregate_data.extract_metadata`
-   - `aggregate_data.aggregate_data` with read-only SQLite SQL
-   - `dashboard_generator.generate_dashboard`, with `template_path=...` when an uploaded template
-     source is present and requested
+   - `dashboard_generator.search_dashboards` with `source_path=...` and
+     `template_path=...` when an uploaded template source is present
+   - `dashboard_generator.load_dashboard` when the same data/template already
+     has a reusable saved dashboard and the user did not request changes
+   - `aggregate_data.aggregate_data` with read-only SQLite SQL only when no
+     reusable dashboard exists or the user explicitly asks for a revision
+   - `dashboard_generator.generate_dashboard` for new/revised dashboards
 6. The dashboard appears as a link in chat and as a side-by-side A2UI artifact
    panel.
 
@@ -26,7 +30,8 @@ openbench demo run general-chat-dashboard-generator
 ```
 
 That run loads the MCP tools as `aggregate_data.extract_metadata`,
-`aggregate_data.aggregate_data`, and `dashboard_generator.generate_dashboard`.
+`aggregate_data.aggregate_data`, `dashboard_generator.generate_dashboard`,
+`dashboard_generator.search_dashboards`, and `dashboard_generator.load_dashboard`.
 
 Equivalent manual fallback:
 
@@ -47,6 +52,12 @@ session is deleted.
 Dashboard template uploads are also kept after a chat turn. The source context
 exposes `Dashboard template path:` so the MCP dashboard tool can read the
 user-provided template directly.
+
+Dashboard generator memory is stored in the shared
+`.openbench/dashboard_generator_state.json` file. Every generated dashboard is
+saved with its source-data fingerprint, template fingerprint, rendered
+ViewModel, and export link. This lets a later chat session load "dashboard
+terakhir" or search for a dashboard by source file/template without rebuilding.
 
 ## Environment
 
@@ -104,7 +115,8 @@ Run mode differences:
   or a dedicated MCP launcher.
 - `openbench demo run general-chat-dashboard-generator`: MCP-only dashboard
   test. It exposes only `aggregate_data.extract_metadata`,
-  `aggregate_data.aggregate_data`, and `dashboard_generator.generate_dashboard`.
+  `aggregate_data.aggregate_data`, `dashboard_generator.generate_dashboard`,
+  `dashboard_generator.search_dashboards`, and `dashboard_generator.load_dashboard`.
 - `openbench demo run general-chat-all`: registry-mode General Chat with all
   bundled MCP integrations seeded together, including dashboard generator plus
   the other MCP demos when their dependencies are available.
