@@ -137,7 +137,7 @@ Or individually:
 
 | Command | Does |
 |---------|------|
-| `deploy/deploy.sh backend` | Cloud Build the API+SPA image (SPA built in stage 1 with the `_VITE_FIREBASE_*` substitutions), `docker pull` + `docker-compose up -d` on the VM, wait for `/health`. |
+| `deploy/deploy.sh backend` | Cloud Build the API+SPA image (SPA built in stage 1 with the `_VITE_FIREBASE_*` substitutions), `docker pull` + `docker-compose up -d` on the VM, wait for `/health`. Also ships the `aggregate_data` / `dashboard_generator` stdio MCP servers, which live *inside* the API image at `/app/mcp/<name>` (unlike `mcp-image`/`fn-image`) — redeploy `backend` to update them. |
 | `deploy/deploy.sh frontend` | Alias of `backend` — the SPA ships inside the API image. |
 | `deploy/deploy.sh mcp-image` | Cloud Build the forked `db_server` MCP image (`mcp-db-server:1.3.1-ob1`) and `docker pull` it on the VM. |
 | `deploy/deploy.sh fn-image` | Cloud Build the `custom_function` MCP image + `docker pull` on the VM (+ functions dir). |

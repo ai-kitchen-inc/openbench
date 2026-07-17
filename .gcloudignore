@@ -56,13 +56,14 @@ Thumbs.db
 prompt-debug/
 general_chat_memory.db
 
-# Standalone MCP server projects (~2.3 GB with models). Not part of any API
-# image — they build separately (deploy.sh mcp-image/fn-image submit their own
-# subdirectory, so this root ignore does not affect those builds). Runtime MCP
-# config paths resolve to examples/general-chat/mcp/, not this directory.
-# Leading slash anchors to repo root: src/openbench/mcp and
-# examples/general-chat/mcp must stay in the context.
-/mcp/
+# Repo-root mcp/ (standalone MCP server projects, ~0.5 MB, no model weights)
+# MUST ship in the general-chat API image: the bundled aggregate_data /
+# dashboard_generator stdio configs (examples/general-chat/mcp/*.yaml) run
+# with cwd ../../mcp/<name>, i.e. /app/mcp/<name> in the container, and the
+# VM prune-recovery recipe docker-cp's build contexts out of /app/mcp/.
+# Do NOT re-add a blanket /mcp/ ignore here (it broke prod discovery with
+# Errno 2), and never put model weights in this tree — mount them from
+# /app-data on the VM instead.
 
 # Build artifacts (paths that should NOT enter image)
 examples/lci-mini/uploads/
