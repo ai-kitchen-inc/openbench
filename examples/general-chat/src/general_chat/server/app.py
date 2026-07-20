@@ -176,6 +176,53 @@ _AUTH_PROTECTED_PREFIXES = (
 SHARED_SOURCES_OWNER = "shared"
 SHARED_SOURCES_THREAD = "global-sources"
 
+# Sidecar file written next to each stored upload recording the owner,
+# so /uploads serving can enforce ownership without a store lookup.
+_UPLOAD_OWNER_MARKER = ".owner"
+
+
+def _stamp_upload_owner(upload_dir: str, file_id: str, owner: str) -> None:
+    """Best-effort sidecar recording which owner stored an upload."""
+    try:
+        marker = Path(upload_dir) / file_id / _UPLOAD_OWNER_MARKER
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(owner, encoding="utf-8")
+    except OSError:
+        logger.warning("Failed to stamp upload owner for %s", file_id, exc_info=True)
+
+
+def _upload_access_allowed(
+    *,
+    owner: str,
+    role: str,
+    file_id: str,
+    upload_dir: str,
+    source_store,
+) -> bool:
+    """Return whether ``owner`` may read the upload ``file_id``.
+
+    Check order: sidecar owner marker (stamped on every new upload) →
+    the owner's own source records → admin-curated shared sources →
+    admin override → legacy grandfather. Pre-marker transient
+    attachments have no record and no marker; denying them would break
+    files referenced by existing chat histories, so they stay readable
+    unless some other owner's source record claims the file.
+    """
+    marker = Path(upload_dir) / file_id / _UPLOAD_OWNER_MARKER
+    try:
+        stamped = marker.read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        stamped = ""
+    if stamped:
+        return stamped in {owner, SHARED_SOURCES_OWNER} or role == "admin"
+    if source_store.for_owner(owner).find_by_upload_file_id(file_id) is not None:
+        return True
+    if source_store.for_owner(SHARED_SOURCES_OWNER).find_by_upload_file_id(file_id) is not None:
+        return True
+    if role == "admin":
+        return True
+    return source_store.find_by_upload_file_id(file_id) is None
+
 
 def _slugify_dashboard_title(title: str) -> str:
     """Filesystem-safe slug for a downloaded dashboard filename."""
@@ -1007,10 +1054,12 @@ def create_app() -> FastAPI:
 
     @app.post("/chat/attachments/upload")
     async def upload_chat_attachment(
+        request: Request,
         file: UploadFile = File(...),
         session_id: str | None = Form(default=None, alias="sessionId"),
     ) -> dict:
         """Store a transient chat composer attachment for the next message."""
+        owner = current_owner(request)
         filename = file.filename or "unnamed"
         mime_type = _resolve_mime(filename, file.content_type or "")
         if mime_type not in _ALLOWED_MIME_TYPES:
@@ -1019,6 +1068,7 @@ def create_app() -> FastAPI:
         content = await _read_upload_limited(file, multipart_upload_max_bytes)
         _archive_attachment(filename, content, mime_type, target_session_id)
         stored = _file_store_for_session(target_session_id).store(filename, content, mime_type)
+        _stamp_upload_owner(upload_dir, stored.id, owner)
         attachment = _attachment_from_stored_file(stored)
         print(
             f"  [chat-attachment-upload] id={stored.id} session={target_session_id!r} "
@@ -1094,6 +1144,7 @@ def create_app() -> FastAPI:
         _archive_attachment(filename, content, mime_type, target_session_id)
         user_file_store = _file_store_for_session(target_session_id)
         stored = user_file_store.store(filename, content, mime_type)
+        _stamp_upload_owner(upload_dir, stored.id, owner)
         if _gcp_enabled():
             record = _queued_gcs_upload_record(session_id=target_session_id, stored=stored)
             srcs.upsert(record)
@@ -1677,7 +1728,42 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Dashboard not found")
         return FileResponse(html_path, media_type="text/html")
 
-    app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
+    # Uploads are served through an explicit route (not a static mount) so
+    # every read is checked against the requester's owner — see
+    # _upload_access_allowed. Auth itself comes from the middleware
+    # (/uploads is in _AUTH_PROTECTED_PREFIXES); ownership failures return
+    # 404 to avoid confirming a foreign file exists.
+    @app.api_route("/uploads/{file_id}", methods=["GET", "HEAD"])
+    async def serve_upload_dir(file_id: str):
+        # Match one-segment /uploads/<x> directly so Starlette's
+        # redirect_slashes never bounces it into the file route below.
+        raise HTTPException(status_code=404, detail="File not found")
+
+    @app.api_route("/uploads/{file_id}/{name:path}", methods=["GET", "HEAD"])
+    async def serve_upload(request: Request, file_id: str, name: str):
+        upload_root = Path(upload_dir).resolve()
+        if Path(file_id).name != file_id or file_id in {".", ".."}:
+            raise HTTPException(status_code=404, detail="File not found")
+        safe_name = Path(name).name
+        if not safe_name or safe_name == _UPLOAD_OWNER_MARKER:
+            raise HTTPException(status_code=404, detail="File not found")
+        if not _upload_access_allowed(
+            owner=current_owner(request),
+            role=current_role(request),
+            file_id=file_id,
+            upload_dir=upload_dir,
+            source_store=source_store,
+        ):
+            raise HTTPException(status_code=404, detail="File not found")
+        candidate = (upload_root / file_id / safe_name).resolve()
+        try:
+            candidate.relative_to(upload_root)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="File not found")
+        if not candidate.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        return FileResponse(candidate, media_type=_resolve_mime(safe_name, ""))
+
     app.mount("/downloads", StaticFiles(directory=download_dir), name="downloads")
     app.mount(
         "/image-search/previews",

@@ -180,6 +180,41 @@ class TestGeneralChatUserIsolation(unittest.TestCase):
         self.assertEqual(as_a.status_code, 200)
         self.assertEqual(as_b.status_code, 404)
 
+    def test_upload_bytes_are_scoped_per_user(self):
+        """Raw /uploads/<file_id>/<name> bytes must be owner-checked, not
+        just auth-gated: B fetching A's upload URL gets 404."""
+        client = self._client()
+        upload = client.post(
+            "/chat/upload",
+            headers=A,
+            files={"file": ("notes.txt", b"hello isolation", "text/plain")},
+            data={"sessionId": "thread-bytes"},
+        ).json()
+        url = upload.get("url") or ""
+        self.assertTrue(url.startswith("/uploads/"), url)
+
+        as_a = client.get(url, headers=A)
+        as_b = client.get(url, headers=B)
+
+        self.assertEqual(as_a.status_code, 200)
+        self.assertEqual(as_a.content, b"hello isolation")
+        self.assertEqual(as_b.status_code, 404)
+
+    def test_attachment_bytes_are_scoped_per_user(self):
+        """Transient composer attachments get an owner stamp too."""
+        client = self._client()
+        upload = client.post(
+            "/chat/attachments/upload",
+            headers=A,
+            files={"file": ("pic.png", b"\x89PNG-bytes", "image/png")},
+            data={"sessionId": "thread-att"},
+        ).json()
+        url = upload.get("url") or ""
+        self.assertTrue(url.startswith("/uploads/"), url)
+
+        self.assertEqual(client.get(url, headers=A).status_code, 200)
+        self.assertEqual(client.get(url, headers=B).status_code, 404)
+
     def test_email_casing_is_normalized(self):
         cased = FirebaseUser(uid="uid-a", email="Alice@Example.com")
         client = self._client(users={"token-a": USER_A, "token-cased": cased})
