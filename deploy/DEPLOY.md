@@ -148,6 +148,7 @@ Or individually:
 | `deploy/deploy.sh init-appdb` | Create the `appdata` DB + `mart` schema + `mcp_app` role on Cloud SQL (idempotent). |
 | `deploy/deploy.sh seed-mcp-db FILE.sql` | Load a `.sql` file into the `appdata` Postgres DB (the `db_server` data). |
 | `deploy/deploy.sh wipe-chat-data` | **DESTRUCTIVE**: drop all chat sessions/memory/sources and clear uploads/downloads on the VM (leaves published dashboards, MCP registry, functions, Grafana intact). Used once for the user-isolation rollout. |
+| `deploy/deploy.sh backups` | Enable + verify Cloud SQL automated daily backups + PITR on `openbench-postgres` (idempotent). See "Backups & restore". |
 | `deploy/deploy.sh verify` | Probe health/auth/hardening/network on the live deployment. |
 
 All identifiers are defaults in `deploy.sh`; override any via env or a gitignored
@@ -381,6 +382,58 @@ bash deploy/deploy.sh verify
 Expected: `/health` 200 · `/persona` 401 (no token) · `/openapi.json` 404
 (docs disabled) · Hosting 200 · raw `:8080` unreachable. Real end-to-end:
 open the Hosting URL, sign in with an allowlisted Google account, send a message.
+
+## Backups & restore
+
+```bash
+bash deploy/deploy.sh backups    # enable + verify (idempotent)
+```
+
+Configures the shared Cloud SQL instance `openbench-postgres`: automated daily
+backups at 18:00 UTC (01:00 WIB, off-hours), 14 backups retained, point-in-time
+recovery with 7 days of transaction logs. Enabling PITR the first time turns on
+WAL archiving and can briefly restart the instance — run off-hours.
+
+**Covered** (everything on the instance):
+
+| Database | Contents |
+|----------|----------|
+| `openbench` | chat sessions, memory, sources, `openbench_users`, settings |
+| `controlled_chat` | the controlled-source-chat Cloud Run deployment's state |
+| `appdata` | `db_server` MCP mart data |
+
+**NOT covered** — VM-disk state under `/app-data`: uploads, downloads,
+Grafana SQLite, MCP registry files. Uploads are additionally copied to the
+GCS forever-archive when `GENERAL_CHAT_ARCHIVE_BUCKET` is set; otherwise
+they are single-copy on the VM disk.
+
+**Restore — recommended path (clone, non-destructive):**
+
+```bash
+gcloud sql backups list --instance=openbench-postgres --project sss-poc1-corporate
+# PITR clone to a new instance (UTC, RFC3339); or use --backup-id=BACKUP_ID
+gcloud sql instances clone openbench-postgres openbench-postgres-restore \
+  --project sss-poc1-corporate \
+  --point-in-time "2026-07-20T02:00:00Z"
+# Give the clone a public IP + the VM's egress IP as an authorized network,
+# then on the VM edit .env.gcp (GENERAL_CHAT_DATABASE_URL, MCP_DB_DATABASE_URL,
+# APPDATA_ADMIN_URL → clone IP) and recreate the containers:
+sudo docker-compose --env-file .env.gcp -f docker-compose.gce.yml up -d --force-recreate
+bash deploy/deploy.sh verify
+```
+
+Keep the clone (update this inventory) or `pg_dump`/restore back and delete it.
+
+**Restore — in-place (destructive):**
+
+```bash
+gcloud sql backups restore BACKUP_ID --restore-instance=openbench-postgres \
+  --project sss-poc1-corporate
+```
+
+> **Warning:** in-place restore overwrites **all three databases** on the shared
+> instance, including `controlled_chat`, which belongs to the separate Cloud Run
+> deployment. Prefer the clone path.
 
 ## Pub/Sub worker subscription
 

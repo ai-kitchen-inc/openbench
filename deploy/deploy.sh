@@ -26,6 +26,7 @@
 #   init-appdb     Create the appdata DB + mart schema + mcp_app role on Cloud SQL
 #   seed-mcp-db FILE  Load a .sql file into the appdata Postgres DB (db_server data)
 #   wipe-chat-data DESTRUCTIVE: drop all chat sessions/memory/sources/uploads
+#   backups        Enable + verify Cloud SQL automated backups + PITR (idempotent)
 #   verify         Probe the live deployment (health/auth/hardening/network)
 #   all            backend → verify
 #   help           Print this help + the resource inventory
@@ -59,6 +60,10 @@ CLOUDBUILD_CONFIG="${CLOUDBUILD_CONFIG:-cloudbuild.general-chat.yaml}"
 # throwaway container that reaches Cloud SQL over its public IP (same path the
 # app already uses), so no special docker network is needed.
 PSQL_IMAGE="${PSQL_IMAGE:-postgres:16}"
+
+# Shared Cloud SQL instance hosting the `openbench` (chat), `controlled_chat`,
+# and `appdata` databases — target of `deploy.sh backups`.
+SQL_INSTANCE="${SQL_INSTANCE:-openbench-postgres}"
 
 # db_server MCP forked image (Postgres + materialize): source dir + Cloud Build.
 MCP_IMAGE="${MCP_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/mcp-db-server:1.3.1-ob1}"
@@ -377,6 +382,37 @@ cmd_wipe_chat_data() {
   ok "chat data wiped — tables recreate with the owner column on next boot"
 }
 
+# --- backups -----------------------------------------------------------------
+# Enable + verify Cloud SQL automated daily backups and point-in-time recovery
+# on the shared instance (covers ALL databases on it: openbench chat DB,
+# controlled_chat, appdata). Idempotent — safe to run any time. Restore
+# runbook: deploy/DEPLOY.md "Backups & restore".
+cmd_backups() {
+  log "Cloud SQL backup config on $SQL_INSTANCE ($PROJECT_ID)"
+  local enabled pitr
+  enabled="$("$GCLOUD" sql instances describe "$SQL_INSTANCE" --project "$PROJECT_ID" \
+    --format='value(settings.backupConfiguration.enabled)')" \
+    || die "cannot describe $SQL_INSTANCE (check gcloud auth / cloudsql.admin role)"
+  pitr="$("$GCLOUD" sql instances describe "$SQL_INSTANCE" --project "$PROJECT_ID" \
+    --format='value(settings.backupConfiguration.pointInTimeRecoveryEnabled)')"
+  if [ "$enabled" = "True" ] && [ "$pitr" = "True" ]; then
+    ok "automated backups + PITR already enabled"
+  else
+    warn "current: backups=$enabled pitr=$pitr — patching"
+    # 18:00 UTC = 01:00 WIB (off-hours for this deployment). Enabling PITR
+    # turns on WAL archiving and can briefly restart the instance.
+    "$GCLOUD" sql instances patch "$SQL_INSTANCE" --project "$PROJECT_ID" \
+      --backup-start-time=18:00 \
+      --enable-point-in-time-recovery \
+      --retained-backups-count=14 \
+      --retained-transaction-log-days=7 \
+      || die "backup patch failed"
+    ok "automated daily backups (14 kept) + PITR (7 days of WAL) enabled"
+  fi
+  log "Most recent backups"
+  "$GCLOUD" sql backups list --instance="$SQL_INSTANCE" --project "$PROJECT_ID" --limit=5 || true
+}
+
 # --- verify ------------------------------------------------------------------
 cmd_verify() {
   log "Verifying live deployment"
@@ -428,6 +464,7 @@ Resource inventory:
   Image          $IMAGE
   Cloud Build    $CLOUDBUILD_CONFIG
   VM             $VM_NAME ($VM_ZONE), dir $VM_DEPLOY_DIR
+  Cloud SQL      $SQL_INSTANCE (backups: deploy.sh backups)
   Compose        $COMPOSE_FILE  (openbench-api @127.0.0.1:8080 + openbench-worker)
   TLS front door $API_URL  (host nginx → 127.0.0.1:8080, Let's Encrypt)
   SPA            served same-origin by the API (GENERAL_CHAT_STATIC_DIR in image)
@@ -449,8 +486,9 @@ case "${1:-help}" in
   init-appdb) cmd_init_appdb ;;
   seed-mcp-db) shift; cmd_seed_mcp_db "${1:-}" ;;
   wipe-chat-data) cmd_wipe_chat_data ;;
+  backups)  cmd_backups ;;
   verify)   cmd_verify ;;
   all)      cmd_backend; cmd_verify ;;
   help|-h|--help) cmd_help ;;
-  *) die "unknown command '$1' (try: backend|frontend|mcp-image|fn-image|grafana|nginx|add-user|remove-user|init-appdb|seed-mcp-db|wipe-chat-data|verify|all|help)" ;;
+  *) die "unknown command '$1' (try: backend|frontend|mcp-image|fn-image|grafana|nginx|add-user|remove-user|init-appdb|seed-mcp-db|wipe-chat-data|backups|verify|all|help)" ;;
 esac
