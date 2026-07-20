@@ -629,6 +629,9 @@ def create_app() -> FastAPI:
             try:
                 existing = session_store.load(thread_id)
             except Exception:
+                logger.warning(
+                    "Failed to load session %s; creating a new one", thread_id, exc_info=True
+                )
                 existing = None
             if existing is not None:
                 return existing
@@ -681,6 +684,11 @@ def create_app() -> FastAPI:
                         status_code=status.HTTP_403_FORBIDDEN,
                     )
         return await call_next(request)
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse({"detail": "Internal server error"}, status_code=500)
 
     @app.on_event("startup")
     async def startup() -> None:
@@ -1054,6 +1062,7 @@ def create_app() -> FastAPI:
             else:
                 transcript = transcriber.transcribe(content, mime_type=mime_type)
         except Exception as exc:
+            logger.warning("Transcription failed", exc_info=True)
             raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
         finally:
             for path in (tmp_path, wav_path):

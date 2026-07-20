@@ -2,6 +2,11 @@ services:
   openbench-api:
     image: ${OPENBENCH_IMAGE:-openbench-general-chat:latest}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     env_file:
       - .env.gcp
     environment:
@@ -69,6 +74,11 @@ services:
   openbench-worker:
     image: ${OPENBENCH_IMAGE:-openbench-general-chat:latest}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     env_file:
       - .env.gcp
     environment:
@@ -102,6 +112,11 @@ services:
   grafana:
     image: grafana/grafana:11.1.0
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     ports:
       - "127.0.0.1:3000:3000"
     environment:

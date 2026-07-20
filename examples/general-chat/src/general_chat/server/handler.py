@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 import re
 import threading
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
 
     from general_chat.sources import SourceRecord
 
+
+logger = logging.getLogger(__name__)
 
 _SOURCE_CONTEXT_ID = "general-chat-source-context"
 _DEFAULT_SOURCE_CONTEXT_LABEL = "Optional context extracted from this user-added source."
@@ -112,6 +115,7 @@ def _generate_session_title(agent: Any, content: str) -> str:
             temperature=0.1,
         )
     except Exception:
+        logger.warning("Session title generation failed; using fallback title", exc_info=True)
         return fallback
     return _clean_session_title(getattr(response, "text", ""), fallback)
 
