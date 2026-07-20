@@ -78,7 +78,9 @@ def _public_url(path: Path) -> str:
     base = os.environ.get("OPENBENCH_EXPORT_URL_BASE")
     if not base:
         return path.as_posix()
-    return f"{base.rstrip('/')}/{path.name}"
+    from openbench.utils.download_tokens import sign_download_url
+
+    return sign_download_url(f"{base.rstrip('/')}/{path.name}")
 
 
 def _push_to_render_queue(item: dict[str, Any]) -> None:

@@ -161,7 +161,9 @@ def _public_url(path: Path) -> str:
     base = _url_base()
     if base is None:
         return path.as_posix()
-    return f"{base}/{path.name}"
+    from openbench.utils.download_tokens import sign_download_url
+
+    return sign_download_url(f"{base}/{path.name}")
 
 
 def _file_item(path: Path, sheets: list[str]) -> dict[str, Any]:

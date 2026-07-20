@@ -24,27 +24,37 @@ pytestmark = pytest.mark.integration
 
 
 class TestGeneralChatFirebaseAuth(unittest.TestCase):
-    def _client(self, *, verify_result=None, verify_error: Exception | None = None):
+    def _client(
+        self,
+        *,
+        verify_result=None,
+        verify_error: Exception | None = None,
+        extra_env: dict[str, str] | None = None,
+    ):
         stack = ExitStack()
         self.addCleanup(stack.close)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         tmpdir = Path(tmp.name)
+        self.download_dir = tmpdir / "downloads"
         stack.enter_context(
             patch.dict(
                 environ,
                 {
                     "GENERAL_CHAT_STORAGE_ROOT": str(tmpdir / "storage"),
                     "GENERAL_CHAT_UPLOAD_DIR": str(tmpdir / "uploads"),
-                    "GENERAL_CHAT_DOWNLOAD_DIR": str(tmpdir / "downloads"),
+                    "GENERAL_CHAT_DOWNLOAD_DIR": str(self.download_dir),
                     "GENERAL_CHAT_FIREBASE_PROJECT_ID": "demo-project",
                     "GENERAL_CHAT_ALLOWED_EMAILS": "allowed@example.com",
                     "OPENBENCH_PROFILE_DIR": str(tmpdir / "profiles"),
+                    **(extra_env or {}),
                 },
                 clear=False,
             )
         )
         environ.pop("OPENBENCH_AUTH_DISABLED", None)
+        if not (extra_env or {}).get("OPENBENCH_DOWNLOAD_SECRET"):
+            environ.pop("OPENBENCH_DOWNLOAD_SECRET", None)
 
         agent = Mock()
         agent.model = "mock-model"
@@ -129,6 +139,26 @@ class TestGeneralChatFirebaseAuth(unittest.TestCase):
         response = client.get("/downloads/not-found.xlsx")
 
         self.assertEqual(response.status_code, 404)
+        verifier.verify.assert_not_called()
+
+    def test_downloads_signed_mode_rejects_unsigned_and_serves_signed(self):
+        """With OPENBENCH_DOWNLOAD_SECRET set, an unsigned /downloads request is
+        403 while a properly signed link (query-string token, no Bearer) serves."""
+        from openbench.utils.download_tokens import sign_download_url
+
+        client, verifier = self._client(
+            extra_env={"OPENBENCH_DOWNLOAD_SECRET": "test-secret"}
+        )
+        (self.download_dir / "report.xlsx").write_bytes(b"xlsx-bytes")
+
+        unsigned = client.get("/downloads/report.xlsx")
+        signed = client.get(sign_download_url("/downloads/report.xlsx"))
+        tampered = client.get(sign_download_url("/downloads/report.xlsx") + "0")
+
+        self.assertEqual(unsigned.status_code, 403)
+        self.assertEqual(signed.status_code, 200)
+        self.assertEqual(signed.content, b"xlsx-bytes")
+        self.assertEqual(tampered.status_code, 403)
         verifier.verify.assert_not_called()
 
     def test_uploads_static_mount_is_protected(self):

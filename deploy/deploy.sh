@@ -400,6 +400,13 @@ cmd_verify() {
     ok "API /openapi.json (hardened): no schema (SPA fallback)"
   fi
   check "Same-origin SPA (/)"          "$API_URL/"             "200"
+  # Signed downloads: with OPENBENCH_DOWNLOAD_SECRET set on the VM, an unsigned
+  # request must be rejected (403). 404 = secret unset (legacy public mode) —
+  # flagged but not fatal so verify still passes before the secret rollout.
+  local dl; dl="$(http_code "$API_URL/downloads/nope.pdf")"
+  if [ "$dl" = "403" ]; then ok "downloads unsigned probe rejected: 403"
+  elif [ "$dl" = "404" ]; then warn "downloads in public mode (404) — set OPENBENCH_DOWNLOAD_SECRET in .env.gcp"
+  else warn "downloads unsigned probe: got $dl, want 403"; fail=1; fi
   check "Grafana /grafana/api/health"  "$API_URL/grafana/api/health" "200"
   # 8080 must NOT be publicly reachable (expect connection failure → 000).
   local raw; raw="$(http_code "http://$VM_PUBLIC_IP:8080/health" 8)"

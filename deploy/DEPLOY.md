@@ -178,6 +178,8 @@ web config (`VITE_FIREBASE_*`) is baked into `deploy.sh` (it ships in the JS bun
 | `GENERAL_CHAT_ALLOWED_DOMAINS` | no longer consulted at runtime |
 | `GENERAL_CHAT_ALLOWED_ORIGINS` | CORS allowlist — same-origin now; keep only localhost dev origins if needed |
 | `GENERAL_CHAT_GCP_BUCKET` / `GENERAL_CHAT_GCP_PUBSUB_SUBSCRIPTION` | GCS + worker |
+| `OPENBENCH_DOWNLOAD_SECRET` | HMAC secret for signed `/downloads` links (`openssl rand -hex 32`); unset = legacy public-by-URL. Old unsigned links stop working once set — users re-run the export |
+| `OPENBENCH_DOWNLOAD_TTL_SECONDS` | signed-link lifetime (default `86400` = 24 h) |
 | `OPENBENCH_API_BIND=127.0.0.1` / `OPENBENCH_IMAGE` | keep API private; image to run |
 
 Full list with defaults: [`.env.example.gcp`](../.env.example.gcp).

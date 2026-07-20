@@ -70,6 +70,7 @@ from openbench.chat.session_store import SessionOwnershipError
 from openbench.chat.transport import AGUIActionHandler
 from openbench.chat.transport.sessions import AGUISessionHandler
 from openbench.mcp.toolhive import ToolHiveError, ToolHiveService
+from openbench.utils.download_tokens import download_secret, verify_download_token
 
 logger = logging.getLogger(__name__)
 
@@ -151,9 +152,11 @@ _EXT_MIME_MAP = {
 
 # NOTE: /downloads is deliberately absent — agent-generated files render as
 # plain anchor links, and browser navigation carries no Bearer header.
-# Generated filenames embed a random uuid suffix and the mount never lists
-# directories, so /downloads is public-by-unguessable-URL like /d/{id}.
-# User-uploaded documents (/uploads) stay auth-gated.
+# With OPENBENCH_DOWNLOAD_SECRET set, links carry an HMAC token in the
+# query string (signed at generation time by the export skill tools) and
+# the serve route verifies it; without the secret, /downloads falls back
+# to public-by-unguessable-URL like /d/{id}.
+# User-uploaded documents (/uploads) stay auth-gated + owner-scoped.
 _AUTH_PROTECTED_PREFIXES = (
     "/account",
     "/admin",
@@ -1764,7 +1767,39 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="File not found")
         return FileResponse(candidate, media_type=_resolve_mime(safe_name, ""))
 
-    app.mount("/downloads", StaticFiles(directory=download_dir), name="downloads")
+    if download_secret() is not None:
+        # Signed downloads: the export skill tools appended ?exp=&sig= at
+        # generation time; the token in the query string is the auth, so
+        # plain anchor links keep working without a Bearer header.
+        @app.api_route("/downloads/{filename:path}", methods=["GET", "HEAD"])
+        async def serve_download(filename: str, exp: str = "", sig: str = ""):
+            download_root = Path(download_dir).resolve()
+            safe_name = Path(filename).name
+            if not safe_name:
+                raise HTTPException(status_code=404, detail="File not found")
+            if not verify_download_token(safe_name, exp, sig):
+                raise HTTPException(
+                    status_code=403, detail="Download link is invalid or has expired."
+                )
+            candidate = (download_root / safe_name).resolve()
+            try:
+                candidate.relative_to(download_root)
+            except ValueError:
+                raise HTTPException(status_code=404, detail="File not found")
+            if not candidate.is_file():
+                raise HTTPException(status_code=404, detail="File not found")
+            return FileResponse(
+                candidate,
+                media_type=_resolve_mime(safe_name, ""),
+                headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+            )
+
+    else:
+        if auth_enabled():
+            logger.warning(
+                "OPENBENCH_DOWNLOAD_SECRET is not set; /downloads is public-by-URL."
+            )
+        app.mount("/downloads", StaticFiles(directory=download_dir), name="downloads")
     app.mount(
         "/image-search/previews",
         StaticFiles(directory=image_search_preview_dir),
