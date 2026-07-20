@@ -538,3 +538,16 @@ def test_dashboard_memory_backfills_existing_html_exports(
     assert loaded["title"] == "Coffee Sales Dashboard"
     assert loaded["viewModel"]["kpis"][0]["value"] == 17
     assert loaded["memory"]["loaded"] is True
+
+
+def test_public_url_signs_when_secret_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    pytest.importorskip("openbench.utils.download_tokens")
+
+    monkeypatch.setenv("OPENBENCH_EXPORT_URL_BASE", "/downloads")
+    monkeypatch.setenv("OPENBENCH_DOWNLOAD_SECRET", "test-secret")
+    url = dashboard_tools._public_url(tmp_path / "report.html")
+    assert url.startswith("/downloads/report.html?")
+    assert "exp=" in url and "sig=" in url
+
+    monkeypatch.setenv("OPENBENCH_DOWNLOAD_SECRET", "")
+    assert dashboard_tools._public_url(tmp_path / "report.html") == "/downloads/report.html"

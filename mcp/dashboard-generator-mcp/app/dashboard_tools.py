@@ -1241,7 +1241,14 @@ def _public_url(path: Path) -> str:
     base = os.environ.get("OPENBENCH_EXPORT_URL_BASE")
     if not base:
         return path.as_posix()
-    return f"{base.rstrip('/')}/{path.name}"
+    url = f"{base.rstrip('/')}/{path.name}"
+    try:
+        # Signs only when OPENBENCH_DOWNLOAD_SECRET is set (stdio mode inherits
+        # it from the API). Standalone container has no openbench — plain URL.
+        from openbench.utils.download_tokens import sign_download_url
+    except ImportError:
+        return url
+    return sign_download_url(url)
 
 
 def _dashboard_template_options(
