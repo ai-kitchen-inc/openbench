@@ -1762,7 +1762,7 @@ def create_app() -> FastAPI:
         try:
             candidate.relative_to(upload_root)
         except ValueError:
-            raise HTTPException(status_code=404, detail="File not found")
+            raise HTTPException(status_code=404, detail="File not found") from None
         if not candidate.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         return FileResponse(candidate, media_type=_resolve_mime(safe_name, ""))
@@ -1785,7 +1785,7 @@ def create_app() -> FastAPI:
             try:
                 candidate.relative_to(download_root)
             except ValueError:
-                raise HTTPException(status_code=404, detail="File not found")
+                raise HTTPException(status_code=404, detail="File not found") from None
             if not candidate.is_file():
                 raise HTTPException(status_code=404, detail="File not found")
             return FileResponse(

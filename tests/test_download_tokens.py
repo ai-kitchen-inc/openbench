@@ -79,7 +79,7 @@ class TestSigned(unittest.TestCase):
 
     def test_default_ttl(self) -> None:
         self.assertEqual(download_ttl_seconds(), 86400)
-        name, exp, _sig = _parse(sign_download_url(URL, now=1_000_000))
+        _name, exp, _sig = _parse(sign_download_url(URL, now=1_000_000))
         self.assertEqual(int(exp), 1_000_000 + 86400)
 
     def test_ttl_override(self) -> None:
