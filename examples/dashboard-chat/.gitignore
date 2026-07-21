@@ -1,0 +1,5 @@
+.env
+.openbench/
+*.db
+frontend/node_modules/
+frontend/dist/
