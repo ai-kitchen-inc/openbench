@@ -12,15 +12,22 @@ const WIDTH_SPAN: Record<string, number> = {
   full: 6,
 };
 
-function Panel({ panel }: { panel: PanelSpec }) {
-  if (panel.type === "kpi") return <KpiCard panel={panel} />;
-  if (panel.type === "table") return <TablePanel panel={panel} />;
-  return <ChartPanel panel={panel} />;
+function Panel({ panel, reloadToken }: { panel: PanelSpec; reloadToken: number }) {
+  if (panel.type === "kpi") return <KpiCard panel={panel} reloadToken={reloadToken} />;
+  if (panel.type === "table") return <TablePanel panel={panel} reloadToken={reloadToken} />;
+  return <ChartPanel panel={panel} reloadToken={reloadToken} />;
 }
 
-/** The main dashboard surface. Refetches the spec whenever refreshTick bumps
- * (a chat turn finished) and re-renders only when the version changed. */
-export function DashboardCanvas({ refreshTick }: { refreshTick: number }) {
+/** The main dashboard surface. `refreshTick` (chat turn finished) refetches
+ * the spec — panels re-query only if their SQL changed. `dataTick` (manual
+ * refresh) additionally forces every panel to re-run its query. */
+export function DashboardCanvas({
+  refreshTick,
+  dataTick,
+}: {
+  refreshTick: number;
+  dataTick: number;
+}) {
   const [spec, setSpec] = useState<DashboardSpec | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +53,7 @@ export function DashboardCanvas({ refreshTick }: { refreshTick: number }) {
     return () => {
       cancelled = true;
     };
-  }, [refreshTick]);
+  }, [refreshTick, dataTick]);
 
   if (isLoading) {
     return (
@@ -86,7 +93,7 @@ export function DashboardCanvas({ refreshTick }: { refreshTick: number }) {
             className="canvas__cell"
             style={{ gridColumn: `span ${WIDTH_SPAN[panel.width ?? "half"] ?? 3}` }}
           >
-            <Panel panel={panel} />
+            <Panel panel={panel} reloadToken={dataTick} />
           </div>
         ))}
       </div>

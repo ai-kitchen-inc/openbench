@@ -59,8 +59,8 @@ function toChartShape(data: PanelData, panel: PanelSpec): ChartShape {
 
 const AXIS_FONT = 11;
 
-export function ChartPanel({ panel }: { panel: PanelSpec }) {
-  const { data, error, isLoading, reload } = usePanelData(panel.id, panel.sql);
+export function ChartPanel({ panel, reloadToken }: { panel: PanelSpec; reloadToken?: number }) {
+  const { data, error, isLoading, reload } = usePanelData(panel.id, panel.sql, reloadToken);
   const dark = isDarkTheme();
   const colors = dark ? DARK_COLORS : LIGHT_COLORS;
   const inkMuted = dark ? "#8f8f8c" : "#8a8a86";

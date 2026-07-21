@@ -53,6 +53,8 @@ function Workspace({ user, onSignOut }: { user: AuthUser; onSignOut: () => void 
   const [chatOpen, setChatOpen] = useState(true);
   // Bumped after every finished chat turn → canvas refetches the spec.
   const [refreshTick, setRefreshTick] = useState(0);
+  // Bumped by the topbar refresh button → every panel re-runs its query.
+  const [dataTick, setDataTick] = useState(0);
 
   const reloadDbStatus = useCallback(() => {
     void getDbStatus()
@@ -64,6 +66,10 @@ function Workspace({ user, onSignOut }: { user: AuthUser; onSignOut: () => void 
 
   const handleTurnComplete = useCallback(() => {
     setRefreshTick((tick) => tick + 1);
+  }, []);
+
+  const handleRefresh = useCallback(() => {
+    setDataTick((tick) => tick + 1);
   }, []);
 
   if (dbStatus === null) {
@@ -80,6 +86,7 @@ function Workspace({ user, onSignOut }: { user: AuthUser; onSignOut: () => void 
           onToggleChat={null}
           onSignOut={onSignOut}
           onDisconnect={null}
+          onRefresh={null}
         />
         <main className="onboarding">
           <ConnectCard onConnected={reloadDbStatus} />
@@ -97,10 +104,11 @@ function Workspace({ user, onSignOut }: { user: AuthUser; onSignOut: () => void 
         onToggleChat={() => setChatOpen((open) => !open)}
         onSignOut={onSignOut}
         onDisconnect={reloadDbStatus}
+        onRefresh={handleRefresh}
       />
       <div className="workspace">
         <main className="workspace__canvas">
-          <DashboardCanvas refreshTick={refreshTick} />
+          <DashboardCanvas refreshTick={refreshTick} dataTick={dataTick} />
         </main>
         <aside
           className={`workspace__chat ${chatOpen ? "workspace__chat--open" : "workspace__chat--closed"}`}

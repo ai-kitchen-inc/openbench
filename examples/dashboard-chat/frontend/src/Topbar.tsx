@@ -1,4 +1,13 @@
-import { Database, LayoutDashboard, LogOut, Moon, PanelRight, Sun, Unplug } from "lucide-react";
+import {
+  Database,
+  LayoutDashboard,
+  LogOut,
+  Moon,
+  PanelRight,
+  RefreshCw,
+  Sun,
+  Unplug,
+} from "lucide-react";
 import { useState } from "react";
 import { disconnectDb, type AuthUser, type DbStatus } from "./api";
 import { useDarkMode } from "./theme";
@@ -10,6 +19,7 @@ export function Topbar({
   onToggleChat,
   onSignOut,
   onDisconnect,
+  onRefresh,
 }: {
   user: AuthUser;
   dbStatus: DbStatus;
@@ -17,9 +27,19 @@ export function Topbar({
   onToggleChat: (() => void) | null;
   onSignOut: () => void;
   onDisconnect: (() => void) | null;
+  onRefresh: (() => void) | null;
 }) {
   const [dark, toggleDark] = useDarkMode();
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = () => {
+    if (!onRefresh) return;
+    onRefresh();
+    // Brief spin as click feedback — data fetches happen per panel.
+    setRefreshing(true);
+    window.setTimeout(() => setRefreshing(false), 600);
+  };
 
   const handleDisconnect = async () => {
     if (busy || !onDisconnect) return;
@@ -60,6 +80,17 @@ export function Topbar({
             aria-label="Disconnect database"
           >
             <Unplug size={16} strokeWidth={1.5} />
+          </button>
+        )}
+        {dbStatus.connected && onRefresh && (
+          <button
+            type="button"
+            className="topbar__icon-button"
+            onClick={handleRefresh}
+            title="Refresh data"
+            aria-label="Refresh data"
+          >
+            <RefreshCw size={16} strokeWidth={1.5} className={refreshing ? "spin" : undefined} />
           </button>
         )}
         <button

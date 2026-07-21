@@ -25,8 +25,8 @@ function formatValue(
 }
 
 /** Stat tile: a single hero number. Expects a 1-row, 1-value query. */
-export function KpiCard({ panel }: { panel: PanelSpec }) {
-  const { data, error, isLoading, reload } = usePanelData(panel.id, panel.sql);
+export function KpiCard({ panel, reloadToken }: { panel: PanelSpec; reloadToken?: number }) {
+  const { data, error, isLoading, reload } = usePanelData(panel.id, panel.sql, reloadToken);
   const value = data?.rows?.[0]?.[data.columns.length - 1] ?? null;
 
   return (

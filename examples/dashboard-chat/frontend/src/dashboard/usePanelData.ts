@@ -8,8 +8,9 @@ export interface PanelDataState {
   reload: () => void;
 }
 
-/** Fetch a panel's rows; re-runs when the panel's SQL (spec version) changes. */
-export function usePanelData(panelId: string, sql: string): PanelDataState {
+/** Fetch a panel's rows; re-runs when the panel's SQL (spec version) changes
+ * or when `reloadToken` bumps (manual refresh — same SQL, fresh data). */
+export function usePanelData(panelId: string, sql: string, reloadToken = 0): PanelDataState {
   const [data, setData] = useState<PanelData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -33,7 +34,7 @@ export function usePanelData(panelId: string, sql: string): PanelDataState {
     return () => controller.abort();
     // `sql` is part of the key: a panel whose query changed must refetch
     // even though its id stayed the same.
-  }, [panelId, sql, attempt]);
+  }, [panelId, sql, attempt, reloadToken]);
 
   return { data, error, isLoading, reload: () => setAttempt((n) => n + 1) };
 }

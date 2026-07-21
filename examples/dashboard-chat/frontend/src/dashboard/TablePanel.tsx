@@ -4,8 +4,8 @@ import { PanelFrame } from "./PanelFrame";
 
 const MAX_TABLE_ROWS = 100;
 
-export function TablePanel({ panel }: { panel: PanelSpec }) {
-  const { data, error, isLoading, reload } = usePanelData(panel.id, panel.sql);
+export function TablePanel({ panel, reloadToken }: { panel: PanelSpec; reloadToken?: number }) {
+  const { data, error, isLoading, reload } = usePanelData(panel.id, panel.sql, reloadToken);
   const rows = data?.rows.slice(0, MAX_TABLE_ROWS) ?? [];
   const meta =
     data && data.rows.length > MAX_TABLE_ROWS ? `showing ${MAX_TABLE_ROWS} rows` : undefined;
