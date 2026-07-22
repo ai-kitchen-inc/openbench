@@ -50,7 +50,7 @@ export interface PanelData {
 // the tab ends the session — no silent auto-login next time you visit.
 export function getStoredToken(): string | null {
   try {
-    return window.localStorage.getItem(TOKEN_STORAGE_KEY);
+    return window.sessionStorage.getItem(TOKEN_STORAGE_KEY);
   } catch {
     return null;
   }
@@ -59,9 +59,9 @@ export function getStoredToken(): string | null {
 export function storeToken(token: string | null): void {
   try {
     if (token) {
-      window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
+      window.sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
     } else {
-      window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     }
   } catch {
     // Storage unavailable (private mode) — session lives in memory only.
