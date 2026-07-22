@@ -83,6 +83,56 @@ class TestValidateSpec(unittest.TestCase):
         self.assertTrue(validate_spec(spec))
 
 
+class TestNormalizeSpec(unittest.TestCase):
+    def test_y_string_coerced_to_list(self):
+        from dashboard_chat.dashboards import normalize_spec
+
+        spec = _spec()
+        spec["panels"][1]["y"] = "value"
+        normalized = normalize_spec(spec)
+        self.assertEqual(normalized["panels"][1]["y"], ["value"])
+
+    def test_y_list_kept(self):
+        from dashboard_chat.dashboards import normalize_spec
+
+        spec = _spec()
+        spec["panels"][1]["y"] = ["a", "b"]
+        self.assertEqual(normalize_spec(spec)["panels"][1]["y"], ["a", "b"])
+
+    def test_unknown_format_dropped(self):
+        from dashboard_chat.dashboards import normalize_spec
+
+        spec = _spec()
+        spec["panels"][0]["format"] = "0.0"
+        spec["panels"][1]["format"] = "currency"
+        normalized = normalize_spec(spec)
+        self.assertNotIn("format", normalized["panels"][0])
+        self.assertEqual(normalized["panels"][1]["format"], "currency")
+
+    def test_missing_width_defaulted(self):
+        from dashboard_chat.dashboards import normalize_spec
+
+        spec = _spec()
+        del spec["panels"][0]["width"]
+        self.assertEqual(normalize_spec(spec)["panels"][0]["width"], "half")
+
+    def test_save_persists_normalized_form(self):
+        import tempfile as _tempfile
+        from pathlib import Path as _Path
+
+        from dashboard_chat.dashboards import build_dashboard_store
+
+        with _tempfile.TemporaryDirectory() as tmp:
+            store = build_dashboard_store(_Path(tmp))
+            spec = _spec()
+            spec["panels"][1]["y"] = "value"
+            spec["panels"][1]["format"] = "0.0"
+            stored = store.save("alice", spec)
+            self.assertEqual(stored["panels"][1]["y"], ["value"])
+            self.assertNotIn("format", stored["panels"][1])
+            self.assertEqual(store.get("alice")["panels"][1]["y"], ["value"])
+
+
 class TestDashboardStore(unittest.TestCase):
     def setUp(self):
         from dashboard_chat.dashboards import build_dashboard_store

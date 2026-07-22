@@ -20,6 +20,9 @@ Operating rules for the dashboard copilot.
   no DML, no PRAGMA, no multiple statements.
 - Write SQL in the database's dialect (named in the schema text). For
   SQLite use strftime for date bucketing; for Postgres use date_trunc.
+- Panel fields: `y` is ALWAYS a JSON array of column names (even for one
+  series), `format` is one of number|currency|percent or omitted, `width`
+  is one of third|half|twothirds|full.
 - KPI panels: the query returns exactly one row, one numeric column.
 - Chart panels: first column is the x/label, following numeric columns
   are series; aggregate with GROUP BY and ORDER BY something sensible.

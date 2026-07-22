@@ -22,9 +22,42 @@ if TYPE_CHECKING:
 
 PANEL_TYPES = ("kpi", "bar", "line", "area", "pie", "table")
 PANEL_WIDTHS = ("third", "half", "twothirds", "full")
+PANEL_FORMATS = ("number", "currency", "percent")
 
 _PANEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _MAX_PANELS = 24
+
+
+def _normalize_panel(panel: dict) -> dict:
+    """Canonicalize LLM output variance so the frontend contract holds.
+
+    The model occasionally writes ``y`` as a bare string, invents format
+    strings like ``"0.0"``, or omits ``width``. Coerce instead of reject —
+    these are presentational fields, not correctness issues.
+    """
+    normalized = dict(panel)
+    y = normalized.get("y")
+    if isinstance(y, str):
+        normalized["y"] = [y]
+    elif y is not None and not isinstance(y, list):
+        normalized.pop("y", None)
+    if normalized.get("format") not in PANEL_FORMATS:
+        normalized.pop("format", None)
+    normalized.setdefault("width", "half")
+    return normalized
+
+
+def normalize_spec(spec: dict) -> dict:
+    """Return a copy of ``spec`` with every panel canonicalized."""
+    if not isinstance(spec, dict):
+        return spec
+    normalized = dict(spec)
+    panels = normalized.get("panels")
+    if isinstance(panels, list):
+        normalized["panels"] = [
+            _normalize_panel(panel) if isinstance(panel, dict) else panel for panel in panels
+        ]
+    return normalized
 
 
 def validate_spec(spec: dict) -> list[str]:
@@ -88,7 +121,8 @@ class DashboardStore:
             return None
 
     def save(self, username: str, spec: dict) -> dict:
-        """Validate, stamp version/updatedAt, persist atomically."""
+        """Normalize, validate, stamp version/updatedAt, persist atomically."""
+        spec = normalize_spec(spec)
         errors = validate_spec(spec)
         if errors:
             raise ValueError("; ".join(errors))
