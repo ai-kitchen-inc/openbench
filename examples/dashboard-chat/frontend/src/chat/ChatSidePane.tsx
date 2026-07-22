@@ -15,20 +15,34 @@ const INITIAL_PROMPT =
 export function ChatSidePane({
   user,
   onTurnComplete,
+  onStreamingChange,
 }: {
   user: AuthUser;
   onTurnComplete: () => void;
+  onStreamingChange?: (streaming: boolean) => void;
 }) {
   const chatConfig = useMemo(buildChatConfig, []);
 
   return (
     <ChatProvider config={chatConfig}>
-      <PaneInner user={user} onTurnComplete={onTurnComplete} />
+      <PaneInner
+        user={user}
+        onTurnComplete={onTurnComplete}
+        onStreamingChange={onStreamingChange}
+      />
     </ChatProvider>
   );
 }
 
-function PaneInner({ user, onTurnComplete }: { user: AuthUser; onTurnComplete: () => void }) {
+function PaneInner({
+  user,
+  onTurnComplete,
+  onStreamingChange,
+}: {
+  user: AuthUser;
+  onTurnComplete: () => void;
+  onStreamingChange?: (streaming: boolean) => void;
+}) {
   const { sessions, activeSessionId, switchSession, isStreaming, sendMessage } = useChatContext();
 
   // The backend pins every stream to this id regardless of what the
@@ -61,14 +75,16 @@ function PaneInner({ user, onTurnComplete }: { user: AuthUser; onTurnComplete: (
   }, [activeSessionId]);
 
   // Fire onTurnComplete on every streaming true -> false edge so the
-  // canvas refetches the (possibly updated) dashboard spec.
+  // canvas refetches the (possibly updated) dashboard spec. Also mirror
+  // the raw streaming flag up so the canvas can show generation progress.
   const wasStreamingRef = useRef(false);
   useEffect(() => {
+    onStreamingChange?.(isStreaming);
     if (wasStreamingRef.current && !isStreaming) {
       onTurnComplete();
     }
     wasStreamingRef.current = isStreaming;
-  }, [isStreaming, onTurnComplete]);
+  }, [isStreaming, onTurnComplete, onStreamingChange]);
 
   return (
     <div className="chat-pane">

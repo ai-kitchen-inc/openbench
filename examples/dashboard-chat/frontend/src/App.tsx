@@ -55,6 +55,8 @@ function Workspace({ user, onSignOut }: { user: AuthUser; onSignOut: () => void 
   const [refreshTick, setRefreshTick] = useState(0);
   // Bumped by the topbar refresh button → every panel re-runs its query.
   const [dataTick, setDataTick] = useState(0);
+  // True while the assistant streams a turn — canvas shows build progress.
+  const [assistantBusy, setAssistantBusy] = useState(false);
 
   const reloadDbStatus = useCallback(() => {
     void getDbStatus()
@@ -108,12 +110,20 @@ function Workspace({ user, onSignOut }: { user: AuthUser; onSignOut: () => void 
       />
       <div className="workspace">
         <main className="workspace__canvas">
-          <DashboardCanvas refreshTick={refreshTick} dataTick={dataTick} />
+          <DashboardCanvas
+            refreshTick={refreshTick}
+            dataTick={dataTick}
+            assistantBusy={assistantBusy}
+          />
         </main>
         <aside
           className={`workspace__chat ${chatOpen ? "workspace__chat--open" : "workspace__chat--closed"}`}
         >
-          <ChatSidePane user={user} onTurnComplete={handleTurnComplete} />
+          <ChatSidePane
+            user={user}
+            onTurnComplete={handleTurnComplete}
+            onStreamingChange={setAssistantBusy}
+          />
         </aside>
       </div>
     </div>
