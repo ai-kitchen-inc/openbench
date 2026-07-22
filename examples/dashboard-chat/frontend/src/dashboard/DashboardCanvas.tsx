@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { getDashboard, type DashboardSpec, type PanelSpec } from "../api";
 import { ChartPanel } from "./ChartPanel";
 import { KpiCard } from "./KpiCard";
+import { PanelErrorBoundary } from "./PanelFrame";
 import { TablePanel } from "./TablePanel";
 
 const WIDTH_SPAN: Record<string, number> = {
@@ -24,9 +25,11 @@ function Panel({ panel, reloadToken }: { panel: PanelSpec; reloadToken: number }
 export function DashboardCanvas({
   refreshTick,
   dataTick,
+  assistantBusy = false,
 }: {
   refreshTick: number;
   dataTick: number;
+  assistantBusy?: boolean;
 }) {
   const [spec, setSpec] = useState<DashboardSpec | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,14 +71,23 @@ export function DashboardCanvas({
   }
 
   if (spec === null) {
+    if (assistantBusy) {
+      return (
+        <div className="canvas-empty">
+          <Loader2 size={24} strokeWidth={1.5} className="spin" />
+          <h2>Building your dashboard</h2>
+          <p>
+            The assistant is analyzing your schema, writing the queries, and laying out the
+            panels. This usually takes a moment.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="canvas-empty">
         <LayoutDashboard size={28} strokeWidth={1.25} />
         <h2>No dashboard yet</h2>
-        <p>
-          The assistant is looking at your schema — your first dashboard will appear here in a
-          moment. You can also just ask for one in the chat.
-        </p>
+        <p>Ask the assistant for one in the chat — it will appear here.</p>
       </div>
     );
   }
@@ -93,7 +105,9 @@ export function DashboardCanvas({
             className="canvas__cell"
             style={{ gridColumn: `span ${WIDTH_SPAN[panel.width ?? "half"] ?? 3}` }}
           >
-            <Panel panel={panel} reloadToken={dataTick} />
+            <PanelErrorBoundary title={panel.title}>
+              <Panel panel={panel} reloadToken={dataTick} />
+            </PanelErrorBoundary>
           </div>
         ))}
       </div>

@@ -41,7 +41,9 @@ interface ChartShape {
 /** First column = x/label, remaining numeric columns = series (agent contract). */
 function toChartShape(data: PanelData, panel: PanelSpec): ChartShape {
   const xKey = panel.x && data.columns.includes(panel.x) ? panel.x : data.columns[0];
-  const preferred = (panel.y ?? []).filter((column) => data.columns.includes(column));
+  // The agent sometimes writes y as a bare string instead of an array.
+  const yList = Array.isArray(panel.y) ? panel.y : panel.y ? [panel.y] : [];
+  const preferred = yList.filter((column) => data.columns.includes(column));
   const seriesKeys = preferred.length
     ? preferred
     : data.columns.filter((column) => column !== xKey);
@@ -58,6 +60,18 @@ function toChartShape(data: PanelData, panel: PanelSpec): ChartShape {
 }
 
 const AXIS_FONT = 11;
+
+const COMPACT = new Intl.NumberFormat(undefined, {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+/** Keep big-number ticks inside the axis gutter: 20000000000 -> "20B". */
+function compactTick(value: unknown): string {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (Number.isNaN(numeric)) return String(value);
+  return COMPACT.format(numeric);
+}
 
 export function ChartPanel({ panel, reloadToken }: { panel: PanelSpec; reloadToken?: number }) {
   const { data, error, isLoading, reload } = usePanelData(panel.id, panel.sql, reloadToken);
@@ -141,7 +155,7 @@ function renderChart(
       <LineChart data={records} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
         <CartesianGrid stroke={gridStroke} vertical={false} />
         <XAxis dataKey={xKey} {...axisProps} />
-        <YAxis {...axisProps} width={44} />
+        <YAxis {...axisProps} width={44} tickFormatter={compactTick} />
         <Tooltip {...tooltipProps} cursor={{ stroke: inkMuted, strokeDasharray: "3 3" }} />
         {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
         {seriesKeys.map((key, index) => (
@@ -164,7 +178,7 @@ function renderChart(
       <AreaChart data={records} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
         <CartesianGrid stroke={gridStroke} vertical={false} />
         <XAxis dataKey={xKey} {...axisProps} />
-        <YAxis {...axisProps} width={44} />
+        <YAxis {...axisProps} width={44} tickFormatter={compactTick} />
         <Tooltip {...tooltipProps} cursor={{ stroke: inkMuted, strokeDasharray: "3 3" }} />
         {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
         {seriesKeys.map((key, index) => (
@@ -187,7 +201,7 @@ function renderChart(
     <BarChart data={records} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barGap={2}>
       <CartesianGrid stroke={gridStroke} vertical={false} />
       <XAxis dataKey={xKey} {...axisProps} />
-      <YAxis {...axisProps} width={44} />
+      <YAxis {...axisProps} width={44} tickFormatter={compactTick} />
       <Tooltip {...tooltipProps} />
       {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
       {seriesKeys.map((key, index) => (

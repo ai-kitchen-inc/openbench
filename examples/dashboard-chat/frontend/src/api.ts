@@ -25,7 +25,8 @@ export interface PanelSpec {
   sql: string;
   width?: "third" | "half" | "twothirds" | "full";
   x?: string;
-  y?: string[];
+  /** Column(s) to plot. The agent sometimes emits a bare string. */
+  y?: string[] | string;
   format?: "number" | "currency" | "percent";
   unit?: string;
 }
@@ -45,6 +46,8 @@ export interface PanelData {
   elapsedMs: number;
 }
 
+// sessionStorage on purpose: a reload keeps you signed in, but closing
+// the tab ends the session — no silent auto-login next time you visit.
 export function getStoredToken(): string | null {
   try {
     return window.localStorage.getItem(TOKEN_STORAGE_KEY);
