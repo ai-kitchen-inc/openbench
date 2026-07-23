@@ -16,10 +16,10 @@ in [`deploy/deploy.sh`](deploy.sh).
 ## Architecture
 
 ```
- Browser  ── one origin for everything: https://35-188-138-52.sslip.io
+ Browser  ── one origin for everything: https://chat.serebrum.co.id
    │  (HTTPS; Firebase JS SDK handles Google sign-in, API calls carry the ID token)
    ▼
- VM nginx (TLS, Let's Encrypt)         https://35-188-138-52.sslip.io
+ VM nginx (TLS, Let's Encrypt)         https://chat.serebrum.co.id
    │  reverse_proxy → 127.0.0.1:8080   (/awp has proxy_buffering off for SSE)
    ▼
  openbench-api container  (uvicorn, 127.0.0.1:8080, bound to localhost only)
@@ -109,10 +109,10 @@ runs in the `openbench-worker` (Pub/Sub) rather than blocking uploads.
 | Compute Engine VM | `openbench-general-chat`, zone `us-central1-a` |
 | VM deploy dir | `/home/Admin/openbench-deploy` (holds `docker-compose.gce.yml` + `.env.gcp`) |
 | Compose | [`docker-compose.gce.yml`](../docker-compose.gce.yml) — `openbench-api` (`127.0.0.1:8080`) + `openbench-worker` |
-| TLS front door | `https://35-188-138-52.sslip.io` (VM public IP `35.188.138.52` via sslip.io) |
+| TLS front door | `https://chat.serebrum.co.id` (DNS A record → reserved static IP `34.135.198.188`, address `openbench-ip`) |
 | Reverse proxy | host **nginx** on the VM; ref config [`deploy/nginx-openbench-api.conf`](nginx-openbench-api.conf) → `/etc/nginx/sites-available/openbench-api` |
 | Frontend (SPA) | `examples/general-chat/frontend` (Vite) — built into the API image (stage 1 of [`Dockerfile.general-chat`](../Dockerfile.general-chat)), served same-origin via `GENERAL_CHAT_STATIC_DIR` |
-| Legacy Hosting URL | `https://sss-poc1-corporate.web.app` — retired; keep only as an optional redirect to the sslip origin |
+| Legacy Hosting URL | `https://sss-poc1-corporate.web.app` — **disabled 2026-07-23** (`firebase hosting:disable`); serves "Site Not Found". Default site can only be deleted with the project; redeploy would re-enable it |
 | Firebase web app id | `1:920070146333:web:1ebd29612bfe6a4d04f9f4` (sign-in only) |
 | User/role table | `openbench_users` in the chat DB (managed from the admin panel) |
 | App settings | `openbench_app_settings` in the chat DB (capabilities + persona) |
@@ -123,7 +123,7 @@ runs in the `openbench-worker` (Pub/Sub) rather than blocking uploads.
 - The VM already exists and is bootstrapped (see [`scripts/bootstrap-gce-general-chat.sh`](../scripts/bootstrap-gce-general-chat.sh)), with `/home/Admin/openbench-deploy/.env.gcp` filled in (secrets) and host nginx serving TLS.
 - Firebase **Authentication → Google provider** enabled (see "Enable Google sign-in" below).
 - Firebase **Authentication → Settings → Authorized domains** must include
-  `35-188-138-52.sslip.io` — the SPA now runs on that origin, and
+  `chat.serebrum.co.id` — the SPA runs on that origin, and
   `signInWithPopup` fails on unlisted domains. (`firebase` CLI and `pnpm` are
   no longer needed for deploys — the SPA builds inside the Docker image.)
 
@@ -238,18 +238,18 @@ grant app access (the `openbench_users` table does).
 
 1. Add `GENERAL_CHAT_BOOTSTRAP_ADMIN=serebrum01@serebrum.co.id` to the VM
    `.env.gcp` (keep the existing `GENERAL_CHAT_ALLOWED_EMAILS` line for the
-   seed) and add `35-188-138-52.sslip.io` to Firebase Auth authorized domains.
+   seed) and add `chat.serebrum.co.id` to Firebase Auth authorized domains.
 2. `bash deploy/deploy.sh all` — first boot seeds `openbench_users`
    (bootstrap emails → `admin`, allowlist emails → `user`) and the
-   `soft-grounded` persona, then serves the SSS SPA at the sslip origin.
+   `soft-grounded` persona, then serves the SSS SPA at the chat.serebrum.co.id origin.
 3. Sign in as the bootstrap admin; verify the Pengguna page lists the seeded
    accounts and the Persona page shows `soft-grounded` (source `db`).
 4. Remove `GENERAL_CHAT_ALLOWED_EMAILS` (and `GENERAL_CHAT_ALLOWED_DOMAINS`)
    from `.env.gcp`; `sudo docker-compose --env-file .env.gcp -f
    docker-compose.gce.yml up -d openbench-api` to restart. Seeding never runs
    again while the table is non-empty.
-5. Optionally retire the Firebase Hosting site (or deploy a static redirect
-   page pointing at `https://35-188-138-52.sslip.io`).
+5. Retire the Firebase Hosting site — **done 2026-07-23** via
+   `firebase hosting:disable` (see "Legacy Hosting URL" in the inventory).
 
 ## MCP DB server (db_server → Cloud SQL Postgres)
 
@@ -309,7 +309,7 @@ Edits made in DBeaver are visible to the agent immediately (it queries live).
 
 A self-hosted Grafana (`grafana/grafana:11.1.0`, bound to `127.0.0.1:3000`)
 runs next to the API and is served by nginx at
-**`https://35-188-138-52.sslip.io/grafana/`** (`GF_SERVER_ROOT_URL` +
+**`https://chat.serebrum.co.id/grafana/`** (`GF_SERVER_ROOT_URL` +
 `serve_from_sub_path`). Access model:
 
 - **View** — anonymous access is enabled with the **Viewer** role: anyone with
@@ -380,8 +380,9 @@ b=3" → the agent calls `custom_function.run_function`.
 bash deploy/deploy.sh verify
 ```
 Expected: `/health` 200 · `/persona` 401 (no token) · `/openapi.json` 404
-(docs disabled) · Hosting 200 · raw `:8080` unreachable. Real end-to-end:
-open the Hosting URL, sign in with an allowlisted Google account, send a message.
+(docs disabled) · raw `:8080` unreachable. Real end-to-end:
+open `https://chat.serebrum.co.id`, sign in with an authorized Google account,
+send a message.
 
 ## Backups & restore
 
@@ -471,7 +472,7 @@ PDFs), so per-file CPU time is low and stays well under the 60s deadline.
 
 ## Rollback
 
-- **Frontend:** `cd examples/general-chat && firebase hosting:rollback` (or redeploy a prior build).
+- **Frontend:** ships inside the API image — roll back the backend (below).
 - **Backend:** images are tagged `:latest`; to roll back, on the VM
   `sudo docker pull <image>@<previous-sha256>` then `... up -d`, or rebuild from a
   prior git commit. Previous `.env.gcp` is backed up as `.env.gcp.bak-*` before edits.
@@ -480,13 +481,13 @@ PDFs), so per-file CPU time is low and stays well under the 60s deadline.
 
 | Symptom | Cause / fix |
 |---------|-------------|
-| `TypeError: NetworkError` in browser | SPA built with wrong `VITE_BACKEND_URL`. Rebuild + redeploy frontend so it targets `https://35-188-138-52.sslip.io`. |
+| `TypeError: NetworkError` in browser | SPA built with wrong `VITE_BACKEND_URL`. Rebuild + redeploy frontend so it targets `https://chat.serebrum.co.id`. |
 | `auth/configuration-not-found` on sign-in | Google provider not enabled — see "Enable Google sign-in". |
 | Signed-in user gets "Access not authorized" / 403 | Email not in `GENERAL_CHAT_ALLOWED_EMAILS` — run `add-user`. |
 | 502 right after a deploy | API still booting (MCP seed ~60s). `deploy.sh backend` waits for `/health`; otherwise re-check shortly. |
 | Chat doesn't stream | nginx `/awp` must have `proxy_buffering off` — run `deploy/deploy.sh nginx`. |
 | `gcloud builds submit` exits 1 but build is fine | Log-streaming permission quirk. `deploy.sh` uses `--async` + polling to avoid it. |
-| Windows git-bash `curl` errors `(43)` on the sslip.io host | Known Schannel-curl bug with the all-numeric hostname labels. `deploy.sh verify` auto-falls back to PowerShell `Invoke-WebRequest`; from Linux/Cloud Shell curl works directly. |
+| Windows git-bash `curl` errors `(43)` | Schannel-curl quirk (hit the old all-numeric sslip.io host). `deploy.sh verify` auto-falls back to PowerShell `Invoke-WebRequest`; from Linux/Cloud Shell curl works directly. |
 
 ## Out of scope
 

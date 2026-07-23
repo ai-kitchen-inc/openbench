@@ -67,7 +67,7 @@ flowchart TB
   end
 
   subgraph VM["GCE VM: openbench-general-chat"]
-    NGINX["nginx (TLS, Let's Encrypt)<br/>35-188-138-52.sslip.io"]
+    NGINX["nginx (TLS, Let's Encrypt)<br/>chat.serebrum.co.id"]
 
     subgraph compose["docker-compose.gce.yml"]
       API["openbench-api<br/>127.0.0.1:8080<br/>+ SupersetClient adapter"]
@@ -211,7 +211,7 @@ classDiagram
   http://127.0.0.1:8088/; ... }` (websocket upgrade headers for live features).
 - **`.env.example.gcp`**: add `SUPERSET_SECRET_KEY`, `SUPERSET_ADMIN_USER`,
   `SUPERSET_ADMIN_PASSWORD`, `SUPERSET_DB_PASSWORD`, `SUPERSET_PUBLIC_URL`
-  (e.g. `https://35-188-138-52.sslip.io/superset`). Real values only in VM
+  (e.g. `https://chat.serebrum.co.id/superset`). Real values only in VM
   `.env.gcp`.
 
 ### 2. Backend adapter (mirror the Grafana pattern)

@@ -3,7 +3,7 @@
 # deploy.sh — one-stop deploy for the OpenBench `general-chat` (SSS) example.
 #
 # Architecture (see deploy/DEPLOY.md for the full runbook):
-#   browser → https://<sslip host> (VM nginx, TLS)
+#   browser → https://chat.serebrum.co.id (VM nginx, TLS)
 #           → openbench-api container (127.0.0.1:8080) on the GCE VM
 #             which serves BOTH the API and the SPA (single origin,
 #             GENERAL_CHAT_STATIC_DIR baked into the image)
@@ -31,7 +31,7 @@
 #   all            backend → verify
 #   help           Print this help + the resource inventory
 #
-# Requirements (on PATH): gcloud, firebase, pnpm, ssh (via gcloud). Run from
+# Requirements (on PATH): gcloud, ssh (via gcloud). Run from
 # git-bash / WSL / Cloud Shell. Secrets (GOOGLE_API_KEY, DB password, OAuth
 # secret) live only in the VM's .env.gcp — never here.
 #
@@ -80,14 +80,12 @@ VM_ZONE="${VM_ZONE:-us-central1-a}"
 VM_DEPLOY_DIR="${VM_DEPLOY_DIR:-/home/Admin/openbench-deploy}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.gce.yml}"
 
-PUBLIC_HOST="${PUBLIC_HOST:-35-188-138-52.sslip.io}"
+PUBLIC_HOST="${PUBLIC_HOST:-chat.serebrum.co.id}"
 API_URL="${API_URL:-https://$PUBLIC_HOST}"
-VM_PUBLIC_IP="${VM_PUBLIC_IP:-35.188.138.52}"
-HOSTING_URL="${HOSTING_URL:-https://sss-poc1-corporate.web.app}"
+VM_PUBLIC_IP="${VM_PUBLIC_IP:-34.135.198.188}"
 
 FRONTEND_DIR="${FRONTEND_DIR:-examples/general-chat/frontend}"
 CHATUI_DIR="${CHATUI_DIR:-studio/chat-ui}"
-FIREBASE_DIR="${FIREBASE_DIR:-examples/general-chat}"
 NGINX_CONF="${NGINX_CONF:-deploy/nginx-openbench-api.conf}"
 NGINX_SITE_PATH="${NGINX_SITE_PATH:-/etc/nginx/sites-available/openbench-api}"
 
@@ -101,10 +99,8 @@ export VITE_FIREBASE_MESSAGING_SENDER_ID="${VITE_FIREBASE_MESSAGING_SENDER_ID:-9
 export VITE_FIREBASE_APP_ID="${VITE_FIREBASE_APP_ID:-1:920070146333:web:1ebd29612bfe6a4d04f9f4}"
 export VITE_FIREBASE_MEASUREMENT_ID="${VITE_FIREBASE_MEASUREMENT_ID:-G-8V67WBHK4K}"
 
-# gcloud/firebase may be .cmd shims on Windows git-bash.
+# gcloud may be a .cmd shim on Windows git-bash.
 GCLOUD="${GCLOUD:-gcloud}"; command -v "$GCLOUD" >/dev/null 2>&1 || GCLOUD="gcloud.cmd"
-FIREBASE="${FIREBASE:-firebase}"; command -v "$FIREBASE" >/dev/null 2>&1 || FIREBASE="firebase.cmd"
-PNPM="${PNPM:-pnpm}"; command -v "$PNPM" >/dev/null 2>&1 || PNPM="pnpm.cmd"
 
 log()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m  OK %s\033[0m\n' "$*"; }
@@ -468,7 +464,7 @@ Resource inventory:
   Compose        $COMPOSE_FILE  (openbench-api @127.0.0.1:8080 + openbench-worker)
   TLS front door $API_URL  (host nginx → 127.0.0.1:8080, Let's Encrypt)
   SPA            served same-origin by the API (GENERAL_CHAT_STATIC_DIR in image)
-  Legacy Hosting $HOSTING_URL  (retired — optional redirect only)
+  Legacy Hosting https://sss-poc1-corporate.web.app  (disabled 2026-07-23 — firebase hosting:disable)
   Runbook        deploy/DEPLOY.md
 EOF
 }

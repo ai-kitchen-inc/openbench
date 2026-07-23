@@ -24,7 +24,7 @@ Guidance for Claude Code when working with this repository.
 The `general-chat` example (product name **SSS**, Bahasa Indonesia UI) is
 deployed to GCP. **Read [deploy/DEPLOY.md](deploy/DEPLOY.md) before doing any
 deploy/infra work** — it is the single source of truth for the architecture
-(single origin: VM nginx/TLS at `35-188-138-52.sslip.io` → `openbench-api`
+(single origin: VM nginx/TLS at `chat.serebrum.co.id` → `openbench-api`
 container serving API + SPA via `GENERAL_CHAT_STATIC_DIR`; Firebase Google
 sign-in + `openbench_users` role table with an in-app admin panel) and the
 full resource inventory. All deploy actions go through

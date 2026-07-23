@@ -36,7 +36,7 @@ services:
       GRAFANA_URL: ${GRAFANA_URL:-http://grafana:3000}
       GRAFANA_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
-      GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-https://35-188-138-52.sslip.io/grafana}
+      GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-https://chat.serebrum.co.id/grafana}
       # Custom functions: host path (== in-container path) holding user-defined
       # Python; mounted read-only into the sandboxed custom_function MCP.
       CUSTOM_FN_DATA_PATH: ${CUSTOM_FN_DATA_PATH:-/app-data/custom-functions}
@@ -120,7 +120,7 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     environment:
-      GF_SERVER_ROOT_URL: ${GRAFANA_PUBLIC_URL:-https://35-188-138-52.sslip.io/grafana}
+      GF_SERVER_ROOT_URL: ${GRAFANA_PUBLIC_URL:-https://chat.serebrum.co.id/grafana}
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
