@@ -274,7 +274,12 @@ Max file size: 25 MB per source (override with `GENERAL_CHAT_MAX_SOURCE_BYTES`).
 ## Sumber Google Drive
 
 Paste any Drive/Docs/Sheets/Slides share link into the "Tambah URL" form in
-the Sources panel. Public "anyone with the link" files work with zero setup:
+the Sources panel — **or directly into a chat message**: Drive links found in
+the message are auto-added as session sources before the turn runs (max 3 per
+message, deduplicated per session, private files use the connected account),
+so the agent can answer about the file immediately. Non-Drive URLs in chat are
+left to the agent's `fetch_url` tool. Public "anyone with the link" files work
+with zero setup:
 binary files download via `uc?export=download`; Google-native files export to
 Office formats (Docs → `.docx`, Sheets → `.xlsx`, Slides → `.pptx`) and flow
 through the normal parser pipeline.

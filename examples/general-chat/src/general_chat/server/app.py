@@ -193,6 +193,10 @@ _AUTH_PROTECTED_PREFIXES = (
 SHARED_SOURCES_OWNER = "shared"
 SHARED_SOURCES_THREAD = "global-sources"
 
+# Cap on Google Drive links auto-ingested from a single chat message —
+# each is a synchronous download before the turn starts streaming.
+_MAX_CHAT_DRIVE_LINKS = 3
+
 # Sidecar file written next to each stored upload recording the owner,
 # so /uploads serving can enforce ownership without a store lookup.
 _UPLOAD_OWNER_MARKER = ".owner"
@@ -1628,6 +1632,58 @@ def create_app() -> FastAPI:
     # create_app() so these routes always precede the SPA catch-all.
     app.include_router(drive_oauth.build_router())
 
+    def _latest_user_message_text(body: dict) -> str:
+        """Mirror _ContentExtractionMixin._extract_content's message pick."""
+        messages = body.get("messages") or []
+        if isinstance(messages, list):
+            for message in reversed(messages):
+                if isinstance(message, dict) and message.get("role") == "user":
+                    return str(message.get("content") or "")
+        return str(body.get("content") or "")
+
+    def _auto_ingest_drive_links(
+        request: Request, body: dict, owner: str, session_id: str | None
+    ) -> None:
+        """Auto-add Google Drive links pasted in the chat message as session
+        sources, so the agent can use the file content in the same turn.
+
+        Runs the same pipeline as POST /chat/sources/{thread}/url (public
+        download or the owner's connected Google account). Best-effort: any
+        failure becomes a failed source record or a log line — never an
+        error on the chat turn. /awp is not under the capability-gated
+        route prefixes, so the session_sources check is explicit here.
+        """
+        try:
+            if not session_id:
+                return
+            if not capability_cache.role_allows(current_role(request), "session_sources"):
+                return
+            text = _latest_user_message_text(body)
+            if "drive.google.com" not in text and "docs.google.com" not in text:
+                return
+            srcs = _sources_for(owner)
+            existing_file_ids = {
+                (record.metadata or {}).get("driveFileId")
+                for record in srcs.list(session_id)
+            }
+            ingested = 0
+            for url in re.findall(r"https?://[^\s<>\"')\]]+", text):
+                if ingested >= _MAX_CHAT_DRIVE_LINKS:
+                    break
+                try:
+                    link = parse_drive_url(url)
+                except DriveAccessError as exc:
+                    srcs.add(_failed_url_record(session_id, url, str(exc)))
+                    ingested += 1
+                    continue
+                if link is None or link.file_id in existing_file_ids:
+                    continue
+                existing_file_ids.add(link.file_id)
+                _ingest_drive_source(owner, session_id, link)
+                ingested += 1
+        except Exception:
+            logger.warning("Chat Drive-link auto-ingest failed", exc_info=True)
+
     # Account + admin management surface (/account/*, /admin/*). Registered
     # inside create_app() so these routes always precede the SPA catch-all.
     register_admin_routes(
@@ -1656,6 +1712,9 @@ def create_app() -> FastAPI:
             source_records = _sources_for(shared_owner).list(shared_thread)
             on_stream_complete = None
         else:
+            # Drive links pasted in the chat message become session sources
+            # BEFORE records are gathered, so this turn already sees them.
+            _auto_ingest_drive_links(request, body, owner, session_id)
             # Admin-curated global sources ground every turn alongside the
             # session's own sources. They are persistent — the one-shot
             # upload cleanup must only ever see the session slice.
