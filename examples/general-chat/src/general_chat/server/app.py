@@ -41,8 +41,15 @@ from general_chat.server.auth import (
     current_role,
     require_firebase_user,
 )
+from general_chat.google_drive import (
+    DriveAccessError,
+    DriveLink,
+    drive_source_record,
+    parse_drive_url,
+)
 from general_chat.server.custom_functions import CustomFunctionError, CustomFunctionStore
 from general_chat.server.dashboard_pdf import render_dashboard_pdf
+from general_chat.server.drive_auth import DriveOAuthManager
 from general_chat.server.grafana import view_model_to_grafana
 from general_chat.server.grafana_client import GrafanaDeployError, deploy_view_model
 from general_chat.server.handler import GeneralChatHandler, set_source_context_label_override
@@ -160,6 +167,12 @@ _EXT_MIME_MAP = {
 _AUTH_PROTECTED_PREFIXES = (
     "/account",
     "/admin",
+    # /auth/drive/callback is deliberately absent: Google's browser
+    # redirect carries no Bearer header — identity comes from the signed
+    # state cookie instead (see general_chat.server.drive_auth).
+    "/auth/drive/connect",
+    "/auth/drive/disconnect",
+    "/auth/drive/status",
     "/awp",
     "/chat",
     "/dashboard",
@@ -453,6 +466,7 @@ def create_app() -> FastAPI:
     user_store = build_user_store(storage_root)
     settings_store = build_settings_store(storage_root)
     capability_cache = CapabilityCache(settings_store)
+    drive_oauth = DriveOAuthManager(storage_root)
 
     # Seed accounts + default persona synchronously (not in the startup
     # event, which TestClient-style consumers never fire). Both are
@@ -787,6 +801,7 @@ def create_app() -> FastAPI:
         print(f"  Source max     : {max_source_bytes} bytes")
         print(f"  Multipart max  : {multipart_upload_max_bytes} bytes")
         print(f"  Firebase auth  : {'enabled' if auth_enabled() else 'disabled'}")
+        print(f"  Drive OAuth    : {'enabled' if drive_oauth.enabled else 'disabled'}")
         if _gcp_enabled():
             print(f"  GCS bucket     : {os.getenv('GENERAL_CHAT_GCP_BUCKET')}")
         print("  AG-UI          : POST /awp")
@@ -1187,6 +1202,63 @@ def create_app() -> FastAPI:
         result["type"] = attachment.type
         return result
 
+    def _failed_url_record(session_id: str, url: str, error: str) -> SourceRecord:
+        """Failure record matching source_record_from_url's failed shape."""
+        return SourceRecord.create(
+            session_id=session_id,
+            name=url,
+            kind="url",
+            mime_type="text/html",
+            size_bytes=0,
+            url=url,
+            text="",
+            status="failed",
+            error=error,
+        )
+
+    def _ingest_drive_source(
+        owner: str,
+        target_session_id: str,
+        link: DriveLink,
+        *,
+        credential_owner: str | None = None,
+    ) -> dict:
+        """Download a Drive link and ingest it via the file-source pipeline.
+
+        Uses the connected Google credentials of ``credential_owner``
+        (defaults to ``owner``) when available so private files work;
+        otherwise only public share links succeed. Bytes are already
+        local, so parsing happens inline even in GCS mode (the worker
+        queue only serves direct-to-GCS browser uploads).
+        """
+        srcs = _sources_for(owner)
+        credentials = drive_oauth.credentials_for(credential_owner or owner)
+        record, stored = drive_source_record(
+            session_id=target_session_id,
+            link=link,
+            file_store=_file_store_for_session(target_session_id),
+            parser=source_parser,
+            max_bytes=max_source_bytes,
+            credentials=credentials,
+        )
+        if stored is None:
+            srcs.add(record)
+            return record.to_dict(include_text=True)
+        _stamp_upload_owner(upload_dir, stored.id, owner)
+        srcs.add(record)
+        stored.extracted_text = record.text
+        print(
+            f"  [source-drive] id={record.id} session={target_session_id!r} "
+            f"name={stored.name!r} mime={stored.mime_type} "
+            f"size={stored.size_bytes}B status={record.status} "
+            f"text_len={len(record.text)}"
+        )
+        attachment = stored.to_attachment(base_url="/uploads")
+        result = {**attachment.to_dict(), **record.to_dict(include_text=True)}
+        result["url"] = record.url or attachment.url
+        result["type"] = attachment.type
+        return result
+
     @app.post("/chat/upload")
     async def upload_file(
         request: Request,
@@ -1404,9 +1476,18 @@ def create_app() -> FastAPI:
     async def add_url_source(thread_id: str, request: Request) -> dict:
         owner = current_owner(request)
         body = await request.json()
+        url = str(body.get("url") or "")
+        try:
+            link = parse_drive_url(url)
+        except DriveAccessError as exc:
+            record = _failed_url_record(thread_id, url, str(exc))
+            _sources_for(owner).add(record)
+            return record.to_dict(include_text=True)
+        if link is not None:
+            return _ingest_drive_source(owner, thread_id, link)
         record = source_record_from_url(
             session_id=thread_id,
-            url=str(body.get("url") or ""),
+            url=url,
             parser=source_parser,
             max_bytes=max_source_bytes,
         )
@@ -1488,9 +1569,23 @@ def create_app() -> FastAPI:
     async def add_shared_url_source(request: Request) -> dict:
         require_role(request, "admin")
         body = await request.json()
+        url = str(body.get("url") or "")
+        try:
+            link = parse_drive_url(url)
+        except DriveAccessError as exc:
+            record = _failed_url_record(SHARED_SOURCES_THREAD, url, str(exc))
+            _shared_sources().add(record)
+            return record.to_dict(include_text=False)
+        if link is not None:
+            return _ingest_drive_source(
+                SHARED_SOURCES_OWNER,
+                SHARED_SOURCES_THREAD,
+                link,
+                credential_owner=current_owner(request),
+            )
         record = source_record_from_url(
             session_id=SHARED_SOURCES_THREAD,
-            url=str(body.get("url") or ""),
+            url=url,
             parser=source_parser,
             max_bytes=max_source_bytes,
         )
@@ -1509,6 +1604,10 @@ def create_app() -> FastAPI:
         if not srcs.delete(SHARED_SOURCES_THREAD, source_id):
             raise HTTPException(status_code=404, detail="Source not found")
         return {"ok": True, "sourceId": source_id}
+
+    # Per-user Google Drive OAuth (/auth/drive/*). Registered inside
+    # create_app() so these routes always precede the SPA catch-all.
+    app.include_router(drive_oauth.build_router())
 
     # Account + admin management surface (/account/*, /admin/*). Registered
     # inside create_app() so these routes always precede the SPA catch-all.

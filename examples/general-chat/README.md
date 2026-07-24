@@ -265,8 +265,67 @@ uvicorn server:app --port 8005
 | Image (`.png`, `.jpg`, `.jpeg`, `.webp`) | Upload via paperclip; VLM-ready |
 | Website | Paste a URL in the Sources panel |
 | Raw text | Paste directly in the Sources panel |
+| Google Drive / Docs / Sheets / Slides | Paste the share link in the Sources panel (see below) |
 
 Max file size: 25 MB per source (override with `GENERAL_CHAT_MAX_SOURCE_BYTES`).
+
+---
+
+## Sumber Google Drive
+
+Paste any Drive/Docs/Sheets/Slides share link into the "Tambah URL" form in
+the Sources panel. Public "anyone with the link" files work with zero setup:
+binary files download via `uc?export=download`; Google-native files export to
+Office formats (Docs → `.docx`, Sheets → `.xlsx`, Slides → `.pptx`) and flow
+through the normal parser pipeline.
+
+### Private files — per-user Google login (OAuth)
+
+When Drive OAuth is configured, each user can click **Hubungkan Google
+Drive** in the Sources panel, grant read-only access
+(`drive.readonly`), and from then on paste links to private files their
+Google account can read. Refresh tokens are AES-GCM encrypted at rest under
+`{GENERAL_CHAT_STORAGE_ROOT}/drive_tokens/`.
+
+One-time Google Cloud Console setup:
+
+1. Enable **Google Drive API** (APIs & Services → Library).
+2. OAuth consent screen → External → add your accounts as **Test users**
+   (`drive.readonly` is a sensitive scope; Testing mode avoids verification).
+3. Credentials → Create OAuth client ID → type **Web application** →
+   authorized redirect URI exactly matching
+   `GENERAL_CHAT_DRIVE_OAUTH_REDIRECT_URL` (local dev:
+   `http://localhost:5174/auth/drive/callback`) → download the JSON
+   outside the repo.
+
+Environment variables (`.env`):
+
+```dotenv
+GENERAL_CHAT_GOOGLE_OAUTH_CLIENT_SECRETS=C:\path\to\oauth-client.json
+GENERAL_CHAT_DRIVE_OAUTH_REDIRECT_URL=http://localhost:5174/auth/drive/callback
+# python -c "import secrets;print(secrets.token_urlsafe(32))"
+GENERAL_CHAT_SESSION_SECRET=...
+# python -c "import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+GENERAL_CHAT_DRIVE_TOKEN_ENCRYPTION_KEY=...
+# Optional: comma-separated scopes (default drive.readonly)
+# GENERAL_CHAT_DRIVE_OAUTH_SCOPES=https://www.googleapis.com/auth/drive.readonly
+```
+
+The startup banner prints `Drive OAuth : enabled` when configured; without
+configuration the connect button is hidden and public links still work.
+
+### Agent-side Drive tools (community MCP, optional)
+
+`mcp/google-drive-mcp.yaml` seeds the community
+[`@isaacphi/mcp-gdrive`](https://github.com/isaacphi/mcp-gdrive) server
+(tools: `gdrive_search`, `gdrive_read_file`, `gsheets_read`) into the MCP
+registry, **disabled by default**. To use it: set `GDRIVE_MCP_CLIENT_ID` /
+`GDRIVE_MCP_CLIENT_SECRET` (and optionally `GDRIVE_MCP_CREDS_DIR`,
+`GDRIVE_MCP_NPX=npx.cmd` on Windows) in `.env` before seeding
+(`GENERAL_CHAT_SEED_ALL_MCP=1`), then enable the server in the admin MCP
+panel. `${VAR}` placeholders expand at seed time; the package runs its own
+one-time browser OAuth on first tool use and caches credentials in
+`GDRIVE_MCP_CREDS_DIR`.
 
 ---
 

@@ -45,7 +45,14 @@ CAPABILITY_DEFINITIONS: tuple[CapabilityDefinition, ...] = (
     CapabilityDefinition(
         id="session_sources",
         kind="route",
-        prefixes=("/chat/sources",),
+        # /auth/drive/callback stays open: it is the browser redirect from
+        # Google and carries no Bearer header for role resolution.
+        prefixes=(
+            "/chat/sources",
+            "/auth/drive/connect",
+            "/auth/drive/disconnect",
+            "/auth/drive/status",
+        ),
         default=True,
         label="Sumber Sesi",
         description="Kelola sumber pengetahuan milik sendiri per sesi.",

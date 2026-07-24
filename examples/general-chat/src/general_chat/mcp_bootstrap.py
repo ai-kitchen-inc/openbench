@@ -21,7 +21,14 @@ BUNDLED_MCP_CONFIGS = (
     "dashboard-generator-stdio.yaml",
     "db-server-docker.yaml",
     "custom-function-docker.yaml",
+    "google-drive-mcp.yaml",
 )
+
+# Configs whose servers need operator-supplied credentials before they can
+# run. import_client_config enables new servers unconditionally, so these
+# are flipped off right after their FIRST seed; a later admin enable
+# survives re-seeding (re-import preserves the existing flag).
+DISABLED_BY_DEFAULT_CONFIGS = frozenset({"google-drive-mcp.yaml"})
 
 
 def seed_all_mcp_registry(
@@ -44,7 +51,19 @@ def seed_all_mcp_registry(
             continue
         try:
             config = MCPConfig.from_file(path)
+            preexisting_ids: set[str] = set()
+            if filename in DISABLED_BY_DEFAULT_CONFIGS:
+                preexisting_ids = {
+                    item["id"] for item in store.list_payload()["servers"]
+                }
             store.import_client_config(config.client_config(), source="manual")
+            if filename in DISABLED_BY_DEFAULT_CONFIGS:
+                for item in store.list_payload()["servers"]:
+                    if (
+                        item["id"] not in preexisting_ids
+                        and item["name"] in config.client_config().servers
+                    ):
+                        store.set_server_enabled(item["id"], False)
         except Exception as exc:
             logger.warning("mcp.bootstrap.seed_failed config=%s error=%s", path, exc)
             errors.append({"config": filename, "error": str(exc)})

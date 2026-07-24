@@ -22,6 +22,11 @@ dependencies = [
     "tavily-python>=0.3.0",
     "python-multipart>=0.0.9",
     "playwright>=1.40",
+    # Google Drive sources: per-user OAuth (drive_auth) + Drive v3 API
+    # downloads (google_drive) + AES-GCM token encryption.
+    "google-api-python-client>=2.100.0",
+    "google-auth>=2.25.0",
+    "cryptography>=41.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]

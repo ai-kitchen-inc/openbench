@@ -32,6 +32,7 @@ export default defineConfig({
       "/chat/transcribe": { target: backendUrl, changeOrigin: true },
       "/chat/sources": { target: backendUrl, changeOrigin: true },
       "/account": { target: backendUrl, changeOrigin: true },
+      "/auth/drive": { target: backendUrl, changeOrigin: true },
       "/admin": { target: backendUrl, changeOrigin: true },
       "/sessions": { target: backendUrl, changeOrigin: true },
       "/uploads": { target: backendUrl, changeOrigin: true },

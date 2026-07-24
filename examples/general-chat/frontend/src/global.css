@@ -3226,6 +3226,29 @@ body {
   background: var(--sss-info-wash);
 }
 
+.source-panel__drive {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 7px;
+  border: 1px solid var(--ob-border);
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--ob-text-secondary);
+  line-height: 1.35;
+}
+
+.source-panel__drive-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--ob-text-secondary);
+}
+
+.source-panel__drive-text {
+  flex: 1;
+  min-width: 0;
+}
+
 .source-panel__item-badge {
   flex-shrink: 0;
   font-size: 9px;
