@@ -281,10 +281,12 @@ so the agent can answer about the file immediately. Non-Drive URLs in chat are
 left to the agent's `fetch_url` tool.
 
 **Folder links** are supported too: the folder's files (up to 10, no subfolder
-recursion) are listed via the Drive API and each is ingested individually.
-Private folders require the connected Google account; public "anyone with the
-link" folders can also be listed anonymously via `GOOGLE_API_KEY`, provided
-the Google Drive API is enabled for that key's Cloud project.
+recursion) are listed and each is ingested individually. Access chain:
+connected Google account (private + public) → Drive API with
+`GOOGLE_API_KEY` (public, if the key allows the Drive API) → Google's
+public `embeddedfolderview` page (public folders, **zero configuration**).
+So any "anyone with the link" folder works with no setup at all; private
+folders need the connected account.
 
 Public "anyone with the link" files work with zero setup:
 binary files download via `uc?export=download`; Google-native files export to

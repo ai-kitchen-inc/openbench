@@ -95,9 +95,8 @@ MSG_NEEDS_AUTH = (
     "Hubungkan Google Drive untuk mengakses berkas privat."
 )
 MSG_FOLDER_NEEDS_AUTH = (
-    "Isi folder tidak dapat dibaca secara publik. Hubungkan Google Drive, "
-    "atau pastikan folder dibagikan publik dan Google Drive API aktif "
-    "untuk GOOGLE_API_KEY."
+    "Isi folder tidak dapat dibaca. Hubungkan Google Drive untuk folder "
+    "privat, atau bagikan folder secara publik (anyone with the link)."
 )
 MSG_FOLDER_NO_ACCESS = (
     "Akun Google yang terhubung tidak memiliki akses ke folder ini."
@@ -443,9 +442,10 @@ def list_drive_folder(
     """List a Drive folder's ingestible files (no subfolder recursion).
 
     Uses the Drive v3 API with the user's credentials when available
-    (private + public folders); otherwise falls back to an anonymous
-    API-key request, which only works for "anyone with the link"
-    folders on a project with the Drive API enabled.
+    (private + public folders); otherwise tries an anonymous API-key
+    request, then Google's server-rendered ``embeddedfolderview`` page
+    — the latter works for any "anyone with the link" folder with ZERO
+    project configuration.
 
     Raises:
         DriveAccessError: folder not listable with the available access.
@@ -482,9 +482,9 @@ def list_drive_folder(
             raise DriveAccessError(
                 f"Google Drive mengembalikan kesalahan: {exc}"
             ) from exc
-    else:
-        if not api_key:
-            raise DriveAccessError(MSG_FOLDER_NEEDS_AUTH, needs_auth=True)
+        return _children_from_listing(response)
+
+    if api_key:
         import requests
 
         http_response = requests.get(
@@ -498,11 +498,17 @@ def list_drive_folder(
             timeout=_DOWNLOAD_TIMEOUT,
             headers={"User-Agent": _USER_AGENT},
         )
-        if http_response.status_code in {400, 401, 403, 404}:
-            raise DriveAccessError(MSG_FOLDER_NEEDS_AUTH, needs_auth=True)
-        http_response.raise_for_status()
-        response = http_response.json()
+        if http_response.status_code == 200:
+            return _children_from_listing(http_response.json())
+        logger.info(
+            "Drive API-key folder listing failed (%s) for %s; trying embedded view",
+            http_response.status_code,
+            link.file_id,
+        )
+    return _list_folder_via_embedded_view(link)
 
+
+def _children_from_listing(response: dict) -> list[DriveLink]:
     children: list[DriveLink] = []
     for item in response.get("files") or []:
         child = _folder_child_link(str(item.get("id") or ""), str(item.get("mimeType") or ""))
@@ -510,6 +516,61 @@ def list_drive_folder(
             children.append(child)
         if len(children) >= MAX_FOLDER_FILES:
             break
+    return children
+
+
+def _list_folder_via_embedded_view(link: DriveLink) -> list[DriveLink]:
+    """Zero-configuration public-folder listing via ``embeddedfolderview``.
+
+    Google still serves ``drive.google.com/embeddedfolderview?id=<id>``
+    as plain server-rendered HTML for "anyone with the link" folders —
+    no API key or OAuth required. Unofficial but long-stable; used only
+    as the last fallback after the API paths.
+    """
+    import requests
+
+    try:
+        response = requests.get(
+            f"https://drive.google.com/embeddedfolderview?id={link.file_id}",
+            timeout=_DOWNLOAD_TIMEOUT,
+            headers={"User-Agent": _USER_AGENT},
+        )
+    except Exception as exc:
+        raise DriveAccessError(MSG_FOLDER_NEEDS_AUTH, needs_auth=True) from exc
+    if response.status_code != 200:
+        raise DriveAccessError(MSG_FOLDER_NEEDS_AUTH, needs_auth=True)
+
+    html_text = response.text
+    children: list[DriveLink] = []
+    seen: set[str] = set()
+    pattern = (
+        r"(?:drive\.google\.com/file/d/|"
+        r"docs\.google\.com/(document|spreadsheets|presentation)/d/)"
+        r"([A-Za-z0-9_-]{10,})"
+    )
+    for match in re.finditer(pattern, html_text):
+        doc_path, file_id = match.group(1), match.group(2)
+        if file_id in seen or file_id == link.file_id:
+            continue
+        seen.add(file_id)
+        if doc_path:
+            kind = {
+                "document": "document",
+                "spreadsheets": "spreadsheet",
+                "presentation": "presentation",
+            }[doc_path]
+            url = f"https://docs.google.com/{doc_path}/d/{file_id}/edit"
+        else:
+            kind = "file"
+            url = f"https://drive.google.com/file/d/{file_id}/view"
+        children.append(
+            DriveLink(file_id=file_id, doc_kind=kind, resource_key=None, original_url=url)
+        )
+        if len(children) >= MAX_FOLDER_FILES:
+            break
+    if not children:
+        # Private folders serve a shell page with no file anchors.
+        raise DriveAccessError(MSG_FOLDER_NEEDS_AUTH, needs_auth=True)
     return children
 
 

@@ -234,18 +234,62 @@ class TestListDriveFolder(unittest.TestCase):
             children = list_drive_folder(_folder_link(), api_key="k")
         self.assertEqual(len(children), MAX_FOLDER_FILES)
 
-    def test_api_key_forbidden_needs_auth(self):
+    def _embedded_response(self, *, status_code: int = 200, html: str = ""):
         response = Mock()
-        response.status_code = 403
-        with patch("requests.get", return_value=response):
+        response.status_code = status_code
+        response.text = html
+        return response
+
+    _EMBEDDED_HTML = (
+        '<a href="https://drive.google.com/file/d/1PdfPdfPdfPdfPdfPdfPdf/view">a.pdf</a>'
+        '<a href="https://docs.google.com/document/d/1DocDocDocDocDocDocDoc/edit">doc</a>'
+        '<a href="https://docs.google.com/spreadsheets/d/1ShtShtShtShtShtShtSht/edit">sheet</a>'
+    )
+
+    def test_api_key_failure_falls_back_to_embedded_view(self):
+        forbidden = Mock()
+        forbidden.status_code = 403
+        embedded = self._embedded_response(html=self._EMBEDDED_HTML)
+        with patch("requests.get", side_effect=[forbidden, embedded]) as mock_get:
+            children = list_drive_folder(_folder_link(), api_key="k")
+        self.assertEqual(mock_get.call_count, 2)
+        self.assertIn("embeddedfolderview", mock_get.call_args_list[1].args[0])
+        self.assertEqual(
+            [(c.file_id[:4], c.doc_kind) for c in children],
+            [("1Pdf", "file"), ("1Doc", "document"), ("1Sht", "spreadsheet")],
+        )
+
+    def test_no_key_uses_embedded_view_directly(self):
+        embedded = self._embedded_response(html=self._EMBEDDED_HTML)
+        with patch("requests.get", return_value=embedded) as mock_get:
+            children = list_drive_folder(_folder_link())
+        self.assertEqual(mock_get.call_count, 1)
+        self.assertIn("embeddedfolderview", mock_get.call_args.args[0])
+        self.assertEqual(len(children), 3)
+
+    def test_embedded_view_dedups_and_skips_folder_own_id(self):
+        html = self._EMBEDDED_HTML * 2 + f'<a href="https://drive.google.com/file/d/{FILE_ID}/view">self</a>'
+        embedded = self._embedded_response(html=html)
+        with patch("requests.get", return_value=embedded):
+            children = list_drive_folder(_folder_link())
+        self.assertEqual(len(children), 3)
+        self.assertNotIn(FILE_ID, [c.file_id for c in children])
+
+    def test_private_folder_all_paths_fail_needs_auth(self):
+        forbidden = Mock()
+        forbidden.status_code = 403
+        empty_embedded = self._embedded_response(html="<html>no anchors</html>")
+        with patch("requests.get", side_effect=[forbidden, empty_embedded]):
             with self.assertRaises(DriveAccessError) as ctx:
                 list_drive_folder(_folder_link(), api_key="k")
         self.assertTrue(ctx.exception.needs_auth)
         self.assertEqual(str(ctx.exception), MSG_FOLDER_NEEDS_AUTH)
 
-    def test_no_credentials_and_no_key_needs_auth(self):
-        with self.assertRaises(DriveAccessError) as ctx:
-            list_drive_folder(_folder_link())
+    def test_no_credentials_and_no_key_embedded_failure_needs_auth(self):
+        embedded = self._embedded_response(status_code=404)
+        with patch("requests.get", return_value=embedded):
+            with self.assertRaises(DriveAccessError) as ctx:
+                list_drive_folder(_folder_link())
         self.assertTrue(ctx.exception.needs_auth)
 
     def test_credentials_path_lists_via_api_client(self):
