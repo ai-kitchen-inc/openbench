@@ -1089,7 +1089,7 @@ def create_agent(
     admin-controlled ``file_generation`` capability).
     """
     key = api_key or os.getenv("GOOGLE_API_KEY")
-    resolved_model = model or os.getenv("GENERAL_CHAT_MODEL", "gemini-3-flash-preview")
+    resolved_model = model or os.getenv("GENERAL_CHAT_MODEL", "gemini-3.5-flash")
     if not key:
         raise RuntimeError("GOOGLE_API_KEY is required. Set it in .env or the environment.")
 

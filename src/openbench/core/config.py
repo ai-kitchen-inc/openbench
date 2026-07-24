@@ -444,6 +444,17 @@ DEFAULT_MODELS = [
         supports_tools=True,
         aliases=["gemini-3-flash"],
     ),
+    ModelInfo(
+        name="gemini-3.5-flash",
+        provider="gemini",
+        context_window=1000000,
+        max_output_tokens=8192,
+        supports_vision=True,
+        supports_audio=True,
+        supports_video=True,
+        supports_tools=True,
+        aliases=["gemini-3.5"],
+    ),
 ]
 
 

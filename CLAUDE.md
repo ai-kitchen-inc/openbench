@@ -440,7 +440,8 @@ examples/
 Use newer model names (minimum 2.5 series):
 - `gemini-2.5-flash` - Fast, cost-effective
 - `gemini-2.5-pro` - Balanced performance
-- `gemini-3-flash-preview` - Latest preview
+- `gemini-3-flash-preview` - Gen-3 preview
+- `gemini-3.5-flash` - Latest fast model (general-chat default)
 
 Avoid outdated: `gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-2.0-flash-exp`
 
