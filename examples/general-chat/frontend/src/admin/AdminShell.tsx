@@ -1,6 +1,7 @@
 import type { User } from "firebase/auth";
 import type { ReactNode } from "react";
 import type { Me } from "../account/api";
+import { setLocalRole } from "../api";
 import { BrandMark } from "../brand/BrandMark";
 import {
   BookIcon,
@@ -13,7 +14,7 @@ import {
   UsersIcon,
 } from "../brand/icons";
 import { UserChat } from "../chat/UserChat";
-import { APP_NAME, APP_TAGLINE, COMMON } from "../i18n/id";
+import { APP_NAME, APP_TAGLINE, COMMON, LOCAL_ROLE } from "../i18n/id";
 import { ThemeIcon, useDarkMode } from "../theme";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -106,6 +107,18 @@ export function AdminShell({
             >
               <ThemeIcon dark={dark} />
             </button>
+            {me.authDisabled && (
+              <button
+                type="button"
+                className="admin-sidebar__signout"
+                onClick={() => {
+                  setLocalRole("user");
+                  window.location.reload();
+                }}
+              >
+                {LOCAL_ROLE.viewAsUser}
+              </button>
+            )}
             <button type="button" className="admin-sidebar__signout" onClick={onSignOut}>
               {COMMON.signOut}
             </button>

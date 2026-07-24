@@ -15,11 +15,11 @@ import {
 import type { User } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Me } from "../account/api";
-import { apiFetch, apiPath, transcribeAudio } from "../api";
+import { apiFetch, apiPath, getLocalRole, setLocalRole, transcribeAudio } from "../api";
 import { BookIcon } from "../brand/icons";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { FunctionsPanel } from "../functions/FunctionsPanel";
-import { APP_NAME, COMMON } from "../i18n/id";
+import { APP_NAME, COMMON, LOCAL_ROLE } from "../i18n/id";
 import { McpCatalogPanel } from "../mcp-catalog/McpCatalogPanel";
 import { ThemeIcon, useDarkMode } from "../theme";
 import { useToast } from "../Toast";
@@ -542,6 +542,18 @@ function ChatLayout({
               >
                 <ThemeIcon dark={dark} />
               </button>
+              {me.authDisabled && getLocalRole() === "user" && (
+                <button
+                  type="button"
+                  className="auth-signout"
+                  onClick={() => {
+                    setLocalRole(null);
+                    window.location.reload();
+                  }}
+                >
+                  {LOCAL_ROLE.backToAdmin}
+                </button>
+              )}
               <button type="button" className="auth-signout" onClick={onSignOut}>
                 {COMMON.signOut}
               </button>

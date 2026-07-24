@@ -63,6 +63,7 @@ _DEFAULT_INTERNAL_APPROVED_TOOLS = {
     "distinct_values",
     "group_and_aggregate",
     "top_n_records",
+    "fetch_url",
 }
 
 
@@ -376,7 +377,8 @@ def _internal_enabled_tool_names() -> set[str]:
         "openbench.filter_records,"
         "openbench.distinct_values,"
         "openbench.group_and_aggregate,"
-        "openbench.top_n_records",
+        "openbench.top_n_records,"
+        "openbench.fetch_url",
     )
     return {
         part.split(".", 1)[-1].strip()

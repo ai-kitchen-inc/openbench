@@ -537,6 +537,25 @@ Edit these files to change the agent's personality without touching code.
 
 ---
 
+## Mode pengguna lokal (uji peran "user" tanpa login)
+
+Local development only — works whenever backend auth is disabled
+(`OPENBENCH_AUTH_DISABLED=1` or no `GENERAL_CHAT_FIREBASE_PROJECT_ID`).
+Three ways to act as a plain `user` account instead of admin:
+
+1. **UI toggle (easiest)**: admin sidebar footer → **Lihat sebagai
+   Pengguna** → the app reloads into the regular user chat with real
+   `user`-role capabilities (admin panel gone, gated features hidden).
+   In the chat header, **Kembali ke Admin** switches back.
+2. **Env**: set `GENERAL_CHAT_LOCAL_ROLE=user` in `.env` and restart —
+   every request acts as `user` until removed.
+3. **Header**: send `X-Local-Role: user` (what the UI toggle does under
+   the hood via localStorage key `sss-local-role`).
+
+The header is ignored whenever real Firebase auth is enabled, so this
+cannot change roles on deployments. Data owner stays `local` for both
+roles, so sources/sessions are shared between the two views.
+
 ## MCP tool testing
 
 General Chat is tool-free by default. Uploaded files and sources remain optional
@@ -557,6 +576,14 @@ Invoke-RestMethod http://localhost:8005/mcp/tools
 ```
 
 For a complete walkthrough, see [MCP_TUTORIAL.md](MCP_TUTORIAL.md).
+
+The default internal allowlist includes `openbench.fetch_url` — the chat agent
+can fetch and read a general web page mid-conversation ("Tolong baca
+https://... dan ringkas"). It runs without a permission prompt (classified
+`external_network`, auto-approved) and is SSRF-guarded: localhost and
+private/link-local addresses are refused. Requires `GENERAL_CHAT_MCP_ENABLED=1`
+(local mode) or the MCP registry path (`general-chat-all` demo), plus
+`GOOGLE_API_KEY` for the agent itself.
 
 To test all bundled MCP integrations in one run:
 

@@ -4,6 +4,11 @@ export const APP_NAME = "SSS";
 export const APP_TAGLINE = "Asisten Pengetahuan Cerdas";
 export const FOOTER_ATTRIBUTION = `© ${new Date().getFullYear()} ${APP_NAME}`;
 
+export const LOCAL_ROLE = {
+  viewAsUser: "Lihat sebagai Pengguna",
+  backToAdmin: "Kembali ke Admin",
+} as const;
+
 export const COMMON = {
   signOut: "Keluar",
   close: "Tutup",

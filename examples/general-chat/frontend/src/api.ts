@@ -16,11 +16,29 @@ export async function authHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+export const LOCAL_ROLE_STORAGE_KEY = "sss-local-role";
+
+/** Local-dev role override ("view as user"); null = default admin.
+ * The X-Local-Role header is ignored by the backend whenever real
+ * (Firebase) auth is enabled, so carrying it is always safe. */
+export function getLocalRole(): "user" | null {
+  return localStorage.getItem(LOCAL_ROLE_STORAGE_KEY) === "user" ? "user" : null;
+}
+
+export function setLocalRole(role: "user" | null): void {
+  if (role) localStorage.setItem(LOCAL_ROLE_STORAGE_KEY, role);
+  else localStorage.removeItem(LOCAL_ROLE_STORAGE_KEY);
+}
+
 export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const requestInit = init ?? {};
   const headers = new Headers(requestInit.headers);
   for (const [key, value] of Object.entries(await authHeaders())) {
     headers.set(key, value);
+  }
+  const localRole = getLocalRole();
+  if (localRole) {
+    headers.set("X-Local-Role", localRole);
   }
   if ([...headers.keys()].length === 0) {
     return init ? fetch(input, init) : fetch(input);

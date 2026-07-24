@@ -18,6 +18,8 @@ resolution) into a tool callable from the agent's reasoning loop.
   (e.g. checking a regulation number, confirming a conversion factor)
 - Agent's knowledge cutoff may not cover the topic
 - User references a URL, paper, or external resource by name
+- User shares a specific URL and asks to read, open, extract, or
+  summarize that page ("baca URL ini", "fetch this link")
 
 ## References
 
@@ -27,6 +29,8 @@ resolution) into a tool callable from the agent's reasoning loop.
 
 - web_search: single query, returns answer + source citations
 - web_search_multi: batch multiple queries in one call
+- fetch_url: fetch one URL and return readable page text
+  (SSRF-guarded — private/local addresses refused; output truncated)
 
 ## Dependencies
 

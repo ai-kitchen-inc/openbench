@@ -23,6 +23,7 @@ _DEFAULT_MCP_APPROVED_TOOLS = (
     "openbench.distinct_values",
     "openbench.group_and_aggregate",
     "openbench.top_n_records",
+    "openbench.fetch_url",
 )
 _IMAGE_SEARCH_SIMILAR_TOOL = "image_search.search_similar_images"
 _SAM_COUNT_TOOL = "sam_segmentation.count_objects_with_sam3"

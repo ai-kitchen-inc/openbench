@@ -79,6 +79,9 @@ def register_admin_routes(
             "displayName": record.display_name if record else "",
             "capabilities": flags,
             "global": dict(capability_cache.value["global"]),
+            # Local-dev signal: when True the UI may offer the
+            # "view as user" role toggle (X-Local-Role header).
+            "authDisabled": not auth_enabled(),
         }
 
     # ------------------------------------------------------------------

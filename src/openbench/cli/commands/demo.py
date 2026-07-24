@@ -60,6 +60,7 @@ _GENERAL_CHAT_ALL_MCP_CONFIGS = (
     "sam-segmentation-docker.yaml",
     "docker-mcp-gateway.yaml",
     "custom-function-docker.yaml",
+    "google-drive-mcp.yaml",
 )
 _CUSTOM_FN_LOCAL_IMAGE = "custom-function-mcp:local"
 
@@ -433,6 +434,7 @@ def _seed_general_chat_all_mcp_registry(demo_dir: Path, env: dict[str, str]) -> 
         sys.path.insert(0, str(general_chat_src))
 
     try:
+        from general_chat.mcp_bootstrap import DISABLED_BY_DEFAULT_CONFIGS
         from general_chat.mcp_registry import MCPServerRegistryStore
 
         from openbench.mcp.config import MCPConfig
@@ -461,7 +463,19 @@ def _seed_general_chat_all_mcp_registry(demo_dir: Path, env: dict[str, str]) -> 
             try:
                 config = MCPConfig.from_file(config_path)
                 client_config = config.client_config()
+                preexisting_ids: set[str] = set()
+                if filename in DISABLED_BY_DEFAULT_CONFIGS:
+                    preexisting_ids = {
+                        item["id"] for item in store.list_payload()["servers"]
+                    }
                 store.import_client_config(client_config)
+                if filename in DISABLED_BY_DEFAULT_CONFIGS:
+                    for item in store.list_payload()["servers"]:
+                        if (
+                            item["id"] not in preexisting_ids
+                            and item["name"] in client_config.servers
+                        ):
+                            store.set_server_enabled(item["id"], False)
                 seeded_names.extend(sorted(client_config.servers))
             except Exception as exc:
                 console.print(

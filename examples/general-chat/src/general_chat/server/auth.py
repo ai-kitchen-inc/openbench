@@ -17,6 +17,11 @@ from openbench.integrations.firebase_auth import (
 LOCAL_OWNER = "local"
 """Sentinel data owner used when auth is disabled (single-user local dev)."""
 
+LOCAL_ROLE_HEADER = "X-Local-Role"
+"""Request header selecting the local-dev role when auth is disabled."""
+
+_LOCAL_ROLES = frozenset({"admin", "user"})
+
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
     raw = os.getenv(name)
@@ -41,6 +46,23 @@ def auth_enabled() -> bool:
 def allowed_emails() -> set[str]:
     """Return the configured lowercase email allowlist."""
     return _split_csv(os.getenv("GENERAL_CHAT_ALLOWED_EMAILS"))
+
+
+def local_role(request: Request) -> str:
+    """Local-dev role when auth is disabled: header > env > "admin".
+
+    Lets developers see the app as a plain "user" account without any
+    login — via the ``X-Local-Role`` request header (UI toggle) or the
+    ``GENERAL_CHAT_LOCAL_ROLE`` env var. The middleware consults this
+    ONLY on the auth-disabled branch, so the header cannot escalate or
+    change roles on real (Firebase-authenticated) deployments. Invalid
+    values fall back to "admin", preserving default local behavior.
+    """
+    header = (request.headers.get(LOCAL_ROLE_HEADER) or "").strip().lower()
+    if header in _LOCAL_ROLES:
+        return header
+    env = (os.getenv("GENERAL_CHAT_LOCAL_ROLE") or "").strip().lower()
+    return env if env in _LOCAL_ROLES else "admin"
 
 
 def allowed_domains() -> set[str]:

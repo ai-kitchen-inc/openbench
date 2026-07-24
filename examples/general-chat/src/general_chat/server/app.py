@@ -39,6 +39,7 @@ from general_chat.server.auth import (
     auth_enabled,
     current_owner,
     current_role,
+    local_role,
     require_firebase_user,
 )
 from general_chat.google_drive import (
@@ -716,37 +717,55 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    def _role_gate_response(path: str, role: str) -> JSONResponse | None:
+        """Shared non-admin gate: /admin* 403 + capability-flag 403.
+
+        Returns None when the request may proceed.
+        """
+        if role == "admin":
+            return None
+        if path.startswith("/admin"):
+            return JSONResponse(
+                {"detail": "Akses ditolak: memerlukan peran admin."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        flag = blocked_flag_for(path)
+        if flag and not capability_cache.role_allows(role, flag):
+            return JSONResponse(
+                {
+                    "detail": "Fitur ini tidak diaktifkan untuk akun Anda.",
+                    "capability": flag,
+                },
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        return None
+
     @app.middleware("http")
     async def firebase_auth_middleware(request: Request, call_next):
-        if (
-            auth_enabled()
-            and request.method.upper() != "OPTIONS"
-            and _requires_auth_path(request.url.path)
-        ):
-            try:
-                await require_firebase_user(request, user_store)
-            except HTTPException as exc:
-                return JSONResponse(
-                    {"detail": exc.detail},
-                    status_code=exc.status_code,
-                    headers=exc.headers,
-                )
-            path = request.url.path
-            if current_role(request) != "admin":
-                if path.startswith("/admin"):
+        path = request.url.path
+        if request.method.upper() != "OPTIONS" and _requires_auth_path(path):
+            if auth_enabled():
+                try:
+                    await require_firebase_user(request, user_store)
+                except HTTPException as exc:
                     return JSONResponse(
-                        {"detail": "Akses ditolak: memerlukan peran admin."},
-                        status_code=status.HTTP_403_FORBIDDEN,
+                        {"detail": exc.detail},
+                        status_code=exc.status_code,
+                        headers=exc.headers,
                     )
-                flag = blocked_flag_for(path)
-                if flag and not capability_cache.role_allows(current_role(request), flag):
-                    return JSONResponse(
-                        {
-                            "detail": "Fitur ini tidak diaktifkan untuk akun Anda.",
-                            "capability": flag,
-                        },
-                        status_code=status.HTTP_403_FORBIDDEN,
-                    )
+                denied = _role_gate_response(path, current_role(request))
+                if denied is not None:
+                    return denied
+            else:
+                # Local dev: optionally act as a plain "user" account
+                # (X-Local-Role header or GENERAL_CHAT_LOCAL_ROLE env).
+                # Default stays admin — no stamping, identical behavior.
+                role = local_role(request)
+                if role != "admin":
+                    request.state.user_role = role
+                    denied = _role_gate_response(path, role)
+                    if denied is not None:
+                        return denied
         return await call_next(request)
 
     @app.exception_handler(Exception)

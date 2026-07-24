@@ -64,7 +64,7 @@ ARTIFACT_TOOLS = {
     "generate_dashboard",
 }
 
-NETWORK_TOOLS = {"web_search", "web_search_multi"}
+NETWORK_TOOLS = {"web_search", "web_search_multi", "fetch_url"}
 
 DESTRUCTIVE_TOOLS = {
     "rebuild_index",

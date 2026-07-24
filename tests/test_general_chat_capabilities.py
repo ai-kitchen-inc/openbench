@@ -186,6 +186,17 @@ class TestCapabilityGatingEndToEnd(unittest.TestCase):
         self.assertEqual(me["role"], "admin")
         self.assertEqual(me["email"], "local")
 
+    def test_local_role_header_ignored_when_auth_enabled(self):
+        client = self._client()
+        member = client.get(
+            "/account/me", headers={**MEMBER_H, "X-Local-Role": "admin"}
+        ).json()
+        self.assertEqual(member["role"], "user")
+        admin = client.get(
+            "/account/me", headers={**ADMIN_H, "X-Local-Role": "user"}
+        ).json()
+        self.assertEqual(admin["role"], "admin")
+
     def _client_disabled(self) -> TestClient:
         stack = ExitStack()
         self.addCleanup(stack.close)
@@ -214,6 +225,90 @@ class TestCapabilityGatingEndToEnd(unittest.TestCase):
         from general_chat.server.app import create_app
 
         return TestClient(create_app())
+
+
+class TestLocalRoleMode(unittest.TestCase):
+    """Local-dev "view as user" mode: header/env role when auth is disabled."""
+
+    def _client(self, extra_env: dict[str, str] | None = None) -> TestClient:
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        tmpdir = Path(tmp.name)
+        stack.enter_context(
+            patch.dict(
+                environ,
+                {
+                    "GENERAL_CHAT_STORAGE_ROOT": str(tmpdir / "storage"),
+                    "GENERAL_CHAT_UPLOAD_DIR": str(tmpdir / "uploads"),
+                    "GENERAL_CHAT_DOWNLOAD_DIR": str(tmpdir / "downloads"),
+                    "OPENBENCH_AUTH_DISABLED": "1",
+                    "OPENBENCH_PROFILE_DIR": str(tmpdir / "profiles"),
+                    **(extra_env or {}),
+                },
+                clear=False,
+            )
+        )
+        environ.pop("GENERAL_CHAT_FIREBASE_PROJECT_ID", None)
+        if not (extra_env or {}).get("GENERAL_CHAT_LOCAL_ROLE"):
+            environ.pop("GENERAL_CHAT_LOCAL_ROLE", None)
+        agent = Mock()
+        agent.model = "mock-model"
+        agent._persona = None
+        agent._skill_registry = None
+        stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
+        from general_chat.server.app import create_app
+
+        return TestClient(create_app())
+
+    def test_env_user_reports_user_role_and_capabilities(self):
+        client = self._client({"GENERAL_CHAT_LOCAL_ROLE": "user"})
+        me = client.get("/account/me").json()
+        self.assertEqual(me["role"], "user")
+        self.assertEqual(me["email"], "local")
+        self.assertTrue(me["authDisabled"])
+        self.assertFalse(me["capabilities"]["mcp_management"])
+        self.assertTrue(me["capabilities"]["attachments"])
+
+    def test_env_user_blocks_admin_routes(self):
+        client = self._client({"GENERAL_CHAT_LOCAL_ROLE": "user"})
+        self.assertEqual(client.get("/admin/users").status_code, 403)
+
+    def test_env_user_blocks_disabled_capability_route(self):
+        client = self._client({"GENERAL_CHAT_LOCAL_ROLE": "user"})
+        blocked = client.get("/mcp/tools")
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(blocked.json()["capability"], "mcp_management")
+        # Default-on capabilities keep working for the local user.
+        self.assertEqual(client.get("/chat/sources/s1").status_code, 200)
+
+    def test_header_overrides_default_admin(self):
+        client = self._client()
+        me = client.get("/account/me", headers={"X-Local-Role": "user"}).json()
+        self.assertEqual(me["role"], "user")
+        self.assertEqual(
+            client.get("/admin/users", headers={"X-Local-Role": "user"}).status_code,
+            403,
+        )
+
+    def test_header_admin_overrides_env_user(self):
+        client = self._client({"GENERAL_CHAT_LOCAL_ROLE": "user"})
+        me = client.get("/account/me", headers={"X-Local-Role": "admin"}).json()
+        self.assertEqual(me["role"], "admin")
+
+    def test_invalid_values_fall_back_to_admin(self):
+        client = self._client({"GENERAL_CHAT_LOCAL_ROLE": "root"})
+        self.assertEqual(client.get("/account/me").json()["role"], "admin")
+        me = client.get("/account/me", headers={"X-Local-Role": "superuser"}).json()
+        self.assertEqual(me["role"], "admin")
+
+    def test_default_local_dev_stays_admin(self):
+        client = self._client()
+        me = client.get("/account/me").json()
+        self.assertEqual(me["role"], "admin")
+        self.assertTrue(me["authDisabled"])
+        self.assertEqual(client.get("/admin/users").status_code, 200)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Any
 
@@ -2020,7 +2021,7 @@ class TestWebSearchSkill(unittest.TestCase):
         self.tools = {name: fn for name, fn, _ in self.skill.tools}
 
     def test_expected_tools_present(self):
-        self.assertEqual(set(self.tools), {"web_search", "web_search_multi"})
+        self.assertEqual(set(self.tools), {"web_search", "web_search_multi", "fetch_url"})
 
     def test_skill_metadata(self):
         self.assertEqual(self.skill.name, "web-search")
@@ -2067,6 +2068,132 @@ class TestWebSearchSkill(unittest.TestCase):
         finally:
             if saved:
                 os.environ["GOOGLE_API_KEY"] = saved
+
+
+class TestWebSearchFetchUrl(unittest.TestCase):
+    """Tests for the fetch_url tool on the web-search SDK skill."""
+
+    _PUBLIC_ADDRINFO = [(2, 1, 6, "", ("93.184.216.34", 0))]
+
+    def setUp(self):
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "web-search")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+        self.fetch_url = self.tools["fetch_url"]
+
+    def _mock_response(
+        self,
+        *,
+        body: bytes = b"<html><head><title>T</title></head>"
+        b"<body><script>secret()</script><p>Hello world</p></body></html>",
+        content_type: str = "text/html; charset=utf-8",
+        url: str = "https://example.com/page",
+        status_code: int = 200,
+    ):
+        response = mock.Mock()
+        response.url = url
+        response.status_code = status_code
+        response.headers = {"content-type": content_type}
+        response.encoding = "utf-8"
+        response.iter_content = lambda chunk_size: iter([body])
+        response.raise_for_status = mock.Mock()
+        response.close = mock.Mock()
+        return response
+
+    def test_schema_shape(self):
+        schema = next(s for n, _, s in self.skill.tools if n == "fetch_url")
+        self.assertEqual(schema["function"]["name"], "fetch_url")
+        self.assertEqual(schema["function"]["parameters"]["required"], ["url"])
+
+    def test_empty_url_returns_error(self):
+        self.assertIn("error", self.fetch_url(""))
+        self.assertIn("error", self.fetch_url("   "))
+
+    def test_rejects_non_http_schemes(self):
+        for url in ("ftp://example.com/file", "file:///etc/passwd", "not-a-url"):
+            self.assertIn("error", self.fetch_url(url), url)
+
+    def test_rejects_localhost_and_private_addresses(self):
+        for url in (
+            "http://localhost:8005/health",
+            "http://127.0.0.1/",
+            "http://192.168.1.10/",
+            "http://10.0.0.1/",
+            "http://169.254.169.254/latest/meta-data",
+            "http://[::1]/",
+        ):
+            result = self.fetch_url(url)
+            self.assertIn("error", result, url)
+            self.assertIn("private or local", result["error"], url)
+
+    def test_happy_path_html(self):
+        with (
+            mock.patch("socket.getaddrinfo", return_value=self._PUBLIC_ADDRINFO),
+            mock.patch("requests.get", return_value=self._mock_response()),
+        ):
+            result = self.fetch_url("https://example.com/page")
+        self.assertNotIn("error", result)
+        self.assertEqual(result["title"], "T")
+        self.assertIn("Hello world", result["text"])
+        self.assertNotIn("secret", result["text"])
+        self.assertEqual(result["content_type"], "text/html")
+        self.assertFalse(result["truncated"])
+
+    def test_max_chars_truncates(self):
+        body = b"<html><body><p>" + b"word " * 2000 + b"</p></body></html>"
+        with (
+            mock.patch("socket.getaddrinfo", return_value=self._PUBLIC_ADDRINFO),
+            mock.patch("requests.get", return_value=self._mock_response(body=body)),
+        ):
+            result = self.fetch_url("https://example.com/page", max_chars=10)
+        self.assertTrue(result["truncated"])
+        self.assertLessEqual(len(result["text"]), 10)
+
+    def test_network_failure_returns_error(self):
+        with (
+            mock.patch("socket.getaddrinfo", return_value=self._PUBLIC_ADDRINFO),
+            mock.patch("requests.get", side_effect=Exception("boom")),
+        ):
+            result = self.fetch_url("https://example.com/page")
+        self.assertIn("error", result)
+        self.assertIn("boom", result["error"])
+
+    def test_binary_content_type_returns_error(self):
+        response = self._mock_response(content_type="application/pdf", body=b"%PDF-")
+        with (
+            mock.patch("socket.getaddrinfo", return_value=self._PUBLIC_ADDRINFO),
+            mock.patch("requests.get", return_value=response),
+        ):
+            result = self.fetch_url("https://example.com/report.pdf")
+        self.assertIn("error", result)
+        self.assertIn("chat source", result["error"])
+
+    def test_raw_text_content_returned_verbatim(self):
+        response = self._mock_response(
+            content_type="application/json", body=b'{"ok": true}'
+        )
+        with (
+            mock.patch("socket.getaddrinfo", return_value=self._PUBLIC_ADDRINFO),
+            mock.patch("requests.get", return_value=response),
+        ):
+            result = self.fetch_url("https://api.example.com/data")
+        self.assertEqual(result["text"], '{"ok": true}')
+
+    def test_redirect_to_private_address_rejected(self):
+        # The final URL after redirects points at loopback: the guard on
+        # response.url must reject even though the original host is public.
+        def fake_getaddrinfo(host, *args, **kwargs):
+            if host == "example.com":
+                return self._PUBLIC_ADDRINFO
+            return [(2, 1, 6, "", ("127.0.0.1", 0))]
+
+        response = self._mock_response(url="http://127.0.0.1/admin")
+        with (
+            mock.patch("socket.getaddrinfo", side_effect=fake_getaddrinfo),
+            mock.patch("requests.get", return_value=response),
+        ):
+            result = self.fetch_url("https://example.com/page")
+        self.assertIn("error", result)
+        self.assertIn("private or local", result["error"])
 
 
 class TestPdfToolsSkill(unittest.TestCase):
@@ -2279,9 +2406,9 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         tools = reg.collect_tools()
         # data-context-extractor(2) + dashboard-generator(4)
         # + data-visualization(5) + export-excel(2) + export-markdown(1)
-        # + pdf-tools(7) + query-explorer(5) + web-search(7)
-        # + memory-scratchpad(4) = 37 tools
-        self.assertEqual(len(tools), 37)
+        # + pdf-tools(7) + query-explorer(5) + web-search(8)
+        # + memory-scratchpad(4) = 38 tools
+        self.assertEqual(len(tools), 38)
 
     def test_load_skills_by_name_after_load_sdk_skills(self):
         """load_skills(['data-visualization']) must work after load_sdk_skills()."""

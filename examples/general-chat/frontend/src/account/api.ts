@@ -55,6 +55,9 @@ export type Me = {
   displayName: string;
   capabilities: Capabilities;
   global: { file_generation: boolean };
+  /** True when the backend runs with auth disabled (local dev) — the UI
+   * may then offer the local "view as user" role toggle. */
+  authDisabled?: boolean;
 };
 
 /** Thrown when the signed-in Google account has not been granted access
