@@ -278,8 +278,15 @@ the Sources panel — **or directly into a chat message**: Drive links found in
 the message are auto-added as session sources before the turn runs (max 3 per
 message, deduplicated per session, private files use the connected account),
 so the agent can answer about the file immediately. Non-Drive URLs in chat are
-left to the agent's `fetch_url` tool. Public "anyone with the link" files work
-with zero setup:
+left to the agent's `fetch_url` tool.
+
+**Folder links** are supported too: the folder's files (up to 10, no subfolder
+recursion) are listed via the Drive API and each is ingested individually.
+Private folders require the connected Google account; public "anyone with the
+link" folders can also be listed anonymously via `GOOGLE_API_KEY`, provided
+the Google Drive API is enabled for that key's Cloud project.
+
+Public "anyone with the link" files work with zero setup:
 binary files download via `uc?export=download`; Google-native files export to
 Office formats (Docs → `.docx`, Sheets → `.xlsx`, Slides → `.pptx`) and flow
 through the normal parser pipeline.

@@ -83,11 +83,25 @@ export function SourcePanel({
             body: JSON.stringify({ url }),
           },
         );
-        const record = await parseJsonResponse<SourceItem>(response);
-        if (record.status === "failed") {
-          toast.show(record.error ?? "Pemrosesan sumber gagal", "error");
+        const payload = await parseJsonResponse<
+          SourceItem | { folder: true; count: number; records: SourceItem[] }
+        >(response);
+        if ("records" in payload) {
+          const okCount = payload.records.filter((r) => r.status !== "failed").length;
+          if (okCount === 0) {
+            toast.show(
+              payload.records[0]?.error ?? "Pemrosesan folder gagal",
+              "error",
+            );
+          } else {
+            toast.show(`${okCount} sumber ditambahkan dari folder`, "success");
+            setUrlValue("");
+            setShowUrlForm(false);
+          }
+        } else if (payload.status === "failed") {
+          toast.show(payload.error ?? "Pemrosesan sumber gagal", "error");
         } else {
-          toast.show(`Sumber ditambahkan: ${record.name}`, "success");
+          toast.show(`Sumber ditambahkan: ${payload.name}`, "success");
           setUrlValue("");
           setShowUrlForm(false);
         }

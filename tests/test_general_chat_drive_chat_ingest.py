@@ -20,6 +20,11 @@ GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-c
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
+from general_chat.google_drive import (  # noqa: E402
+    MSG_FOLDER_NEEDS_AUTH,
+    DriveAccessError,
+    DriveLink,
+)
 from general_chat.sources import SourceRecord  # noqa: E402
 
 pytestmark = pytest.mark.integration
@@ -153,19 +158,79 @@ class TestChatDriveLinkAutoIngest(unittest.TestCase):
         mock_ingest.assert_not_called()
         self.assertEqual(self._sources(client, "s-web"), [])
 
-    def test_folder_link_produces_failed_record(self):
+    def test_unreadable_folder_link_produces_failed_record(self):
         client = self._build_test_client()
         folder = f"https://drive.google.com/drive/folders/{FILE_ID_A}"
-        with patch(
-            "general_chat.server.app.drive_source_record",
-            side_effect=_fake_drive_source_record,
-        ) as mock_ingest:
+        with (
+            patch(
+                "general_chat.server.app.list_drive_folder",
+                side_effect=DriveAccessError(MSG_FOLDER_NEEDS_AUTH, needs_auth=True),
+            ),
+            patch(
+                "general_chat.server.app.drive_source_record",
+                side_effect=_fake_drive_source_record,
+            ) as mock_ingest,
+        ):
             self._post_turn(client, "s-folder", f"Lihat {folder}")
         mock_ingest.assert_not_called()
         sources = self._sources(client, "s-folder")
         self.assertEqual(len(sources), 1)
         self.assertEqual(sources[0]["status"], "failed")
-        self.assertIn("folder", sources[0]["error"])
+        self.assertIn("Hubungkan Google Drive", sources[0]["error"])
+
+    def test_folder_link_in_chat_ingests_listed_files(self):
+        client = self._build_test_client()
+        folder = f"https://drive.google.com/drive/folders/{FILE_ID_C}"
+        children = [
+            DriveLink(
+                file_id=fid,
+                doc_kind="file",
+                resource_key=None,
+                original_url=f"https://drive.google.com/file/d/{fid}/view",
+            )
+            for fid in (FILE_ID_A, FILE_ID_B)
+        ]
+        with (
+            patch("general_chat.server.app.list_drive_folder", return_value=children),
+            patch(
+                "general_chat.server.app.drive_source_record",
+                side_effect=_fake_drive_source_record,
+            ) as mock_ingest,
+        ):
+            self._post_turn(client, "s-folder-ok", f"Baca semua di {folder}")
+        self.assertEqual(mock_ingest.call_count, 2)
+        sources = self._sources(client, "s-folder-ok")
+        self.assertEqual(
+            {s["metadata"]["driveFileId"] for s in sources}, {FILE_ID_A, FILE_ID_B}
+        )
+
+    def test_url_endpoint_folder_returns_multi_record_payload(self):
+        client = self._build_test_client()
+        folder = f"https://drive.google.com/drive/folders/{FILE_ID_C}"
+        children = [
+            DriveLink(
+                file_id=fid,
+                doc_kind="file",
+                resource_key=None,
+                original_url=f"https://drive.google.com/file/d/{fid}/view",
+            )
+            for fid in (FILE_ID_A, FILE_ID_B)
+        ]
+        with (
+            patch("general_chat.server.app.list_drive_folder", return_value=children),
+            patch(
+                "general_chat.server.app.drive_source_record",
+                side_effect=_fake_drive_source_record,
+            ),
+        ):
+            response = client.post(
+                "/chat/sources/s-folder-api/url", json={"url": folder}
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["folder"])
+        self.assertEqual(payload["count"], 2)
+        self.assertEqual(len(self._sources(client, "s-folder-api")), 2)
 
     def test_capability_off_skips_ingest(self):
         client = self._build_test_client()

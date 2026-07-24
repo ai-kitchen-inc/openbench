@@ -43,9 +43,11 @@ from general_chat.server.auth import (
     require_firebase_user,
 )
 from general_chat.google_drive import (
+    MSG_FOLDER_EMPTY,
     DriveAccessError,
     DriveLink,
     drive_source_record,
+    list_drive_folder,
     parse_drive_url,
 )
 from general_chat.server.custom_functions import CustomFunctionError, CustomFunctionStore
@@ -1507,6 +1509,8 @@ def create_app() -> FastAPI:
             _sources_for(owner).add(record)
             return record.to_dict(include_text=True)
         if link is not None:
+            if link.doc_kind == "folder":
+                return _ingest_drive_folder(owner, thread_id, link)
             return _ingest_drive_source(owner, thread_id, link)
         record = source_record_from_url(
             session_id=thread_id,
@@ -1600,6 +1604,13 @@ def create_app() -> FastAPI:
             _shared_sources().add(record)
             return record.to_dict(include_text=False)
         if link is not None:
+            if link.doc_kind == "folder":
+                return _ingest_drive_folder(
+                    SHARED_SOURCES_OWNER,
+                    SHARED_SOURCES_THREAD,
+                    link,
+                    credential_owner=current_owner(request),
+                )
             return _ingest_drive_source(
                 SHARED_SOURCES_OWNER,
                 SHARED_SOURCES_THREAD,
@@ -1631,6 +1642,54 @@ def create_app() -> FastAPI:
     # Per-user Google Drive OAuth (/auth/drive/*). Registered inside
     # create_app() so these routes always precede the SPA catch-all.
     app.include_router(drive_oauth.build_router())
+
+    def _ingest_drive_folder(
+        owner: str,
+        target_session_id: str,
+        folder_link: DriveLink,
+        *,
+        credential_owner: str | None = None,
+    ) -> dict:
+        """List a Drive folder and ingest each file as a session source.
+
+        Returns ``{"folder": True, "count": n, "records": [...]}`` on a
+        listing success; a single failed-record dict otherwise.
+        """
+        srcs = _sources_for(owner)
+        credentials = drive_oauth.credentials_for(credential_owner or owner)
+        try:
+            children = list_drive_folder(
+                folder_link,
+                credentials=credentials,
+                api_key=(os.getenv("GOOGLE_API_KEY") or "").strip() or None,
+            )
+        except DriveAccessError as exc:
+            record = _failed_url_record(
+                target_session_id, folder_link.original_url, str(exc)
+            )
+            srcs.add(record)
+            return record.to_dict(include_text=True)
+        if not children:
+            record = _failed_url_record(
+                target_session_id, folder_link.original_url, MSG_FOLDER_EMPTY
+            )
+            srcs.add(record)
+            return record.to_dict(include_text=True)
+        records = [
+            _ingest_drive_source(
+                owner,
+                target_session_id,
+                child,
+                credential_owner=credential_owner,
+            )
+            for child in children
+        ]
+        return {
+            "folder": True,
+            "folderUrl": folder_link.original_url,
+            "count": len(records),
+            "records": records,
+        }
 
     def _latest_user_message_text(body: dict) -> str:
         """Mirror _ContentExtractionMixin._extract_content's message pick."""
@@ -1679,7 +1738,14 @@ def create_app() -> FastAPI:
                 if link is None or link.file_id in existing_file_ids:
                     continue
                 existing_file_ids.add(link.file_id)
-                _ingest_drive_source(owner, session_id, link)
+                if link.doc_kind == "folder":
+                    result = _ingest_drive_folder(owner, session_id, link)
+                    for child in result.get("records") or []:
+                        child_meta = child.get("metadata") or {}
+                        if child_meta.get("driveFileId"):
+                            existing_file_ids.add(child_meta["driveFileId"])
+                else:
+                    _ingest_drive_source(owner, session_id, link)
                 ingested += 1
         except Exception:
             logger.warning("Chat Drive-link auto-ingest failed", exc_info=True)

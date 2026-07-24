@@ -16,11 +16,14 @@ if str(GENERAL_CHAT_SRC) not in sys.path:
 import general_chat.google_drive as gd  # noqa: E402
 from general_chat.google_drive import (  # noqa: E402
     EXPORT_FORMATS,
+    MAX_FOLDER_FILES,
+    MSG_FOLDER_NEEDS_AUTH,
     DriveAccessError,
     DriveDownload,
     DriveLink,
     download_public_drive_file,
     drive_source_record,
+    list_drive_folder,
     parse_drive_url,
 )
 from general_chat.sources import SourceParserRegistry  # noqa: E402
@@ -88,14 +91,16 @@ class TestParseDriveUrl(unittest.TestCase):
     def test_short_ids_rejected(self):
         self.assertIsNone(parse_drive_url("https://drive.google.com/file/d/short/view"))
 
-    def test_folder_links_raise(self):
+    def test_folder_links_parse_as_folder(self):
         for url in (
             f"https://drive.google.com/drive/folders/{FILE_ID}",
             f"https://drive.google.com/drive/u/0/folders/{FILE_ID}",
+            f"https://drive.google.com/drive/mobile/folders/{FILE_ID}",
         ):
-            with self.assertRaises(DriveAccessError) as ctx:
-                parse_drive_url(url)
-            self.assertFalse(ctx.exception.needs_auth)
+            link = parse_drive_url(url)
+            self.assertIsNotNone(link, url)
+            self.assertEqual(link.doc_kind, "folder", url)
+            self.assertEqual(link.file_id, FILE_ID, url)
 
     def test_forms_raise(self):
         with self.assertRaises(DriveAccessError):
@@ -184,6 +189,74 @@ class TestDownloadPublicDriveFile(unittest.TestCase):
             download = download_public_drive_file(link, max_bytes=1000)
         self.assertIn("/export?format=xlsx", mock_get.call_args[0][0])
         self.assertTrue(download.filename.endswith(".xlsx"))
+
+
+def _folder_link() -> DriveLink:
+    return DriveLink(
+        file_id=FILE_ID,
+        doc_kind="folder",
+        resource_key=None,
+        original_url=f"https://drive.google.com/drive/folders/{FILE_ID}",
+    )
+
+
+class TestListDriveFolder(unittest.TestCase):
+    def _listing_response(self, files: list[dict]):
+        response = Mock()
+        response.status_code = 200
+        response.raise_for_status = Mock()
+        response.json = lambda: {"files": files}
+        return response
+
+    def test_api_key_path_maps_kinds_and_skips_subfolders(self):
+        files = [
+            {"id": "1DocDocDocDocDocDocDoc", "mimeType": "application/vnd.google-apps.document"},
+            {"id": "1ShtShtShtShtShtShtSht", "mimeType": "application/vnd.google-apps.spreadsheet"},
+            {"id": "1PdfPdfPdfPdfPdfPdfPdf", "mimeType": "application/pdf"},
+            {"id": "1SubSubSubSubSubSubSub", "mimeType": "application/vnd.google-apps.folder"},
+            {"id": "1FrmFrmFrmFrmFrmFrmFrm", "mimeType": "application/vnd.google-apps.form"},
+        ]
+        with patch("requests.get", return_value=self._listing_response(files)) as mock_get:
+            children = list_drive_folder(_folder_link(), api_key="k")
+        self.assertEqual(
+            [(c.file_id[:4], c.doc_kind) for c in children],
+            [("1Doc", "document"), ("1Sht", "spreadsheet"), ("1Pdf", "file")],
+        )
+        params = mock_get.call_args.kwargs["params"]
+        self.assertIn(FILE_ID, params["q"])
+        self.assertEqual(params["key"], "k")
+
+    def test_api_key_path_caps_results(self):
+        files = [
+            {"id": f"1File{i:018d}", "mimeType": "text/plain"} for i in range(25)
+        ]
+        with patch("requests.get", return_value=self._listing_response(files)):
+            children = list_drive_folder(_folder_link(), api_key="k")
+        self.assertEqual(len(children), MAX_FOLDER_FILES)
+
+    def test_api_key_forbidden_needs_auth(self):
+        response = Mock()
+        response.status_code = 403
+        with patch("requests.get", return_value=response):
+            with self.assertRaises(DriveAccessError) as ctx:
+                list_drive_folder(_folder_link(), api_key="k")
+        self.assertTrue(ctx.exception.needs_auth)
+        self.assertEqual(str(ctx.exception), MSG_FOLDER_NEEDS_AUTH)
+
+    def test_no_credentials_and_no_key_needs_auth(self):
+        with self.assertRaises(DriveAccessError) as ctx:
+            list_drive_folder(_folder_link())
+        self.assertTrue(ctx.exception.needs_auth)
+
+    def test_credentials_path_lists_via_api_client(self):
+        service = Mock()
+        service.files.return_value.list.return_value.execute.return_value = {
+            "files": [{"id": "1PdfPdfPdfPdfPdfPdfPdf", "mimeType": "application/pdf"}]
+        }
+        with patch("googleapiclient.discovery.build", return_value=service):
+            children = list_drive_folder(_folder_link(), credentials=object())
+        self.assertEqual(len(children), 1)
+        self.assertEqual(children[0].doc_kind, "file")
 
 
 class TestDriveSourceRecord(unittest.TestCase):

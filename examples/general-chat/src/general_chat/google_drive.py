@@ -78,13 +78,31 @@ GOOGLE_NATIVE_EXPORT_MIME: dict[str, tuple[str, str]] = {
 
 _SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
 
+# Google-native mime -> DriveLink.doc_kind for folder children.
+_GOOGLE_NATIVE_DOC_KINDS = {
+    "application/vnd.google-apps.document": "document",
+    "application/vnd.google-apps.spreadsheet": "spreadsheet",
+    "application/vnd.google-apps.presentation": "presentation",
+}
+
+# Cap on files ingested from a single folder link (no subfolder recursion).
+MAX_FOLDER_FILES = 10
+
+_DRIVE_FILES_LIST_URL = "https://www.googleapis.com/drive/v3/files"
+
 MSG_NEEDS_AUTH = (
     "Berkas Google Drive ini tidak dapat diakses publik. "
     "Hubungkan Google Drive untuk mengakses berkas privat."
 )
-MSG_FOLDER = (
-    "Tautan folder Google Drive belum didukung. Tempel tautan berkas satu per satu."
+MSG_FOLDER_NEEDS_AUTH = (
+    "Isi folder tidak dapat dibaca secara publik. Hubungkan Google Drive, "
+    "atau pastikan folder dibagikan publik dan Google Drive API aktif "
+    "untuk GOOGLE_API_KEY."
 )
+MSG_FOLDER_NO_ACCESS = (
+    "Akun Google yang terhubung tidak memiliki akses ke folder ini."
+)
+MSG_FOLDER_EMPTY = "Folder kosong atau tidak berisi berkas yang didukung."
 MSG_UNSUPPORTED = "Tipe tautan Google ini tidak didukung sebagai sumber."
 MSG_NO_ACCESS = "Akun Google yang terhubung tidak memiliki akses ke berkas ini."
 MSG_RECONNECT = (
@@ -113,7 +131,7 @@ class DriveLink:
     """A parsed Google Drive / Docs share link."""
 
     file_id: str
-    doc_kind: str  # "file" | "document" | "spreadsheet" | "presentation"
+    doc_kind: str  # "file" | "document" | "spreadsheet" | "presentation" | "folder"
     resource_key: str | None
     original_url: str
 
@@ -176,12 +194,10 @@ def parse_drive_url(url: str) -> DriveLink | None:
         return None
 
     if host == "drive.google.com":
-        if segments[:2] == ["drive", "folders"] or segments[:3] == [
-            "drive",
-            "mobile",
-            "folders",
-        ]:
-            raise DriveAccessError(MSG_FOLDER)
+        if segments[:2] == ["drive", "folders"] and len(segments) >= 3:
+            return _link(segments[2], "folder")
+        if segments[:3] == ["drive", "mobile", "folders"] and len(segments) >= 4:
+            return _link(segments[3], "folder")
         if segments[:2] == ["file", "d"] and len(segments) >= 3:
             return _link(segments[2], "file")
         if segments[:1] == ["open"]:
@@ -397,6 +413,106 @@ def download_drive_file_with_credentials(
     return DriveDownload(filename=filename, content=content, mime_type=out_mime)
 
 
+def _folder_child_link(file_id: str, mime_type: str) -> DriveLink | None:
+    """Map a folder listing entry to an ingestible DriveLink, or None to skip."""
+    if not file_id:
+        return None
+    if mime_type in _GOOGLE_NATIVE_DOC_KINDS:
+        kind = _GOOGLE_NATIVE_DOC_KINDS[mime_type]
+        path = {
+            "document": "document",
+            "spreadsheet": "spreadsheets",
+            "presentation": "presentation",
+        }[kind]
+        url = f"https://docs.google.com/{path}/d/{file_id}/edit"
+    elif mime_type.startswith("application/vnd.google-apps."):
+        # Subfolders, forms, shortcuts, maps, ... — not ingestible here.
+        return None
+    else:
+        kind = "file"
+        url = f"https://drive.google.com/file/d/{file_id}/view"
+    return DriveLink(file_id=file_id, doc_kind=kind, resource_key=None, original_url=url)
+
+
+def list_drive_folder(
+    link: DriveLink,
+    *,
+    credentials: Any | None = None,
+    api_key: str | None = None,
+) -> list[DriveLink]:
+    """List a Drive folder's ingestible files (no subfolder recursion).
+
+    Uses the Drive v3 API with the user's credentials when available
+    (private + public folders); otherwise falls back to an anonymous
+    API-key request, which only works for "anyone with the link"
+    folders on a project with the Drive API enabled.
+
+    Raises:
+        DriveAccessError: folder not listable with the available access.
+    """
+    query = f"'{link.file_id}' in parents and trashed=false"
+    fields = "files(id,name,mimeType)"
+    page_size = MAX_FOLDER_FILES * 3  # headroom for skipped subfolders etc.
+
+    if credentials is not None:
+        try:
+            from googleapiclient.discovery import build
+            from googleapiclient.errors import HttpError
+        except ImportError as exc:
+            logger.warning("Drive OAuth configured but googleapiclient missing: %s", exc)
+            raise DriveAccessError(MSG_MISSING_DEPS) from exc
+        try:
+            service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+            response = (
+                service.files()
+                .list(
+                    q=query,
+                    fields=fields,
+                    pageSize=page_size,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            status = getattr(getattr(exc, "resp", None), "status", None)
+            logger.info("Drive folder list error for %s: %s", link.file_id, exc)
+            if status in {403, 404}:
+                raise DriveAccessError(MSG_FOLDER_NO_ACCESS) from exc
+            raise DriveAccessError(
+                f"Google Drive mengembalikan kesalahan: {exc}"
+            ) from exc
+    else:
+        if not api_key:
+            raise DriveAccessError(MSG_FOLDER_NEEDS_AUTH, needs_auth=True)
+        import requests
+
+        http_response = requests.get(
+            _DRIVE_FILES_LIST_URL,
+            params={
+                "q": query,
+                "key": api_key,
+                "fields": fields,
+                "pageSize": page_size,
+            },
+            timeout=_DOWNLOAD_TIMEOUT,
+            headers={"User-Agent": _USER_AGENT},
+        )
+        if http_response.status_code in {400, 401, 403, 404}:
+            raise DriveAccessError(MSG_FOLDER_NEEDS_AUTH, needs_auth=True)
+        http_response.raise_for_status()
+        response = http_response.json()
+
+    children: list[DriveLink] = []
+    for item in response.get("files") or []:
+        child = _folder_child_link(str(item.get("id") or ""), str(item.get("mimeType") or ""))
+        if child is not None:
+            children.append(child)
+        if len(children) >= MAX_FOLDER_FILES:
+            break
+    return children
+
+
 def drive_source_record(
     *,
     session_id: str,
@@ -413,6 +529,21 @@ def drive_source_record(
     same failure shape as :func:`source_record_from_url`, so the UI
     renders it as-is).
     """
+    if link.doc_kind == "folder":  # callers route folders to list_drive_folder
+        return (
+            SourceRecord.create(
+                session_id=session_id,
+                name=link.original_url,
+                kind="url",
+                mime_type="text/html",
+                size_bytes=0,
+                url=link.original_url,
+                text="",
+                status="failed",
+                error=MSG_FOLDER_NEEDS_AUTH,
+            ),
+            None,
+        )
     access = "public"
     try:
         if credentials is not None:
