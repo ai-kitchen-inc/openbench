@@ -32,6 +32,7 @@ import {
 import { SourcePanel } from "./SourcePanel";
 import { SourcesDrawer } from "./SourcesDrawer";
 import {
+  MAX_ATTACHMENTS_PER_MESSAGE,
   parseJsonResponse,
   readErrorMessage,
   SOURCE_ACCEPT,
@@ -41,6 +42,40 @@ import {
 } from "./uploads";
 
 const STREAM_URL = apiPath("/awp");
+
+/** Export shortcuts under every table — the SDK's defaults are English. */
+const TABLE_EXPORT = {
+  label: "Ekspor:",
+  formats: [
+    {
+      id: "xlsx",
+      label: "Excel",
+      prompt: "Ekspor tabel di atas ke file Excel (.xlsx) yang bisa saya unduh.",
+    },
+    {
+      id: "pdf",
+      label: "PDF",
+      prompt: "Ekspor tabel di atas ke file PDF yang bisa saya unduh.",
+    },
+    {
+      id: "md",
+      label: "Markdown",
+      prompt: "Ekspor tabel di atas ke file Markdown (.md) yang bisa saya unduh.",
+    },
+  ],
+};
+
+/** Composer rejection copy — the SDK's defaults are English. */
+const ATTACHMENT_MESSAGES = {
+  rejectedType: (files: File[]) =>
+    `Jenis berkas tidak didukung: ${files.map((f) => f.name).join(", ")}`,
+  oversize: (files: File[], maxBytes: number) =>
+    `Berkas terlalu besar (maks ${Math.round(maxBytes / (1024 * 1024))} MB): ` +
+    files.map((f) => f.name).join(", "),
+  tooMany: (files: File[], max: number) =>
+    `Terlalu banyak berkas (maks ${max} per pesan). Dilewati: ` +
+    files.map((f) => f.name).join(", "),
+};
 
 const SUGGESTIONS = [
   "Apa saja yang dicakup oleh sumber pengetahuan?",
@@ -517,6 +552,8 @@ function ChatLayout({
           greeting={`Selamat datang di ${APP_NAME}`}
           persistentAttachments={persistentAttachments}
           acceptedFileTypes={SOURCE_ACCEPT}
+          maxAttachments={MAX_ATTACHMENTS_PER_MESSAGE}
+          attachmentMessages={ATTACHMENT_MESSAGES}
           onAttachmentError={(message) => toast.show(message, "error")}
           onTranscribe={me.capabilities.attachments ? transcribeAudio : undefined}
           renderSurfaceFooter={renderDashboardSurfaceFooter}
@@ -614,6 +651,7 @@ export function UserChat({
       actionUrl: apiPath("/chat/action"),
       sessionsUrl: apiPath("/sessions"),
       getAuthToken,
+      tableExport: TABLE_EXPORT,
       dashboardActions: {
         publish: async (viewModel: unknown) => {
           const response = await apiFetch(apiPath("/dashboard/publish"), {

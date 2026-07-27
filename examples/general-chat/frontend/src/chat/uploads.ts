@@ -9,6 +9,14 @@ export const SOURCE_ACCEPT =
   ".mp3,.wav,.m4a,.ogg,.aac,.flac," +
   ".mp4,.webm,.mov,.avi";
 export const DIRECT_UPLOAD_THRESHOLD_BYTES = 25 * 1024 * 1024;
+/** Mirrors MAX_ATTACHMENTS in openbench.chat.transport.validation. Enforced
+ * in the composer so a big batch is rejected with a readable message instead
+ * of a 422 after every file has already been uploaded.
+ *
+ * Note there is deliberately no client-side per-file size cap: files over
+ * DIRECT_UPLOAD_THRESHOLD_BYTES are legitimate and route to the direct
+ * Cloud Storage upload path instead of multipart. */
+export const MAX_ATTACHMENTS_PER_MESSAGE = 50;
 const DIRECT_UPLOAD_POLL_INTERVAL_MS = 2000;
 const DIRECT_UPLOAD_MAX_POLLS = 90;
 
@@ -77,15 +85,30 @@ export async function parseJsonResponse<T>(response: Response): Promise<T> {
     }
   }
   if (!response.ok) {
+    const coded = translateErrorDetail(payload?.detail);
     const detail =
-      typeof payload?.detail === "string"
+      coded ??
+      (typeof payload?.detail === "string"
         ? payload.detail
         : typeof payload?.error === "string"
           ? payload.error
-          : `${response.status} ${response.statusText}`;
+          : `${response.status} ${response.statusText}`);
     throw new Error(detail);
   }
   return payload as T;
+}
+
+/** Turn a structured `{code, ...}` error detail into Indonesian copy.
+ * The transport returns a code rather than a sentence so the wording
+ * lives here with the rest of the UI strings. */
+function translateErrorDetail(detail: unknown): string | null {
+  if (!detail || typeof detail !== "object") return null;
+  const { code, max } = detail as { code?: unknown; max?: unknown };
+  if (code === "too_many_attachments") {
+    const limit = typeof max === "number" ? max : MAX_ATTACHMENTS_PER_MESSAGE;
+    return `Terlalu banyak berkas dalam satu pesan (maksimum ${limit}). Kirim sebagian dulu.`;
+  }
+  return null;
 }
 
 export function sourceToAttachment(source: SourceItem): Attachment | null {
