@@ -98,7 +98,9 @@ class AGUIHandler(_SessionLifecycleMixin, _EventStreamMixin, _ContentExtractionM
 
         try:
             body = validate_stream_request_body(await request.json())
-        except (ChatTransportValidationError, ValueError):
+        except ChatTransportValidationError as exc:
+            raise_invalid_request(error=exc)
+        except ValueError:
             raise_invalid_request()
         accept = request.headers.get("accept", "text/event-stream")
 

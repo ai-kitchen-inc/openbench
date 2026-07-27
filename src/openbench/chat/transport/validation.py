@@ -16,7 +16,17 @@ _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 
 
 class ChatTransportValidationError(ValueError):
-    """Raised when a chat transport request body fails validation."""
+    """Raised when a chat transport request body fails validation.
+
+    ``code`` lets a caller distinguish the cases worth explaining to the
+    user (currently: too many attachments) from the generic rejection,
+    without leaking payload details into the response.
+    """
+
+    def __init__(self, message: str, *, code: str = "invalid_body", **detail: Any) -> None:
+        super().__init__(message)
+        self.code = code
+        self.detail = detail
 
 
 def _validate_safe_id(value: str | None, *, field_name: str, required: bool = False) -> str | None:
@@ -127,8 +137,22 @@ def validate_stream_request_body(raw: Any) -> dict[str, Any]:
     try:
         _AGUIStreamRequestModel.model_validate(body)
     except ValidationError as exc:
+        if _is_attachment_overflow(exc):
+            raise ChatTransportValidationError(
+                "Too many attachments",
+                code="too_many_attachments",
+                max=MAX_ATTACHMENTS,
+            ) from exc
         raise ChatTransportValidationError("Invalid chat request body") from exc
     return body
+
+
+def _is_attachment_overflow(exc: ValidationError) -> bool:
+    """True when the only problem is an over-long attachments list."""
+    errors = exc.errors()
+    return bool(errors) and all(
+        err.get("type") == "too_long" and "attachments" in err.get("loc", ()) for err in errors
+    )
 
 
 def validate_action_request_body(raw: Any) -> dict[str, Any]:
@@ -142,9 +166,23 @@ def validate_action_request_body(raw: Any) -> dict[str, Any]:
     return body
 
 
-def raise_invalid_request(status_code: int = 422) -> None:
-    """Raise a generic FastAPI validation error without leaking payload details."""
+def raise_invalid_request(
+    status_code: int = 422, error: ChatTransportValidationError | None = None
+) -> None:
+    """Raise a FastAPI validation error without leaking payload details.
+
+    With no ``error`` the detail stays the generic string every existing
+    caller expects. When the validation error carries a specific ``code``,
+    the detail becomes a small structured object the client can translate
+    — the count limit is not a secret, and "Invalid request body" gives a
+    user with 60 files nothing to act on.
+    """
 
     from fastapi import HTTPException
 
+    if error is not None and error.code != "invalid_body":
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": error.code, **error.detail},
+        )
     raise HTTPException(status_code=status_code, detail="Invalid request body")
