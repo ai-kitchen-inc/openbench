@@ -640,8 +640,9 @@ EXTRACT_PDF_TABLES_SCHEMA = _schema(
 
 MERGE_PDFS_SCHEMA = _schema(
     "merge_pdfs",
-    "Combine multiple PDF files into one document. Files are merged in the "
-    "order given. Returns a downloadable file card.",
+    "Combine multiple PDF files into one document, in the order given, and "
+    "return a downloadable file card. Use when the user asks to merge / "
+    "combine / join PDFs — Indonesian 'gabungkan pdf', 'satukan pdf'.",
     {
         "paths": {
             "type": "array",
@@ -655,8 +656,10 @@ MERGE_PDFS_SCHEMA = _schema(
 
 SPLIT_PDF_SCHEMA = _schema(
     "split_pdf",
-    "Extract specific pages from a PDF into a new file. Returns a "
-    "downloadable file card with only the selected pages.",
+    "Extract specific pages from a PDF into a new file and return a "
+    "downloadable file card with only the selected pages. Use when the "
+    "user asks to split / extract pages — Indonesian 'pisahkan pdf', "
+    "'ambil halaman'.",
     {
         "path": {"type": "string"},
         "pages": {
@@ -671,15 +674,43 @@ SPLIT_PDF_SCHEMA = _schema(
 
 GENERATE_PDF_SCHEMA = _schema(
     "generate_pdf",
-    "Create a PDF report from structured sections. Supported section types: "
-    "'heading' (bold title), 'text' (paragraph), 'table' (grid with headers). "
-    "Returns a downloadable file card.",
+    "Create a PDF report from structured sections and return a download "
+    "card. Use whenever the user asks for a PDF deliverable, in any "
+    "language — English 'export as pdf', 'download a pdf report', 'save "
+    "this as pdf'; Indonesian 'unduh sebagai pdf', 'buatkan laporan pdf', "
+    "'ekspor ke pdf', 'berkas pdf'. When a file is requested, replying "
+    "with markdown alone is not enough — call this tool. For spreadsheets "
+    "use export_to_excel; for markdown/text use generate_markdown.",
     {
         "title": {"type": "string", "description": "Report title"},
         "sections": {
             "type": "array",
-            "description": "Ordered list of sections. Each: {type: 'heading'|'text'|'table', content: '...', headers?: [...], rows?: [[...]]}",
-            "items": {"type": "object"},
+            "description": "Ordered list of report sections.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["heading", "text", "table"],
+                        "description": "Section kind.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Heading or paragraph text. Unused for 'table'.",
+                    },
+                    "headers": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Column headers. Required for 'table'.",
+                    },
+                    "rows": {
+                        "type": "array",
+                        "items": {"type": "array", "items": {"type": "string"}},
+                        "description": "Table rows, one array of cell strings per row.",
+                    },
+                },
+                "required": ["type"],
+            },
         },
         "filename": {"type": "string", "description": "Output filename (default 'report.pdf')"},
         "author": {"type": "string", "description": "Author name for PDF metadata"},

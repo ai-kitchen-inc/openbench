@@ -2,9 +2,8 @@
 
 Write records to an Excel workbook and return a file render item that
 the ChatEngine surfaces as an `ObFileCard`. Supports both single-sheet
-and multi-sheet exports. This is the companion "finish step" to
-`data-visualization` — use it when the user wants a downloadable
-deliverable rather than an in-chat visual.
+and multi-sheet exports. Use it whenever the user wants a downloadable
+spreadsheet rather than an in-chat table.
 
 The skill does not attempt to style cells, freeze panes, or auto-fit
 columns. It writes clean, predictable data that downstream tools
@@ -12,11 +11,20 @@ columns. It writes clean, predictable data that downstream tools
 
 ## Triggers
 
-- User asks to "export", "download", "save to Excel", "send me as xlsx"
+Trigger on these regardless of the language the user writes in.
+
+- English: "export", "download", "save to Excel", "send me as xlsx",
+  "spreadsheet", "workbook"
+- Bahasa Indonesia: "ekspor", "unduh", "buatkan file excel", "simpan
+  sebagai xlsx", "berkas excel", "lembar kerja"
 - Agent has a final computed dataset that the user needs for offline work
 - User wants a multi-sheet report (one sheet per category, per year, etc.)
 - A previous skill produced records that the user wants to share with
   someone who can't see the chat
+
+When the user asks for a file, answering with a markdown table alone is
+not enough — call the tool and return the download card. For PDF use
+`generate_pdf`; for markdown/text use `generate_markdown`.
 
 ## Tools
 

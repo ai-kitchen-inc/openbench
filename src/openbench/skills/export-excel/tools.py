@@ -324,15 +324,44 @@ def export_to_excel(
 # ---------------------------------------------------------------------------
 
 
+def _normalize_sheets(
+    sheets: dict[str, list[dict[str, Any]]] | list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]] | None:
+    """Accept either the mapping form or the list-of-objects form.
+
+    The tool schema advertises a list of ``{"sheet_name", "records"}``
+    objects because a bare ``{"type": "object"}`` parameter carries no
+    ``properties`` and function-calling models cannot populate it. Direct
+    Python callers (and older tests) still pass the natural mapping, so
+    both shapes are normalised to a mapping here. Returns ``None`` when
+    the input is neither shape.
+    """
+    if isinstance(sheets, dict):
+        return sheets
+    if not isinstance(sheets, list):
+        return None
+    normalized: dict[str, list[dict[str, Any]]] = {}
+    for entry in sheets:
+        if not isinstance(entry, dict):
+            return None
+        name = entry.get("sheet_name") or entry.get("name")
+        if not isinstance(name, str) or not name:
+            return None
+        normalized[name] = entry.get("records", [])
+    return normalized
+
+
 def export_multi_sheet_excel(
-    sheets: dict[str, list[dict[str, Any]]],
+    sheets: dict[str, list[dict[str, Any]]] | list[dict[str, Any]],
     filename: str,
     output_dir: str | None = None,
 ) -> dict[str, Any]:
     """Write multiple named sheets to one .xlsx file.
 
     Args:
-        sheets: Mapping of sheet name -> list of record dicts.
+        sheets: Either a mapping of sheet name -> list of record dicts, or
+            a list of ``{"sheet_name": ..., "records": [...]}`` objects
+            (the shape the tool schema advertises to the model).
         filename: Output filename.
         output_dir: Optional directory.
 
@@ -344,8 +373,12 @@ def export_multi_sheet_excel(
     except ImportError:
         return _error("pandas is required — install openbench[data]")
 
+    sheets = _normalize_sheets(sheets)  # type: ignore[assignment]
     if not isinstance(sheets, dict) or not sheets:
-        return _error("`sheets` must be a non-empty mapping of sheet_name -> records")
+        return _error(
+            "`sheets` must be a non-empty mapping of sheet_name -> records, "
+            "or a non-empty list of {sheet_name, records} objects"
+        )
 
     frames: dict[str, Any] = {}
     for name, records in sheets.items():
@@ -396,8 +429,15 @@ def _schema(name: str, description: str, properties: dict, required: list[str]) 
 
 EXPORT_TO_EXCEL_SCHEMA = _schema(
     "export_to_excel",
-    "Write a list of records to a single-sheet .xlsx file. Returns a file "
-    "render item (name, url, size) that the chat UI renders as a download card.",
+    "Write a list of records to a single-sheet .xlsx file and return a "
+    "download card the user can click. Use whenever the user asks for a "
+    "spreadsheet / Excel / xlsx deliverable, in any language — English "
+    "'export', 'download', 'save as excel', 'send me a spreadsheet'; "
+    "Indonesian 'ekspor', 'unduh', 'buatkan file excel', 'simpan sebagai "
+    "xlsx'. When a file is requested, replying with a markdown table alone "
+    "is not enough — call this tool. For multi-sheet workbooks use "
+    "export_multi_sheet_excel; for PDF use generate_pdf; for markdown/text "
+    "use generate_markdown.",
     {
         "records": {
             "type": "array",
@@ -409,26 +449,46 @@ EXPORT_TO_EXCEL_SCHEMA = _schema(
             "description": "Output filename (xlsx extension added if missing)",
         },
         "sheet_name": {"type": "string", "description": "Sheet name (default 'Sheet1')"},
-        "output_dir": {
-            "type": "string",
-            "description": "Optional directory. Defaults to the current working directory.",
-        },
+        # `output_dir` is intentionally NOT exposed to the model: the host
+        # resolves the export directory from env, and offering the parameter
+        # only invites a bogus path. It remains a Python kwarg for tests/CLI.
     },
     ["records", "filename"],
 )
 
 EXPORT_MULTI_SHEET_EXCEL_SCHEMA = _schema(
     "export_multi_sheet_excel",
-    "Write multiple named sheets to one .xlsx file. Use this for reports "
-    "that naturally split along one dimension (per region, per category, "
-    "per year). Sheet names are truncated to 31 chars (Excel limit).",
+    "Write multiple named sheets to one .xlsx file and return a download "
+    "card. Use when a spreadsheet request naturally splits along one "
+    "dimension (per region, per category, per year) — English 'export a "
+    "workbook with a sheet per…', Indonesian 'buatkan file excel per…'. "
+    "For a single sheet use export_to_excel; for PDF use generate_pdf. "
+    "Sheet names are truncated to 31 chars (Excel limit).",
     {
         "sheets": {
-            "type": "object",
-            "description": "Mapping of sheet_name -> list of records. Keys are sheet names, values are dict lists.",
+            "type": "array",
+            "description": "One entry per worksheet, in the order they should appear.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "sheet_name": {
+                        "type": "string",
+                        "description": "Worksheet name (truncated to 31 chars).",
+                    },
+                    "records": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "Rows for this sheet — each dict becomes a row.",
+                    },
+                },
+                "required": ["sheet_name", "records"],
+            },
         },
-        "filename": {"type": "string"},
-        "output_dir": {"type": "string"},
+        "filename": {
+            "type": "string",
+            "description": "Output filename (xlsx extension added if missing)",
+        },
+        # See EXPORT_TO_EXCEL_SCHEMA — `output_dir` stays host-side.
     },
     ["sheets", "filename"],
 )

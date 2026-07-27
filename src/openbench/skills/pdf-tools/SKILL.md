@@ -10,12 +10,23 @@ asks for a PDF report as a deliverable.
 
 ## Triggers
 
+Trigger on these regardless of the language the user writes in.
+
 - User uploads or mentions a `.pdf` file
 - User asks "what's in this PDF?", "extract tables", "how many pages?"
 - User asks to merge, combine, or join multiple PDFs
+  (Indonesian: "gabungkan pdf", "satukan pdf")
 - User asks to extract specific pages from a PDF
+  (Indonesian: "pisahkan pdf", "ambil halaman")
 - User asks for a PDF report, summary, or deliverable
+  (Indonesian: "unduh sebagai pdf", "buatkan laporan pdf", "ekspor ke pdf",
+  "berkas pdf")
 - Agent needs structured data from a PDF (tables, metadata)
+
+When the user asks for a PDF file, answering with markdown alone is not
+enough — call `generate_pdf` and return the download card. For
+spreadsheets use `export_to_excel`; for markdown/text use
+`generate_markdown`.
 
 ## References
 

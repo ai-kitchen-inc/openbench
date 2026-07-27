@@ -187,8 +187,11 @@ GENERATE_MARKDOWN_SCHEMA = _schema(
     "generate_markdown",
     "Write text content to a downloadable Markdown (.md) file. Returns a "
     "file render item the chat UI renders as a download card. Use when the "
-    "user asks for a markdown/text file deliverable; for PDF use "
-    "generate_pdf, for spreadsheets use export_to_excel.",
+    "user asks for a markdown/text file deliverable, in any language — "
+    "English 'save as markdown', 'download as .md', 'export these notes'; "
+    "Indonesian 'simpan sebagai markdown', 'unduh file md', 'buatkan "
+    "catatan dalam berkas'. For PDF use generate_pdf, for spreadsheets use "
+    "export_to_excel.",
     {
         "content": {"type": "string", "description": "Markdown body text."},
         "filename": {

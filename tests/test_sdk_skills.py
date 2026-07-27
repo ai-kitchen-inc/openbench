@@ -1792,6 +1792,96 @@ class TestExportExcelSkill(unittest.TestCase):
         result = self.tools["export_to_excel"]("not a list", "out.xlsx")
         self.assertIn("error", result)
 
+    def test_export_multi_sheet_rejects_empty_list(self):
+        result = self.tools["export_multi_sheet_excel"]([], "out.xlsx")
+        self.assertIn("error", result)
+
+    def test_export_multi_sheet_rejects_list_entries_without_a_name(self):
+        result = self.tools["export_multi_sheet_excel"]([{"records": []}], "out.xlsx")
+        self.assertIn("error", result)
+
+
+class TestFileExportToolDescriptions(unittest.TestCase):
+    """The model picks a tool from its description.
+
+    Every export tool must say *when* to use it and cross-reference its
+    siblings, or the model settles for an inline markdown table. The
+    triggers are named in both languages General Chat is used in.
+    """
+
+    SKILLS_AND_TOOLS = {
+        "export-excel": ("export_to_excel", "export_multi_sheet_excel"),
+        "pdf-tools": ("generate_pdf", "merge_pdfs", "split_pdf"),
+        "export-markdown": ("generate_markdown",),
+    }
+
+    def _schemas(self, skill_name):
+        skill = Skill.from_dir(SDK_SKILLS_DIR / skill_name)
+        return {name: schema for name, _, schema in skill.tools}
+
+    def test_export_tools_say_when_to_use_them(self):
+        for skill_name, tool_names in self.SKILLS_AND_TOOLS.items():
+            schemas = self._schemas(skill_name)
+            for tool_name in tool_names:
+                with self.subTest(tool=tool_name):
+                    description = schemas[tool_name]["function"]["description"].lower()
+                    self.assertIn("use", description)
+                    self.assertIn("when", description)
+
+    def test_primary_export_tools_name_indonesian_triggers(self):
+        for skill_name, tool_name, term in (
+            ("export-excel", "export_to_excel", "unduh"),
+            ("pdf-tools", "generate_pdf", "unduh"),
+            ("export-markdown", "generate_markdown", "simpan sebagai"),
+        ):
+            with self.subTest(tool=tool_name):
+                description = self._schemas(skill_name)[tool_name]["function"][
+                    "description"
+                ].lower()
+                self.assertIn(term, description)
+
+    def test_output_dir_is_not_offered_to_the_model(self):
+        # The host resolves the export directory from env; exposing the
+        # parameter only invites a bogus path.
+        schemas = self._schemas("export-excel")
+        for tool_name in ("export_to_excel", "export_multi_sheet_excel"):
+            with self.subTest(tool=tool_name):
+                params = schemas[tool_name]["function"]["parameters"]["properties"]
+                self.assertNotIn("output_dir", params)
+
+
+class TestFileExportSchemaShapes(unittest.TestCase):
+    """Structured parameters of the export tools describe their contents.
+
+    ``sheets`` and ``sections`` used to be bare ``{"type": "object"}``
+    with the real shape buried in prose in the description. Free-form
+    ``records``/``rows`` lists stay free-form on purpose — the columns
+    genuinely are unknown — so this only pins the two structured ones.
+    """
+
+    def _properties(self, skill_name, tool_name):
+        skill = Skill.from_dir(SDK_SKILLS_DIR / skill_name)
+        schema = {name: s for name, _, s in skill.tools}[tool_name]
+        return schema["function"]["parameters"]["properties"]
+
+    def test_multi_sheet_sheets_is_a_typed_array(self):
+        sheets = self._properties("export-excel", "export_multi_sheet_excel")["sheets"]
+        self.assertEqual(sheets["type"], "array")
+        item_props = sheets["items"]["properties"]
+        self.assertIn("sheet_name", item_props)
+        self.assertIn("records", item_props)
+
+    def test_generate_pdf_sections_is_a_typed_array(self):
+        sections = self._properties("pdf-tools", "generate_pdf")["sections"]
+        self.assertEqual(sections["type"], "array")
+        item_props = sections["items"]["properties"]
+        self.assertIn("type", item_props)
+        self.assertEqual(
+            set(item_props["type"]["enum"]), {"heading", "text", "table"}
+        )
+        for key in ("content", "headers", "rows"):
+            self.assertIn(key, item_props)
+
 
 class TestExportExcelPathResolution(unittest.TestCase):
     """Unit tests for the path / URL resolution helpers.
