@@ -470,6 +470,13 @@ def create_app() -> FastAPI:
         "GENERAL_CHAT_MULTIPART_UPLOAD_MAX_BYTES",
         25 * 1024 * 1024,
     )
+    # Document parsing (Docling/OCR) is synchronous and slow. It runs in a
+    # worker thread so it cannot stall the single-worker event loop — and
+    # behind a semaphore so a batch of uploads doesn't start one OCR run per
+    # file at once.
+    source_parse_semaphore = asyncio.Semaphore(
+        max(1, _env_int("GENERAL_CHAT_UPLOAD_PARSE_CONCURRENCY", 2))
+    )
     user_store = build_user_store(storage_root)
     settings_store = build_settings_store(storage_root)
     capability_cache = CapabilityCache(settings_store)
@@ -1184,9 +1191,11 @@ def create_app() -> FastAPI:
             )
 
         content = await _read_upload_limited(file, multipart_upload_max_bytes)
-        _archive_attachment(filename, content, mime_type, target_session_id)
+        await asyncio.to_thread(
+            _archive_attachment, filename, content, mime_type, target_session_id
+        )
         user_file_store = _file_store_for_session(target_session_id)
-        stored = user_file_store.store(filename, content, mime_type)
+        stored = await asyncio.to_thread(user_file_store.store, filename, content, mime_type)
         _stamp_upload_owner(upload_dir, stored.id, owner)
         if _gcp_enabled():
             record = _queued_gcs_upload_record(session_id=target_session_id, stored=stored)
@@ -1202,13 +1211,15 @@ def create_app() -> FastAPI:
                 "type": record.kind,
             }
 
-        record = source_record_from_file(
-            session_id=target_session_id,
-            stored_file=stored,
-            parser=source_parser,
-            max_bytes=max_source_bytes,
-        )
-        srcs.add(record)
+        async with source_parse_semaphore:
+            record = await asyncio.to_thread(
+                source_record_from_file,
+                session_id=target_session_id,
+                stored_file=stored,
+                parser=source_parser,
+                max_bytes=max_source_bytes,
+            )
+        await asyncio.to_thread(srcs.add, record)
         stored.extracted_text = record.text
 
         print(
