@@ -19,6 +19,7 @@ from openbench.intelligence.base import AgentMemory, BaseAgent, Message, Message
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
 from openbench.mcp.permissions import MCPPermissionContext
 
+from general_chat.server.export_intent import ExportIntent, detect_export_intent
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 
 if TYPE_CHECKING:
@@ -30,6 +31,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SOURCE_CONTEXT_ID = "general-chat-source-context"
+_EXPORT_INSTRUCTION_ID = "general-chat-export-instruction"
+_SOURCE_BUDGET_NOTE_ID = "general-chat-source-budget-note"
+# ~60k tokens of source text per turn, leaving room for history, tool
+# schemas and the answer itself. Set to 0 to disable the cap.
+_DEFAULT_SOURCE_CONTEXT_BUDGET = 240_000
+_DEFAULT_SOURCE_CONTEXT_MIN_CHARS = 2_000
 _DEFAULT_SOURCE_CONTEXT_LABEL = "Optional context extracted from this user-added source."
 _REDACTED_ATTACHMENT_CONTEXT = (
     "Context data: [previous General Chat source attachment content redacted]"
@@ -181,7 +188,9 @@ class _DebugLLMProvider(LLMProvider):
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
 
-    def generate(self, prompt: str | list[dict[str, Any]], model: str = "", **params) -> LLMResponse:
+    def generate(
+        self, prompt: str | list[dict[str, Any]], model: str = "", **params
+    ) -> LLMResponse:
         _dump_prompt(
             prompt,
             model=model,
@@ -213,10 +222,7 @@ def _source_context_attachments(doc_context: str) -> list[Attachment]:
                 name="uploaded_sources.md",
                 url="",
                 mime_type="text/markdown",
-                extracted_text=(
-                    f"{_source_context_label()}\n\n"
-                    f"{doc_context}"
-                ),
+                extracted_text=(f"{_source_context_label()}\n\n{doc_context}"),
             )
         ]
 
@@ -234,13 +240,170 @@ def _source_context_attachments(doc_context: str) -> list[Attachment]:
                 url="",
                 mime_type="text/markdown",
                 extracted_text=(
-                    f"Source filename: {name}\n\n"
-                    f"{_source_context_label()}\n\n"
-                    f"## {name}\n\n{text}"
+                    f"Source filename: {name}\n\n{_source_context_label()}\n\n## {name}\n\n{text}"
                 ),
             )
         )
     return attachments
+
+
+def _source_context_budget() -> int:
+    """Total characters of source text allowed into a single turn."""
+    raw = os.getenv("GENERAL_CHAT_SOURCE_CONTEXT_CHAR_BUDGET", "").strip()
+    try:
+        value = int(raw) if raw else _DEFAULT_SOURCE_CONTEXT_BUDGET
+    except ValueError:
+        value = _DEFAULT_SOURCE_CONTEXT_BUDGET
+    return max(0, value)
+
+
+def _source_context_min_chars() -> int:
+    """Below this, a truncated source is not worth sending at all."""
+    raw = os.getenv("GENERAL_CHAT_SOURCE_CONTEXT_MIN_CHARS", "").strip()
+    try:
+        value = int(raw) if raw else _DEFAULT_SOURCE_CONTEXT_MIN_CHARS
+    except ValueError:
+        value = _DEFAULT_SOURCE_CONTEXT_MIN_CHARS
+    return max(1, value)
+
+
+def _fair_shares(sizes: list[int], budget: int) -> list[int]:
+    """Split ``budget`` across ``sizes`` by water-filling.
+
+    Every source smaller than its equal share is satisfied whole and its
+    leftover is redistributed to the rest; repeat until stable. Small
+    files are therefore never truncated to make room for a huge one, and
+    two equally large files get equal shares.
+    """
+    shares = [0] * len(sizes)
+    remaining = budget
+    pending = [i for i, size in enumerate(sizes) if size > 0]
+    while pending:
+        share = remaining // len(pending)
+        satisfied = [i for i in pending if sizes[i] <= share]
+        if not satisfied:
+            for i in pending:
+                shares[i] = share
+            break
+        for i in satisfied:
+            shares[i] = sizes[i]
+            remaining -= sizes[i]
+        satisfied_set = set(satisfied)
+        pending = [i for i in pending if i not in satisfied_set]
+    return shares
+
+
+def _apply_source_context_budget(attachments: list[Attachment]) -> list[Attachment]:
+    """Cap the total source text injected into one turn.
+
+    Without this there is no input guard anywhere: every ready source's
+    full text is JSON-dumped into the current user message, and the
+    history budget explicitly exempts the newest message, so a session
+    that accumulates enough sources fails with a provider 400 instead of
+    a degraded answer. Truncation is annotated so the model can tell the
+    user what it did and did not see.
+    """
+    budget = _source_context_budget()
+    if budget <= 0:
+        return attachments
+    sizes = [len(a.extracted_text or "") for a in attachments]
+    total = sum(sizes)
+    if total <= budget:
+        return attachments
+
+    min_chars = _source_context_min_chars()
+    shares = _fair_shares(sizes, budget)
+    # When the budget cannot give every source a usable slice, keep the
+    # most recent sources whole instead of shredding all of them.
+    if any(0 < share < min_chars for share in shares):
+        shares = [0] * len(sizes)
+        remaining = budget
+        for i in range(len(sizes) - 1, -1, -1):
+            if sizes[i] <= remaining:
+                shares[i] = sizes[i]
+                remaining -= sizes[i]
+
+    trimmed: list[Attachment] = []
+    dropped: list[tuple[str, int, int]] = []
+    for attachment, size, share in zip(attachments, sizes, shares):
+        if share >= size:
+            trimmed.append(attachment)
+            continue
+        dropped.append((attachment.name, share, size))
+        if share <= 0:
+            text = (
+                f"Source name: {attachment.name}\n\n"
+                "[OMITTED: this source did not fit in this turn's context "
+                "budget. Ask the user to remove other sources if they need "
+                "it, or ask about it in a session with fewer sources.]"
+            )
+        else:
+            text = (
+                f"{(attachment.extracted_text or '')[:share]}\n\n"
+                f"[TRUNCATED: showing the first {share:,} of {size:,} "
+                f'characters of "{attachment.name}".]'
+            )
+        trimmed.append(_replace_extracted_text(attachment, text))
+
+    if dropped:
+        logger.info(
+            "[general-chat] source context budget applied: %d/%d sources trimmed, %d->%d chars",
+            len(dropped),
+            len(attachments),
+            total,
+            sum(min(size, share) for size, share in zip(sizes, shares)),
+        )
+        lines = "\n".join(
+            f"- {name}: {kept:,} of {size:,} characters" for name, kept, size in dropped
+        )
+        trimmed.append(
+            Attachment(
+                id=_SOURCE_BUDGET_NOTE_ID,
+                type="file",
+                name="source-context-note.md",
+                url="",
+                mime_type="text/markdown",
+                extracted_text=(
+                    "This turn had more source text than fits in one request, "
+                    "so these sources were shortened:\n\n"
+                    f"{lines}\n\n"
+                    "Answer from what you were given, and tell the user in "
+                    "their own language which sources were only partially "
+                    "available before you answer."
+                ),
+            )
+        )
+    return trimmed
+
+
+def _replace_extracted_text(attachment: Attachment, text: str) -> Attachment:
+    """Copy ``attachment`` with new extracted text, preserving routing fields."""
+    return Attachment(
+        id=attachment.id,
+        type=attachment.type,
+        name=attachment.name,
+        url=attachment.url,
+        mime_type=attachment.mime_type,
+        size_bytes=attachment.size_bytes,
+        path=attachment.path,
+        extracted_text=text,
+    )
+
+
+def _merge_attachments(draft: list[Attachment], source: list[Attachment]) -> list[Attachment]:
+    """Combine composer attachments with server-side source records.
+
+    The composer sends each attachment's ``extractedText`` and the stream
+    endpoint separately re-reads every session source, so on the turn a
+    file is uploaded its text arrives twice. The server-side record wins:
+    it carries the tool-routing lines and the context budget above.
+    """
+    source_ids = {a.id for a in source if a.id}
+    source_keys = {(a.name, a.size_bytes) for a in source}
+    kept = [
+        a for a in draft if a.id not in source_ids and (a.name, a.size_bytes) not in source_keys
+    ]
+    return [*kept, *source]
 
 
 def _image_attachment_mcp_path(attachment: Attachment) -> str | None:
@@ -343,6 +506,83 @@ def _build_visual_observation_attachment(
     )
 
 
+def _build_export_instruction_attachment(
+    *,
+    intent: ExportIntent,
+    available_tools: list[str],
+) -> Attachment:
+    """Per-turn instruction telling the model to produce an actual file.
+
+    Delivered as a synthetic attachment because that is the existing
+    channel for per-turn steering in this handler (see
+    ``_build_visual_observation_attachment`` and the spreadsheet routing
+    lines in ``_source_record_attachments``) — the text flows into the
+    ``Context data:`` block the agent reads alongside the user message.
+    """
+    # One turn can ask for several formats at once, so name every tool the
+    # request implies — instructing only the first would be narrower than
+    # what the user asked for.
+    wanted = [name for name in intent.tools if name in available_tools]
+    if len(wanted) > 1:
+        listed = ", ".join(f"`{name}`" for name in wanted)
+        target = (
+            f"The user asked for {len(wanted)} files. You MUST call ALL of "
+            f"these in this turn, one per requested format: {listed}."
+        )
+    elif wanted:
+        target = f"You MUST call `{wanted[0]}` in this turn."
+    else:
+        options = ", ".join(f"`{name}`" for name in available_tools)
+        target = f"You MUST call one of these in this turn: {options}."
+    text = (
+        "The user asked for a downloadable file.\n\n"
+        f"{target}\n\n"
+        "Do not reply with only a markdown table, and do not tell the user to "
+        "copy data into a spreadsheet themselves. If you need the data first, "
+        "call the aggregation or analysis tools and then the export tool in the "
+        "same turn. After the tool returns, confirm briefly in the user's own "
+        "language and point at the download card — do not paste the file "
+        "contents back into the chat."
+    )
+    return Attachment(
+        id=_EXPORT_INSTRUCTION_ID,
+        type="file",
+        name="export-instruction.md",
+        url="",
+        mime_type="text/markdown",
+        extracted_text=text,
+    )
+
+
+def _augment_with_export_instruction(
+    *,
+    agent: Any,
+    content: str,
+    attachments: list[Attachment],
+) -> list[Attachment]:
+    """Append the export instruction when the user asked for a file.
+
+    Matches ``content`` only — never the injected source text, which is
+    full of words like "excel" and "unduh" that would fire the nudge on
+    turns where the user asked for nothing of the sort.
+    """
+    if not _env_flag("GENERAL_CHAT_EXPORT_NUDGE", default=True):
+        return attachments
+    # File-producing tools only — the same skills also register readers
+    # (read_pdf, pdf_metadata, …) which cannot satisfy a file request.
+    available = list(getattr(agent, "_file_export_tools", None) or [])
+    if not available:
+        return attachments
+    intent = detect_export_intent(content)
+    if intent is None:
+        return attachments
+    logger.info("[general-chat] export intent detected formats=%s", ",".join(intent.formats))
+    return [
+        *attachments,
+        _build_export_instruction_attachment(intent=intent, available_tools=available),
+    ]
+
+
 def _augment_with_visual_observations(
     *,
     agent: Any,
@@ -354,7 +594,9 @@ def _augment_with_visual_observations(
         return attachments
 
     image_items = [
-        item for item in (_attachment_to_vision_item(attachment) for attachment in attachments) if item
+        item
+        for item in (_attachment_to_vision_item(attachment) for attachment in attachments)
+        if item
     ]
     if not image_items:
         return attachments
@@ -375,10 +617,7 @@ def _augment_with_visual_observations(
                 f"source={item.get('name') or 'image'} model={model}"
             )
 
-    goal = (
-        "Analyze the uploaded image(s) for the user's request. "
-        f"User request: {content}"
-    )
+    goal = f"Analyze the uploaded image(s) for the user's request. User request: {content}"
     if plate_request:
         goal = (
             "Use the vehicle-plate-reading skill to read any visible vehicle "
@@ -576,6 +815,34 @@ def _redact_stale_source_context(messages: list[Message]) -> tuple[list[Message]
     return redacted, changed
 
 
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def refresh_system_message(messages: list[Message], system_prompt: str) -> bool:
+    """Replace a stale leading system message with the current prompt.
+
+    Sessions persist their system message on first use, so a session
+    created before a prompt change keeps the old text forever — tool
+    schemas still ship, but every instruction that tells the model *when*
+    to use them is missing. Rewriting index 0 on load is what lets an
+    existing conversation pick up new capabilities (this mirrors what
+    ``BaseAgent`` already does for ``persona=`` on construction).
+
+    Returns True when a replacement happened. Callers with an empty
+    history should use ``add_system`` instead — this only rewrites.
+    """
+    if not messages or messages[0].role != MessageRole.SYSTEM:
+        return False
+    if messages[0].content == system_prompt:
+        return False
+    messages[0] = Message(role=MessageRole.SYSTEM, content=system_prompt)
+    return True
+
+
 def sanitize_messages(messages: list[Message]) -> list[Message]:
     """Remove invalid conversation-turn sequences that break Gemini's API.
 
@@ -626,7 +893,11 @@ def sanitize_messages(messages: list[Message]) -> list[Message]:
                 j += 1
             has_followup_assistant = j < n and messages[j].role == MessageRole.ASSISTANT
             has_replayable_raw_content = m.raw_content is not None
-            if len(responses) == num_expected and has_followup_assistant and has_replayable_raw_content:
+            if (
+                len(responses) == num_expected
+                and has_followup_assistant
+                and has_replayable_raw_content
+            ):
                 out.append(m)
                 out.extend(responses)
                 i = j
@@ -676,18 +947,28 @@ class GeneralChatHandler(AGUIHandler):
     def _extract_content(self, body):
         content, draft_attachments = super()._extract_content(body)
         attachments = _enrich_draft_attachments(draft_attachments)
+        source_attachments: list[Attachment] = []
         if self._source_records:
-            source_attachments = _source_record_attachments(self._source_records)
-            attachments = [*attachments, *source_attachments]
+            source_attachments.extend(_source_record_attachments(self._source_records))
         if self._doc_context:
-            source_attachments = _source_context_attachments(self._doc_context)
-            attachments = [*attachments, *source_attachments]
+            source_attachments.extend(_source_context_attachments(self._doc_context))
+        if source_attachments:
+            source_attachments = _apply_source_context_budget(source_attachments)
+            attachments = _merge_attachments(attachments, source_attachments)
         if attachments:
             attachments = _augment_with_visual_observations(
                 agent=self.engine.agent,
                 content=content,
                 attachments=attachments,
             )
+        # Appended last so it is the final thing the model reads. Runs even
+        # with no other attachments — "export the table above to excel" is a
+        # file request with nothing uploaded.
+        attachments = _augment_with_export_instruction(
+            agent=self.engine.agent,
+            content=content,
+            attachments=attachments,
+        )
         return content, attachments or None
 
     def _get_or_create_session(self, session_id):
@@ -760,8 +1041,33 @@ class GeneralChatHandler(AGUIHandler):
         else:
             agent_copy.memory = AgentMemory()
 
-        if not agent_copy.memory.messages or agent_copy.memory.messages[0].role != MessageRole.SYSTEM:
+        if (
+            not agent_copy.memory.messages
+            or agent_copy.memory.messages[0].role != MessageRole.SYSTEM
+        ):
             agent_copy.memory.add_system(agent._system_prompt)
+        elif _env_flag("GENERAL_CHAT_REFRESH_SYSTEM_PROMPT", default=True):
+            # Runs after the sanitize/redact block above so that rewrite never
+            # persists the new prompt as a side effect.
+            stale_len = len(agent_copy.memory.messages[0].content or "")
+            if refresh_system_message(agent_copy.memory.messages, agent._system_prompt):
+                logger.info(
+                    "[general-chat] refreshed stale system prompt session=%s %d->%d chars",
+                    session_id,
+                    stale_len,
+                    len(agent._system_prompt),
+                )
+                # Persist so the rewrite survives a restart. Same delete+save
+                # shape the redaction path uses; only fires on the first turn
+                # after a prompt change, not on every request.
+                if (
+                    session_id
+                    and self._memory_store
+                    and _env_flag("GENERAL_CHAT_PERSIST_SYSTEM_PROMPT_REFRESH", default=True)
+                ):
+                    refreshed = list(agent_copy.memory.messages)
+                    self._memory_store.delete_session(session_id)
+                    self._memory_store.save(session_id, refreshed)
 
         agent_copy._llm = agent._llm
         if _debug_prompt_dir() is not None:
