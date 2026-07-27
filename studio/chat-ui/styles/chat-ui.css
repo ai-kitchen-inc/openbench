@@ -2087,6 +2087,39 @@ video.chat-attachment-preview__media {
   -webkit-overflow-scrolling: touch;
 }
 
+.ob-table__export {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ob-table__export-label {
+  font-size: 0.75rem;
+  color: var(--ob-text-muted, rgba(55, 53, 47, 0.65));
+}
+
+.ob-table__export-button {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--ob-border, rgba(55, 53, 47, 0.09));
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.ob-table__export-button:hover:not(:disabled) {
+  background: var(--ob-bg-hover, rgba(55, 53, 47, 0.06));
+}
+
+.ob-table__export-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .ob-table__table {
   /* min-width: 100% fills narrow tables to the bubble width while
      letting wide tables grow past 100% to their natural content
