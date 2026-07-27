@@ -27,6 +27,23 @@ export interface ChatInputProps {
   /** Max size per file in bytes. Files larger than this are rejected. */
   maxUploadSize?: number;
   /**
+   * Max files staged on one message. Counts files already attached, so a
+   * second pick cannot push the total past the limit. Mirror the server's
+   * attachment cap here to reject locally with a readable message instead
+   * of a 422 after the upload round-trip.
+   */
+  maxAttachments?: number;
+  /**
+   * Overrides for the rejection messages, for hosts whose UI is not in
+   * English. Each receives the offending files and returns the string
+   * passed to ``onAttachmentError``.
+   */
+  attachmentMessages?: {
+    rejectedType?: (files: File[]) => string;
+    oversize?: (files: File[], maxBytes: number) => string;
+    tooMany?: (files: File[], max: number) => string;
+  };
+  /**
    * Optional fallback transcriber for browsers without the Web Speech API.
    * Given a recorded audio blob, returns the transcript text. When omitted
    * and Web Speech is unavailable, the mic button is hidden.
@@ -43,6 +60,8 @@ export function ChatInput({
   multiple = true,
   allowAttachments = true,
   maxUploadSize,
+  maxAttachments,
+  attachmentMessages,
   onTranscribe,
 }: ChatInputProps) {
   const [text, setText] = useState("");
@@ -214,13 +233,25 @@ export function ChatInput({
     const oversize = maxUploadSize
       ? typeOk.filter((file) => file.size > maxUploadSize)
       : [];
-    const acceptedFiles = typeOk.filter((file) => !maxUploadSize || file.size <= maxUploadSize);
+    const sized = typeOk.filter((file) => !maxUploadSize || file.size <= maxUploadSize);
+    // Count what is already staged so two picks cannot exceed the cap.
+    const room = maxAttachments
+      ? Math.max(0, maxAttachments - attachmentsRef.current.length)
+      : sized.length;
+    const acceptedFiles = sized.slice(0, room);
+    const overflow = sized.slice(room);
 
     if (typeRejected.length > 0) {
-      onAttachmentError?.(formatRejectedFilesMessage(typeRejected), typeRejected);
+      const format = attachmentMessages?.rejectedType ?? formatRejectedFilesMessage;
+      onAttachmentError?.(format(typeRejected), typeRejected);
     }
     if (oversize.length > 0) {
-      onAttachmentError?.(formatOversizeMessage(oversize, maxUploadSize as number), oversize);
+      const format = attachmentMessages?.oversize ?? formatOversizeMessage;
+      onAttachmentError?.(format(oversize, maxUploadSize as number), oversize);
+    }
+    if (overflow.length > 0) {
+      const format = attachmentMessages?.tooMany ?? formatTooManyFilesMessage;
+      onAttachmentError?.(format(overflow, maxAttachments as number), overflow);
     }
 
     if (acceptedFiles.length === 0) return;
@@ -235,7 +266,15 @@ export function ChatInput({
       file: file,
     }));
     setAttachments((prev) => [...prev, ...newAttachments]);
-  }, [acceptedFileTypes, allowAttachments, maxUploadSize, multiple, onAttachmentError]);
+  }, [
+    acceptedFileTypes,
+    allowAttachments,
+    attachmentMessages,
+    maxAttachments,
+    maxUploadSize,
+    multiple,
+    onAttachmentError,
+  ]);
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -462,4 +501,9 @@ function formatOversizeMessage(files: File[], maxBytes: number): string {
   const mb = Math.round(maxBytes / (1024 * 1024));
   const names = files.map((file) => file.name).join(", ");
   return `File too large (max ${mb} MB): ${names}`;
+}
+
+function formatTooManyFilesMessage(files: File[], max: number): string {
+  const names = files.map((file) => file.name).join(", ");
+  return `Too many files (max ${max} per message), skipped: ${names}`;
 }

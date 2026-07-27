@@ -3,6 +3,7 @@
  */
 
 import { ChatInput } from "./ChatInput";
+import type { ChatInputProps } from "./ChatInput";
 import { useChatContext } from "./ChatProvider";
 import { MessageList } from "./MessageList";
 import type { SurfaceFooterRenderer } from "./MessageBubble";
@@ -30,6 +31,10 @@ export interface ChatPanelProps {
   onAttachmentError?: (message: string, files: File[]) => void;
   /** Max size per file in bytes, forwarded to the composer. */
   maxUploadSize?: number;
+  /** Max files per message, forwarded to the composer. */
+  maxAttachments?: number;
+  /** Localized composer rejection messages, forwarded to the composer. */
+  attachmentMessages?: ChatInputProps["attachmentMessages"];
   /** Whether the composer accepts file attachments (default true). */
   allowAttachments?: boolean;
   /** Fallback audio transcriber for browsers without the Web Speech API. */
@@ -49,6 +54,8 @@ export function ChatPanel({
   acceptedFileTypes,
   onAttachmentError,
   maxUploadSize,
+  maxAttachments,
+  attachmentMessages,
   allowAttachments,
   onTranscribe,
   renderSurfaceFooter,
@@ -158,6 +165,8 @@ export function ChatPanel({
           acceptedFileTypes={acceptedFileTypes}
           onAttachmentError={onAttachmentError}
           maxUploadSize={maxUploadSize}
+          maxAttachments={maxAttachments}
+          attachmentMessages={attachmentMessages}
           allowAttachments={allowAttachments}
           onTranscribe={onTranscribe}
         />

@@ -14,6 +14,7 @@ import type { ChatStore } from "../core/chat-store";
 import { createChatStore } from "../core/chat-store";
 import { StreamManager } from "../core/stream-manager";
 import { AGUITransport } from "../core/transport";
+import { runWithConcurrency } from "../core/upload-queue";
 import { generateId, nowISO } from "../core/utils";
 import type {
   A2UIAction,
@@ -22,6 +23,7 @@ import type {
   ChatConfig,
   ChatMessage,
   DashboardActions,
+  TableExportConfig,
   TransportStatus,
 } from "../types";
 
@@ -73,6 +75,8 @@ export interface UseChatReturn {
 
   // Host-provided dashboard actions (publish / export), if configured.
   dashboardActions?: DashboardActions;
+  /** Export shortcut config for table renderers (see ChatConfig.tableExport). */
+  tableExport?: TableExportConfig;
 
   // UI
   sidebarOpen: boolean;
@@ -188,42 +192,62 @@ export function useChat(config: ChatConfig): UseChatReturn {
       };
       store.getState().addMessageToSession(sessionId, assistantMsg);
 
+      const failPlaceholder = () => {
+        store.getState().updateMessageInSession(sessionId, assistantId, (m) =>
+          m.status === "streaming" ? { ...m, status: "error" as const } : m,
+        );
+      };
+
       // Upload files then start parallel stream (async, fire-and-forget)
       (async () => {
         try {
           let serverAttachments: Attachment[] | undefined;
+          let uploadFailures = 0;
 
           if (attachments?.length) {
-            serverAttachments = await Promise.all(
-              attachments.map(async (att) => {
-                if (att.file) {
-                  // Seed a 0% entry so the UI paints a progress bar
-                  // immediately — otherwise a fast XHR on localhost
-                  // can complete before the first progress event
-                  // fires and the bar never renders.
-                  store.getState().setUploadProgress(att.id, 0);
-                  const localFile = att.file;
-                  try {
-                    const uploaded = await (config.uploadFile ?? transport.upload.bind(transport))(
-                      localFile,
-                      {
-                        sessionId,
-                        onProgress: (frac) => store.getState().setUploadProgress(att.id, frac),
-                      },
-                    );
-                    URL.revokeObjectURL(att.url);
-                    config.onUploadSuccess?.(att.id, uploaded);
-                    return { ...uploaded, file: undefined };
-                  } catch (err) {
-                    config.onUploadError?.(localFile, err);
-                    throw err;
-                  } finally {
-                    store.getState().clearUploadProgress(att.id);
-                  }
+            // Bounded concurrency, and each file settles on its own: one
+            // failed upload must not discard the files that succeeded nor
+            // prevent the turn from being sent.
+            const outcomes = await runWithConcurrency(
+              attachments,
+              config.uploadConcurrency ?? 3,
+              async (att) => {
+                if (!att.file) return att;
+                // Seed a 0% entry so the UI paints a progress bar
+                // immediately — otherwise a fast XHR on localhost
+                // can complete before the first progress event
+                // fires and the bar never renders.
+                store.getState().setUploadProgress(att.id, 0);
+                const localFile = att.file;
+                try {
+                  const uploaded = await (config.uploadFile ?? transport.upload.bind(transport))(
+                    localFile,
+                    {
+                      sessionId,
+                      onProgress: (frac) => store.getState().setUploadProgress(att.id, frac),
+                    },
+                  );
+                  URL.revokeObjectURL(att.url);
+                  config.onUploadSuccess?.(att.id, uploaded);
+                  return { ...uploaded, file: undefined };
+                } catch (err) {
+                  config.onUploadError?.(localFile, err);
+                  return null;
+                } finally {
+                  store.getState().clearUploadProgress(att.id);
                 }
-                return att;
-              }),
+              },
             );
+            serverAttachments = outcomes.filter((a): a is Attachment => a != null);
+            uploadFailures = outcomes.length - serverAttachments.length;
+          }
+
+          // Only give up when there is nothing left to say: every
+          // attachment failed and the user typed no text. Otherwise the
+          // turn goes out with whatever survived.
+          if (uploadFailures > 0 && !serverAttachments?.length && !content.trim()) {
+            failPlaceholder();
+            return;
           }
 
           // Start independent stream — does NOT cancel other active streams
@@ -235,6 +259,8 @@ export function useChat(config: ChatConfig): UseChatReturn {
           }
         } catch (err) {
           console.error("[useChat] Upload/stream error:", err);
+          // Never leave the placeholder spinning forever.
+          failPlaceholder();
         }
       })();
 
@@ -388,6 +414,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
     surfaces: [], // Deprecated at hook level — use message.surfaces instead
     sendAction,
     dashboardActions: config.dashboardActions,
+    tableExport: config.tableExport,
     sidebarOpen,
     setSidebarOpen,
   };

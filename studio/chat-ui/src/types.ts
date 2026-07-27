@@ -179,6 +179,24 @@ export type A2UIServerMessage =
 
 // ── Configuration ──
 
+export interface TableExportOption {
+  /** Stable key — also used as the React key. */
+  id: string;
+  /** Button label. */
+  label: string;
+  /** User message sent when the button is clicked. */
+  prompt: string;
+}
+
+export interface TableExportConfig {
+  /** Defaults to true when ``tableExport`` is supplied at all. */
+  enabled?: boolean;
+  /** Row label shown before the buttons. Defaults to "Export:". */
+  label?: string;
+  /** Defaults to Excel / PDF / Markdown with English prompts. */
+  formats?: TableExportOption[];
+}
+
 export interface ChatConfig {
   streamUrl: string; // POST → SSE AG-UI endpoint (e.g., "/awp")
   actionUrl?: string; // POST → JSON (defaults to "/chat/action")
@@ -187,6 +205,21 @@ export interface ChatConfig {
   sessionsUrl?: string; // REST CRUD endpoint (defaults to "/sessions")
   theme?: "light" | "dark" | "auto";
   maxConcurrentStreams?: number; // Max parallel SSE streams (default: 3)
+  /**
+   * Max attachment uploads in flight at once when a message carries
+   * several files (default: 3). Uploads settle independently — a failed
+   * file is reported via ``onUploadError`` and dropped from the turn
+   * rather than aborting the whole send.
+   */
+  uploadConcurrency?: number;
+  /**
+   * Export shortcuts rendered under every ObTable. Clicking one sends a
+   * normal user turn asking for that file, so the agent's export tools
+   * do the work. Set ``enabled: false`` to hide the row; override
+   * ``formats`` to localize the labels and prompts (the defaults are
+   * English).
+   */
+  tableExport?: TableExportConfig;
   /**
    * Optional hook called before every authenticated request. Wire it
    * to Firebase Auth's getIdToken() (or any equivalent) to have the
