@@ -190,18 +190,61 @@ def _sync_agent_system_message(agent: BaseAgent) -> None:
         agent.memory.add_system(agent._system_prompt)
 
 
+# Skill tools that actually produce a downloadable file. The skills also
+# register readers (read_pdf, pdf_metadata, …) which must never be offered
+# as an answer to "give me a file".
+_FILE_PRODUCING_TOOLS = (
+    "export_to_excel",
+    "export_multi_sheet_excel",
+    "generate_pdf",
+    "generate_markdown",
+    "merge_pdfs",
+    "split_pdf",
+)
+
+_FILE_DELIVERABLE_RULES = """\
+# File Deliverables
+
+You can create real downloadable files. File tools registered this session: {tools}.
+
+- export_to_excel — one table becomes one .xlsx sheet.
+- export_multi_sheet_excel — several tables become one .xlsx with several sheets.
+- generate_pdf — a formatted .pdf report.
+- generate_markdown — a .md file.
+- merge_pdfs / split_pdf — combine PDFs, or pull specific pages out of one.
+
+When the user asks for a file, a download, an export, a spreadsheet, Excel or
+.xlsx — or uses Indonesian wording such as "unduh", "download", "ekspor",
+"export", "buatkan file", "berkas", "file excel", "lembar kerja", "laporan pdf",
+"simpan sebagai" — call the matching tool. Do not answer with only an inline
+markdown table, and never tell the user to copy a table into Excel themselves.
+Never claim you cannot create files. Markdown tables are for reading in the
+chat; these tools are for deliverables the user can keep.
+
+After the tool returns, confirm briefly in the user's own language and let the
+download card speak for itself — do not paste the file contents back as well."""
+
+
 def _load_sdk_skills(agent: BaseAgent, skill_names: list[str]) -> None:
     """Load a set of SDK skills (by directory name) into General Chat.
 
     Dashboard generation is MCP-only (the dashboard-generator MCP replaces
     the in-process SDK skill) — this loader carries the file-export skills.
+
+    Note on output routing: General Chat deliberately uses the skills' legacy
+    env-var export path (``OPENBENCH_EXPORT_DIR`` / ``OPENBENCH_EXPORT_URL_BASE``
+    set in ``server/app.py``), so ``registry.bind(output_store=...)`` is NOT
+    called here. Binding a store would write exports into ``uploads/`` and
+    return an unsigned ``/uploads/<id>/<name>`` URL, which the upload route
+    rejects because an export has no ``SourceRecord`` owner — a 404 on every
+    download card. Binding requires a signed ``/exports/`` route with its own
+    owner check first.
     """
     registry = SkillRegistry()
     registry.load_project_skills([_sdk_skill_dir(name) for name in skill_names])
     skill_context = registry.compose_context()
     if skill_context:
         agent._system_prompt = f"{agent._system_prompt}\n\n{skill_context}"
-        _sync_agent_system_message(agent)
 
     registered: set[str] = set()
     for tool_name, tool_fn, tool_schema in registry.collect_tools():
@@ -212,8 +255,23 @@ def _load_sdk_skills(agent: BaseAgent, skill_names: list[str]) -> None:
         agent.tools.register(tool_name, tool_fn, schema=tool_schema)
         registered.add(tool_name)
 
+    # The file-deliverable rules live here rather than in the persona because
+    # the deployed persona comes from the admin settings row in the database,
+    # which is seeded once and never re-read from persona_templates.py. Keying
+    # the block off the tools actually registered also means the model is never
+    # told about tools it does not have.
+    producers = [name for name in _FILE_PRODUCING_TOOLS if name in registered]
+    if producers:
+        agent._system_prompt = "{}\n\n{}".format(
+            agent._system_prompt,
+            _FILE_DELIVERABLE_RULES.format(tools=", ".join(producers)),
+        )
+    if skill_context or registered:
+        _sync_agent_system_message(agent)
+
     agent._skill_registry = registry  # type: ignore[attr-defined]
     agent._dashboard_skill_tools = sorted(registered)  # type: ignore[attr-defined]
+    agent._file_export_tools = producers  # type: ignore[attr-defined]
 
 
 def _format_score(value: Any) -> str:
@@ -1130,6 +1188,12 @@ def create_agent(
     # stays bounded as sessions grow. Set GENERAL_CHAT_HISTORY_TOKEN_BUDGET=0 to
     # send the full history (old behavior).
     _history_budget = _env_int("GENERAL_CHAT_HISTORY_TOKEN_BUDGET", 16000)
+    # NOTE: ``goal`` only reaches the model when no persona resolves — BaseAgent
+    # sets ``_system_prompt`` from the persona and never consults the goal
+    # otherwise. General Chat normally has a persona (admin DB or soul/), so
+    # treat this string as the persona-less fallback, not as live steering.
+    # Rules that must always apply belong in soul/AGENTS.md + persona_templates,
+    # and per-turn tool routing belongs in the handler's context injection.
     agent = BaseAgent(
         goal=(goal or "").strip()
         or os.getenv("GENERAL_CHAT_AGENT_GOAL", "").strip()
@@ -1191,6 +1255,7 @@ def create_agent(
     else:
         agent._skill_registry = None  # type: ignore[attr-defined]
         agent._dashboard_skill_tools = []  # type: ignore[attr-defined]
+        agent._file_export_tools = []  # type: ignore[attr-defined]
     _attach_dashboard_revision_context(agent)
     agent._mcp_enabled = bool(mcp_summary.get("enabled"))  # type: ignore[attr-defined]
     agent._mcp_summary = mcp_summary  # type: ignore[attr-defined]
