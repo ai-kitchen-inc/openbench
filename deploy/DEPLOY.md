@@ -185,6 +185,80 @@ web config (`VITE_FIREBASE_*`) is baked into `deploy.sh` (it ships in the JS bun
 
 Full list with defaults: [`.env.example.gcp`](../.env.example.gcp).
 
+## Source index & tabular store
+
+Uploaded sources are chunked and embedded so a turn retrieves only the
+passages that answer the question, and spreadsheets are converted to Parquet
+so numeric questions are answered with SQL instead of by reading rows. Without
+this, every ready source's full text goes into every prompt.
+
+**Off by default.** Both flags below must be set; the prompt shape only changes
+when `GENERAL_CHAT_SOURCE_CONTEXT_MODE` moves off `full`.
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `GENERAL_CHAT_SOURCE_INDEX_ENABLED` | `0` | chunk + embed uploads; load the retrieval skills |
+| `GENERAL_CHAT_TABLE_PARQUET_ENABLED` | follows the flag above | convert spreadsheets/CSVs to Parquet |
+| `GENERAL_CHAT_SOURCE_CONTEXT_MODE` | `full` | `full` = today's prompt · `auto` = cards for indexed sources · `cards` = also drop the full-text fallback |
+| `GENERAL_CHAT_RETRIEVAL_TOP_K` | `6` | passages injected eagerly per turn |
+| `GENERAL_CHAT_SOURCE_CARD_BUDGET` | `24000` | advisory char cap on the card block |
+| `GENERAL_CHAT_SOURCE_INDEX_CONCURRENCY` | `2` | parallel embedding jobs on the local upload path |
+| `GENERAL_CHAT_TABLE_MAX_ROWS` / `GENERAL_CHAT_TABLE_QUERY_TIMEOUT_S` | `1000` / `20` | DuckDB result and time caps |
+| `OPENBENCH_DOC_INDEX_URL` | falls back to `GENERAL_CHAT_DATABASE_URL` | index backend; unset + no chat DB ⇒ SQLite under the storage root |
+| `OPENBENCH_EMBEDDING_MODEL` / `OPENBENCH_EMBEDDING_DIM` | provider default / `1536` | keep the dimension ≤ 2000: pgvector's HNSW index does not support more |
+
+**State it creates**
+
+- Postgres tables `openbench_source_chunks` and `openbench_source_tables`,
+  created on first use (self-migrating, `IF NOT EXISTS`).
+- Parquet under `/app-data/openbench/tables/<owner>/<session>/<source_id>/` —
+  inside the bind mount both `openbench-api` and `openbench-worker` already
+  share, so **no compose change**. Deliberately outside `uploads/`, which the
+  end-of-turn cleanup empties.
+- SQLite equivalents (`source_index.sqlite3`, `source_tables.sqlite3`) when no
+  database URL is set — local dev only.
+
+The worker writes the index and the API reads it; both already have the volume
+and `GENERAL_CHAT_DATABASE_URL`, so there is no new secret.
+
+**One-time: pgvector.** Check first, as the app role usually cannot create
+extensions:
+
+```bash
+psql "$GENERAL_CHAT_DATABASE_URL" -c "SELECT * FROM pg_available_extensions WHERE name='vector';"
+```
+
+If listed, enable it as a superuser: `CREATE EXTENSION IF NOT EXISTS vector;`
+If not, nothing breaks — the store logs a warning and falls back to an array
+column with a Python cosine scan, which is correct but slower.
+
+**Rollout** (each step reversible on its own):
+
+1. Enable the extension.
+2. Add the vars to `.env.gcp` with `GENERAL_CHAT_SOURCE_INDEX_ENABLED=1` and
+   `GENERAL_CHAT_SOURCE_CONTEXT_MODE=full`. Compose env changes do **not** apply
+   on a plain `deploy.sh backend` — recreate the containers with `--env-file`
+   and confirm the running container actually has the new values.
+3. `bash deploy/deploy.sh backend` → `verify`. The prompt is unchanged here;
+   upload a file and confirm chunks and Parquet appear, and watch upload latency.
+4. Backfill existing sources:
+   `python examples/general-chat/scripts/backfill_source_index.py --dry-run`,
+   then without the flag. `--prune` removes artifacts whose source is gone.
+5. Flip `GENERAL_CHAT_SOURCE_CONTEXT_MODE=auto` and recreate. Watch answer
+   quality on real sessions — this is the behavioural risk, not the code.
+
+**Rollback:** set `GENERAL_CHAT_SOURCE_CONTEXT_MODE=full` and recreate. The old
+prompt returns exactly; chunks keep being written harmlessly.
+
+**Note:** `deploy.sh wipe-chat-data` drops the two new tables and removes the
+Parquet directory. Chunks and Parquet are copies of uploaded content, so a wipe
+that skipped them would leave deleted material answering questions.
+
+`examples/controlled-source-chat` inherits all of this through `create_app()`.
+It needs the same extension on its own `controlled_chat` database and the same
+vars — flip it **separately, after** general-chat has soaked; its strict
+grounding persona makes it the more retrieval-sensitive of the two.
+
 ## Enable Google sign-in (one-time, project-level)
 
 The Firebase project must have Authentication initialized + the Google provider
