@@ -188,6 +188,81 @@ class TestExcelConversion(ConversionTestCase):
 
 
 @unittest.skipUnless(HAS_TABULAR, "pandas and pyarrow are not installed")
+class TestMixedTypeColumns(ConversionTestCase):
+    """Sheets that mix text and numbers in one column must still convert.
+
+    This is the normal shape of a real spreadsheet: a merged title row
+    above the data, or "N/A" in a numeric column. Arrow infers one type
+    per column and raises ``Expected bytes, got a 'int' object``, which
+    silently dropped 35 of 45 real spreadsheets in production before
+    this was handled.
+    """
+
+    def _mixed_workbook(self) -> Path:
+        path = self.root / "rab.xlsx"
+        frame = pd.DataFrame(
+            {
+                # Title text sitting above numeric data, as Excel exports it.
+                "RENCANA ANGGARAN BIAYA (RAB)": ["JUDUL", 1, 2, 3],
+                "harga": [1000, 2000, 3000, 4000],
+                "catatan": ["a", "b", "c", "d"],
+            }
+        )
+        frame.to_excel(path, index=False)
+        return path
+
+    def test_mixed_column_sheet_still_produces_a_table(self):
+        artifacts = convert_to_parquet(
+            self._mixed_workbook(), dest_dir=self.dest, source_id="source-mixed"
+        )
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0].row_count, 4)
+        self.assertTrue(Path(artifacts[0].parquet_path).exists())
+
+    def test_offending_column_is_reported_as_coerced(self):
+        artifact = convert_to_parquet(
+            self._mixed_workbook(), dest_dir=self.dest, source_id="source-mixed"
+        )[0]
+        self.assertTrue(
+            any("stored as text" in warning for warning in artifact.warnings),
+            artifact.warnings,
+        )
+
+    def test_clean_numeric_columns_keep_their_type(self):
+        artifact = convert_to_parquet(
+            self._mixed_workbook(), dest_dir=self.dest, source_id="source-mixed"
+        )[0]
+        harga = next(column for column in artifact.columns if column.name == "harga")
+        # Only the offending column is downgraded; SQL aggregation on the
+        # clean numeric columns must keep working.
+        self.assertIn("int", harga.dtype)
+        self.assertIsNotNone(harga.min)
+
+    def test_parquet_is_queryable_after_coercion(self):
+        try:
+            import duckdb
+        except ImportError:
+            self.skipTest("duckdb is not installed")
+        artifact = convert_to_parquet(
+            self._mixed_workbook(), dest_dir=self.dest, source_id="source-mixed"
+        )[0]
+        conn = duckdb.connect(":memory:")
+        try:
+            total = conn.execute(
+                f"SELECT SUM(harga) FROM read_parquet('{Path(artifact.parquet_path).as_posix()}')"
+            ).fetchone()[0]
+            self.assertEqual(total, 10000)
+        finally:
+            conn.close()
+
+    def test_all_null_object_column_converts(self):
+        path = self.root / "nulls.xlsx"
+        pd.DataFrame({"a": [1, 2], "b": [None, None]}).to_excel(path, index=False)
+        artifacts = convert_to_parquet(path, dest_dir=self.dest, source_id="source-null")
+        self.assertEqual(len(artifacts), 1)
+
+
+@unittest.skipUnless(HAS_TABULAR, "pandas and pyarrow are not installed")
 class TestSchemaCard(ConversionTestCase):
     def setUp(self):
         super().setUp()

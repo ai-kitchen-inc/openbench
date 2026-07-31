@@ -244,6 +244,54 @@ def _sample_rows(frame, limit: int = SAMPLE_ROWS) -> list[dict[str, Any]]:
     ]
 
 
+def _as_text(value: Any) -> Any:
+    """Render one cell as text, preserving nulls."""
+    if value is None:
+        return None
+    if isinstance(value, float) and value != value:  # NaN
+        return None
+    return value if isinstance(value, str) else str(value)
+
+
+def _coerce_for_arrow(frame) -> tuple[Any, list[str]]:
+    """Cast columns Arrow cannot type-infer into text.
+
+    Real spreadsheets routinely mix text and numbers in one column —
+    merged title rows, "N/A" in a numeric column, a stray note. Arrow
+    picks a single type per column and rejects everything else with
+    ``Expected bytes, got a 'int' object``, which would otherwise drop
+    the whole sheet. Only the offending columns are converted, so clean
+    numeric and date columns keep their types for SQL aggregation.
+    """
+    import pyarrow as pa
+
+    warnings: list[str] = []
+    for name in frame.columns:
+        if frame[name].dtype != object:
+            continue
+        try:
+            pa.array(frame[name].to_numpy(), from_pandas=True)
+        except Exception:
+            frame[name] = frame[name].map(_as_text)
+            warnings.append(f'column "{name}" stored as text (mixed types in the sheet)')
+    return frame, warnings
+
+
+def _prepare_for_arrow(frame) -> tuple[Any, list[str]]:
+    """Return a frame Arrow can convert, plus any coercion warnings.
+
+    Runs before profiling so the schema card describes the types the
+    Parquet file actually has.
+    """
+    import pyarrow as pa
+
+    try:
+        pa.Table.from_pandas(frame, preserve_index=False)
+        return frame, []
+    except Exception:
+        return _coerce_for_arrow(frame.copy())
+
+
 def _write_parquet(frame, destination: Path, compression: str) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -319,6 +367,10 @@ def convert_to_parquet(
             if max_rows is not None and len(frame) > max_rows:
                 warnings.append(f"truncated to the first {max_rows:,} rows")
                 frame = frame.head(max_rows)
+
+            # Before profiling, so the schema card matches what Parquet holds.
+            frame, coerce_warnings = _prepare_for_arrow(frame)
+            warnings.extend(coerce_warnings)
 
             alias = _slug(str(sheet_name))
             candidate = alias
