@@ -25,7 +25,8 @@
 #   remove-user EMAIL      Break-glass: delete a user row via psql
 #   init-appdb     Create the appdata DB + mart schema + mcp_app role on Cloud SQL
 #   seed-mcp-db FILE  Load a .sql file into the appdata Postgres DB (db_server data)
-#   wipe-chat-data DESTRUCTIVE: drop all chat sessions/memory/sources/uploads
+#   wipe-chat-data DESTRUCTIVE: drop all chat sessions/memory/sources/chunks/
+#                  Parquet tables/uploads
 #   backups        Enable + verify Cloud SQL automated backups + PITR (idempotent)
 #   verify         Probe the live deployment (health/auth/hardening/network)
 #   all            backend → verify
@@ -346,7 +347,10 @@ cmd_seed_mcp_db() {
 
 # --- wipe-chat-data ------------------------------------------------------------
 # One-time destructive reset of all per-user chat data (sessions, agent memory,
-# sources, uploads, downloads). Used for the user-isolation rollout: the old
+# sources, source chunks, Parquet tables, uploads, downloads). The chunk index
+# and Parquet tables are copies of uploaded content, so a wipe that skipped
+# them would leave deleted material answering questions with no visible
+# source. Used for the user-isolation rollout: the old
 # rows have no owner column values and would be invisible/unmigrated, so they
 # are dropped instead (decision: wipe, no migration). Leaves published
 # dashboards, MCP registry, custom functions, Grafana and image-search data
@@ -369,8 +373,9 @@ cmd_wipe_chat_data() {
         -c \"CREATE DATABASE \\\"\$dbname\\\";\" || exit 1; \
     fi; \
     sudo docker run --rm -i $PSQL_IMAGE psql \"\$dburl\" -v ON_ERROR_STOP=1 \
-      -c 'DROP TABLE IF EXISTS openbench_sessions, openbench_sources, openbench_messages;' && \
+      -c 'DROP TABLE IF EXISTS openbench_sessions, openbench_sources, openbench_messages, openbench_source_chunks, openbench_source_tables;' && \
     sudo rm -rf /app-data/openbench/sources /app-data/openbench/sessions.db /app-data/openbench/memory.db && \
+    sudo rm -rf /app-data/openbench/tables /app-data/openbench/source_index.sqlite3 /app-data/openbench/source_tables.sqlite3 && \
     sudo find /app-data/uploads -mindepth 1 -maxdepth 1 -exec rm -rf {} + && \
     sudo find /app-data/downloads -mindepth 1 -maxdepth 1 -exec rm -rf {} + && \
     sudo docker-compose --env-file .env.gcp -f $COMPOSE_FILE up -d && echo WIPED" \

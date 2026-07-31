@@ -11,8 +11,8 @@ import json
 import logging
 import os
 import re
-import signal
 import shutil
+import signal
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +20,7 @@ from typing import Any
 
 from general_chat.agent import get_persona_dir
 from general_chat.extractor import DoclingContentExtractor
+from general_chat.source_index import index_source_record, source_index_enabled
 from general_chat.sources import (
     SourceParserRegistry,
     SourceRecord,
@@ -28,7 +29,6 @@ from general_chat.sources import (
     source_record_from_file,
 )
 from openbench.chat.files import StoredFile
-from openbench.data.stores import ChunkingConfig, chunk_text
 from openbench.integrations.gcp import GCSFileStore
 
 logger = logging.getLogger(__name__)
@@ -170,13 +170,6 @@ def process_gcs_object(
         metadata["processedGeneration"] = event.generation
 
     if parsed.status == "ready" and parsed.text.strip():
-        chunks = chunk_text(
-            parsed.text,
-            ChunkingConfig(
-                chunk_size=_env_int("GENERAL_CHAT_GCP_CHUNK_SIZE", 1000),
-                chunk_overlap=_env_int("GENERAL_CHAT_GCP_CHUNK_OVERLAP", 200),
-            ),
-        )
         derived_object = file_store.object_name_for_derived(
             file_id=file_id,
             session_id=session_id,
@@ -193,9 +186,18 @@ def process_gcs_object(
             },
         )
         metadata["derivedObject"] = derived_object
-        metadata["chunkCount"] = str(len(chunks))
 
     record.metadata = metadata
+
+    if source_index_enabled() and parsed.status == "ready":
+        # parseStatus stays non-ready until the chunks exist, so the SPA's
+        # upload poll never reports a source as usable before it is
+        # retrievable. GET /chat/uploads/{file_id} surfaces this directly.
+        record.metadata = {**metadata, "parseStatus": "indexing"}
+        source_store.upsert(record)
+        record = index_source_record(record, stored_file=stored_for_parse)
+        record.metadata = {**(record.metadata or {}), "parseStatus": "ready"}
+
     source_store.upsert(record)
     logger.info(
         "Processed GCS upload file_id=%s session=%s status=%s",

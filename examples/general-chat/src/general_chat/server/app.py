@@ -24,6 +24,14 @@ from general_chat.admin_store import build_settings_store, build_user_store, see
 from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
 from general_chat.capabilities import CapabilityCache, blocked_flag_for
 from general_chat.extractor import DoclingContentExtractor
+from general_chat.google_drive import (
+    MSG_FOLDER_EMPTY,
+    DriveAccessError,
+    DriveLink,
+    drive_source_record,
+    list_drive_folder,
+    parse_drive_url,
+)
 from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.persona_templates import (
@@ -42,14 +50,6 @@ from general_chat.server.auth import (
     local_role,
     require_firebase_user,
 )
-from general_chat.google_drive import (
-    MSG_FOLDER_EMPTY,
-    DriveAccessError,
-    DriveLink,
-    drive_source_record,
-    list_drive_folder,
-    parse_drive_url,
-)
 from general_chat.server.custom_functions import CustomFunctionError, CustomFunctionStore
 from general_chat.server.dashboard_pdf import render_dashboard_pdf
 from general_chat.server.drive_auth import DriveOAuthManager
@@ -58,6 +58,11 @@ from general_chat.server.grafana_client import GrafanaDeployError, deploy_view_m
 from general_chat.server.handler import GeneralChatHandler, set_source_context_label_override
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.server.publish_store import PublishStore
+from general_chat.source_index import (
+    deindex_records,
+    index_source_record,
+    source_index_enabled,
+)
 from general_chat.sources import (
     DEFAULT_DISCOVERY_LIMIT,
     SearchDiscoveryAdapter,
@@ -477,6 +482,12 @@ def create_app() -> FastAPI:
     source_parse_semaphore = asyncio.Semaphore(
         max(1, _env_int("GENERAL_CHAT_UPLOAD_PARSE_CONCURRENCY", 2))
     )
+    # Chunking + embedding runs on the upload request in local mode, so it
+    # gets its own bound: a batch of uploads must not fan out one embedding
+    # batch per file at once.
+    source_index_semaphore = asyncio.Semaphore(
+        max(1, _env_int("GENERAL_CHAT_SOURCE_INDEX_CONCURRENCY", 2))
+    )
     user_store = build_user_store(storage_root)
     settings_store = build_settings_store(storage_root)
     capability_cache = CapabilityCache(settings_store)
@@ -646,6 +657,19 @@ def create_app() -> FastAPI:
                         getattr(record, "id", ""),
                         exc_info=True,
                     )
+
+    def _purge_source_artifacts(records: list) -> None:
+        """Delete sources for good: upload files, chunks, and Parquet.
+
+        Distinct from ``_delete_upload_files_for_records`` on purpose.
+        That helper is also called by ``_cleanup_source_uploads_after_use``
+        at the *end of every turn* — hooking deindexing into it would wipe
+        the index of every source the user just used. Only real deletions
+        belong here.
+        """
+        _delete_upload_files_for_records(records)
+        if source_index_enabled():
+            deindex_records(records)
 
     def _session_store_for(owner: str):
         """Owner-scoped session store view for one request."""
@@ -1222,6 +1246,13 @@ def create_app() -> FastAPI:
         await asyncio.to_thread(srcs.add, record)
         stored.extracted_text = record.text
 
+        if source_index_enabled():
+            async with source_index_semaphore:
+                record = await asyncio.to_thread(
+                    index_source_record, record, stored_file=stored
+                )
+            await asyncio.to_thread(srcs.upsert, record)
+
         print(
             f"  [source-upload] id={record.id} session={target_session_id!r} "
             f"name={stored.name!r} "
@@ -1283,6 +1314,9 @@ def create_app() -> FastAPI:
         _stamp_upload_owner(upload_dir, stored.id, owner)
         srcs.add(record)
         stored.extracted_text = record.text
+        if source_index_enabled():
+            record = index_source_record(record, stored_file=stored)
+            srcs.upsert(record)
         print(
             f"  [source-drive] id={record.id} session={target_session_id!r} "
             f"name={stored.name!r} mime={stored.mime_type} "
@@ -1544,7 +1578,7 @@ def create_app() -> FastAPI:
         target = next((record for record in records if record.id == source_id), None)
         if target is None:
             raise HTTPException(status_code=404, detail="Source not found")
-        _delete_upload_files_for_records([target])
+        _purge_source_artifacts([target])
         deleted = srcs.delete(thread_id, source_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Source not found")
@@ -1554,7 +1588,7 @@ def create_app() -> FastAPI:
     async def clear_sources(thread_id: str, request: Request) -> dict:
         """Remove all stored sources for a session."""
         srcs = _sources_for(current_owner(request))
-        _delete_upload_files_for_records(srcs.list(thread_id))
+        _purge_source_artifacts(srcs.list(thread_id))
         srcs.clear(thread_id)
         return {"ok": True}
 
@@ -1645,7 +1679,7 @@ def create_app() -> FastAPI:
         target = next((record for record in records if record.id == source_id), None)
         if target is None:
             raise HTTPException(status_code=404, detail="Source not found")
-        _delete_upload_files_for_records([target])
+        _purge_source_artifacts([target])
         if not srcs.delete(SHARED_SOURCES_THREAD, source_id):
             raise HTTPException(status_code=404, detail="Source not found")
         return {"ok": True, "sourceId": source_id}
@@ -1879,7 +1913,7 @@ def create_app() -> FastAPI:
         owner = current_owner(request)
         srcs = _sources_for(owner)
         handler = AGUISessionHandler(session_store=_session_store_for(owner))
-        _delete_upload_files_for_records(srcs.list(session_id))
+        _purge_source_artifacts(srcs.list(session_id))
         srcs.clear(session_id)
         handler.delete(session_id)
         return {"ok": True, "sessionId": session_id}
