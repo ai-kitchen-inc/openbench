@@ -38,40 +38,18 @@ logger = logging.getLogger("backfill")
 def _iter_records(store, *, owner: str | None, session: str | None):
     """Yield every stored SourceRecord matching the filters.
 
-    Works against both the Postgres and the JSON store by going through
-    the owner-scoped view each backend exposes.
+    Uses ``list_all``, which both the JSON and Postgres stores implement.
+    Enumerating by guessing at optional accessors is what made an earlier
+    version of this script silently report ``indexed=0`` on a store full
+    of records, so an unsupported store is a hard error here.
     """
-    owners = [owner] if owner else _known_owners(store)
-    for owner_key in owners:
-        scoped = store.for_owner(owner_key)
-        for session_id in _known_sessions(scoped, session):
-            yield from scoped.list(session_id)
-
-
-def _known_owners(store) -> list[str]:
-    for method in ("owners", "list_owners"):
-        accessor = getattr(store, method, None)
-        if callable(accessor):
-            try:
-                return list(accessor())
-            except Exception:
-                pass
-    # Fall back to the ownerless view, which covers single-tenant and
-    # pre-ownership deployments.
-    return [""]
-
-
-def _known_sessions(scoped_store, session: str | None) -> list[str]:
-    if session:
-        return [session]
-    for method in ("sessions", "list_sessions"):
-        accessor = getattr(scoped_store, method, None)
-        if callable(accessor):
-            try:
-                return list(accessor())
-            except Exception:
-                pass
-    return []
+    lister = getattr(store, "list_all", None)
+    if not callable(lister):
+        raise SystemExit(
+            f"{type(store).__name__} does not implement list_all(); cannot enumerate "
+            "sources to backfill. Update the source store before running this."
+        )
+    yield from lister(owner=owner, session_id=session)
 
 
 def backfill(args: argparse.Namespace) -> int:
@@ -79,9 +57,10 @@ def backfill(args: argparse.Namespace) -> int:
     store = build_source_store(str(root))
 
     kinds = {kind.strip() for kind in (args.kinds or "").split(",") if kind.strip()}
-    indexed = skipped = failed = 0
+    indexed = skipped = failed = scanned = 0
 
     for record in _iter_records(store, owner=args.owner, session=args.session):
+        scanned += 1
         if args.limit and indexed >= args.limit:
             break
         if kinds and record.kind not in kinds:
@@ -113,7 +92,14 @@ def backfill(args: argparse.Namespace) -> int:
         if not args.dry_run:
             store.for_owner(record.owner).upsert(updated)
 
-    print(f"\nindexed={indexed} skipped={skipped} failed={failed}")
+    print(f"\nscanned={scanned} indexed={indexed} skipped={skipped} failed={failed}")
+    if scanned == 0:
+        # Distinguish "nothing to do" from "could not see anything" — the
+        # two look identical in a bare counter, and the second is a bug.
+        print(
+            "WARNING: no source records were found. If this store is not empty, "
+            "the enumeration is broken — do not treat this as a completed backfill."
+        )
     return 1 if failed else 0
 
 

@@ -301,3 +301,59 @@ class TestTurnEndCleanupDoesNotDeindex(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAS_GENERAL_CHAT, "general-chat example is not importable")
+class TestSourceStoreListAll(unittest.TestCase):
+    """Enumeration across owners and sessions.
+
+    The backfill script needs to walk the whole store. An earlier version
+    guessed at optional accessors (``sessions``/``list_owners``) that no
+    store implements, so it silently reported ``indexed=0`` against a
+    store full of records — a no-op that looked like success.
+    """
+
+    def setUp(self):
+        from general_chat.sources import build_source_store
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.store = build_source_store(self._tmp.name)
+        for index, owner in enumerate(["alice@example.com", "bob@example.com", ""]):
+            record = SourceRecord.create(
+                session_id=f"s{index}",
+                name=f"doc{index}.md",
+                kind="document",
+                mime_type="text/markdown",
+                size_bytes=100,
+                text="body",
+                owner=owner,
+            )
+            scoped = self.store.for_owner(owner) if owner else self.store
+            scoped.upsert(record)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_list_all_spans_owners_and_sessions(self):
+        self.assertEqual(len(self.store.list_all()), 3)
+
+    def test_list_all_filters_by_owner(self):
+        records = self.store.list_all(owner="alice@example.com")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].owner, "alice@example.com")
+
+    def test_list_all_filters_by_session(self):
+        records = self.store.list_all(session_id="s1")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].session_id, "s1")
+
+    def test_list_all_unknown_filters_return_empty(self):
+        self.assertEqual(self.store.list_all(owner="nobody@example.com"), [])
+        self.assertEqual(self.store.list_all(session_id="s-missing"), [])
+
+    def test_postgres_store_exposes_the_same_method(self):
+        # Prod uses the Postgres store; the backfill hard-errors without
+        # this rather than silently enumerating nothing.
+        from general_chat.sources import PostgresSourceStore
+
+        self.assertTrue(callable(getattr(PostgresSourceStore, "list_all", None)))

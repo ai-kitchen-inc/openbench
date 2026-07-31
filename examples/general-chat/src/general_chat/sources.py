@@ -120,7 +120,7 @@ DUCKDUCKGO_RESULT_SNIPPET = "result__snippet"
 
 
 def _without_nul(value: str) -> str:
-    return value.replace("\x00", "\uFFFD")
+    return value.replace("\x00", "\ufffd")
 
 
 def _sanitize_json_value(value: Any) -> Any:
@@ -132,10 +132,7 @@ def _sanitize_json_value(value: Any) -> Any:
     if isinstance(value, tuple):
         return [_sanitize_json_value(item) for item in value]
     if isinstance(value, dict):
-        return {
-            _without_nul(str(key)): _sanitize_json_value(item)
-            for key, item in value.items()
-        }
+        return {_without_nul(str(key)): _sanitize_json_value(item) for key, item in value.items()}
     return value
 
 
@@ -244,18 +241,10 @@ class SourceRecord:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SourceRecord:
         normalized = dict(data)
-        normalized["mime_type"] = normalized.pop(
-            "mimeType", normalized.get("mime_type", "")
-        )
-        normalized["session_id"] = normalized.pop(
-            "sessionId", normalized.get("session_id", "")
-        )
-        normalized["size_bytes"] = normalized.pop(
-            "sizeBytes", normalized.get("size_bytes", 0)
-        )
-        normalized["created_at"] = normalized.pop(
-            "createdAt", normalized.get("created_at", "")
-        )
+        normalized["mime_type"] = normalized.pop("mimeType", normalized.get("mime_type", ""))
+        normalized["session_id"] = normalized.pop("sessionId", normalized.get("session_id", ""))
+        normalized["size_bytes"] = normalized.pop("sizeBytes", normalized.get("size_bytes", 0))
+        normalized["created_at"] = normalized.pop("createdAt", normalized.get("created_at", ""))
         normalized.pop("extractedText", None)
         return cls(**normalized)
 
@@ -482,6 +471,22 @@ class SourceStore:
             records.extend(self._read(path))
         return records
 
+    def list_all(
+        self, *, owner: str | None = None, session_id: str | None = None
+    ) -> list[SourceRecord]:
+        """Every stored record, across sessions and owners.
+
+        Maintenance operations (backfill, audit) need to walk the whole
+        store; ``list`` only answers per-session. Filters are applied in
+        Python because the JSON layout is small enough to read whole.
+        """
+        records = self._list_all()
+        if owner is not None:
+            records = [record for record in records if (record.owner or "") == owner]
+        if session_id is not None:
+            records = [record for record in records if record.session_id == session_id]
+        return records
+
 
 class PostgresSourceStore:
     """PostgreSQL-backed per-session source store for GCE deployments."""
@@ -530,6 +535,35 @@ class PostgresSourceStore:
             rows = cur.fetchall()
         return [self._record_from_data(row[0]) for row in rows]
 
+    def list_all(
+        self, *, owner: str | None = None, session_id: str | None = None
+    ) -> list[SourceRecord]:
+        """Every stored record, across sessions and owners.
+
+        Maintenance operations (backfill, audit) need to walk the whole
+        table; ``list`` only answers per-session. The store's own owner
+        scope still applies on top of the ``owner`` argument.
+        """
+        clause, extra = self._owner_clause()
+        params: list[Any] = list(extra)
+        if owner is not None:
+            clause += " AND owner = %s"
+            params.append(owner)
+        if session_id is not None:
+            clause += " AND session_id = %s"
+            params.append(session_id)
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT data FROM {self.table_name}
+                WHERE 1 = 1{clause}
+                ORDER BY created_at
+                """,
+                tuple(params),
+            )
+            rows = cur.fetchall()
+        return [self._record_from_data(row[0]) for row in rows]
+
     def add(self, record: SourceRecord) -> SourceRecord:
         return self.upsert(record)
 
@@ -541,13 +575,9 @@ class PostgresSourceStore:
             with conn.cursor() as cur:
                 # Unscoped upsert (worker path) keeps the row's existing
                 # owner so background updates can't strip ownership.
-                owner_update = (
-                    "" if self.owner is None else ", owner = EXCLUDED.owner"
-                )
+                owner_update = "" if self.owner is None else ", owner = EXCLUDED.owner"
                 owner_guard = (
-                    ""
-                    if self.owner is None
-                    else f" WHERE {self.table_name}.owner = EXCLUDED.owner"
+                    "" if self.owner is None else f" WHERE {self.table_name}.owner = EXCLUDED.owner"
                 )
                 cur.execute(
                     f"""
@@ -780,10 +810,7 @@ class SourceParserRegistry:
                 stored_file.name,
             )
             return ParsedSourceContent(text=text)
-        if (
-            stored_file.mime_type in SPREADSHEET_MIME_TYPES
-            or ext in SPREADSHEET_EXTENSIONS
-        ):
+        if stored_file.mime_type in SPREADSHEET_MIME_TYPES or ext in SPREADSHEET_EXTENSIONS:
             return self._parse_spreadsheet(stored_file)
         if stored_file.mime_type in IMAGE_MIME_TYPES or ext in IMAGE_EXTENSIONS:
             return self._parse_image(stored_file)
@@ -893,9 +920,7 @@ class SourceParserRegistry:
         try:
             import pandas as pd
         except ImportError as exc:
-            raise ValueError(
-                "Install pandas and openpyxl for Excel source support."
-            ) from exc
+            raise ValueError("Install pandas and openpyxl for Excel source support.") from exc
 
         try:
             sheets = pd.read_excel(stored_file.path, sheet_name=None)
@@ -964,9 +989,7 @@ class BaseSearchDiscoveryProvider:
 
     provider_name = "base"
 
-    def search(
-        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
-    ) -> SearchProviderResponse:
+    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
         raise NotImplementedError
 
 
@@ -1092,9 +1115,7 @@ class DuckDuckGoSearchDiscoveryProvider(BaseSearchDiscoveryProvider):
     def __init__(self, transport: SearchHTTPTransport | None = None):
         self._transport = transport or SearchHTTPTransport()
 
-    def search(
-        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
-    ) -> SearchProviderResponse:
+    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
         import requests
 
         try:
@@ -1172,9 +1193,7 @@ class TavilySearchDiscoveryProvider(BaseSearchDiscoveryProvider):
         self._transport = transport or SearchHTTPTransport()
         self._api_key = api_key or os.getenv("TAVILY_API_KEY", "").strip()
 
-    def search(
-        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
-    ) -> SearchProviderResponse:
+    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
         import requests
 
         if not self._api_key:
@@ -1304,9 +1323,7 @@ class GroundedSearchDiscoveryProvider(BaseSearchDiscoveryProvider):
 
     provider_name = "grounded"
 
-    def search(
-        self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT
-    ) -> SearchProviderResponse:
+    def search(self, query: str, *, limit: int = DEFAULT_DISCOVERY_LIMIT) -> SearchProviderResponse:
         try:
             from openbench.data.sources.grounded_search import GroundedSearchSource
 
@@ -1361,10 +1378,10 @@ class SearchDiscoveryAdapter:
 
     def __init__(self, provider_name: str | None = None):
         requested = (
-            provider_name
-            or os.getenv("GENERAL_CHAT_DISCOVERY_PROVIDER")
-            or "tavily"
-        ).strip().lower()
+            (provider_name or os.getenv("GENERAL_CHAT_DISCOVERY_PROVIDER") or "tavily")
+            .strip()
+            .lower()
+        )
         self.provider_name = requested
         self._cache: dict[str, list[SearchDiscoveryResult]] = {}
         self._providers = self._build_provider_chain(requested)
@@ -1508,7 +1525,9 @@ class _DuckDuckGoResultsParser(HTMLParser):
                 self._current_link = {"url": href, "title": ""}
                 self._current_snippet_parts = []
                 self._in_anchor = True
-        elif tag in {"a", "span"} and DUCKDUCKGO_RESULT_SNIPPET in class_name and self._current_link:
+        elif (
+            tag in {"a", "span"} and DUCKDUCKGO_RESULT_SNIPPET in class_name and self._current_link
+        ):
             self._in_snippet = True
 
     def handle_endtag(self, tag: str) -> None:
@@ -1616,10 +1635,10 @@ def dashboard_source_text(stored_file: StoredFile, *, parsed_text: str) -> str:
             "For general table/metric aggregation requests, call "
             "aggregate_data.extract_metadata if you need column names, then write "
             "read-only SQLite SQL against table `data` and call "
-            f"aggregate_data.aggregate_data with path=\"{metadata['localFilePath']}\". "
+            f'aggregate_data.aggregate_data with path="{metadata["localFilePath"]}". '
             "For questions like whether a dashboard has already been made from this file, "
             "call dashboard_generator.search_dashboards with "
-            f"source_path=\"{metadata['localFilePath']}\" and answer from the match. "
+            f'source_path="{metadata["localFilePath"]}" and answer from the match. '
             "For previous-dashboard load requests, call dashboard_generator.search_dashboards "
             "or dashboard_generator.load_dashboard before asking for another file. "
             "For dashboard creation requests, call aggregate_data.extract_metadata "
@@ -1645,9 +1664,7 @@ def is_dashboard_template_file(filename: str, mime_type: str) -> bool:
     if mime_type in DASHBOARD_TEMPLATE_MIME_TYPES or ext in DASHBOARD_TEMPLATE_EXTENSIONS:
         return True
     return ext in {".md", ".markdown"} and (
-        stem in DASHBOARD_TEMPLATE_MARKDOWN_NAMES
-        or "template" in stem
-        or "design" in stem
+        stem in DASHBOARD_TEMPLATE_MARKDOWN_NAMES or "template" in stem or "design" in stem
     )
 
 
@@ -1684,7 +1701,7 @@ def dashboard_template_text(stored_file: StoredFile) -> str:
         "",
         (
             "For dashboard requests that mention this template, call "
-            f"generate_dashboard with template_path=\"{template_path}\" after "
+            f'generate_dashboard with template_path="{template_path}" after '
             "building the declarative OpenBench ViewModel. Still use "
             "aggregate_data.extract_metadata and aggregate_data.aggregate_data "
             "for uploaded spreadsheet data."
@@ -1791,14 +1808,14 @@ def image_search_text(
         "",
         (
             "To find visually similar CIFAR-10 images for this uploaded image, call "
-            f"image_search.search_similar_images with image_path=\"{metadata['imageSearchPath']}\"."
+            f'image_search.search_similar_images with image_path="{metadata["imageSearchPath"]}".'
         ),
         (
             "To count objects matching a text concept in this uploaded image, call "
             "sam_segmentation.count_objects_with_sam3 with "
-            f"image_path=\"{metadata['samSegmentationPath']}\" and concept set to "
-            "the noun phrase requested by the user, such as \"dog\", \"person\", "
-            "\"red apple\", or \"yellow school bus\". Call it once and answer from "
+            f'image_path="{metadata["samSegmentationPath"]}" and concept set to '
+            'the noun phrase requested by the user, such as "dog", "person", '
+            '"red apple", or "yellow school bus". Call it once and answer from '
             "the returned count when successful."
         ),
         (
