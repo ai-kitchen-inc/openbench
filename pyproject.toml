@@ -98,6 +98,9 @@ vector = [
 tabular = [
     "pandas>=2.0.0",
     "openpyxl>=3.1.0",
+    # Legacy .xls (pre-2007). Common in Indonesian government RAB files;
+    # pandas raises ImportError without it and the whole sheet is lost.
+    "xlrd>=2.0.1",
     "pyarrow>=15.0.0",
     "duckdb>=1.0.0",
 ]
