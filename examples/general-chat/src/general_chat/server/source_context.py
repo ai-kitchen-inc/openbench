@@ -47,6 +47,8 @@ DEFAULT_CARD_BUDGET = 24_000
 #: Below this a message is a greeting or an acknowledgement, not a
 #: question worth spending a retrieval round-trip on.
 MIN_QUERY_CHARS = 12
+#: Table names listed on a card beyond those rendered with a schema.
+MAX_NAMED_TABLES = 6
 
 
 @dataclass(frozen=True)
@@ -110,12 +112,16 @@ def is_indexed(record: Any) -> bool:
     return metadata.get("indexStatus") == "ready"
 
 
-def _routing_lines(record: Any) -> str:
-    """Preserve the existing tool-routing contracts on a card.
+ROUTING_NOTE_ID = "general-chat-source-routing"
 
-    These paths are how the image, dashboard, and template tools find
-    their input. They are small and load-bearing — the card replaces the
-    document *text*, not the routing.
+
+def _routing_lines(record: Any) -> str:
+    """Per-source tool paths.
+
+    Only the paths, which differ per source. The instructions that go
+    with them are identical for every source and are emitted once by
+    :func:`build_routing_note` — repeating them per card cost ~330 chars
+    each, which on a 34-spreadsheet session was 11k of pure duplication.
     """
     metadata = record.metadata or {}
     lines: list[str] = []
@@ -131,22 +137,47 @@ def _routing_lines(record: Any) -> str:
     dashboard_path = metadata.get("localFilePath")
     if record.kind == "spreadsheet" and isinstance(dashboard_path, str):
         lines.append(f"Dashboard source path: {dashboard_path}")
-        lines.append(
-            "For dashboard requests only: call aggregate_data.extract_metadata with "
-            "this path, then dashboard_generator.search_dashboards before any "
-            "aggregation; load a reusable match instead of regenerating. For every "
-            "other numeric question use query_source_table."
-        )
 
     template_path = metadata.get("dashboardTemplatePath")
     if record.kind == "dashboard_template" and isinstance(template_path, str):
         lines.append(f"Dashboard template path: {template_path}")
-        lines.append(
-            "For dashboard requests that should use this uploaded template, pass "
-            "this path as generate_dashboard(template_path=...)."
-        )
 
     return "\n".join(lines)
+
+
+def build_routing_note(records: list) -> Attachment | None:
+    """Emit the shared tool-routing instructions once for the whole turn.
+
+    Returns ``None`` when no source needs them.
+    """
+    kinds = {getattr(record, "kind", "") for record in records}
+    blocks: list[str] = []
+
+    if "spreadsheet" in kinds:
+        blocks.append(
+            "Spreadsheets: use query_source_table(sql=...) for every numeric "
+            "question - totals, counts, averages, rankings. Call "
+            "describe_source_table(table) first when you need a column list the "
+            "card does not show. Only for dashboard requests, call "
+            "aggregate_data.extract_metadata with that source's Dashboard source "
+            "path, then dashboard_generator.search_dashboards before any "
+            "aggregation, and load a reusable match instead of regenerating."
+        )
+    if "dashboard_template" in kinds:
+        blocks.append(
+            "Dashboard templates: pass the template path as generate_dashboard(template_path=...)."
+        )
+    if not blocks:
+        return None
+
+    return Attachment(
+        id=ROUTING_NOTE_ID,
+        type="file",
+        name="source-tools.md",
+        url="",
+        mime_type="text/markdown",
+        extracted_text="How to use the sources in this conversation:\n\n" + "\n\n".join(blocks),
+    )
 
 
 def _size_label(size_bytes: int) -> str:
@@ -159,11 +190,53 @@ def _size_label(size_bytes: int) -> str:
     return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
-def build_source_card(record: Any, *, label: str = "") -> Attachment:
+def _table_lines(table: dict, *, max_columns: int) -> str:
+    """Render one table's schema, bounded to ``max_columns`` columns.
+
+    Prefers the stored ``schemaCard`` but re-clips it: that card was
+    rendered at ingest with a generous column budget, which is fine on
+    its own and far too large when 40 sources each carry several.
+    """
+    name = table.get("table") or "table"
+    rows = table.get("rowCount")
+    cols = table.get("columnCount")
+    header = (
+        f'Table "{name}"  {rows:,} rows x {cols} cols'
+        if isinstance(rows, int)
+        else f'Table "{name}"'
+    )
+
+    card = table.get("schemaCard") or ""
+    detail = [line for line in card.splitlines()[1:] if line.strip().startswith("-")][:max_columns]
+    if not detail:
+        return header
+    more = (cols - len(detail)) if isinstance(cols, int) else 0
+    if more > 0:
+        detail.append(f"  ... and {more} more columns")
+    return "\n".join([header, *detail])
+
+
+def build_source_card(
+    record: Any,
+    *,
+    label: str = "",
+    max_tables: int = 3,
+    max_table_columns: int = 10,
+) -> Attachment:
     """Render one indexed source as a compact card.
 
     The card tells the model what the source is and how to read more; it
     deliberately does not carry the source's text.
+
+    Args:
+        record: The source record.
+        label: Framing line for injected source material.
+        max_tables: Tables rendered with a full column list. Workbooks
+            here routinely have 50+ sheets, and printing every schema
+            made the card larger than the full text it replaced — the
+            rest are named only, and ``describe_source_table`` exists to
+            fetch detail on demand.
+        max_table_columns: Columns listed per rendered table.
     """
     metadata = record.metadata or {}
     lines = [f"Source: {record.name}   (id: {record.id})"]
@@ -192,16 +265,16 @@ def build_source_card(record: Any, *, label: str = "") -> Attachment:
         lines.append(f"Summary: {summary}")
 
     tables = metadata.get("tables") or []
-    for table in tables:
-        card = table.get("schemaCard")
-        if card:
-            lines.append(card)
     if tables:
-        names = ", ".join(f'"{table.get("table")}"' for table in tables if table.get("table"))
-        lines.append(
-            f"Answer numeric questions about {names} with query_source_table(sql=...) - "
-            "aggregate in SQL rather than estimating from the sample rows."
-        )
+        detailed = tables[:max_tables] if max_tables > 0 else []
+        lines.extend(_table_lines(table, max_columns=max_table_columns) for table in detailed)
+        remaining = tables[len(detailed) :]
+        if remaining:
+            shown = remaining[:MAX_NAMED_TABLES]
+            names = ", ".join(str(table.get("table")) for table in shown)
+            suffix = f", +{len(remaining) - len(shown)} more" if len(remaining) > len(shown) else ""
+            lines.append(f"{len(remaining)} more table(s): {names}{suffix}")
+        lines.append(f"{len(tables)} table(s) total; query them with query_source_table.")
 
     routing = _routing_lines(record)
     if routing:
@@ -302,29 +375,45 @@ def build_retrieved_context_attachment(
     )
 
 
-def apply_card_budget(attachments: list[Attachment], budget: int | None = None) -> list[Attachment]:
-    """Trim the card list if it somehow grows past its advisory cap.
+#: Progressively leaner card renderings, tried in order until the whole
+#: set fits the budget. Losing detail is always better than losing a
+#: source: a source the model cannot see is one it will never mention.
+CARD_TIERS: tuple[dict[str, int], ...] = (
+    {"max_tables": 3, "max_table_columns": 10},
+    {"max_tables": 1, "max_table_columns": 6},
+    {"max_tables": 0, "max_table_columns": 0},
+)
 
-    Cards are small by construction, so this should never fire; it exists
-    so a pathological session degrades instead of failing the request.
+
+def _total_chars(attachments: list[Attachment]) -> int:
+    return sum(len(a.extracted_text or "") for a in attachments)
+
+
+def build_cards_within_budget(
+    records: list, *, label: str = "", budget: int | None = None
+) -> list[Attachment]:
+    """Render every source's card, shrinking detail until the set fits.
+
+    Never drops a source. An earlier version trimmed by removing whole
+    cards, which silently hid 32 of 34 sources in a real session: the
+    model then had no idea those documents existed, which is a far worse
+    failure than a terse card.
     """
     limit = card_budget() if budget is None else budget
-    if limit <= 0:
-        return attachments
-    total = sum(len(a.extracted_text or "") for a in attachments)
-    if total <= limit:
-        return attachments
+    cards: list[Attachment] = []
+    for tier in CARD_TIERS:
+        cards = [build_source_card(record, label=label, **tier) for record in records]
+        if limit <= 0 or _total_chars(cards) <= limit:
+            return cards
 
-    logger.warning("Source cards exceeded the card budget (%d > %d chars); trimming", total, limit)
-    kept: list[Attachment] = []
-    used = 0
-    for attachment in attachments:
-        size = len(attachment.extracted_text or "")
-        if used + size > limit and kept:
-            continue
-        used += size
-        kept.append(attachment)
-    return kept
+    logger.warning(
+        "Source cards exceed the budget even at the leanest tier "
+        "(%d > %d chars across %d sources); sending them anyway",
+        _total_chars(cards),
+        limit,
+        len(records),
+    )
+    return cards
 
 
 def build_source_attachments(
@@ -365,8 +454,11 @@ def build_source_attachments(
     )
     set_source_scope(scope if indexed else None)
 
-    attachments = [build_source_card(record, label=label) for record in indexed]
-    attachments = apply_card_budget(attachments)
+    attachments = build_cards_within_budget(indexed, label=label)
+
+    routing_note = build_routing_note(indexed)
+    if routing_note is not None:
+        attachments.append(routing_note)
 
     if indexed:
         retrieved = build_retrieved_context_attachment(content, scope, index=index, label=label)
@@ -390,7 +482,8 @@ __all__ = [
     "MODE_FULL",
     "RETRIEVED_CONTEXT_ID",
     "SourceScope",
-    "apply_card_budget",
+    "CARD_TIERS",
+    "build_cards_within_budget",
     "build_retrieved_context_attachment",
     "build_source_attachments",
     "build_source_card",

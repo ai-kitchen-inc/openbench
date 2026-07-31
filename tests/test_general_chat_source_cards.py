@@ -80,6 +80,38 @@ def _record(
     return record
 
 
+def _workbook_record(source_id: str, *, sheets: int = 25):
+    """A spreadsheet source shaped like the real RAB uploads.
+
+    Many sheets, each with a wide column list — the shape that blew the
+    card budget in production.
+    """
+    tables = []
+    for sheet in range(sheets):
+        columns = "\n".join(
+            f"  - Kolom {col} untuk kebutuhan alat kesehatan str (30 distinct) [12 null]"
+            for col in range(14)
+        )
+        tables.append(
+            {
+                "table": f"sheet_{sheet}",
+                "displayName": f"Sheet {sheet}",
+                "rowCount": 120,
+                "columnCount": 14,
+                "schemaCard": f'Table "sheet_{sheet}"  120 rows x 14 cols\n{columns}',
+            }
+        )
+    return _record(
+        source_id,
+        name=f"RAB ALKES {source_id}.xlsx",
+        kind="spreadsheet",
+        metadata={
+            "localFilePath": f"/general-chat/uploads/file-{source_id}/rab.xlsx",
+            "tables": tables,
+        },
+    )
+
+
 class _FakeIndex:
     def __init__(self, items=None, fail=False):
         self.items = items if items is not None else []
@@ -239,9 +271,13 @@ class TestCard(SourceContextTestCase):
             metadata={"localFilePath": "/general-chat/uploads/file-abc/penjualan.xlsx"},
         )
         card = build_source_card(record).extracted_text
+        # The per-source path stays on the card; the instructions that go
+        # with it are emitted once per turn by the routing note.
         self.assertIn("Dashboard source path:", card)
-        self.assertIn("aggregate_data.extract_metadata", card)
-        self.assertIn("dashboard_generator.search_dashboards", card)
+        note = source_context.build_routing_note([record])
+        self.assertIsNotNone(note)
+        self.assertIn("aggregate_data.extract_metadata", note.extracted_text)
+        self.assertIn("dashboard_generator.search_dashboards", note.extracted_text)
 
     def test_image_card_preserves_image_tool_paths(self):
         record = _record(
@@ -266,7 +302,9 @@ class TestCard(SourceContextTestCase):
         )
         card = build_source_card(record).extracted_text
         self.assertIn("Dashboard template path:", card)
-        self.assertIn("generate_dashboard(template_path=", card)
+        note = source_context.build_routing_note([record])
+        self.assertIsNotNone(note)
+        self.assertIn("generate_dashboard(template_path=", note.extracted_text)
 
 
 class TestCardMode(SourceContextTestCase):
@@ -345,6 +383,80 @@ class TestCardMode(SourceContextTestCase):
         )
         total = sum(len(a.extracted_text or "") for a in built)
         self.assertLess(total, source_context.card_budget() + 4000)
+
+    def test_many_multi_sheet_workbooks_keep_every_source(self):
+        """Reproduces the production regression.
+
+        34 spreadsheets, each a workbook with many sheets. Rendering every
+        sheet's schema made the card set 243k chars, and the old trimmer
+        responded by deleting whole cards — 32 of 34 sources vanished from
+        the prompt entirely.
+        """
+        records = [_workbook_record(f"source-wb{index}", sheets=25) for index in range(34)]
+        built = build_source_attachments(
+            records,
+            "berapa total harga alat kesehatan?",
+            index=_FakeIndex(),
+            legacy_builder=_legacy_builder,
+        )
+        cards = [a for a in built if a.id.startswith(source_context.SOURCE_CARD_PREFIX)]
+        self.assertEqual(len(cards), 34, "every source must still have a card")
+
+        card_chars = sum(len(a.extracted_text or "") for a in cards)
+        self.assertLessEqual(
+            card_chars,
+            source_context.card_budget(),
+            f"cards were {card_chars:,} chars, over the {source_context.card_budget():,} budget",
+        )
+
+        # The equivalent full-text prompt for this session in production
+        # was ~53k chars; the whole point is to be well under that.
+        total = sum(len(a.extracted_text or "") for a in built)
+        self.assertLess(total, 30_000, f"total context was {total:,} chars")
+
+    def test_shared_routing_text_is_not_repeated_per_card(self):
+        records = [_workbook_record(f"source-wb{index}", sheets=4) for index in range(10)]
+        built = build_source_attachments(
+            records, "berapa total?", index=_FakeIndex(), legacy_builder=_legacy_builder
+        )
+        joined = "\n".join(a.extracted_text or "" for a in built)
+        # The dashboard instructions appear once, in the shared note.
+        self.assertEqual(joined.count("aggregate_data.extract_metadata"), 1)
+        notes = [a for a in built if a.id == source_context.ROUTING_NOTE_ID]
+        self.assertEqual(len(notes), 1)
+        # Per-source paths still ride on each card.
+        for record in records:
+            self.assertIn(record.metadata["localFilePath"], joined)
+
+    def test_no_routing_note_without_tool_bearing_sources(self):
+        built = build_source_attachments(
+            [_record()],
+            "berapa pendapatan?",
+            index=_FakeIndex(),
+            legacy_builder=_legacy_builder,
+        )
+        self.assertFalse([a for a in built if a.id == source_context.ROUTING_NOTE_ID])
+
+    def test_every_source_id_appears_in_the_prompt(self):
+        records = [_workbook_record(f"source-wb{index}", sheets=25) for index in range(34)]
+        built = build_source_attachments(
+            records, "berapa total?", index=_FakeIndex(), legacy_builder=_legacy_builder
+        )
+        joined = "\n".join(a.extracted_text or "" for a in built)
+        for record in records:
+            self.assertIn(record.id, joined)
+
+    def test_unrendered_tables_are_still_named(self):
+        record = _workbook_record("source-wb", sheets=25)
+        card = build_source_card(record, max_tables=3, max_table_columns=10)
+        text = card.extracted_text
+        # Tables past the rendered few are named, not silently dropped.
+        self.assertIn("more table(s)", text)
+        self.assertIn("25 table(s) total", text)
+        self.assertIn("query_source_table", text)
+        # How to get the columns that aren't shown lives in the note.
+        note = source_context.build_routing_note([record])
+        self.assertIn("describe_source_table", note.extracted_text)
 
     def test_no_records_publishes_no_scope(self):
         self.assertEqual(
