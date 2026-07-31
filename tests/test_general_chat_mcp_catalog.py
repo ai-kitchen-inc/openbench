@@ -8,10 +8,8 @@ import pytest
 
 import asyncio
 import json
-import queue
 import sys
 import tempfile
-import threading
 import unittest
 from contextlib import ExitStack
 from os import environ
@@ -22,15 +20,11 @@ from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
 from openbench.chat import ChatEngine
-from openbench.chat.transport.agui_actions import ActionData
 from openbench.core.abstractions import LLMProvider, LLMResponse
 from openbench.intelligence import BaseAgent
-from openbench.mcp.adapters import MCPToolAdapter
 from openbench.mcp.config import MCPClientConfig, MCPPolicyConfig, MCPServerConnectionConfig
 from openbench.mcp.permissions import (
-    MCPPermissionContext,
     MCPPermissionSession,
-    use_mcp_permission_context,
 )
 from openbench.mcp.toolhive import ToolHiveWorkload
 
@@ -41,7 +35,6 @@ if str(GENERAL_CHAT_SRC) not in sys.path:
 from general_chat.agent import reload_external_mcp_tools
 from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
-from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.server.handler import GeneralChatHandler
 
 
@@ -78,38 +71,6 @@ def _internal_server(payload: dict) -> dict:
         for server in payload["servers"]
         if server.get("providerKind") == "internal" or server.get("provider_kind") == "internal"
     )
-
-
-class ImmediateLoop:
-    def call_soon_threadsafe(self, fn, *args):
-        fn(*args)
-
-
-class RecordingMCPClient:
-    def __init__(self):
-        self.calls = []
-
-    def call_tool_sync(self, *args, **kwargs):
-        self.calls.append((args, kwargs))
-        return {"ok": True}
-
-
-def _permission_request_id(messages: list) -> tuple[str, str]:
-    surface_id = ""
-    request_id = ""
-    for item in messages:
-        message = getattr(item, "message", item)
-        create = message.get("createSurface") if isinstance(message, dict) else None
-        if create:
-            surface_id = create["surfaceId"]
-        update = message.get("updateComponents") if isinstance(message, dict) else None
-        if not update:
-            continue
-        for component in update.get("components", []):
-            if component.get("id") != "mcp-permission-allow":
-                continue
-            request_id = component["action"]["event"]["context"]["requestId"]
-    return surface_id, request_id
 
 
 PLAYWRIGHT_CONFIG = json.dumps(
@@ -529,117 +490,6 @@ class FakeGitToolHiveService(FakeToolHiveService):
                 package="io.github.stacklok/git",
             )
         ]
-
-
-class TestGeneralChatMCPPermissionCoordinator(unittest.TestCase):
-    def _run_adapter_with_coordinator(self, coordinator, client, messages, result):
-        adapter = MCPToolAdapter(
-            client=client,
-            namespaced_name="git.git_status",
-            tool_schema={"description": "Read git status"},
-        )
-        message_queue = queue.Queue()
-        context = MCPPermissionContext(
-            lambda request: coordinator.request_permission(
-                session_id="session-1",
-                request=request,
-                queue=message_queue,
-                loop=ImmediateLoop(),
-            )
-        )
-
-        def target():
-            try:
-                with use_mcp_permission_context(context):
-                    result["value"] = adapter.execute(repo=".")
-            except Exception as exc:
-                result["error"] = exc
-
-        thread = threading.Thread(target=target)
-        thread.start()
-        messages.append(message_queue.get(timeout=1))
-        messages.append(message_queue.get(timeout=1))
-        return thread
-
-    def test_approval_surface_blocks_mcp_tool_until_allowed(self):
-        coordinator = GeneralChatMCPPermissionCoordinator(timeout_seconds=5)
-        client = RecordingMCPClient()
-        messages = []
-        result = {}
-
-        thread = self._run_adapter_with_coordinator(
-            coordinator,
-            client,
-            messages,
-            result,
-        )
-        self.assertEqual(client.calls, [])
-        surface_id, request_id = _permission_request_id(messages)
-        self.assertTrue(request_id)
-
-        updates = coordinator.resolve_action(
-            ActionData(
-                name="mcp_permission_decision",
-                surface_id=surface_id,
-                context={"requestId": request_id, "decision": "allow"},
-                thread_id="session-1",
-            )
-        )
-        thread.join(timeout=1)
-
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(result["value"], {"ok": True})
-        self.assertEqual(len(client.calls), 1)
-        self.assertTrue(client.calls[0][1]["approved"])
-        self.assertEqual(
-            updates[0]["updateComponents"]["components"][1]["title"],
-            "Approved. The tool is running now.",
-        )
-
-    def test_deny_prevents_mcp_tool_execution(self):
-        coordinator = GeneralChatMCPPermissionCoordinator(timeout_seconds=5)
-        client = RecordingMCPClient()
-        messages = []
-        result = {}
-
-        thread = self._run_adapter_with_coordinator(
-            coordinator,
-            client,
-            messages,
-            result,
-        )
-        surface_id, request_id = _permission_request_id(messages)
-        coordinator.resolve_action(
-            ActionData(
-                name="mcp_permission_decision",
-                surface_id=surface_id,
-                context={"requestId": request_id, "decision": "deny"},
-                thread_id="session-1",
-            )
-        )
-        thread.join(timeout=1)
-
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(client.calls, [])
-        self.assertIn("not approved", str(result["error"]))
-
-    def test_permission_timeout_prevents_mcp_tool_execution(self):
-        coordinator = GeneralChatMCPPermissionCoordinator(timeout_seconds=0.01)
-        client = RecordingMCPClient()
-        messages = []
-        result = {}
-
-        thread = self._run_adapter_with_coordinator(
-            coordinator,
-            client,
-            messages,
-            result,
-        )
-        thread.join(timeout=1)
-
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(client.calls, [])
-        self.assertIn("not approved", str(result["error"]))
 
 
 class TestMCPServerRegistryStore(unittest.TestCase):

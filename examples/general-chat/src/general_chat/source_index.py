@@ -31,6 +31,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TEXT_INDEX_MIN_CHARS = 2_000
 
+#: This deployment has GOOGLE_API_KEY and no OPENAI_API_KEY, so the
+#: provider is pinned rather than left to the SDK's OpenAI default.
+DEFAULT_EMBEDDING_PROVIDER = "google"
+DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
+#: gemini-embedding-001 is natively 3072-dim; pgvector's HNSW index tops
+#: out at 2000, so it is requested at 1536 via Matryoshka scaling.
+DEFAULT_EMBEDDING_DIM = 1536
+
 _UNSET = object()
 _document_index: Any = _UNSET
 _table_catalog: Any = _UNSET
@@ -106,13 +114,57 @@ def get_document_index() -> Any:
         _document_index = build_document_index(
             database_url=_database_url(),
             storage_root=storage_root(),
-            embedding_model=os.getenv("OPENBENCH_EMBEDDING_MODEL") or None,
-            dimension=_env_int("OPENBENCH_EMBEDDING_DIM", 1536),
+            # Default to Google explicitly. Without a provider name the SDK
+            # resolver falls through to OpenAI, and this deployment has a
+            # GOOGLE_API_KEY but no OPENAI_API_KEY.
+            embedding_provider_name=(
+                os.getenv("OPENBENCH_EMBEDDING_PROVIDER") or DEFAULT_EMBEDDING_PROVIDER
+            ),
+            embedding_model=(os.getenv("OPENBENCH_EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODEL),
+            # Must stay <= 2000: pgvector's HNSW index rejects more, and
+            # gemini-embedding-001 defaults to 3072 unless asked otherwise.
+            dimension=_env_int("OPENBENCH_EMBEDDING_DIM", DEFAULT_EMBEDDING_DIM),
         )
     except Exception:
         logger.warning("Could not build the document index; sources stay unindexed", exc_info=True)
         _document_index = None
     return _document_index
+
+
+def check_embeddings(*, log: bool = True) -> dict[str, Any] | None:
+    """Probe the embedding provider once, at startup.
+
+    A bad key or a dimension mismatch would otherwise surface only as a
+    silent ``indexStatus=failed`` on every upload, which is far harder to
+    diagnose than one explicit line in the container log.
+
+    Returns ``None`` when the index is disabled; never raises.
+    """
+    index = get_document_index()
+    if index is None:
+        return None
+
+    result = index.check_embeddings()
+    if not log:
+        return result
+
+    if result.get("ok"):
+        logger.info(
+            "[general-chat] embeddings ready: provider=%s model=%s dim=%s",
+            result.get("provider"),
+            result.get("model"),
+            result.get("actual_dimension"),
+        )
+    else:
+        logger.error(
+            "[general-chat] EMBEDDINGS UNAVAILABLE — uploads will not be indexed. "
+            "provider=%s model=%s expected_dim=%s: %s",
+            result.get("provider"),
+            result.get("model"),
+            result.get("expected_dimension"),
+            result.get("error"),
+        )
+    return result
 
 
 def get_table_catalog() -> Any:
@@ -340,6 +392,7 @@ def deindex_records(records: list) -> None:
 
 
 __all__ = [
+    "check_embeddings",
     "deindex_records",
     "deindex_source",
     "get_document_index",

@@ -59,6 +59,7 @@ from general_chat.server.handler import GeneralChatHandler, set_source_context_l
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.server.publish_store import PublishStore
 from general_chat.source_index import (
+    check_embeddings,
     deindex_records,
     index_source_record,
     source_index_enabled,
@@ -488,6 +489,10 @@ def create_app() -> FastAPI:
     source_index_semaphore = asyncio.Semaphore(
         max(1, _env_int("GENERAL_CHAT_SOURCE_INDEX_CONCURRENCY", 2))
     )
+    if source_index_enabled():
+        # One explicit line in the log beats a silent indexStatus=failed on
+        # every upload when the key or the dimension is wrong.
+        check_embeddings()
     user_store = build_user_store(storage_root)
     settings_store = build_settings_store(storage_root)
     capability_cache = CapabilityCache(settings_store)

@@ -329,6 +329,119 @@ class TestDeletion(SQLiteDocumentIndexTestCase):
         self.assertFalse(self.store.update("source-del-chunk-9999", "x"))
 
 
+class TestEmbeddingProviderResolution(unittest.TestCase):
+    """The store must resolve provider AND dimension explicitly.
+
+    ``EmbeddingMixin`` resolves with the model alone, which in a
+    Google-only deployment silently produces an OpenAI provider, and
+    never forwards the dimension — so a Google model would emit 3072-dim
+    vectors into a 1536-dim column. Both would only fail in production.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self._saved_key = os.environ.get("GOOGLE_API_KEY")
+        os.environ["GOOGLE_API_KEY"] = "test-key-not-used"
+
+    def tearDown(self):
+        if self._saved_key is None:
+            os.environ.pop("GOOGLE_API_KEY", None)
+        else:
+            os.environ["GOOGLE_API_KEY"] = self._saved_key
+        self._tmp.cleanup()
+
+    def _store(self, **kwargs):
+        return DocumentIndexStore(sqlite_path=self.root / "resolve.sqlite3", **kwargs)
+
+    def test_named_provider_is_honoured(self):
+        from openbench.intelligence.embeddings import GoogleEmbeddingProvider
+
+        store = self._store(
+            embedding_provider_name="google",
+            embedding_model="gemini-embedding-001",
+            dimension=1536,
+        )
+        try:
+            self.assertIsInstance(store._get_embedding_provider(), GoogleEmbeddingProvider)
+        finally:
+            store.close()
+
+    def test_requested_dimension_reaches_the_provider(self):
+        store = self._store(
+            embedding_provider_name="google",
+            embedding_model="gemini-embedding-001",
+            dimension=1536,
+        )
+        try:
+            provider = store._get_embedding_provider()
+            # Without the fix this returns the model default of 3072.
+            self.assertEqual(provider.get_dimension(), 1536)
+            self.assertEqual(store._get_dimension(), 1536)
+        finally:
+            store.close()
+
+    def test_injected_provider_still_wins(self):
+        provider = FakeEmbeddingProvider()
+        store = self._store(embedding_provider=provider, embedding_provider_name="google")
+        try:
+            self.assertIs(store._get_embedding_provider(), provider)
+        finally:
+            store.close()
+
+    def test_dimension_mismatch_raises_a_readable_error(self):
+        from openbench.data.stores.exceptions import StoreError
+
+        # Provider yields 32 dims; the index was configured for 1536.
+        store = self._store(embedding_provider=FakeEmbeddingProvider(32), dimension=1536)
+        try:
+            with self.assertRaises(StoreError) as ctx:
+                store.index_text("some text to index", source_id="s", session_id="s1")
+            message = str(ctx.exception)
+            self.assertIn("32", message)
+            self.assertIn("1536", message)
+        finally:
+            store.close()
+
+    def test_check_embeddings_reports_success(self):
+        store = self._store(embedding_provider=FakeEmbeddingProvider(32), dimension=32)
+        try:
+            result = store.check_embeddings()
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["actual_dimension"], 32)
+            self.assertIsNone(result["error"])
+        finally:
+            store.close()
+
+    def test_check_embeddings_reports_a_dimension_mismatch(self):
+        store = self._store(embedding_provider=FakeEmbeddingProvider(32), dimension=1536)
+        try:
+            result = store.check_embeddings()
+            self.assertFalse(result["ok"])
+            self.assertIn("1536", result["error"])
+        finally:
+            store.close()
+
+    def test_check_embeddings_reports_a_broken_provider(self):
+        class Broken:
+            def embed(self, text, model=None):
+                raise RuntimeError("api key not valid")
+
+            def embed_batch(self, texts, model=None, batch_size=100):
+                raise RuntimeError("api key not valid")
+
+            def get_dimension(self, model=None):
+                return 1536
+
+        store = self._store(embedding_provider=Broken(), dimension=1536)
+        try:
+            result = store.check_embeddings()
+            self.assertFalse(result["ok"])
+            self.assertIn("api key", result["error"])
+        finally:
+            store.close()
+
+
 class TestBuildDocumentIndex(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

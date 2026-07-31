@@ -942,6 +942,7 @@ class DocumentIndexStore(DataStore, EmbeddingMixin, HybridSearchMixin):
         sqlite_path: str | Path | None = None,
         table_name: str = DEFAULT_CHUNK_TABLE,
         embedding_provider: Any = None,
+        embedding_provider_name: str | None = None,
         embedding_model: str | None = None,
         dimension: int | None = None,
         chunking: ChunkingConfig | None = None,
@@ -961,6 +962,7 @@ class DocumentIndexStore(DataStore, EmbeddingMixin, HybridSearchMixin):
 
         self.backend = backend
         self._embedding_provider = embedding_provider
+        self._embedding_provider_name = embedding_provider_name
         self._embedding_model = embedding_model
         self._dimension = dimension
         self.chunking = chunking or ChunkingConfig()
@@ -973,6 +975,69 @@ class DocumentIndexStore(DataStore, EmbeddingMixin, HybridSearchMixin):
     def store_type(self) -> str:
         return "vector"
 
+    def _get_embedding_provider(self) -> Any:
+        """Resolve the provider with an explicit name *and* dimension.
+
+        ``EmbeddingMixin`` resolves with the model alone, which cannot
+        express either. That default is wrong here in two ways: with no
+        model configured it falls through to OpenAI, and the store's
+        dimension never reaches the provider — so a Google model returns
+        its native 3072-dim vectors into a ``vector(1536)`` column and
+        every insert fails. Passing both is the supported path;
+        ``resolve_embedding_provider`` forwards them to the constructor.
+        """
+        if self._embedding_provider is not None:
+            return self._embedding_provider
+
+        from openbench.intelligence.embeddings import resolve_embedding_provider
+
+        kwargs: dict[str, Any] = {}
+        if self._dimension is not None:
+            kwargs["dimension"] = self._dimension
+
+        self._embedding_provider = resolve_embedding_provider(
+            model=self._embedding_model,
+            provider=self._embedding_provider_name,
+            **kwargs,
+        )
+        return self._embedding_provider
+
+    def check_embeddings(self) -> dict[str, Any]:
+        """Embed a short probe string to surface misconfiguration early.
+
+        Called once at startup by the host application. Without it a bad
+        key or a dimension mismatch shows up only as a silent per-upload
+        indexing failure, which is much harder to trace.
+
+        Returns:
+            ``{"ok": bool, "provider", "model", "expected_dimension",
+            "actual_dimension", "error"}`` — never raises.
+        """
+        expected = self._dimension
+        info: dict[str, Any] = {
+            "ok": False,
+            "provider": self._embedding_provider_name,
+            "model": self._embedding_model,
+            "expected_dimension": expected,
+            "actual_dimension": None,
+            "error": None,
+        }
+        try:
+            vector = self._embed("openbench embedding probe")
+            info["actual_dimension"] = len(vector)
+            info["provider"] = type(self._get_embedding_provider()).__name__
+            if expected is not None and len(vector) != expected:
+                info["error"] = (
+                    f"provider returned {len(vector)} dimensions but the index "
+                    f"column expects {expected}; set OPENBENCH_EMBEDDING_DIM to "
+                    "match the model or pick a model that supports this size"
+                )
+                return info
+            info["ok"] = True
+        except Exception as exc:
+            info["error"] = str(exc)
+        return info
+
     def _ensure_schema(self) -> None:
         if not self._schema_ready:
             self.backend.ensure_schema(self._get_dimension())
@@ -980,9 +1045,28 @@ class DocumentIndexStore(DataStore, EmbeddingMixin, HybridSearchMixin):
 
     def _vectors_for(self, texts: list[str]) -> list[list[float]]:
         vectors = self._embed_batch(texts)
+        self._assert_dimension(vectors)
         if self.normalize_vectors:
             return [_normalize(vector) for vector in vectors]
         return vectors
+
+    def _assert_dimension(self, vectors: list[list[float]]) -> None:
+        """Fail with a readable message on a dimension mismatch.
+
+        Postgres would otherwise reject the insert with an opaque vector
+        error, and SQLite would silently store unusable embeddings.
+        """
+        if not vectors:
+            return
+        expected = self._get_dimension()
+        actual = len(vectors[0])
+        if actual != expected:
+            raise StoreError(
+                f"Embedding provider returned {actual}-dimension vectors but the "
+                f"index expects {expected}. Set the embedding dimension to match "
+                f"the model (model={self._embedding_model!r}, "
+                f"provider={self._embedding_provider_name!r})."
+            )
 
     def _vector_for(self, text: str) -> list[float]:
         vector = self._embed(text)
