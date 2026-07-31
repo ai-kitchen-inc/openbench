@@ -624,14 +624,21 @@ class PgVectorBackend(DocumentIndexBackend):
         """True when the pgvector extension is in use."""
         return self._vector_native
 
+    @contextmanager
     def _connection(self):
+        """Yield a connection, closing only the ones we opened."""
         if self._conn is not None:
-            return _ExternalConnection(self._conn)
+            yield self._conn
+            return
         try:
             import psycopg
         except ImportError as exc:  # pragma: no cover - environment dependent
             raise ImportError("PgVectorBackend requires psycopg. Install openbench[gcp].") from exc
-        return psycopg.connect(self.database_url)
+        conn = psycopg.connect(str(self.database_url))
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def ensure_schema(self, dimension: int) -> None:
         self._dimension = dimension
@@ -916,19 +923,6 @@ class PgVectorBackend(DocumentIndexBackend):
             "sources": int(row[1]) if row else 0,
             "vector_native": self._vector_native,
         }
-
-
-class _ExternalConnection:
-    """Wrap a caller-owned connection so ``with`` does not close it."""
-
-    def __init__(self, conn: Any):
-        self.conn = conn
-
-    def __enter__(self):
-        return self.conn
-
-    def __exit__(self, exc_type, exc, tb) -> bool:
-        return False
 
 
 class DocumentIndexStore(DataStore, EmbeddingMixin, HybridSearchMixin):

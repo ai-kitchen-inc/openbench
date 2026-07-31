@@ -94,6 +94,14 @@ vector = [
     "pinecone-client>=3.0.0",
 ]
 
+# Parquet-backed tables + guarded DuckDB SQL over uploaded spreadsheets.
+tabular = [
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+    "pyarrow>=15.0.0",
+    "duckdb>=1.0.0",
+]
+
 gdrive = [
     "google-api-python-client>=2.100.0",
     "google-auth>=2.25.0",
@@ -138,7 +146,7 @@ mcp = [
 ]
 
 all = [
-    "openbench[dev,data,intelligence,output,security,google,vector,search,extraction,epub,media,chat,mcp,gcp]"
+    "openbench[dev,data,intelligence,output,security,google,vector,tabular,search,extraction,epub,media,chat,mcp,gcp]"
 ]
 
 [project.urls]
@@ -228,6 +236,9 @@ module = [
     "ag_ui.*",
     "mcp.*",
     "yaml.*",
+    "pandas.*",
+    "pyarrow.*",
+    "duckdb.*",
 ]
 ignore_missing_imports = true
 
