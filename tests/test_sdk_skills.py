@@ -14,11 +14,12 @@ from __future__ import annotations
 import copy
 import json
 import os
+import sys
 import tempfile
 import unittest
-from unittest import mock
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from openbench.intelligence.skill import Skill
 from openbench.intelligence.skill_registry import SkillRegistry
@@ -36,6 +37,8 @@ class TestSDKSkillsDiscovery(unittest.TestCase):
         "export-excel",
         "pdf-tools",
         "query-explorer",
+        "source-retrieval",
+        "table-query",
         "web-search",
     }
 
@@ -360,9 +363,7 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         if self._old_dashboard_memory_enabled is None:
             os.environ.pop("OPENBENCH_DASHBOARD_MEMORY_ENABLED", None)
         else:
-            os.environ["OPENBENCH_DASHBOARD_MEMORY_ENABLED"] = (
-                self._old_dashboard_memory_enabled
-            )
+            os.environ["OPENBENCH_DASHBOARD_MEMORY_ENABLED"] = self._old_dashboard_memory_enabled
         if self._old_dashboard_state_path is None:
             os.environ.pop("OPENBENCH_DASHBOARD_STATE_PATH", None)
         else:
@@ -458,9 +459,7 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
 
         self.assertEqual(result["errors"], [])
         self.assertEqual(len(result["datasets"]), 2)
-        self.assertEqual(
-            {ds["id"] for ds in result["datasets"]}, {"dataset_1", "dataset_2"}
-        )
+        self.assertEqual({ds["id"] for ds in result["datasets"]}, {"dataset_1", "dataset_2"})
 
     def test_aggregate_data_rejects_destructive_sql(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -736,10 +735,7 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
                 },
             )
 
-        by_title = {
-            item["title"]: item
-            for item in revised["viewModel"]["sections"][0]["items"]
-        }
+        by_title = {item["title"]: item for item in revised["viewModel"]["sections"][0]["items"]}
         self.assertEqual(by_title["Revenue Share"]["chart_type"], "pie")
         self.assertEqual(by_title["Revenue Trend"]["chart_type"], "line")
         self.assertEqual(revised["revisionMerge"]["applied_keys"], [])
@@ -815,10 +811,7 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
 
         self.assertEqual(revised["datasets"]["share"][0]["revenue"], 200)
         self.assertEqual(revised["datasets"]["trend"][0]["revenue"], 100)
-        by_title = {
-            item["title"]: item
-            for item in revised["viewModel"]["sections"][0]["items"]
-        }
+        by_title = {item["title"]: item for item in revised["viewModel"]["sections"][0]["items"]}
         self.assertEqual(by_title["Revenue Share"]["chart_type"], "bar")
         self.assertEqual(by_title["Revenue Trend"]["chart_type"], "line")
 
@@ -885,10 +878,7 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
                 view_model=noncanonical_revision,
             )
 
-        by_title = {
-            item["title"]: item
-            for item in revised["viewModel"]["sections"][0]["items"]
-        }
+        by_title = {item["title"]: item for item in revised["viewModel"]["sections"][0]["items"]}
         self.assertEqual(by_title["Revenue by Coffee Name"]["chart_type"], "pie")
         self.assertEqual(by_title["Revenue by Time of Day"]["chart_type"], "pie")
         self.assertTrue(revised["revisionMerge"]["auto_revision"])
@@ -941,10 +931,7 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
             )
             revised = self.tools["generate_dashboard"](output_dir=tmp, view_model=drifted)
 
-        by_title = {
-            item["title"]: item
-            for item in revised["viewModel"]["sections"][0]["items"]
-        }
+        by_title = {item["title"]: item for item in revised["viewModel"]["sections"][0]["items"]}
         self.assertEqual(by_title["Revenue by Coffee Name"]["chart_type"], "pie")
         self.assertEqual(by_title["Revenue by Time of Day"]["chart_type"], "pie")
 
@@ -991,10 +978,7 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
                 view_model=regenerated,
             )
 
-        by_title = {
-            item["title"]: item
-            for item in revised["viewModel"]["sections"][0]["items"]
-        }
+        by_title = {item["title"]: item for item in revised["viewModel"]["sections"][0]["items"]}
         self.assertEqual(by_title["Revenue by Coffee Name"]["chart_type"], "pie")
         self.assertEqual(by_title["Revenue by Time of Day"]["chart_type"], "pie")
         self.assertEqual(
@@ -1142,13 +1126,16 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         self.assertEqual(len(revised["viewModel"]["kpis"]), 4)
         self.assertEqual(revised["viewModel"]["kpis"][3]["label"], "Top Product")
         items = revised["viewModel"]["sections"][0]["items"]
-        self.assertEqual([item["title"] for item in items], [
-            "Sales by Coffee Type",
-            "Monthly Sales Trend",
-            "Sales by Time of Day",
-            "Sales by Weekday",
-            "Payment Method Distribution",
-        ])
+        self.assertEqual(
+            [item["title"] for item in items],
+            [
+                "Sales by Coffee Type",
+                "Monthly Sales Trend",
+                "Sales by Time of Day",
+                "Sales by Weekday",
+                "Payment Method Distribution",
+            ],
+        )
         by_title = {item["title"]: item for item in items}
         self.assertEqual(by_title["Sales by Coffee Type"]["chart_type"], "pie")
         self.assertEqual(by_title["Sales by Time of Day"]["chart_type"], "pie")
@@ -1243,8 +1230,7 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "coffee.csv"
             source.write_text(
-                "coffee_name,month,money\n"
-                "Latte,Jan,10\nLatte,Feb,15\nEspresso,Jan,5\n",
+                "coffee_name,month,money\nLatte,Jan,10\nLatte,Feb,15\nEspresso,Jan,5\n",
                 encoding="utf-8",
             )
             aggregate = self.tools["aggregate_data"](
@@ -1372,10 +1358,7 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
 
         datasets = result["viewModel"]["datasets"]
         self.assertGreaterEqual(len(datasets), 3)
-        by_title = {
-            item["title"]: item
-            for item in result["viewModel"]["sections"][0]["items"]
-        }
+        by_title = {item["title"]: item for item in result["viewModel"]["sections"][0]["items"]}
         self.assertEqual(by_title["Daily Sales Trend"]["x_field"], "sale_date")
         self.assertEqual(by_title["Sales by Coffee Type"]["x_field"], "coffee_name")
         self.assertEqual(by_title["Sales by Payment Method"]["x_field"], "cash_type")
@@ -1395,7 +1378,9 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
                 def render(self, view_model: dict[str, Any]) -> dict[str, Any]:
                     output = Path(output_path)
                     output.parent.mkdir(parents=True, exist_ok=True)
-                    output.write_text("<html><body>Injected adapter</body></html>", encoding="utf-8")
+                    output.write_text(
+                        "<html><body>Injected adapter</body></html>", encoding="utf-8"
+                    )
                     calls.append(
                         {
                             "view_model": view_model,
@@ -1527,7 +1512,9 @@ class TestDashboardGeneratorSkill(unittest.TestCase):
                 else:
                     os.environ[key] = value
 
-        self.assertEqual([call["json"]["method"] for call in calls], ["tools/list", "tools/call", "tools/call"])
+        self.assertEqual(
+            [call["json"]["method"] for call in calls], ["tools/list", "tools/call", "tools/call"]
+        )
         self.assertEqual(calls[0]["headers"]["X-Goog-Api-Key"], "test-key")
         self.assertEqual(calls[2]["json"]["params"]["name"], "generate_screen_from_text")
         self.assertEqual(calls[2]["json"]["params"]["arguments"]["projectId"], "123456789")
@@ -1876,9 +1863,7 @@ class TestFileExportSchemaShapes(unittest.TestCase):
         self.assertEqual(sections["type"], "array")
         item_props = sections["items"]["properties"]
         self.assertIn("type", item_props)
-        self.assertEqual(
-            set(item_props["type"]["enum"]), {"heading", "text", "table"}
-        )
+        self.assertEqual(set(item_props["type"]["enum"]), {"heading", "text", "table"})
         for key in ("content", "headers", "rows"):
             self.assertIn(key, item_props)
 
@@ -2258,9 +2243,7 @@ class TestWebSearchFetchUrl(unittest.TestCase):
         self.assertIn("chat source", result["error"])
 
     def test_raw_text_content_returned_verbatim(self):
-        response = self._mock_response(
-            content_type="application/json", body=b'{"ok": true}'
-        )
+        response = self._mock_response(content_type="application/json", body=b'{"ok": true}')
         with (
             mock.patch("socket.getaddrinfo", return_value=self._PUBLIC_ADDRINFO),
             mock.patch("requests.get", return_value=response),
@@ -2473,6 +2456,327 @@ class TestPdfToolsSkill(unittest.TestCase):
         self.assertIn("error", result)
 
 
+# ---------------------------------------------------------------------------
+# source-retrieval
+# ---------------------------------------------------------------------------
+
+
+class _FakeScope:
+    """Stand-in for the host's per-turn source scope."""
+
+    def __init__(self, source_ids, owner="alice@example.com", session_id="s1"):
+        self.source_ids = tuple(source_ids)
+        self.owner = owner
+        self.session_id = session_id
+
+
+class _FakeSearchResult:
+    def __init__(self, items, scores):
+        self.items = items
+        self.scores = scores
+        self.total = len(items)
+
+
+class _FakeIndex:
+    """Minimal DocumentIndexStore stand-in recording what it was asked."""
+
+    def __init__(self):
+        self.last_query = None
+        self.raise_on_search = False
+
+    def search(self, query):
+        self.last_query = query
+        if self.raise_on_search:
+            raise RuntimeError("index offline")
+        return _FakeSearchResult(
+            items=[
+                {
+                    "id": "source-a-chunk-2",
+                    "content": "Revenue rose twelve percent.",
+                    "metadata": {
+                        "source_id": "source-a",
+                        "name": "laporan.pdf",
+                        "chunk_index": 2,
+                        "total_chunks": 9,
+                        "heading": "Pendapatan",
+                    },
+                }
+            ],
+            scores=[0.87],
+        )
+
+    def read_range(self, source_id, start_index=0, chunk_count=4):
+        return [
+            {
+                "id": f"{source_id}-chunk-{index}",
+                "content": f"Body of chunk {index}.",
+                "metadata": {
+                    "source_id": source_id,
+                    "name": "laporan.pdf",
+                    "chunk_index": index,
+                    "total_chunks": 9,
+                },
+            }
+            for index in range(start_index, min(start_index + chunk_count, 9))
+        ]
+
+    def outline(self, source_id):
+        return [{"heading": "Pendapatan", "chunk_index": 2, "page": None}]
+
+
+class SourceRetrievalTestCase(unittest.TestCase):
+    def setUp(self):
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "source-retrieval")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+        self.module = sys.modules["openbench_skill_source_retrieval"]
+        self.index = _FakeIndex()
+        self.module.bind(
+            source_index=self.index,
+            source_scope_provider=lambda: _FakeScope(["source-a", "source-b"]),
+        )
+
+    def tearDown(self):
+        self.module.bind(source_index=None, source_scope_provider=None)
+
+
+class TestSourceRetrievalSkill(SourceRetrievalTestCase):
+    def test_expected_tools_present(self):
+        self.assertEqual(
+            set(self.tools), {"search_sources", "read_source_section", "outline_source"}
+        )
+
+    def test_search_returns_flattened_hits(self):
+        result = self.tools["search_sources"]("revenue")
+        self.assertEqual(result["count"], 1)
+        hit = result["results"][0]
+        self.assertEqual(hit["source_id"], "source-a")
+        self.assertEqual(hit["source_name"], "laporan.pdf")
+        self.assertEqual(hit["chunk_index"], 2)
+        self.assertEqual(hit["heading"], "Pendapatan")
+        self.assertIn("content", hit)
+
+    def test_search_scopes_to_the_turn_by_default(self):
+        self.tools["search_sources"]("revenue")
+        self.assertEqual(self.index.last_query.filters["source_ids"], ["source-a", "source-b"])
+
+    def test_search_honours_explicit_source_ids(self):
+        self.tools["search_sources"]("revenue", source_ids=["source-b"])
+        self.assertEqual(self.index.last_query.filters["source_ids"], ["source-b"])
+
+    def test_search_rejects_out_of_scope_source_id(self):
+        result = self.tools["search_sources"]("revenue", source_ids=["source-someone-else"])
+        self.assertIn("error", result)
+        self.assertIn("source-someone-else", result["error"])
+        self.assertIsNone(self.index.last_query)
+
+    def test_top_k_is_capped(self):
+        self.tools["search_sources"]("revenue", top_k=9999)
+        self.assertLessEqual(self.index.last_query.limit, 12)
+
+    def test_empty_query_is_an_error(self):
+        self.assertIn("error", self.tools["search_sources"]("   "))
+
+    def test_index_failure_is_reported_not_raised(self):
+        self.index.raise_on_search = True
+        result = self.tools["search_sources"]("revenue")
+        self.assertIn("error", result)
+
+    def test_read_section_returns_ordered_sections(self):
+        result = self.tools["read_source_section"]("source-a", start_chunk=1, chunk_count=3)
+        self.assertEqual(result["count"], 3)
+        indexes = [section["chunk_index"] for section in result["sections"]]
+        self.assertEqual(indexes, [1, 2, 3])
+
+    def test_read_section_rejects_out_of_scope_source(self):
+        self.assertIn("error", self.tools["read_source_section"]("source-other"))
+
+    def test_read_section_past_end_reports_a_note(self):
+        result = self.tools["read_source_section"]("source-a", start_chunk=500)
+        self.assertEqual(result["count"], 0)
+        self.assertIn("note", result)
+
+    def test_outline_returns_headings(self):
+        result = self.tools["outline_source"]("source-a")
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["outline"][0]["heading"], "Pendapatan")
+
+    def test_outline_rejects_out_of_scope_source(self):
+        self.assertIn("error", self.tools["outline_source"]("source-other"))
+
+
+class TestSourceRetrievalUnbound(unittest.TestCase):
+    """Without a bound index every tool must degrade, not raise."""
+
+    def setUp(self):
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "source-retrieval")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+        self.module = sys.modules["openbench_skill_source_retrieval"]
+        self.module.bind(source_index=None, source_scope_provider=None)
+
+    def test_all_tools_return_an_error(self):
+        self.assertIn("error", self.tools["search_sources"]("anything"))
+        self.assertIn("error", self.tools["read_source_section"]("source-a"))
+        self.assertIn("error", self.tools["outline_source"]("source-a"))
+
+
+# ---------------------------------------------------------------------------
+# table-query
+# ---------------------------------------------------------------------------
+
+
+class _FakeColumn:
+    def __init__(self, name, dtype="int64"):
+        self.name = name
+        self.dtype = dtype
+        self.null_count = 0
+        self.distinct_estimate = None
+        self.min = None
+        self.max = None
+        self.sample_values = []
+
+
+class _FakeArtifact:
+    def __init__(self, source_id, name, parquet_path, columns):
+        self.source_id = source_id
+        self.name = name
+        self.display_name = name.title()
+        self.parquet_path = parquet_path
+        self.row_count = 4
+        self.columns = [_FakeColumn(column) for column in columns]
+        self.sample_rows = [{columns[0]: 1}]
+
+
+class _FakeCatalog:
+    def __init__(self, artifacts):
+        self._artifacts = artifacts
+
+    def list_for(self, *, source_ids=None, session_id=None, owner=None):
+        if source_ids is None:
+            return list(self._artifacts)
+        return [a for a in self._artifacts if a.source_id in set(source_ids)]
+
+    def get_by_name(self, name):
+        return next((a for a in self._artifacts if a.name == name), None)
+
+
+@unittest.skipUnless(
+    __import__("importlib").util.find_spec("duckdb") is not None
+    and __import__("importlib").util.find_spec("pandas") is not None,
+    "duckdb and pandas are not installed",
+)
+class TableQueryTestCase(unittest.TestCase):
+    def setUp(self):
+        import pandas as pd
+
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        parquet = root / "sales.parquet"
+        pd.DataFrame(
+            {"region": ["North", "South", "North", "East"], "amount": [100, 250, 50, 75]}
+        ).to_parquet(parquet)
+
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "table-query")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+        self.module = sys.modules["openbench_skill_table_query"]
+        self.catalog = _FakeCatalog(
+            [_FakeArtifact("source-a", "sales", str(parquet), ["region", "amount"])]
+        )
+        self.module.bind(
+            table_catalog=self.catalog,
+            source_scope_provider=lambda: _FakeScope(["source-a"]),
+        )
+
+    def tearDown(self):
+        self.module.bind(table_catalog=None, source_scope_provider=None)
+        self._tmp.cleanup()
+
+
+class TestTableQuerySkill(TableQueryTestCase):
+    def test_expected_tools_present(self):
+        self.assertEqual(
+            set(self.tools),
+            {"list_source_tables", "describe_source_table", "query_source_table"},
+        )
+
+    def test_list_tables(self):
+        result = self.tools["list_source_tables"]()
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["tables"][0]["table"], "sales")
+
+    def test_describe_table(self):
+        result = self.tools["describe_source_table"]("sales")
+        self.assertEqual([c["name"] for c in result["columns"]], ["region", "amount"])
+
+    def test_describe_unknown_table_lists_alternatives(self):
+        result = self.tools["describe_source_table"]("nope")
+        self.assertIn("error", result)
+        self.assertEqual(result["available_tables"], ["sales"])
+
+    def test_query_returns_correct_aggregate(self):
+        result = self.tools["query_source_table"](
+            "SELECT region, SUM(amount) AS total FROM sales GROUP BY region"
+        )
+        totals = {row[0]: row[1] for row in result["rows"]}
+        self.assertEqual(totals["North"], 150)
+        self.assertEqual(totals["South"], 250)
+
+    def test_query_rejects_writes_with_a_hint(self):
+        result = self.tools["query_source_table"]("DROP TABLE sales")
+        self.assertIn("error", result)
+        self.assertIn("available_columns", result)
+        self.assertIn("hint", result)
+
+    def test_query_rejects_file_access(self):
+        result = self.tools["query_source_table"]("SELECT * FROM read_parquet('/etc/passwd')")
+        self.assertIn("error", result)
+
+    def test_bad_column_returns_available_columns(self):
+        result = self.tools["query_source_table"]("SELECT nope FROM sales")
+        self.assertIn("error", result)
+        self.assertEqual(result["available_columns"]["sales"], ["region", "amount"])
+
+    def test_unknown_table_argument_is_rejected(self):
+        result = self.tools["query_source_table"]("SELECT 1", tables=["ghost"])
+        self.assertIn("error", result)
+        self.assertEqual(result["available_tables"], ["sales"])
+
+    def test_empty_sql_is_an_error(self):
+        self.assertIn("error", self.tools["query_source_table"]("  "))
+
+    def test_query_tool_declares_a_timeout(self):
+        self.assertTrue(hasattr(self.tools["query_source_table"], "timeout_seconds"))
+
+
+class TestTableQueryScopeIsolation(TableQueryTestCase):
+    def test_out_of_scope_source_exposes_no_tables(self):
+        self.module.bind(
+            table_catalog=self.catalog,
+            source_scope_provider=lambda: _FakeScope(["source-someone-else"]),
+        )
+        self.assertEqual(self.tools["list_source_tables"]()["count"], 0)
+        self.assertIn("error", self.tools["query_source_table"]("SELECT 1"))
+
+    def test_empty_scope_exposes_no_tables(self):
+        self.module.bind(table_catalog=self.catalog, source_scope_provider=lambda: _FakeScope([]))
+        self.assertEqual(self.tools["list_source_tables"]()["count"], 0)
+
+
+class TestTableQueryUnbound(unittest.TestCase):
+    """Without a bound catalog every tool must degrade, not raise."""
+
+    def setUp(self):
+        self.skill = Skill.from_dir(SDK_SKILLS_DIR / "table-query")
+        self.tools = {name: fn for name, fn, _ in self.skill.tools}
+        sys.modules["openbench_skill_table_query"].bind(
+            table_catalog=None, source_scope_provider=None
+        )
+
+    def test_all_tools_return_an_error(self):
+        self.assertIn("error", self.tools["list_source_tables"]())
+        self.assertIn("error", self.tools["describe_source_table"]("sales"))
+        self.assertIn("error", self.tools["query_source_table"]("SELECT 1"))
+
+
 class TestSDKSkillRegistryIntegration(unittest.TestCase):
     """End-to-end: load all SDK skills through the registry."""
 
@@ -2497,8 +2801,9 @@ class TestSDKSkillRegistryIntegration(unittest.TestCase):
         # data-context-extractor(2) + dashboard-generator(4)
         # + data-visualization(5) + export-excel(2) + export-markdown(1)
         # + pdf-tools(7) + query-explorer(5) + web-search(8)
-        # + memory-scratchpad(4) = 38 tools
-        self.assertEqual(len(tools), 38)
+        # + memory-scratchpad(4) + source-retrieval(3) + table-query(3)
+        # = 44 tools
+        self.assertEqual(len(tools), 44)
 
     def test_load_skills_by_name_after_load_sdk_skills(self):
         """load_skills(['data-visualization']) must work after load_sdk_skills()."""
