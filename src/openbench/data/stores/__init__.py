@@ -7,6 +7,14 @@ from openbench.data.stores.base import (
     chunk_raw_data,
     chunk_text,
 )
+from openbench.data.stores.document_index import (
+    ChunkRow,
+    DocumentIndexBackend,
+    DocumentIndexStore,
+    PgVectorBackend,
+    SQLiteDocumentBackend,
+    build_document_index,
+)
 from openbench.data.stores.exceptions import (
     DimensionMismatchError,
     EmbeddingError,
@@ -43,6 +51,12 @@ __all__ = [
     "chunk_raw_data",
     # Stores
     "PineconeStore",
+    "ChunkRow",
+    "DocumentIndexBackend",
+    "DocumentIndexStore",
+    "PgVectorBackend",
+    "SQLiteDocumentBackend",
+    "build_document_index",
     # Exceptions
     "StoreError",
     "IndexNotFoundError",
