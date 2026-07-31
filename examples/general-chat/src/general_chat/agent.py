@@ -225,7 +225,9 @@ After the tool returns, confirm briefly in the user's own language and let the
 download card speak for itself — do not paste the file contents back as well."""
 
 
-def _load_sdk_skills(agent: BaseAgent, skill_names: list[str]) -> None:
+def _load_sdk_skills(
+    agent: BaseAgent, skill_names: list[str], bindings: dict | None = None
+) -> None:
     """Load a set of SDK skills (by directory name) into General Chat.
 
     Dashboard generation is MCP-only (the dashboard-generator MCP replaces
@@ -242,6 +244,12 @@ def _load_sdk_skills(agent: BaseAgent, skill_names: list[str]) -> None:
     """
     registry = SkillRegistry()
     registry.load_project_skills([_sdk_skill_dir(name) for name in skill_names])
+    if bindings:
+        # Bound once here, not per request: _create_request_agent shares one
+        # ToolExecutor across requests, so per-request mutation would race.
+        # The scope provider is a ContextVar reader, so each turn still sees
+        # only its own sources.
+        registry.bind(**bindings)
     skill_context = registry.compose_context()
     if skill_context:
         agent._system_prompt = f"{agent._system_prompt}\n\n{skill_context}"
@@ -1250,8 +1258,25 @@ def create_agent(
     skill_names: list[str] = []
     if enable_file_generation and _env_flag("GENERAL_CHAT_FILE_GENERATION_ENABLED", default=True):
         skill_names.extend(["export-excel", "pdf-tools", "export-markdown"])
+
+    bindings: dict = {}
+    if _env_flag("GENERAL_CHAT_SOURCE_INDEX_ENABLED"):
+        from general_chat.server.source_context import current_source_scope
+        from general_chat.source_index import get_document_index, get_table_catalog
+
+        skill_names.extend(["source-retrieval", "table-query"])
+        bindings = {
+            "source_index": get_document_index(),
+            "table_catalog": get_table_catalog(),
+            # A ContextVar reader, so one binding serves every request and
+            # each turn resolves to its own scope.
+            "source_scope_provider": current_source_scope,
+            "duckdb_max_rows": _env_int("GENERAL_CHAT_TABLE_MAX_ROWS", 1000),
+            "duckdb_timeout_s": _env_int("GENERAL_CHAT_TABLE_QUERY_TIMEOUT_S", 20),
+        }
+
     if skill_names:
-        _load_sdk_skills(agent, skill_names)
+        _load_sdk_skills(agent, skill_names, bindings or None)
     else:
         agent._skill_registry = None  # type: ignore[attr-defined]
         agent._dashboard_skill_tools = []  # type: ignore[attr-defined]

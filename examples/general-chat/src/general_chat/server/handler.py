@@ -12,15 +12,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from general_chat.server.export_intent import ExportIntent, detect_export_intent
+from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
+from general_chat.server.source_context import build_source_attachments
+from general_chat.source_index import get_document_index
 from openbench.chat.session import Attachment, ChatSession
 from openbench.chat.transport import AGUIHandler
 from openbench.core.abstractions import ExecutionContext, LLMProvider, LLMResponse
 from openbench.intelligence.base import AgentMemory, BaseAgent, Message, MessageRole
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
 from openbench.mcp.permissions import MCPPermissionContext
-
-from general_chat.server.export_intent import ExportIntent, detect_export_intent
-from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -346,7 +347,10 @@ def _apply_source_context_budget(attachments: list[Attachment]) -> list[Attachme
         trimmed.append(_replace_extracted_text(attachment, text))
 
     if dropped:
-        logger.info(
+        # In card mode this is a safety net that should never fire: cards
+        # are small by construction, so reaching the legacy budget means
+        # full text leaked back into the turn.
+        logger.warning(
             "[general-chat] source context budget applied: %d/%d sources trimmed, %d->%d chars",
             len(dropped),
             len(attachments),
@@ -949,7 +953,15 @@ class GeneralChatHandler(AGUIHandler):
         attachments = _enrich_draft_attachments(draft_attachments)
         source_attachments: list[Attachment] = []
         if self._source_records:
-            source_attachments.extend(_source_record_attachments(self._source_records))
+            source_attachments.extend(
+                build_source_attachments(
+                    self._source_records,
+                    content,
+                    index=get_document_index(),
+                    label=_source_context_label(),
+                    legacy_builder=_source_record_attachments,
+                )
+            )
         if self._doc_context:
             source_attachments.extend(_source_context_attachments(self._doc_context))
         if source_attachments:

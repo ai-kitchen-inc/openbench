@@ -198,6 +198,34 @@ class TestSearch(SQLiteDocumentIndexTestCase):
         self.assertTrue(result.items)
         self.assertIn("zzyzx", result.items[0]["content"])
 
+    def test_rare_term_wins_against_a_wall_of_similar_chunks(self):
+        """Keyword-only hits must not be buried by uniform vector scores.
+
+        With many near-identical passages, every vector score is close to
+        the maximum. If a keyword-only hit were scored 0 on the vector
+        axis it could never surface, which is exactly the case hybrid
+        search is supposed to cover.
+        """
+        filler = "\n\n".join(
+            f"Bagian {i} membahas operasional gudang pada wilayah {i}." for i in range(60)
+        )
+        store = DocumentIndexStore(
+            sqlite_path=self.root / "wall.sqlite3",
+            embedding_provider=FakeEmbeddingProvider(),
+            dimension=32,
+        )
+        try:
+            store.index_text(
+                filler + "\n\nMarjin laba bersih adalah dua belas koma empat persen.",
+                source_id="source-wall",
+                session_id="s1",
+            )
+            result = store.search(Query(text="marjin laba bersih", limit=5))
+            joined = " ".join(item["content"] for item in result.items)
+            self.assertIn("Marjin laba bersih", joined)
+        finally:
+            store.close()
+
     def test_search_respects_limit(self):
         result = self.store.search(Query(text="the", limit=2))
         self.assertLessEqual(len(result.items), 2)

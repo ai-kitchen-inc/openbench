@@ -1053,10 +1053,18 @@ class DocumentIndexStore(DataStore, EmbeddingMixin, HybridSearchMixin):
         for chunk, score in vector_hits:
             merged[chunk.chunk_id] = chunk.to_item()
             scores[chunk.chunk_id] = float(score)
+
+        # A keyword-only hit has no vector score, but scoring it 0 would
+        # bury it: the rerank weights vector similarity 0.7, so an exact
+        # rare-term match could never outrank a semantically mediocre
+        # chunk — defeating the reason hybrid search exists. Treat it as
+        # the weakest vector candidate instead, and let its keyword score
+        # do the deciding.
+        vector_floor = min((score for _, score in vector_hits), default=0.0)
         for chunk, _ in keyword_hits:
             if chunk.chunk_id not in merged:
                 merged[chunk.chunk_id] = chunk.to_item()
-                scores[chunk.chunk_id] = 0.0
+                scores[chunk.chunk_id] = float(vector_floor)
 
         if not merged:
             return SearchResult(
