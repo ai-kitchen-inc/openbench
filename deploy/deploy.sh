@@ -114,11 +114,15 @@ vm_ssh() { "$GCLOUD" compute ssh "$VM_NAME" --zone "$VM_ZONE" --command="$1"; }
 # HTTP status of a URL. Uses curl on Linux/Cloud Shell. On Windows git-bash the
 # bundled Schannel curl errors (43) on some hostnames, so fall back to PowerShell
 # Invoke-WebRequest when curl can't get a code.
+#
+# Third arg "no_fallback" skips that PowerShell retry. Use it only for probes
+# where 000 is the EXPECTED answer (private-port checks) — otherwise every run
+# pays the curl timeout and then the PowerShell timeout on top of it.
 http_code() {
-  local url="$1" t="${2:-20}" code
+  local url="$1" t="${2:-20}" mode="${3:-}" code
   code="$(curl -s -o /dev/null -w '%{http_code}' --ssl-no-revoke --max-time "$t" "$url" 2>/dev/null || true)"
   if [ -z "$code" ] || [ "$code" = "000" ]; then
-    if command -v powershell.exe >/dev/null 2>&1; then
+    if [ "$mode" != "no_fallback" ] && command -v powershell.exe >/dev/null 2>&1; then
       code="$(powershell.exe -NoProfile -Command "try { (Invoke-WebRequest -Uri '$url' -UseBasicParsing -TimeoutSec $t).StatusCode } catch { if (\$_.Exception.Response) { [int]\$_.Exception.Response.StatusCode } else { 0 } }" 2>/dev/null | tr -d '\r' || echo 0)"
     fi
   fi
@@ -146,7 +150,7 @@ cmd_backend() {
     case "$status" in
       SUCCESS) ok "build $build_id SUCCESS"; break ;;
       FAILURE|TIMEOUT|CANCELLED|EXPIRED) die "build $build_id ended: $status" ;;
-      *) printf '  ... %s\n' "${status:-pending}"; sleep 15 ;;
+      *) printf '  ... %s\n' "${status:-pending}"; sleep 10 ;;
     esac
   done
 
@@ -446,10 +450,10 @@ cmd_verify() {
   else warn "downloads unsigned probe: got $dl, want 403"; fail=1; fi
   check "Grafana /grafana/api/health"  "$API_URL/grafana/api/health" "200"
   # 8080 must NOT be publicly reachable (expect connection failure → 000).
-  local raw; raw="$(http_code "http://$VM_PUBLIC_IP:8080/health" 8)"
+  local raw; raw="$(http_code "http://$VM_PUBLIC_IP:8080/health" 3 no_fallback)"
   if [ "$raw" = "000" ] || [ "$raw" = "0" ]; then ok "raw :8080 unreachable (private)"; else warn "raw :8080 reachable ($raw) — should be private"; fail=1; fi
   # Grafana's raw port must be private too.
-  local rawg; rawg="$(http_code "http://$VM_PUBLIC_IP:3000/api/health" 8)"
+  local rawg; rawg="$(http_code "http://$VM_PUBLIC_IP:3000/api/health" 3 no_fallback)"
   if [ "$rawg" = "000" ] || [ "$rawg" = "0" ]; then ok "raw :3000 unreachable (private)"; else warn "raw :3000 reachable ($rawg) — should be private"; fail=1; fi
   [ "$fail" -eq 0 ] && ok "all checks passed" || die "one or more checks failed"
 }
