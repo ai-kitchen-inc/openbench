@@ -1,0 +1,26 @@
+# Firebase web config (public, not secret) is baked into the SPA bundle.
+# deploy.sh passes the substitutions from the frontend .env.production.
+substitutions:
+  _VITE_FIREBASE_API_KEY: ""
+  _VITE_FIREBASE_AUTH_DOMAIN: ""
+  _VITE_FIREBASE_PROJECT_ID: ""
+  _VITE_FIREBASE_APP_ID: ""
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.general-chat
+      - --build-arg
+      - VITE_FIREBASE_API_KEY=${_VITE_FIREBASE_API_KEY}
+      - --build-arg
+      - VITE_FIREBASE_AUTH_DOMAIN=${_VITE_FIREBASE_AUTH_DOMAIN}
+      - --build-arg
+      - VITE_FIREBASE_PROJECT_ID=${_VITE_FIREBASE_PROJECT_ID}
+      - --build-arg
+      - VITE_FIREBASE_APP_ID=${_VITE_FIREBASE_APP_ID}
+      - -t
+      - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/general-chat:latest
+      - .
+images:
+  - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/general-chat:latest

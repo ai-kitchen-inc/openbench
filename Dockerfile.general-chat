@@ -1,0 +1,76 @@
+# ============================================================
+# General Chat (SSS) — single-origin image for the GCE VM.
+# Stage 1 builds the React SPA (served same-origin by the API via
+# GENERAL_CHAT_STATIC_DIR); stage 2 is the Python API runtime.
+# Build from repo root: docker build -f Dockerfile.general-chat .
+# ============================================================
+
+# ── Stage 1: frontend build ─────────────────────────────────
+FROM node:22-slim AS frontend
+
+RUN npm install -g pnpm@10
+
+WORKDIR /build
+
+# Preserve repo layout: the frontend depends on the workspace SDK via
+# "file:../../../studio/chat-ui", which must be built (dist/) before the
+# frontend install packs it.
+COPY studio/chat-ui/ studio/chat-ui/
+COPY examples/general-chat/frontend/ examples/general-chat/frontend/
+
+RUN cd studio/chat-ui && pnpm install && pnpm build
+
+# No VITE_BACKEND_URL: the SPA uses relative API paths (same-origin).
+# Firebase web config is baked in via VITE_FIREBASE_* build args.
+ARG VITE_FIREBASE_API_KEY=""
+ARG VITE_FIREBASE_AUTH_DOMAIN=""
+ARG VITE_FIREBASE_PROJECT_ID=""
+ARG VITE_FIREBASE_APP_ID=""
+ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY \
+    VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN \
+    VITE_FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID \
+    VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID
+
+RUN cd examples/general-chat/frontend && pnpm install && pnpm build
+
+# ── Stage 2: Python API runtime ─────────────────────────────
+FROM python:3.13-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    docker-cli \
+    gnupg \
+    libcairo2 \
+    libglib2.0-0 \
+    libgl1 \
+    libheif1 \
+    libreadline8 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libxcb1 \
+    nodejs \
+    npm \
+    openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY . /app
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -e .[google,chat,search,gcp,mcp,epub,media,output,tabular] && \
+    pip install --no-cache-dir -e ./examples/general-chat
+
+# Chromium for server-side dashboard PDF export (POST /dashboard/export/pdf).
+RUN python -m playwright install --with-deps chromium
+
+COPY --from=frontend /build/examples/general-chat/frontend/dist \
+    /app/examples/general-chat/frontend/dist
+
+ENV GENERAL_CHAT_STATIC_DIR=/app/examples/general-chat/frontend/dist
+
+WORKDIR /app/examples/general-chat
+ENV PORT=8080
+
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080"]

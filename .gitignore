@@ -487,12 +487,20 @@ docs/.vitepress/cache/
 # ==========================================
 .dockerignore
 !examples/sam-segmentation-mcp/.dockerignore
+# The root .dockerignore decides what `COPY . /app` puts into the general-chat
+# image. Untracked it would be missing from a fresh clone, and that build would
+# copy uploads/, .venv, node_modules and *.db straight into the image.
+!/.dockerignore
 # Root-level Dockerfile is a transient artifact from examples/*/deploy.sh
 # (copied during gcloud run deploy --source . and meant to be removed after).
 # Anchored with leading slash so nested Dockerfiles (examples/*/Dockerfile) stay tracked.
 /Dockerfile
-/Dockerfile.general-chat
-/cloudbuild.general-chat.yaml
+# NOTE: Dockerfile.general-chat and cloudbuild.general-chat.yaml are NOT
+# transient — they are the permanent build definition for the deployed SSS
+# image and are tracked on purpose. They were once ignored here by association
+# with the rule above; the result was that a production-critical fix (the
+# `tabular` extra) lived on one laptop and no fresh clone could rebuild the
+# running image. Do not re-add them.
 
 # ==========================================
 # Terraform

@@ -105,7 +105,7 @@ runs in the `openbench-worker` (Pub/Sub) rather than blocking uploads.
 |-------|-------|
 | GCP / Firebase project | `sss-poc1-corporate` (region `us-central1`) |
 | API image | `us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/general-chat:latest` |
-| Image build config | [`cloudbuild.general-chat.yaml`](../cloudbuild.general-chat.yaml) ← [`Dockerfile.general-chat`](../Dockerfile.general-chat) |
+| Image build config | [`cloudbuild.general-chat.yaml`](../cloudbuild.general-chat.yaml) ← [`Dockerfile.general-chat`](../Dockerfile.general-chat) ← [`.dockerignore`](../.dockerignore) — all three are **tracked in git** and are the source of truth for the deployed image; edit them in the repo, not on a laptop |
 | Compute Engine VM | `openbench-general-chat`, zone `us-central1-a` |
 | VM deploy dir | `/home/Admin/openbench-deploy` (holds `docker-compose.gce.yml` + `.env.gcp`) |
 | Compose | [`docker-compose.gce.yml`](../docker-compose.gce.yml) — `openbench-api` (`127.0.0.1:8080`) + `openbench-worker` |
