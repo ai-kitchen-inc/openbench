@@ -106,6 +106,7 @@ runs in the `openbench-worker` (Pub/Sub) rather than blocking uploads.
 | GCP / Firebase project | `sss-poc1-corporate` (region `us-central1`) |
 | API image | `us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/general-chat:latest` |
 | Image build config | [`cloudbuild.general-chat.yaml`](../cloudbuild.general-chat.yaml) ← [`Dockerfile.general-chat`](../Dockerfile.general-chat) ← [`.dockerignore`](../.dockerignore) — all three are **tracked in git** and are the source of truth for the deployed image; edit them in the repo, not on a laptop |
+| Build context | Repo root, filtered by [`.gcloudignore`](../.gcloudignore) (**not** `.gitignore` — gcloud stops reading `.gitignore` once `.gcloudignore` exists). `mcp/*/{data,models,weights,.venv}/` is excluded: ~1.17 GB of local-dev weights that no deployed container reads. See "Build speed" below. |
 | Compute Engine VM | `openbench-general-chat`, zone `us-central1-a` |
 | VM deploy dir | `/home/Admin/openbench-deploy` (holds `docker-compose.gce.yml` + `.env.gcp`) |
 | Compose | [`docker-compose.gce.yml`](../docker-compose.gce.yml) — `openbench-api` (`127.0.0.1:8080`) + `openbench-worker` |
@@ -153,6 +154,54 @@ Or individually:
 
 All identifiers are defaults in `deploy.sh`; override any via env or a gitignored
 `deploy/deploy.env` (e.g. `PUBLIC_HOST=...`, `VM_ZONE=...`).
+
+### Build speed
+
+`deploy.sh backend` used to take ~20 min. Three things keep it down; if a
+deploy suddenly gets slow again, check these first.
+
+**1. Build context — keep it small.** `gcloud builds submit` tars the *repo
+root*. Measure it before blaming the network:
+
+```bash
+gcloud meta list-files-for-upload . | wc -l
+```
+
+Expect **~1.1k files / ~9 MB**. It was 53,690 files / 1,236 MB until
+`.gcloudignore` started excluding `mcp/*/{data,models,weights,.venv}/` —
+1.17 GB of local-dev model weights and CIFAR data that no deployed container
+reads (`image_search` bind-mounts `/app-data/image-search/*`; SAM's weights
+are baked into `openbench/sam-segmentation-mcp:cpu` at `/models/sam3.pt`).
+If that number jumps, something new landed in the tree that `.gcloudignore`
+does not match.
+
+Two traps in `.gcloudignore`: it **replaces** `.gitignore` (gcloud stops
+reading `.gitignore` the moment `.gcloudignore` exists), and a blanket
+`mcp/` rule must never be re-added — it breaks prod MCP discovery with
+`Errno 2`, because `aggregate_data` / `dashboard_generator` run with cwd
+`/app/mcp/<name>` *inside* the API image. Exclude subdirs, never the tree.
+
+**2. Cloud Build worker.** `cloudbuild.general-chat.yaml` sets
+`machineType: E2_HIGHCPU_8` (the default worker is 2 vCPU) and
+`timeout: 2400s`, matching `cloudbuild.controlled-source-chat.yaml`.
+Non-default machine types are outside the Cloud Build free tier.
+
+**Do not swap the docker builder for kaniko.** It was tried (build
+`c6755ac8-316b-4f90-9898-b48c7098f42c`) and died with **exit 137 (OOM)**
+after 12 min — kaniko snapshots the whole filesystem after every `RUN`
+layer, and torch + docling + Playwright Chromium does not fit in
+`E2_HIGHCPU_8`'s 8 GB. A `--cache-from` warm-up has its own trap: pulling
+the previous ~multi-GB `:latest` onto the builder can cost more than the
+cache saves.
+
+**3. There is no layer cache, and fixing that needs the Dockerfile first.**
+`Dockerfile.general-chat` puts `COPY . /app` (`:59`) *before* the pip
+install (`:61-63`) and the Playwright Chromium download (`:66`), so any
+source edit invalidates both — no cache backend can help while that
+ordering stands. Moving the `playwright install` line above `COPY . /app`
+is a one-line change and the single biggest remaining win; doing the same
+for pip needs a pinned requirements file plus `pip install --no-deps -e .`
+at the end.
 
 ## Environment variables
 
