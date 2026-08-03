@@ -17,6 +17,7 @@ env/
 ENV/
 .mypy_cache/
 .pytest_cache/
+.ruff_cache/
 .coverage
 .coverage.*
 htmlcov/
@@ -38,11 +39,17 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# Env (keep .env.example)
+# Env (keep .env.example / .env.example.gcp)
 .env
 **/.env
 .env.local
 .env.*.local
+# Real secrets: a local .env.gcp (GOOGLE_API_KEY, GENERAL_CHAT_DATABASE_URL
+# with the Cloud SQL password) is untracked but was still being tarred into
+# the Cloud Build staging bucket. The build never needs it — the VM's own
+# .env.gcp is what runs the containers.
+.env.gcp
+**/.env.gcp
 
 # Misc
 .tmp/
@@ -64,6 +71,21 @@ general_chat_memory.db
 # Do NOT re-add a blanket /mcp/ ignore here (it broke prod discovery with
 # Errno 2), and never put model weights in this tree — mount them from
 # /app-data on the VM instead.
+#
+# The weight/dataset subdirs below ARE excluded (~1.17 GB, 94% of the upload).
+# They are local-dev only: image_search and sam_segmentation run as *sibling*
+# containers (openbench/image-search-mcp:cpu, openbench/sam-segmentation-mcp:cpu
+# — see examples/general-chat/mcp/{image-search,sam-segmentation}-docker.yaml).
+# SAM's weights are baked into its own image at /models/sam3.pt; image_search
+# bind-mounts ${IMAGE_SEARCH_MCP_DATA_PATH}/${_MODELS_PATH} = /app-data/... on
+# the VM (docker-compose.gce.yml). Nothing ever reads /app/mcp/*/{data,models}.
+mcp/*/data/
+mcp/*/models/
+mcp/*/weights/
+mcp/*/.venv/
+
+# Sphinx output (~34 MB) — the `build/` rule above does not match `_build`.
+docs/_build/
 
 # Build artifacts (paths that should NOT enter image)
 examples/lci-mini/uploads/
@@ -88,6 +110,10 @@ examples/controlled-source-chat/profiles/
 examples/controlled-source-chat/.openbench/
 examples/controlled-source-chat/controlled_source_chat_memory.db
 examples/controlled-source-chat/frontend/dist/
+# Legacy local-dev location (now empty; the real tree is repo-root mcp/, which
+# is covered by the mcp/*/{data,models,weights,.venv}/ rules above). Kept
+# because examples/general-chat/.env.example still points IMAGE_SEARCH_MCP_*
+# here for local runs.
 examples/image-search-mcp/.venv/
 examples/image-search-mcp/data/
 examples/image-search-mcp/models/

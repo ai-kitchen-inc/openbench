@@ -29,3 +29,33 @@ prompt-debug
 !/.env.example.gcp
 studio/chat-ui/node_modules
 examples/*/frontend/node_modules
+
+# MCP model weights + datasets (~1.17 GB). Local-dev only: image_search and
+# sam_segmentation run as sibling containers with their own images / bind
+# mounts from /app-data (see .gcloudignore for the full note). `COPY . /app`
+# in Dockerfile.general-chat would otherwise bake them into a layer that gets
+# pushed to Artifact Registry and re-pulled by the VM on every deploy.
+mcp/*/data
+mcp/*/models
+mcp/*/weights
+mcp/*/.venv
+examples/image-search-mcp/data
+examples/image-search-mcp/models
+docs/_build
+
+# Docker patterns without a `/` match the ROOT LEVEL ONLY — that is why
+# studio/chat-ui/node_modules had to be spelled out above. Re-state the
+# entries at the top of this file that must apply at any depth.
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.venv
+**/node_modules
+**/dist
+**/build
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.db
+**/*.sqlite
+**/*.sqlite3
