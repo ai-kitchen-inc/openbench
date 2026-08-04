@@ -234,7 +234,9 @@ def _index_tables(record: SourceRecord, stored_file: Any) -> list[dict[str, Any]
         return []
 
     destination = _parquet_dir(record)
-    artifacts = convert_to_parquet(path, dest_dir=destination, source_id=record.id)
+    artifacts = convert_to_parquet(
+        path, dest_dir=destination, source_id=record.id, compression="zstd"
+    )
 
     summaries: list[dict[str, Any]] = []
     for artifact in artifacts:

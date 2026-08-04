@@ -112,6 +112,19 @@ class TestCsvConversion(ConversionTestCase):
         with self.assertRaises(ValueError):
             convert_to_parquet(path, dest_dir=self.dest, source_id="source-x")
 
+    def test_parquet_is_zstd_compressed_by_default(self):
+        import pyarrow.parquet as pq
+
+        path = self._write_csv("compressed.csv", "a,b\n1,2\n3,4\n")
+        artifact = convert_to_parquet(path, dest_dir=self.dest, source_id="source-zstd")[0]
+        metadata = pq.ParquetFile(artifact.parquet_path).metadata
+        codecs = {
+            metadata.row_group(rg).column(col).compression
+            for rg in range(metadata.num_row_groups)
+            for col in range(metadata.num_columns)
+        }
+        self.assertEqual(codecs, {"ZSTD"})
+
 
 @unittest.skipUnless(HAS_TABULAR, "pandas and pyarrow are not installed")
 class TestDedupeColumns(unittest.TestCase):
