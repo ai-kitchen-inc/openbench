@@ -68,6 +68,7 @@ Why this shape:
 | Dockerfile | [`Dockerfile.controlled-source-chat`](../../Dockerfile.controlled-source-chat) (repo root, multi-stage: node builds SPA → python runtime) |
 | Cloud Build config | [`cloudbuild.controlled-source-chat.yaml`](../../cloudbuild.controlled-source-chat.yaml) (repo root) |
 | Cloud SQL | existing instance `openbench-postgres` (`sss-poc1-corporate:us-central1:openbench-postgres`), **database `controlled_chat`**, user `controlled-chat-app` |
+| Backups | Owned by the **general-chat runbook** — `deploy/deploy.sh backups` enables daily backups + PITR on the shared instance, which covers `controlled_chat` too (see `deploy/DEPLOY.md` "Backups & restore"). This example has no separate backup. **Warning:** an *in-place* restore run from that runbook overwrites `controlled_chat` along with the other databases — insist on the clone-restore path |
 | Runtime service account | default compute SA (`920070146333-compute@…`, has `roles/editor` → Cloud SQL connect) |
 | Live URL | `gcloud run services describe controlled-source-chat --region us-central1 --format='value(status.url)'` |
 

@@ -116,7 +116,8 @@ runs in the `openbench-worker` (Pub/Sub) rather than blocking uploads.
 | API image | `us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/general-chat:latest` |
 | Image build config | [`cloudbuild.general-chat.yaml`](../cloudbuild.general-chat.yaml) ← [`Dockerfile.general-chat`](../Dockerfile.general-chat) ← [`.dockerignore`](../.dockerignore) — all three are **tracked in git** and are the source of truth for the deployed image; edit them in the repo, not on a laptop |
 | Build context | Repo root, filtered by [`.gcloudignore`](../.gcloudignore) (**not** `.gitignore` — gcloud stops reading `.gitignore` once `.gcloudignore` exists). `mcp/*/{data,models,weights,.venv}/` is excluded: ~1.17 GB of local-dev weights that no deployed container reads. See "Build speed" below. |
-| Compute Engine VM | `openbench-general-chat`, zone `us-central1-a` |
+| Compute Engine VM | `openbench-general-chat`, zone `us-central1-a`, **`e2-standard-2`** (2 vCPU / 8 GB), 100 GB `pd-standard` boot disk. Downsized from `e2-standard-4` on 2026-08-04 (30-day CPU median 0.9%, container peak RSS 511 MiB); resize = stop → `set-machine-type` → start, the static IP survives |
+| Cloud SQL | `openbench-postgres` (POSTGRES_15, `us-central1`, zonal), **`db-custom-1-3840`** (1 vCPU / 3.75 GB), 50 GB SSD, storage auto-resize capped at **50 GB**. Serves 3 DBs: chat (`openbench`), `controlled_chat`, `appdata`. Downsized from `db-custom-2-8192` on 2026-08-04 (7-day CPU avg 6%, 113 MB data). Disk can grow but never shrink — shrinking would require a new instance + endpoint migration (grafana datasource IP, `.env.gcp`, CSC socket path) |
 | VM deploy dir | `/home/Admin/openbench-deploy` (holds `docker-compose.gce.yml` + `.env.gcp`) |
 | Compose | [`docker-compose.gce.yml`](../docker-compose.gce.yml) — `openbench-api` (`127.0.0.1:8080`) + `openbench-worker` |
 | TLS front door | `https://chat.serebrum.co.id` (DNS A record → reserved static IP `34.135.198.188`, address `openbench-ip`) |
@@ -126,6 +127,25 @@ runs in the `openbench-worker` (Pub/Sub) rather than blocking uploads.
 | Firebase web app id | `1:920070146333:web:1ebd29612bfe6a4d04f9f4` (sign-in only) |
 | User/role table | `openbench_users` in the chat DB (managed from the admin panel) |
 | App settings | `openbench_app_settings` in the chat DB (capabilities + persona) |
+
+## Cost & sizing
+
+Right-sized on 2026-08-04 against 30 days of metrics (~$230/mo → ~$112/mo list):
+
+| Resource | Size | Basis | Revisit when |
+|----------|------|-------|--------------|
+| Cloud SQL | `db-custom-1-3840`, 50 GB SSD, auto-resize cap 50 GB | 7-day CPU avg 6% (peak 7.5%), 113 MB data, ≤2 connections | sustained CPU >40% or RAM pressure; `db-g1-small` (shared-core, ~$25/mo less) is the next step down if weeks of metrics stay flat |
+| VM | `e2-standard-2` | 30-day CPU median 0.9% / p95 8.5% (only deploy-time pulls burst higher); 13-day container `memory.peak`: api 511 MiB, worker 72 MiB, grafana 97 MiB; zero OOM | sustained CPU >50% outside deploys, or OOM kills in `journalctl -k` |
+| Artifact Registry | cleanup policies on all repos: keep 5 most-recent versions, delete >30 days | repo had grown to 169 GB of ~9 GB images (one per deploy, never pruned) | — |
+| Cloud Build bucket | `gs://sss-poc1-corporate_cloudbuild` 30-day delete lifecycle | grew to 25 GB of source tarballs | — |
+| VM boot disk | 100 GB `pd-standard` kept | `deploy.sh backend` now prunes dangling images each rollout (was 89% full from 7 dangling ~9 GB images) | shrinking needs VM re-creation — not worth $4/mo |
+
+Deleted 2026-08-04 (stale, superseded by the VM deployment): Cloud Run services
+`general-chat` (us-central1), `general-chat-openui-api` + `general-chat-openui-web`
+(asia-southeast2). Only `controlled-source-chat` remains on Cloud Run.
+
+No budget alert exists yet — creating one needs a Billing Account Administrator
+(console → Billing → Budgets & alerts; suggested: $150/mo with 50/90/100% alerts).
 
 ## Prerequisites (one-time)
 
@@ -527,6 +547,13 @@ backups at 18:00 UTC (01:00 WIB, off-hours), 14 backups retained, point-in-time
 recovery with 7 days of transaction logs. Enabling PITR the first time turns on
 WAL archiving and can briefly restart the instance — run off-hours.
 
+> **History:** on 2026-08-04 backups were found **disabled** on the live
+> instance (zero backups existed) even though this section claimed otherwise —
+> the config does not survive instance recreation. `deploy.sh backups` was
+> re-run and coverage verified. **Re-run it after any instance recreate/clone
+> promotion**, and treat "backups enabled" as something to verify
+> (`gcloud sql backups list`), not assume.
+
 **Covered** (everything on the instance):
 
 | Database | Contents |
@@ -550,7 +577,9 @@ gcloud sql instances clone openbench-postgres openbench-postgres-restore \
   --point-in-time "2026-07-20T02:00:00Z"
 # Give the clone a public IP + the VM's egress IP as an authorized network,
 # then on the VM edit .env.gcp (GENERAL_CHAT_DATABASE_URL, MCP_DB_DATABASE_URL,
-# APPDATA_ADMIN_URL → clone IP) and recreate the containers:
+# APPDATA_ADMIN_URL → clone IP), update the hardcoded Postgres IP in
+# deploy/grafana/datasources.yaml (uid appdata-postgres) + rerun
+# `deploy/deploy.sh grafana`, and recreate the containers:
 sudo docker-compose --env-file .env.gcp -f docker-compose.gce.yml up -d --force-recreate
 bash deploy/deploy.sh verify
 ```
