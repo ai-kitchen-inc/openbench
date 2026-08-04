@@ -227,13 +227,17 @@ export function useChat(config: ChatConfig): UseChatReturn {
                       onProgress: (frac) => store.getState().setUploadProgress(att.id, frac),
                     },
                   );
-                  URL.revokeObjectURL(att.url);
                   config.onUploadSuccess?.(att.id, uploaded);
                   return { ...uploaded, file: undefined };
                 } catch (err) {
                   config.onUploadError?.(localFile, err);
                   return null;
                 } finally {
+                  // The local preview URL is dead either way: a success
+                  // switches to the server attachment, a failure drops
+                  // the file from the turn. Failing to revoke here
+                  // leaked one blob per failed upload.
+                  if (att.url.startsWith("blob:")) URL.revokeObjectURL(att.url);
                   store.getState().clearUploadProgress(att.id);
                 }
               },
