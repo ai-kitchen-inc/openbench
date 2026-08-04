@@ -82,6 +82,15 @@ Accepted residual risks (documented decisions, not bugs):
   retires the old "any allowlisted user can edit shared config" residual risk.
 - The Pub/Sub worker updates source records without a request identity; it
   preserves the existing row's owner and never creates user-visible rows.
+- The `openbench-api` container runs as **root** (no `USER` directive in
+  `Dockerfile.general-chat`). A non-root user would be cosmetic here: the
+  container holds the mounted docker socket to spawn on-demand MCP servers,
+  and socket access is root-equivalent on the host regardless of the in-container
+  uid. Meanwhile `USER app` would break VM-side realities (docker group GID,
+  `/app-data` volume ownership, Playwright's browser cache under `/root`).
+  The real hardening path — if ever needed — is moving MCP spawning to a
+  separate socket-holding sidecar and dropping the socket from this container;
+  only then does a non-root API user buy anything.
 
 Public dashboard share links: `POST /dashboard/publish` (auth) persists a dashboard
 under `$GENERAL_CHAT_STORAGE_ROOT/published/` (on the persistent `/app-data/openbench`
