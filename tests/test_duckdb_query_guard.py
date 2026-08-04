@@ -92,6 +92,15 @@ class TestValidateSQL(unittest.TestCase):
             "SELECT * FROM postgres_scan('host=x', 'public', 't')",
             "SELECT getenv('OPENAI_API_KEY')",
             "SET enable_external_access=true",
+            "SELECT * FROM read_ndjson('/etc/passwd')",
+            "SELECT * FROM read_ndjson_auto('/etc/passwd')",
+            "SELECT * FROM read_json_objects('/etc/passwd')",
+            "SELECT * FROM read_json_objects_auto('/etc/passwd')",
+            "SELECT * FROM sniff_csv('/etc/passwd')",
+            "SELECT * FROM parquet_metadata('/data/x.parquet')",
+            "SELECT * FROM parquet_file_metadata('/data/x.parquet')",
+            "SELECT * FROM parquet_kv_metadata('/data/x.parquet')",
+            "SELECT * FROM parquet_schema('/data/x.parquet')",
         ):
             with self.subTest(sql=sql), self.assertRaises(SQLGuardError):
                 validate_sql(sql)
@@ -239,6 +248,39 @@ class TestEngineLockdown(DuckDBEngineTestCase):
                 conn.execute(f"SELECT * FROM read_parquet('{self.parquet.as_posix()}')")
         finally:
             conn.close()
+
+    def test_big_table_view_path_still_disables_external_access(self):
+        # A table over max_materialize_rows stays as an on-disk view, but
+        # that must NOT leave the whole filesystem reachable: only the
+        # view's own directory is allowlisted.
+        import duckdb
+
+        engine = DuckDBQueryEngine(max_materialize_rows=0)
+        # Sibling of self.root — must stay outside the allowlisted
+        # directory (a subdirectory of an allowed dir would be allowed).
+        outside_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(outside_tmp.cleanup)
+        secret = Path(outside_tmp.name) / "secret.json"
+        secret.write_text('{"k": "v"}', encoding="utf-8")
+
+        conn = duckdb.connect(":memory:")
+        try:
+            engine._prepare(conn, self.tables)
+            value = conn.execute("SELECT current_setting('enable_external_access')").fetchone()[0]
+            self.assertIn(str(value).lower(), ("false", "0"))
+            # The scoped view still works...
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sales").fetchone()[0], 4)
+            # ...but reads outside the allowlisted directory are refused.
+            with self.assertRaises(duckdb.Error):
+                conn.execute(f"SELECT * FROM read_json_auto('{secret.as_posix()}')")
+        finally:
+            conn.close()
+
+    def test_big_table_view_is_queryable_through_run(self):
+        engine = DuckDBQueryEngine(max_materialize_rows=0)
+        result = engine.run("SELECT SUM(amount) FROM sales", tables=self.tables)
+        self.assertEqual(result.rows[0][0], 475)
+        self.assertTrue(any("queried directly from disk" in w for w in result.warnings))
 
     def test_invalid_table_alias_is_rejected(self):
         import duckdb

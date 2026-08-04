@@ -11,6 +11,9 @@ threat:
    files into a fresh in-memory database, then disables external access
    and locks the configuration. From that point the connection cannot
    read or write the filesystem regardless of what the query says.
+   Tables too large to materialize stay as on-disk views; their exact
+   directories are allowlisted via ``allowed_directories`` and external
+   access is still disabled for every other path.
 3. Results are capped by row count and by serialized size, so a
    ``SELECT *`` cannot recreate the context bloat this module exists to
    avoid.
@@ -50,6 +53,9 @@ _DENY_PATTERN = re.compile(
     r"insert|update|delete|create|drop|alter|truncate|"
     r"call|set|reset|checkpoint|vacuum|shell|system|"
     r"read_csv|read_csv_auto|read_parquet|read_json|read_json_auto|read_text|read_blob|"
+    r"read_ndjson|read_ndjson_auto|read_json_objects|read_json_objects_auto|"
+    r"read_ndjson_objects|sniff_csv|parquet_metadata|parquet_file_metadata|"
+    r"parquet_kv_metadata|parquet_schema|"
     r"parquet_scan|csv_scan|json_scan|delta_scan|iceberg_scan|postgres_scan|"
     r"mysql_scan|sqlite_scan|httpfs|glob|getenv"
     r")\b",
@@ -181,7 +187,7 @@ class DuckDBQueryEngine:
         conn.execute(f"SET memory_limit='{self.memory_limit}'")
         conn.execute(f"SET threads={self.threads}")
 
-        needs_external_access = False
+        allowed_dirs: set[str] = set()
         for alias, parquet_path in tables.items():
             if not _IDENTIFIER_RE.match(alias):
                 raise SQLGuardError(f"Invalid table alias: {alias!r}")
@@ -192,20 +198,27 @@ class DuckDBQueryEngine:
             posix = path.as_posix().replace("'", "''")
             row_count = conn.execute(f"SELECT COUNT(*) FROM read_parquet('{posix}')").fetchone()[0]
             if row_count > self.max_materialize_rows:
-                # Too big to copy into memory; keep it as a view and
-                # leave external access on for this connection only.
+                # Too big to copy into memory; keep it as a view. The
+                # view reads the file at query time, so its directory
+                # goes on the allowlist below.
                 conn.execute(f"CREATE VIEW \"{alias}\" AS SELECT * FROM read_parquet('{posix}')")
-                needs_external_access = True
+                allowed_dirs.add(path.parent.as_posix())
                 warnings.append(
                     f'table "{alias}" has {row_count:,} rows and is queried directly from disk'
                 )
             else:
                 conn.execute(f"CREATE TABLE \"{alias}\" AS SELECT * FROM read_parquet('{posix}')")
 
-        if not needs_external_access:
-            # After this the connection cannot touch the filesystem or
-            # network at all, whatever the query text says.
-            conn.execute("SET enable_external_access=false")
+        if allowed_dirs:
+            # Views need their Parquet files readable at query time, but
+            # only those: allowlist the exact directories, then disable
+            # external access for everything else.
+            quoted = ", ".join(f"'{d.replace(chr(39), chr(39) * 2)}'" for d in sorted(allowed_dirs))
+            conn.execute(f"SET allowed_directories=[{quoted}]")
+        # After this the connection cannot touch the filesystem outside
+        # the allowlist (usually empty) or the network at all, whatever
+        # the query text says.
+        conn.execute("SET enable_external_access=false")
         conn.execute("SET lock_configuration=true")
         return warnings
 
