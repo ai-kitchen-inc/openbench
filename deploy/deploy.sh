@@ -165,6 +165,13 @@ cmd_backend() {
     printf '  ... booting\n'; sleep 5
   done
   ok "API healthy at $API_URL/health"
+
+  # Each rollout re-tags :latest and leaves the previous ~9 GB image dangling;
+  # unpruned they filled the 100 GB boot disk to 89% (found 2026-08-04).
+  # Dangling-only prune — NEVER `prune -a` here (it would wipe the tagged
+  # on-demand MCP images: sam-segmentation, image-search, generic-api, …).
+  log "Pruning dangling images on the VM"
+  vm_ssh "sudo docker image prune -f" || warn "image prune failed (non-fatal)"
 }
 
 # --- mcp-image ---------------------------------------------------------------
