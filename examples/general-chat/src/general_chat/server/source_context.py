@@ -57,7 +57,10 @@ class SourceScope:
 
     Carries explicit source ids rather than a session id: admin-curated
     global sources live under a different owner and session, and a
-    session-only filter would silently drop them.
+    session-only filter would silently drop them. ``source_ids`` is the
+    authorization boundary; ``session_id`` and ``owner`` are informational
+    (they hold the first indexed record's values and MUST NOT be used as
+    retrieval filters — the ids can span owners).
     """
 
     session_id: str = ""
@@ -329,10 +332,15 @@ def build_retrieved_context_attachment(
     try:
         from openbench.core.abstractions import Query
 
+        # No owner filter here: scope.source_ids spans owners (admin-curated
+        # global sources plus the session's own), and the ids themselves are
+        # the authorization boundary — the server resolved them for this
+        # owner before the scope was built. ANDing a single owner on top
+        # silently drops every source belonging to the other owner.
         result = index.search(
             Query(
                 text=content,
-                filters={"source_ids": list(scope.source_ids), "owner": scope.owner},
+                filters={"source_ids": list(scope.source_ids)},
                 limit=top_k or retrieval_top_k(),
             )
         )

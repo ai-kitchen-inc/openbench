@@ -2559,6 +2559,12 @@ class TestSourceRetrievalSkill(SourceRetrievalTestCase):
         self.tools["search_sources"]("revenue")
         self.assertEqual(self.index.last_query.filters["source_ids"], ["source-a", "source-b"])
 
+    def test_search_filters_carry_no_owner(self):
+        # Scoped ids span owners (session sources + admin globals); an
+        # owner filter would silently drop the other owner's sources.
+        self.tools["search_sources"]("revenue")
+        self.assertNotIn("owner", self.index.last_query.filters)
+
     def test_search_honours_explicit_source_ids(self):
         self.tools["search_sources"]("revenue", source_ids=["source-b"])
         self.assertEqual(self.index.last_query.filters["source_ids"], ["source-b"])

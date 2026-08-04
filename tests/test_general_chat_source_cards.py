@@ -345,6 +345,27 @@ class TestCardMode(SourceContextTestCase):
         )
         self.assertIn("source-global", current_source_scope().source_ids)
 
+    def test_retrieval_filter_spans_mixed_owner_sources(self):
+        # Production ordering: admin-curated globals (owner "shared") come
+        # first, then the session's own sources. The retrieval filter must
+        # carry every scoped id and no owner — an owner AND-filter took the
+        # first record's owner and silently dropped the user's own sources.
+        index = _FakeIndex(
+            items=[{"content": "hit", "metadata": {"name": "laporan.pdf", "chunk_index": 0}}]
+        )
+        build_source_attachments(
+            [
+                _record("source-global", owner="shared", session_id="global-sources"),
+                _record("source-mine"),
+            ],
+            "berapa pendapatan?",
+            index=index,
+            legacy_builder=_legacy_builder,
+        )
+        filters = index.last_query.filters
+        self.assertEqual(set(filters["source_ids"]), {"source-global", "source-mine"})
+        self.assertNotIn("owner", filters)
+
     def test_unindexed_sources_fall_back_to_full_text_in_auto_mode(self):
         built = build_source_attachments(
             [_record("source-old", indexed=False)],

@@ -163,15 +163,18 @@ def search_sources(
         return _error(scope_error)
 
     limit = max(1, min(int(top_k or 6), MAX_TOP_K))
-    scope = _scope()
 
     try:
         from openbench.core.abstractions import Query
 
+        # ids already carry the turn's authorization (intersection with the
+        # scope above), and they may span owners — session sources plus
+        # admin-curated globals. An owner filter on top would silently drop
+        # every source that does not share the scope's single owner value.
         result = _source_index.search(
             Query(
                 text=query,
-                filters={"source_ids": ids, "owner": getattr(scope, "owner", None)},
+                filters={"source_ids": ids},
                 limit=limit,
             )
         )
