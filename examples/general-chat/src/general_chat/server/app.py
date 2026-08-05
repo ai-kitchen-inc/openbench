@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from general_chat.admin_store import build_settings_store, build_user_store, seed_users
 from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
 from general_chat.capabilities import CapabilityCache, blocked_flag_for
+from general_chat.runtime_settings import RuntimeSettingsCache
 from general_chat.extractor import DoclingContentExtractor
 from general_chat.google_drive import (
     MSG_FOLDER_EMPTY,
@@ -496,6 +497,7 @@ def create_app() -> FastAPI:
     user_store = build_user_store(storage_root)
     settings_store = build_settings_store(storage_root)
     capability_cache = CapabilityCache(settings_store)
+    runtime_settings_cache = RuntimeSettingsCache(settings_store)
     drive_oauth = DriveOAuthManager(storage_root)
 
     # Seed accounts + default persona synchronously (not in the startup
@@ -1807,6 +1809,7 @@ def create_app() -> FastAPI:
         user_store=user_store,
         settings_store=settings_store,
         capability_cache=capability_cache,
+        runtime_settings_cache=runtime_settings_cache,
         agent_holder=agent_holder,
     )
 

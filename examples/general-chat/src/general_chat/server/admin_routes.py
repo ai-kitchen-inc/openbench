@@ -27,6 +27,11 @@ from general_chat.persona_templates import (
     settings_from_template,
     templates_payload,
 )
+from general_chat.runtime_settings import (
+    RuntimeSettingsCache,
+    invalid_runtime_values,
+    runtime_settings_options,
+)
 from general_chat.server.auth import LOCAL_OWNER, auth_enabled, current_owner, current_role
 
 logger = logging.getLogger(__name__)
@@ -53,6 +58,7 @@ def register_admin_routes(
     user_store: Any,
     settings_store: Any,
     capability_cache: CapabilityCache,
+    runtime_settings_cache: RuntimeSettingsCache,
     agent_holder: Any,
 ) -> None:
     """Register /account/* and /admin/* endpoints."""
@@ -200,6 +206,32 @@ def register_admin_routes(
             "definitions": capability_definitions_payload(),
             **merged,
         }
+
+    # ------------------------------------------------------------------
+    # Admin: runtime model settings
+    # ------------------------------------------------------------------
+
+    @app.get("/admin/runtime-settings")
+    async def get_runtime_settings(request: Request) -> dict:
+        require_role(request, "admin")
+        return {
+            "values": dict(runtime_settings_cache.value),
+            "options": runtime_settings_options(),
+        }
+
+    @app.put("/admin/runtime-settings")
+    async def put_runtime_settings(request: Request) -> dict:
+        require_role(request, "admin")
+        body = await request.json()
+        invalid = invalid_runtime_values(body)
+        if invalid:
+            key, value = next(iter(invalid.items()))
+            raise HTTPException(
+                status_code=400,
+                detail=f"Nilai tidak valid untuk {key}: {value!r}",
+            )
+        merged = runtime_settings_cache.update(body, updated_by=_requester_email(request))
+        return {"values": merged, "options": runtime_settings_options()}
 
     # ------------------------------------------------------------------
     # Admin: persona
