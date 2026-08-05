@@ -57,6 +57,9 @@ class TestPersonaTemplates(unittest.TestCase):
         value = settings_from_template(get_template("soft-grounded"))
         persona, goal, label = persona_from_settings(value)
         self.assertIn("general knowledge", persona.soul)
+        self.assertIn("## Guardrails", persona.agents)
+        self.assertIn("## Scope / Capabilities", persona.agents)
+        self.assertIn("## Restrictions", persona.agents)
         self.assertEqual(goal, "")
         self.assertIn("general knowledge remains allowed", label)
 
