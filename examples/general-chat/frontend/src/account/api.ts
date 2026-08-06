@@ -192,6 +192,30 @@ export async function putCapabilities(patch: {
   return parseJsonResponse<CapabilitiesState>(response);
 }
 
+// ── /admin/runtime-settings ──
+
+export type RuntimeSettingsState = {
+  values: Record<string, string>;
+  options: Record<string, string[]>;
+};
+
+export async function getRuntimeSettings(): Promise<RuntimeSettingsState> {
+  const response = await apiFetch(apiPath("/admin/runtime-settings"));
+  return parseJsonResponse<RuntimeSettingsState>(response);
+}
+
+/** Partial update; the backend returns the full resolved state. */
+export async function putRuntimeSettings(
+  patch: Record<string, string>,
+): Promise<RuntimeSettingsState> {
+  const response = await apiFetch(apiPath("/admin/runtime-settings"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return parseJsonResponse<RuntimeSettingsState>(response);
+}
+
 // ── /admin/persona ──
 
 export type PersonaSettings = {

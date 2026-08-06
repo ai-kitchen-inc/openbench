@@ -10,6 +10,7 @@ import {
   MessageIcon,
   PersonaIcon,
   ServerIcon,
+  SettingsIcon,
   SlidersIcon,
   UsersIcon,
 } from "../brand/icons";
@@ -21,6 +22,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { FunctionsPage } from "./pages/FunctionsPage";
 import { McpServersPage } from "./pages/McpServersPage";
 import { PersonaPage } from "./pages/PersonaPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { UsersPage } from "./pages/UsersPage";
 import { useHashPage, type AdminPage } from "./useHashPage";
@@ -30,6 +32,7 @@ const NAV_ITEMS: { page: AdminPage; label: string; icon: ReactNode }[] = [
   { page: "sumber", label: "Sumber Global", icon: <BookIcon /> },
   { page: "persona", label: "Persona", icon: <PersonaIcon /> },
   { page: "kemampuan", label: "Kemampuan", icon: <SlidersIcon /> },
+  { page: "pengaturan", label: "Pengaturan", icon: <SettingsIcon /> },
   { page: "pengguna", label: "Pengguna", icon: <UsersIcon /> },
   { page: "mcp", label: "Server MCP", icon: <ServerIcon /> },
   { page: "fungsi", label: "Fungsi Kustom", icon: <CodeIcon /> },
@@ -41,6 +44,7 @@ const PAGE_TITLES: Record<AdminPage, string> = {
   sumber: "Sumber Global",
   persona: "Persona",
   kemampuan: "Kemampuan",
+  pengaturan: "Pengaturan",
   pengguna: "Pengguna",
   mcp: "Server MCP",
   fungsi: "Fungsi Kustom",
@@ -143,6 +147,7 @@ export function AdminShell({
                 {page === "sumber" && <SourcesPage />}
                 {page === "persona" && <PersonaPage />}
                 {page === "kemampuan" && <CapabilitiesPage />}
+                {page === "pengaturan" && <SettingsPage />}
                 {page === "pengguna" && <UsersPage currentEmail={me.email} />}
                 {page === "mcp" && <McpServersPage />}
                 {page === "fungsi" && <FunctionsPage />}
