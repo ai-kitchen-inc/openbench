@@ -20,6 +20,7 @@ import { ThemeIcon, useDarkMode } from "../theme";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FunctionsPage } from "./pages/FunctionsPage";
+import { CustomSkillsPage } from "./pages/CustomSkillsPage";
 import { McpServersPage } from "./pages/McpServersPage";
 import { PersonaPage } from "./pages/PersonaPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -36,6 +37,7 @@ const NAV_ITEMS: { page: AdminPage; label: string; icon: ReactNode }[] = [
   { page: "pengguna", label: "Pengguna", icon: <UsersIcon /> },
   { page: "mcp", label: "Server MCP", icon: <ServerIcon /> },
   { page: "fungsi", label: "Fungsi Kustom", icon: <CodeIcon /> },
+  { page: "skill", label: "Skill Kustom", icon: <BookIcon /> },
   { page: "chat", label: "Buka Chat", icon: <MessageIcon /> },
 ];
 
@@ -48,6 +50,7 @@ const PAGE_TITLES: Record<AdminPage, string> = {
   pengguna: "Pengguna",
   mcp: "Server MCP",
   fungsi: "Fungsi Kustom",
+  skill: "Skill Kustom",
   chat: "Buka Chat",
 };
 
@@ -151,6 +154,7 @@ export function AdminShell({
                 {page === "pengguna" && <UsersPage currentEmail={me.email} />}
                 {page === "mcp" && <McpServersPage />}
                 {page === "fungsi" && <FunctionsPage />}
+                {page === "skill" && <CustomSkillsPage />}
               </div>
             </main>
           </div>

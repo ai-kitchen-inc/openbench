@@ -52,6 +52,7 @@ from general_chat.server.auth import (
     require_firebase_user,
 )
 from general_chat.server.custom_functions import CustomFunctionError, CustomFunctionStore
+from general_chat.server.custom_skills import CustomSkillError, CustomSkillStore
 from general_chat.server.dashboard_pdf import render_dashboard_pdf
 from general_chat.server.drive_auth import DriveOAuthManager
 from general_chat.server.grafana import view_model_to_grafana
@@ -463,6 +464,7 @@ def create_app() -> FastAPI:
     storage = _build_storage_backend(storage_root)
     publish_store = PublishStore(storage_root)
     custom_functions = CustomFunctionStore(storage_root)
+    custom_skills = CustomSkillStore(storage_root)
     file_store = LocalFileStore(upload_dir=upload_dir)
     archiver = _build_attachment_archiver()
     extractor = DoclingContentExtractor()
@@ -534,6 +536,7 @@ def create_app() -> FastAPI:
             persona=persona,
             goal=goal or None,
             enable_file_generation=capability_cache.global_enabled("file_generation"),
+            custom_skill_paths=custom_skills.paths(),
         )
 
     agent_holder = AgentHolder(_agent_factory)
@@ -915,6 +918,63 @@ def create_app() -> FastAPI:
             "summary": registry.summary(),
             "skills": items,
         }
+
+    @app.get("/admin/custom-skills")
+    async def list_custom_skills(request: Request) -> dict:
+        require_role(request, "admin")
+        return {"skills": custom_skills.list()}
+
+    @app.post("/admin/custom-skills")
+    async def save_custom_skill(request: Request) -> dict:
+        require_role(request, "admin")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Expected a JSON object")
+        try:
+            meta = custom_skills.save(
+                str(body.get("id") or ""),
+                name=str(body.get("name") or ""),
+                description=str(body.get("description") or ""),
+                triggers=body.get("triggers"),
+                instructions=str(body.get("instructions") or ""),
+                version=str(body.get("version") or "0.1.0"),
+            )
+        except CustomSkillError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            agent_holder.rebuild()
+        except Exception as exc:
+            logger.exception("Agent rebuild after custom skill change failed")
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Skill tersimpan, tetapi pemuatan ulang agen gagal - "
+                    f"agen lama masih aktif: {exc}"
+                ),
+            ) from exc
+        return meta
+
+    @app.delete("/admin/custom-skills/{skill_id}")
+    async def delete_custom_skill(skill_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        try:
+            existed = custom_skills.delete(skill_id)
+        except CustomSkillError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not existed:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        try:
+            agent_holder.rebuild()
+        except Exception as exc:
+            logger.exception("Agent rebuild after custom skill delete failed")
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Skill terhapus, tetapi pemuatan ulang agen gagal - "
+                    f"agen lama masih aktif: {exc}"
+                ),
+            ) from exc
+        return {"ok": True, "id": skill_id}
 
     @app.get("/mcp/tools")
     async def mcp_tools_info() -> dict:

@@ -226,7 +226,10 @@ download card speak for itself — do not paste the file contents back as well."
 
 
 def _load_sdk_skills(
-    agent: BaseAgent, skill_names: list[str], bindings: dict | None = None
+    agent: BaseAgent,
+    skill_names: list[str],
+    bindings: dict | None = None,
+    project_skill_paths: list[str | Path] | None = None,
 ) -> None:
     """Load a set of SDK skills (by directory name) into General Chat.
 
@@ -244,6 +247,8 @@ def _load_sdk_skills(
     """
     registry = SkillRegistry()
     registry.load_project_skills([_sdk_skill_dir(name) for name in skill_names])
+    if project_skill_paths:
+        registry.load_project_skills(list(project_skill_paths))
     if bindings:
         # Bound once here, not per request: _create_request_agent shares one
         # ToolExecutor across requests, so per-request mutation would race.
@@ -1140,6 +1145,7 @@ def create_agent(
     persona: Persona | None = None,
     goal: str | None = None,
     enable_file_generation: bool = True,
+    custom_skill_paths: list[str | Path] | None = None,
 ) -> BaseAgent:
     """Create the general-purpose chat agent.
 
@@ -1275,8 +1281,14 @@ def create_agent(
             "duckdb_timeout_s": _env_int("GENERAL_CHAT_TABLE_QUERY_TIMEOUT_S", 20),
         }
 
-    if skill_names:
-        _load_sdk_skills(agent, skill_names, bindings or None)
+    custom_skill_paths = list(custom_skill_paths or [])
+    if skill_names or custom_skill_paths:
+        _load_sdk_skills(
+            agent,
+            skill_names,
+            bindings or None,
+            project_skill_paths=custom_skill_paths,
+        )
     else:
         agent._skill_registry = None  # type: ignore[attr-defined]
         agent._dashboard_skill_tools = []  # type: ignore[attr-defined]

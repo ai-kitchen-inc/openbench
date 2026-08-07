@@ -491,9 +491,40 @@ HTML.
 | `DELETE` | `/sessions/{session_id}` | Delete a session |
 | `GET` | `/persona` | Inspect loaded persona |
 | `GET` | `/skills` | Inspect loaded skills |
+| `GET` | `/admin/custom-skills` | List admin-defined custom skills |
+| `POST` | `/admin/custom-skills` | Save a custom skill and reload the agent |
+| `DELETE` | `/admin/custom-skills/{id}` | Delete a custom skill and reload the agent |
 | `GET` | `/mcp/tools` | Inspect opt-in MCP tool adapters loaded into the chat agent |
 | `GET` | `/mcp/catalogs` | List registered MCP servers and discovered tools |
 | `POST` | `/mcp/catalogs/import` | Register pasted standard `mcpServers` JSON |
+
+## Custom skills
+
+Admins can add project-specific knowledge skills from the **Skill Kustom** menu
+in the left admin panel. A saved skill is written under the General Chat storage
+root as a normal OpenBench skill directory with `SKILL.md`, then the shared agent
+is rebuilt so the next chat turn can use it.
+
+Example test skill:
+
+| Field | Value |
+|-------|-------|
+| Skill ID | `risk-review` |
+| Nama skill | `Risk Review` |
+| Deskripsi | `Membantu menilai risiko, dampak, mitigasi, dan pemilik aksi.` |
+| Trigger | `User meminta review risiko`<br>`User meminta mitigasi keputusan` |
+| Instruksi skill | `Saat user meminta review risiko, jawab dengan tabel berisi Risiko, Dampak, Mitigasi, dan Owner. Akhiri dengan 3 prioritas aksi.` |
+| Versi | `0.1.0` |
+
+After saving, open **Buka Chat** and test with:
+
+```text
+Tolong review risiko rencana migrasi database produksi akhir pekan ini.
+```
+
+The answer should follow the saved skill instructions, including a risk table
+and prioritized actions. You can also inspect `GET /skills` to confirm the custom
+skill is loaded.
 
 ## Chat-based CIFAR-10 image search through MCP
 

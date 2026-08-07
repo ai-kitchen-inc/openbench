@@ -112,6 +112,7 @@ describe("App role branching", () => {
     expect(await screen.findByText("Panel Kendali")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Buka Chat/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Kemampuan/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Skill Kustom/ })).toBeInTheDocument();
     expect(screen.getByText("Administrator")).toBeInTheDocument();
   });
 

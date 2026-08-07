@@ -9,6 +9,7 @@ export type AdminPage =
   | "pengguna"
   | "mcp"
   | "fungsi"
+  | "skill"
   | "chat";
 
 const DEFAULT_PAGE: AdminPage = "ringkasan";
@@ -21,6 +22,7 @@ const VALID_PAGES: readonly AdminPage[] = [
   "pengguna",
   "mcp",
   "fungsi",
+  "skill",
   "chat",
 ];
 
