@@ -533,6 +533,10 @@ def create_app() -> FastAPI:
         )
         set_source_context_label_override(source_label if persona is not None else None)
         return create_agent(
+            # Admin-managed model choice; the cache default already honors
+            # GENERAL_CHAT_MODEL, so env behavior is unchanged until an
+            # admin picks a different model.
+            model=runtime_settings_cache.value.get("llm_model") or None,
             persona=persona,
             goal=goal or None,
             enable_file_generation=capability_cache.global_enabled("file_generation"),

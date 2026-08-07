@@ -230,7 +230,19 @@ def register_admin_routes(
                 status_code=400,
                 detail=f"Nilai tidak valid untuk {key}: {value!r}",
             )
+        previous_llm_model = runtime_settings_cache.value.get("llm_model")
         merged = runtime_settings_cache.update(body, updated_by=_requester_email(request))
+        # The LLM model steers agent construction — rebuild only when it
+        # actually changed (same contract as global capability flags).
+        if merged.get("llm_model") != previous_llm_model:
+            try:
+                agent_holder.rebuild()
+            except Exception as exc:
+                logger.exception("Agent rebuild after model change failed")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Pengaturan tersimpan, tetapi pemuatan ulang agen gagal: {exc}",
+                ) from exc
         return {"values": merged, "options": runtime_settings_options()}
 
     # ------------------------------------------------------------------

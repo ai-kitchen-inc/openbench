@@ -131,7 +131,9 @@ class TestRuntimeSettingsEndpoints(unittest.TestCase):
         agent.model = "mock-model"
         agent._persona = None
         agent._skill_registry = None
-        stack.enter_context(patch("general_chat.server.app.create_agent", return_value=agent))
+        self.create_agent = stack.enter_context(
+            patch("general_chat.server.app.create_agent", return_value=agent)
+        )
         from general_chat.server.app import create_app
 
         return TestClient(create_app())
@@ -169,6 +171,26 @@ class TestRuntimeSettingsEndpoints(unittest.TestCase):
         response = client.put("/admin/runtime-settings", json={"made_up": "x"})
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("made_up", response.json()["values"])
+
+    def test_saved_model_reaches_agent_factory(self):
+        client = self._client()
+        response = client.put(
+            "/admin/runtime-settings", json={"llm_model": "gemini-2.5-pro"}
+        )
+        self.assertEqual(response.status_code, 200)
+        # The model change triggers a rebuild, and the factory passes the
+        # stored model to create_agent.
+        self.assertEqual(self.create_agent.call_args.kwargs["model"], "gemini-2.5-pro")
+
+    def test_unchanged_model_does_not_rebuild(self):
+        client = self._client()
+        calls_before = self.create_agent.call_count
+        # vector_store is stored-only: saving it must not rebuild the agent.
+        response = client.put(
+            "/admin/runtime-settings", json={"vector_store": "pinecone"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.create_agent.call_count, calls_before)
 
     def test_user_role_is_blocked(self):
         client = self._client()
