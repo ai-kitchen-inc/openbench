@@ -102,12 +102,51 @@ class TestRuntimeSettingsResolution(unittest.TestCase):
         )
 
 
+class TestSetVectorStore(unittest.TestCase):
+    """set_vector_store() cache-invalidation semantics."""
+
+    def setUp(self):
+        from general_chat import source_index
+
+        self.source_index = source_index
+        self.addCleanup(source_index.set_vector_store, None)
+        self.addCleanup(source_index.reset_caches)
+        source_index.set_vector_store(None)
+
+    def test_change_invalidates_cached_index(self):
+        module = self.source_index
+        module._document_index = "cached"
+        module.set_vector_store("pinecone")
+        self.assertIs(module._document_index, module._UNSET)
+
+    def test_same_value_keeps_cache(self):
+        module = self.source_index
+        module.set_vector_store("pinecone")
+        module._document_index = "cached"
+        module.set_vector_store("pinecone")
+        self.assertEqual(module._document_index, "cached")
+
+    def test_postgres_equals_default_selection(self):
+        module = self.source_index
+        module._document_index = "cached"
+        # "postgres" normalizes to the default SQL selection — seeding it
+        # over a fresh process must not drop a live index.
+        module.set_vector_store("postgres")
+        self.assertEqual(module._document_index, "cached")
+
+
 class TestRuntimeSettingsEndpoints(unittest.TestCase):
     """Local-dev client (auth disabled → requester is admin by default)."""
 
     def _client(self) -> TestClient:
         stack = ExitStack()
         self.addCleanup(stack.close)
+        # PUT vector_store mutates module state in source_index; reset so
+        # later tests see the default selection again.
+        from general_chat import source_index
+
+        self.addCleanup(source_index.set_vector_store, None)
+        self.addCleanup(source_index.reset_caches)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         tmpdir = Path(tmp.name)
@@ -182,15 +221,35 @@ class TestRuntimeSettingsEndpoints(unittest.TestCase):
         # stored model to create_agent.
         self.assertEqual(self.create_agent.call_args.kwargs["model"], "gemini-2.5-pro")
 
-    def test_unchanged_model_does_not_rebuild(self):
+    def test_stored_only_field_does_not_rebuild(self):
         client = self._client()
         calls_before = self.create_agent.call_count
-        # vector_store is stored-only: saving it must not rebuild the agent.
-        response = client.put(
-            "/admin/runtime-settings", json={"vector_store": "pinecone"}
-        )
+        # vlm_model is stored-only: saving a change must not rebuild the agent.
+        response = client.put("/admin/runtime-settings", json={"vlm_model": "gemma4:e4b"})
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["values"]["vlm_model"], "gemma4:e4b")
         self.assertEqual(self.create_agent.call_count, calls_before)
+
+    def test_vector_store_change_rebuilds_agent(self):
+        client = self._client()
+        calls_before = self.create_agent.call_count
+        response = client.put("/admin/runtime-settings", json={"vector_store": "pinecone"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.create_agent.call_count, calls_before + 1)
+        # Saving the same value again changes nothing and skips the rebuild.
+        response = client.put("/admin/runtime-settings", json={"vector_store": "pinecone"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.create_agent.call_count, calls_before + 1)
+
+    def test_vector_store_change_swaps_index_selection(self):
+        from general_chat import source_index
+
+        client = self._client()
+        self.assertIsNone(source_index._vector_store_setting)
+        client.put("/admin/runtime-settings", json={"vector_store": "pinecone"})
+        self.assertEqual(source_index._vector_store_setting, "pinecone")
+        client.put("/admin/runtime-settings", json={"vector_store": "postgres"})
+        self.assertIsNone(source_index._vector_store_setting)
 
     def test_user_role_is_blocked(self):
         client = self._client()

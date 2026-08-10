@@ -64,6 +64,7 @@ from general_chat.source_index import (
     check_embeddings,
     deindex_records,
     index_source_record,
+    set_vector_store,
     source_index_enabled,
 )
 from general_chat.sources import (
@@ -492,14 +493,17 @@ def create_app() -> FastAPI:
     source_index_semaphore = asyncio.Semaphore(
         max(1, _env_int("GENERAL_CHAT_SOURCE_INDEX_CONCURRENCY", 2))
     )
-    if source_index_enabled():
-        # One explicit line in the log beats a silent indexStatus=failed on
-        # every upload when the key or the dimension is wrong.
-        check_embeddings()
     user_store = build_user_store(storage_root)
     settings_store = build_settings_store(storage_root)
     capability_cache = CapabilityCache(settings_store)
     runtime_settings_cache = RuntimeSettingsCache(settings_store)
+    # The vector_store selection must land before check_embeddings()
+    # builds the index singleton, or the probe exercises the wrong backend.
+    set_vector_store(runtime_settings_cache.value.get("vector_store"))
+    if source_index_enabled():
+        # One explicit line in the log beats a silent indexStatus=failed on
+        # every upload when the key or the dimension is wrong.
+        check_embeddings()
     drive_oauth = DriveOAuthManager(storage_root)
 
     # Seed accounts + default persona synchronously (not in the startup

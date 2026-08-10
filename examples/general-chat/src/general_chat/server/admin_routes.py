@@ -33,6 +33,7 @@ from general_chat.runtime_settings import (
     runtime_settings_options,
 )
 from general_chat.server.auth import LOCAL_OWNER, auth_enabled, current_owner, current_role
+from general_chat.source_index import set_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -231,14 +232,19 @@ def register_admin_routes(
                 detail=f"Nilai tidak valid untuk {key}: {value!r}",
             )
         previous_llm_model = runtime_settings_cache.value.get("llm_model")
+        previous_vector_store = runtime_settings_cache.value.get("vector_store")
         merged = runtime_settings_cache.update(body, updated_by=_requester_email(request))
-        # The LLM model steers agent construction — rebuild only when it
-        # actually changed (same contract as global capability flags).
-        if merged.get("llm_model") != previous_llm_model:
+        vector_store_changed = merged.get("vector_store") != previous_vector_store
+        if vector_store_changed:
+            set_vector_store(merged.get("vector_store"))
+        # The LLM model steers agent construction, and the vector store is
+        # captured by the agent's source-retrieval bindings — rebuild once
+        # when either actually changed (same contract as capability flags).
+        if merged.get("llm_model") != previous_llm_model or vector_store_changed:
             try:
                 agent_holder.rebuild()
             except Exception as exc:
-                logger.exception("Agent rebuild after model change failed")
+                logger.exception("Agent rebuild after settings change failed")
                 raise HTTPException(
                     status_code=500,
                     detail=f"Pengaturan tersimpan, tetapi pemuatan ulang agen gagal: {exc}",

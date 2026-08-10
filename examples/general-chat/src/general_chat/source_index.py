@@ -42,6 +42,10 @@ DEFAULT_EMBEDDING_DIM = 1536
 _UNSET = object()
 _document_index: Any = _UNSET
 _table_catalog: Any = _UNSET
+#: Admin-managed backend selection: ``"pinecone"`` or ``None`` (SQL,
+#: driven by the database URL). Seeded from the runtime settings at
+#: startup and swapped by the admin PUT.
+_vector_store_setting: str | None = None
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -94,6 +98,24 @@ def _database_url() -> str | None:
     return os.getenv("OPENBENCH_DOC_INDEX_URL") or os.getenv("GENERAL_CHAT_DATABASE_URL") or None
 
 
+def set_vector_store(value: str | None) -> None:
+    """Apply the admin-managed ``vector_store`` selection.
+
+    ``"pinecone"`` routes index construction to the Pinecone backend;
+    any other value keeps the SQL selection driven by the database URL.
+    The cached index is dropped only when the selection actually changes,
+    so a startup seed with the current value never tears down a live
+    index. The Parquet table catalog is untouched — it is not a vector
+    store.
+    """
+    global _vector_store_setting, _document_index
+    normalized = value if value == "pinecone" else None
+    if normalized == _vector_store_setting:
+        return
+    _vector_store_setting = normalized
+    _document_index = _UNSET
+
+
 def get_document_index() -> Any:
     """Process-wide document index, or ``None`` when disabled.
 
@@ -114,6 +136,7 @@ def get_document_index() -> Any:
         _document_index = build_document_index(
             database_url=_database_url(),
             storage_root=storage_root(),
+            vector_backend=_vector_store_setting,
             # Default to Google explicitly. Without a provider name the SDK
             # resolver falls through to OpenAI, and this deployment has a
             # GOOGLE_API_KEY but no OPENAI_API_KEY.

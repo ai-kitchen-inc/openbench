@@ -218,6 +218,21 @@ def run_pubsub_worker() -> None:
             "Pub/Sub worker requires google-cloud-pubsub. Install openbench[gcp]."
         ) from exc
 
+    # The worker indexes uploads, so it must honor the admin's vector
+    # store selection. Read once at startup — a runtime flip needs a
+    # worker restart — and never block startup on a DB hiccup.
+    try:
+        from general_chat.admin_store import build_settings_store
+        from general_chat.runtime_settings import SETTINGS_KEY
+        from general_chat.source_index import set_vector_store, storage_root
+
+        stored = build_settings_store(storage_root()).get(SETTINGS_KEY)
+        set_vector_store(stored.get("vector_store") if isinstance(stored, dict) else None)
+    except Exception:
+        logger.warning(
+            "Could not read runtime settings; using the default vector store", exc_info=True
+        )
+
     subscriber = pubsub_v1.SubscriberClient()
     stop = threading.Event()
 

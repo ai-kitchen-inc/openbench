@@ -11,8 +11,9 @@ Fields:
   admin PUT triggers an agent rebuild once wired).
 * ``vlm_model`` — the vision model. Stored only for now; the agent keeps
   reading its env configuration.
-* ``vector_store`` — ``postgres`` or ``pinecone``. Stored only; store
-  wiring is still decided by the database URL.
+* ``vector_store`` — ``postgres`` or ``pinecone``. Applied to the
+  document index: a change swaps the index singleton and rebuilds the
+  agent. The Pub/Sub worker reads it at startup only.
 """
 
 from __future__ import annotations

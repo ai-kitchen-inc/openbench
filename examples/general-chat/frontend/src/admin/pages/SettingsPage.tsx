@@ -30,7 +30,7 @@ const FIELDS: FieldDefinition[] = [
     id: "vector_store",
     label: "Basis Data Vektor",
     description:
-      "Penyimpanan vektor untuk indeks sumber. Belum diterapkan — pengaturan disimpan saja.",
+      "Penyimpanan vektor untuk indeks sumber. Berlaku segera; worker perlu restart untuk ikut berpindah.",
   },
 ];
 
