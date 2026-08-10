@@ -97,7 +97,7 @@ body {
   --ob-primary: var(--sss-primary);
   --ob-primary-hover: var(--sss-primary-hover);
   --ob-primary-text: var(--sss-primary-text);
-  --ob-user-bubble: var(--sss-primary);
+  --ob-user-bubble: var(--sss-navy-600);
   --ob-user-text: #ffffff;
   --ob-assistant-bubble: var(--sss-surface);
   --ob-assistant-text: var(--sss-text);
@@ -1767,7 +1767,7 @@ body {
 }
 
 .chat-message--user .chat-message__content {
-  border: 1px solid rgba(41, 65, 95, 0.2);
+  border: 1px solid rgba(61, 95, 134, 0.22);
   border-bottom-right-radius: 5px;
   box-shadow: var(--sss-shadow-1);
 }
@@ -1782,6 +1782,11 @@ body {
   margin-top: 5px;
   color: var(--sss-text-2);
   font-size: 11px;
+}
+
+.chat-message--user .chat-message__meta {
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 2px rgba(29, 41, 57, 0.18);
 }
 
 .ob-markdown {
@@ -3994,6 +3999,463 @@ body {
   font-weight: 650;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* ============================================================
+   Modern business refinement
+   Visual-only polish for controls, windows, tabs, and panels.
+   ============================================================ */
+
+:root {
+  --sss-control-height: 36px;
+  --sss-control-radius: 8px;
+  --sss-panel-radius: 10px;
+  --sss-control-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --sss-control-shadow-hover: 0 7px 18px rgba(16, 24, 40, 0.09);
+  --sss-window-shadow: 0 18px 48px rgba(16, 24, 40, 0.16);
+  --sss-focus-ring: 0 0 0 3px rgba(41, 65, 95, 0.14);
+}
+
+[data-theme="dark"] {
+  --sss-control-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --sss-control-shadow-hover: 0 8px 20px rgba(0, 0, 0, 0.34);
+  --sss-window-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  --sss-focus-ring: 0 0 0 3px rgba(143, 180, 223, 0.18);
+}
+
+.btn,
+.panel-button,
+.mcp-btn,
+.error-boundary__btn,
+.auth-signout,
+.admin-sidebar__signout,
+.settings-dialog__close,
+.settings-tools__open,
+.source-panel__add-btn,
+.source-panel__mini-btn,
+.source-panel__wide-btn,
+.dashboard-artifact-open {
+  min-height: var(--sss-control-height);
+  border-radius: var(--sss-control-radius);
+  border-color: var(--sss-border);
+  box-shadow: var(--sss-control-shadow);
+  font-weight: 620;
+  letter-spacing: 0;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.btn:hover:not(:disabled),
+.panel-button:hover:not(:disabled),
+.mcp-btn:hover:not(:disabled),
+.error-boundary__btn:hover:not(:disabled),
+.auth-signout:hover:not(:disabled),
+.admin-sidebar__signout:hover:not(:disabled),
+.settings-dialog__close:hover,
+.settings-tools__open:hover,
+.source-panel__add-btn:hover:not(:disabled),
+.source-panel__mini-btn:hover:not(:disabled),
+.source-panel__wide-btn:hover:not(:disabled),
+.dashboard-artifact-open:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--sss-control-shadow-hover);
+}
+
+.btn--primary,
+.panel-button--primary,
+.mcp-btn--primary,
+.error-boundary__btn--primary,
+.settings-tools__open,
+.source-panel__add-btn,
+.chat-input__send-btn {
+  background: var(--sss-primary);
+  border-color: var(--sss-primary);
+  color: var(--sss-primary-text);
+  box-shadow: 0 8px 18px rgba(41, 65, 95, 0.18);
+}
+
+.btn--primary:hover:not(:disabled),
+.panel-button--primary:hover:not(:disabled),
+.mcp-btn--primary:hover:not(:disabled),
+.error-boundary__btn--primary:hover:not(:disabled),
+.settings-tools__open:hover,
+.source-panel__add-btn:hover:not(:disabled),
+.chat-input__send-btn:hover:not(:disabled) {
+  background: var(--sss-primary-hover);
+  border-color: var(--sss-primary-hover);
+  color: var(--sss-primary-text);
+  box-shadow: 0 10px 22px rgba(29, 41, 57, 0.2);
+}
+
+.mcp-icon-btn,
+.theme-toggle,
+.sidebar-settings-button,
+.chat-panel__sidebar-toggle,
+.chat-input__attach-btn,
+.chat-input__mic-btn,
+.dashboard-artifact__icon-btn,
+.drawer__close,
+.toast__close,
+.source-panel__item-remove {
+  border-radius: var(--sss-control-radius);
+  border-color: var(--sss-border);
+  background: var(--sss-surface);
+  color: var(--sss-text-2);
+  box-shadow: var(--sss-control-shadow);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.mcp-icon-btn:hover,
+.theme-toggle:hover,
+.sidebar-settings-button:hover,
+.chat-panel__sidebar-toggle:hover,
+.chat-input__attach-btn:hover,
+.chat-input__mic-btn:hover,
+.dashboard-artifact__icon-btn:hover,
+.drawer__close:hover,
+.toast__close:hover,
+.source-panel__item-remove:hover {
+  border-color: var(--sss-border-strong);
+  background: var(--sss-surface-2);
+  color: var(--sss-text);
+  box-shadow: var(--sss-control-shadow-hover);
+  transform: translateY(-1px);
+}
+
+.btn:focus-visible,
+.panel-button:focus-visible,
+.mcp-btn:focus-visible,
+.mcp-icon-btn:focus-visible,
+.error-boundary__btn:focus-visible,
+.theme-toggle:focus-visible,
+.auth-signout:focus-visible,
+.admin-sidebar__signout:focus-visible,
+.settings-dialog__close:focus-visible,
+.settings-tools__open:focus-visible,
+.source-panel__add-btn:focus-visible,
+.source-panel__mini-btn:focus-visible,
+.source-panel__wide-btn:focus-visible,
+.dashboard-artifact-open:focus-visible,
+.dashboard-artifact__icon-btn:focus-visible,
+.chat-panel__sidebar-toggle:focus-visible,
+.chat-input__attach-btn:focus-visible,
+.chat-input__mic-btn:focus-visible,
+.chat-input__send-btn:focus-visible {
+  outline: none;
+  border-color: var(--sss-primary);
+  box-shadow: var(--sss-focus-ring), var(--sss-control-shadow-hover);
+}
+
+.admin-topbar,
+.chat-panel__header,
+.drawer__header,
+.settings-dialog__header,
+.mcp-dialog__header,
+.dashboard-artifact__header {
+  background: color-mix(in srgb, var(--sss-surface) 94%, var(--sss-bg));
+  border-color: var(--sss-border);
+}
+
+.admin-topbar {
+  min-height: 52px;
+  box-shadow: 0 1px 0 rgba(16, 24, 40, 0.04);
+}
+
+.admin-page__inner {
+  gap: 18px;
+}
+
+.panel-section,
+.mcp-section,
+.mcp-card,
+.persona-card,
+.settings-persona .persona-badge,
+.settings-persona .skill-badge,
+.settings-persona .badge-skeleton,
+.source-panel__item,
+.source-panel__result,
+.source-panel__discovery-result,
+.dashboard-artifact {
+  border-color: var(--sss-border);
+  border-radius: var(--sss-panel-radius);
+  background: var(--sss-surface);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.panel-section,
+.mcp-section,
+.dashboard-artifact {
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 12px 28px rgba(16, 24, 40, 0.05);
+}
+
+.panel-section__header,
+.mcp-section__header,
+.mcp-config-list .mcp-section__header {
+  padding-top: 18px;
+  padding-bottom: 16px;
+  background: color-mix(in srgb, var(--sss-surface) 92%, var(--sss-bg));
+}
+
+.panel-section__title,
+.mcp-section__title,
+.source-panel__title,
+.settings-dialog__header h2,
+.mcp-dialog__header h2,
+.drawer__title {
+  color: var(--sss-text);
+  font-weight: 720;
+  letter-spacing: 0;
+}
+
+.panel-section__subtitle,
+.mcp-section__subtitle,
+.source-panel__empty,
+.settings-dialog__header p {
+  line-height: 1.55;
+}
+
+.admin-nav {
+  gap: 4px;
+  padding: 14px 12px;
+}
+
+.admin-nav__label {
+  padding: 8px 12px 10px;
+  color: rgba(198, 210, 228, 0.62);
+}
+
+.admin-nav__item {
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.admin-nav__item:hover {
+  border-color: rgba(226, 234, 247, 0.08);
+}
+
+.admin-nav__item--active {
+  border-color: rgba(226, 234, 247, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(226, 234, 247, 0.04);
+}
+
+.admin-nav__item--active::before {
+  top: 9px;
+  bottom: 9px;
+}
+
+.admin-sidebar__brand {
+  min-height: 82px;
+}
+
+.admin-sidebar__avatar,
+.auth-avatar {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.settings-dialog__nav {
+  gap: 6px;
+  padding: 16px;
+  background: color-mix(in srgb, var(--sss-surface) 94%, var(--sss-bg));
+}
+
+.settings-dialog__nav button,
+.settings-tools__switcher button {
+  border-radius: 8px;
+  font-weight: 600;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.settings-dialog__nav button {
+  min-height: 36px;
+  padding: 8px 11px;
+}
+
+.settings-dialog__nav button:hover,
+.settings-dialog__nav button.is-active,
+.settings-tools__switcher button:hover,
+.settings-tools__switcher button.is-active {
+  border-color: color-mix(in srgb, var(--sss-primary) 20%, var(--sss-border));
+  background: color-mix(in srgb, var(--sss-wash) 68%, var(--sss-surface));
+  color: var(--sss-primary);
+  box-shadow: inset 0 0 0 1px rgba(41, 65, 95, 0.02);
+}
+
+.settings-tools__switcher {
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sss-surface-2) 70%, var(--sss-surface));
+  box-shadow: inset 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.settings-tools__switcher button {
+  min-height: 32px;
+  padding: 7px 12px;
+}
+
+.settings-dialog__content {
+  padding: 22px;
+}
+
+.mcp-dialog {
+  backdrop-filter: blur(6px);
+}
+
+.mcp-dialog__panel,
+.drawer,
+.toast {
+  border-color: var(--sss-border);
+  border-radius: 12px;
+  box-shadow: var(--sss-window-shadow);
+}
+
+.mcp-dialog__header,
+.drawer__header {
+  padding-top: 18px;
+  padding-bottom: 16px;
+}
+
+.mcp-dialog__actions {
+  background: color-mix(in srgb, var(--sss-surface) 94%, var(--sss-bg));
+}
+
+.mcp-card,
+.source-panel__item,
+.source-panel__result,
+.source-panel__discovery-result,
+.persona-card,
+.cap-row {
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.mcp-card:hover,
+.source-panel__item:hover,
+.source-panel__result:hover,
+.source-panel__discovery-result:hover,
+.persona-card:hover,
+.cap-row:hover {
+  border-color: var(--sss-border-strong);
+  box-shadow: 0 8px 20px rgba(16, 24, 40, 0.08);
+}
+
+.cap-row {
+  border-radius: var(--sss-panel-radius);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
+}
+
+.mcp-field input,
+.mcp-field select,
+.mcp-field textarea,
+.sources-form input,
+.sources-form select,
+.sources-form textarea,
+.persona-editor__field input,
+.persona-editor__field textarea,
+.source-panel__input,
+.source-panel__textarea,
+.settings-model-select,
+.chat-input__row,
+.a2ui-textfield__input,
+.a2ui-choice-picker__select,
+.a2ui-datetime-input__input {
+  border-radius: var(--sss-control-radius);
+  border-color: var(--sss-border);
+  background-color: var(--sss-surface);
+  box-shadow: inset 0 1px 2px rgba(16, 24, 40, 0.03);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.mcp-field input:focus,
+.mcp-field select:focus,
+.mcp-field textarea:focus,
+.sources-form input:focus,
+.sources-form select:focus,
+.sources-form textarea:focus,
+.persona-editor__field input:focus,
+.persona-editor__field textarea:focus,
+.source-panel__input:focus,
+.source-panel__textarea:focus,
+.settings-model-select:focus,
+.chat-input__row:focus-within,
+.a2ui-textfield__input:focus,
+.a2ui-choice-picker__select:focus,
+.a2ui-datetime-input__input:focus {
+  outline: none;
+  border-color: var(--sss-primary);
+  box-shadow: var(--sss-focus-ring), inset 0 1px 2px rgba(16, 24, 40, 0.03);
+}
+
+.settings-model-select {
+  border-radius: 9px;
+  font-weight: 620;
+}
+
+.chat-message__content {
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.chat-message--user .chat-message__content {
+  box-shadow: 0 10px 24px rgba(61, 95, 134, 0.14);
+}
+
+.chat-welcome__suggestion {
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.chat-welcome__suggestion:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(16, 24, 40, 0.08);
+}
+
+[data-theme="dark"] .panel-section,
+[data-theme="dark"] .mcp-section,
+[data-theme="dark"] .mcp-card,
+[data-theme="dark"] .persona-card,
+[data-theme="dark"] .cap-row,
+[data-theme="dark"] .source-panel__item,
+[data-theme="dark"] .source-panel__result,
+[data-theme="dark"] .source-panel__discovery-result,
+[data-theme="dark"] .dashboard-artifact,
+[data-theme="dark"] .chat-message__content,
+[data-theme="dark"] .chat-welcome__suggestion {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+}
+
+[data-theme="dark"] .panel-section,
+[data-theme="dark"] .mcp-section,
+[data-theme="dark"] .dashboard-artifact {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 12px 28px rgba(0, 0, 0, 0.28);
+}
+
+[data-theme="dark"] .chat-message--user .chat-message__content {
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
 }
 
 /* ============================================================
