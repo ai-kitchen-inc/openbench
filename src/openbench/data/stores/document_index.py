@@ -1342,15 +1342,35 @@ def build_document_index(
     *,
     database_url: str | None = None,
     storage_root: str | Path | None = None,
+    vector_backend: str | None = None,
     **kwargs: Any,
 ) -> DocumentIndexStore | None:
     """Build the appropriate index for the environment.
 
-    Prefers Postgres when a database URL is available (explicit argument
-    or ``OPENBENCH_DOC_INDEX_URL``), otherwise falls back to SQLite under
-    ``storage_root``. Returns ``None`` when neither is configured, so
-    callers can treat the index as an optional feature.
+    ``vector_backend="pinecone"`` selects the Pinecone backend when
+    ``PINECONE_API_KEY`` is set (index name from ``PINECONE_DOC_INDEX``,
+    namespace from ``PINECONE_DOC_NAMESPACE``); without the key it logs
+    and falls through rather than failing, so a saved-but-unusable
+    setting never takes the index down.
+
+    Otherwise prefers Postgres when a database URL is available (explicit
+    argument or ``OPENBENCH_DOC_INDEX_URL``), then falls back to SQLite
+    under ``storage_root``. Returns ``None`` when nothing is configured,
+    so callers can treat the index as an optional feature.
     """
+    if vector_backend == "pinecone":
+        if os.getenv("PINECONE_API_KEY"):
+            from openbench.data.stores.pinecone_document import PineconeDocumentBackend
+
+            backend = PineconeDocumentBackend(
+                index_name=os.getenv("PINECONE_DOC_INDEX") or "openbench-source-chunks",
+                namespace=os.getenv("PINECONE_DOC_NAMESPACE") or "",
+            )
+            return DocumentIndexStore(backend=backend, **kwargs)
+        logger.warning(
+            "vector_backend='pinecone' requested but PINECONE_API_KEY is unset; "
+            "falling back to the SQL document index"
+        )
     url = database_url or os.getenv("OPENBENCH_DOC_INDEX_URL") or None
     if url:
         return DocumentIndexStore(database_url=url, **kwargs)

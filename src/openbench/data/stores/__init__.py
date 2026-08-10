@@ -39,6 +39,10 @@ def __getattr__(name: str):
                 "PineconeStore requires pinecone-client. "
                 "Install with: pip install openbench[vector]"
             ) from None
+    if name == "PineconeDocumentBackend":
+        from openbench.data.stores.pinecone_document import PineconeDocumentBackend
+
+        return PineconeDocumentBackend
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -51,6 +55,7 @@ __all__ = [
     "chunk_raw_data",
     # Stores
     "PineconeStore",
+    "PineconeDocumentBackend",
     "ChunkRow",
     "DocumentIndexBackend",
     "DocumentIndexStore",
