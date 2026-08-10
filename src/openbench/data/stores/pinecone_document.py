@@ -115,7 +115,8 @@ class PineconeDocumentBackend(DocumentIndexBackend):
             from pinecone import Pinecone, ServerlessSpec
         except ImportError:
             raise StoreError(
-                "pinecone-client not installed. Install with: pip install openbench[vector]"
+                "The pinecone package is not installed. "
+                "Install with: pip install openbench[vector]"
             ) from None
 
         client = Pinecone(api_key=self._api_key)

@@ -91,7 +91,9 @@ security = [
 ]
 
 vector = [
-    "pinecone-client>=3.0.0",
+    # The SDK was renamed: `pinecone-client` is now a tombstone package
+    # whose import raises. `pinecone` >=5 keeps the same v3-style API.
+    "pinecone>=5.0.0",
 ]
 
 # Parquet-backed tables + guarded DuckDB SQL over uploaded spreadsheets.

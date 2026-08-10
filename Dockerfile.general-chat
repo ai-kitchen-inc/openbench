@@ -59,7 +59,7 @@ WORKDIR /app
 COPY . /app
 
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e .[google,chat,search,gcp,mcp,epub,media,output,tabular] && \
+    pip install --no-cache-dir -e .[google,chat,search,gcp,mcp,epub,media,output,tabular,vector] && \
     pip install --no-cache-dir -e ./examples/general-chat
 
 # Chromium for server-side dashboard PDF export (POST /dashboard/export/pdf).

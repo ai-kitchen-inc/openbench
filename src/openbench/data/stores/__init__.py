@@ -36,7 +36,7 @@ def __getattr__(name: str):
             return PineconeStore
         except ImportError:
             raise ImportError(
-                "PineconeStore requires pinecone-client. "
+                "PineconeStore requires the pinecone package. "
                 "Install with: pip install openbench[vector]"
             ) from None
     if name == "PineconeDocumentBackend":

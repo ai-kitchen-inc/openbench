@@ -204,7 +204,8 @@ class PineconeStore(DataStore, EmbeddingMixin, HybridSearchMixin):
             self._client = Pinecone(api_key=self._api_key)
         except ImportError:
             raise StoreError(
-                "pinecone-client not installed. Install with: pip install openbench[vector]"
+                "The pinecone package is not installed. "
+                "Install with: pip install openbench[vector]"
             ) from None
         except Exception as e:
             raise StoreConnectionError("pinecone", str(e)) from e

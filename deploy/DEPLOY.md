@@ -344,9 +344,10 @@ agent rebuild); the worker reads it **at startup only**.
 
 **Rollout** (each step reversible on its own):
 
-1. Add `PINECONE_API_KEY` to `.env.gcp` and recreate the containers (compose
-   env changes do **not** apply on a plain `deploy.sh backend` — same caveat
-   as step 2 above; both services use `env_file`, so no compose edit).
+1. Add `PINECONE_API_KEY` to `.env.gcp`, then `bash deploy/deploy.sh backend`
+   — the image build includes the `vector` extra (the `pinecone` SDK), and the
+   rollout step recreates the containers with `--env-file`, which is what
+   makes the new env var stick (a plain restart would not).
 2. Copy the existing corpus — stored embeddings are reused, nothing is
    re-embedded:
    `python examples/general-chat/scripts/migrate_vectors_to_pinecone.py --dry-run`,
