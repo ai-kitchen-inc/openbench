@@ -328,6 +328,40 @@ column with a Python cosine scan, which is correct but slower.
 **Rollback:** set `GENERAL_CHAT_SOURCE_CONTEXT_MODE=full` and recreate. The old
 prompt returns exactly; chunks keep being written harmlessly.
 
+### Optional: Pinecone vector store
+
+The admin panel (**Pengaturan → Basis Data Vektor**) can switch the chunk index
+from Postgres/pgvector to a Pinecone serverless index. The selection lives in
+`openbench_app_settings` and applies to the API immediately (index singleton +
+agent rebuild); the worker reads it **at startup only**.
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `PINECONE_API_KEY` | — | required for the `pinecone` selection; without it the app logs a warning and stays on the SQL index |
+| `PINECONE_DOC_INDEX` | `openbench-source-chunks` | serverless index name — created on first use (metric cosine, dim = `OPENBENCH_EMBEDDING_DIM`) |
+| `PINECONE_DOC_NAMESPACE` | `""` | namespace holding the chunk vectors |
+| `PINECONE_CLOUD` / `PINECONE_REGION` | `aws` / `us-east-1` | serverless spec used at index creation |
+
+**Rollout** (each step reversible on its own):
+
+1. Add `PINECONE_API_KEY` to `.env.gcp` and recreate the containers (compose
+   env changes do **not** apply on a plain `deploy.sh backend` — same caveat
+   as step 2 above; both services use `env_file`, so no compose edit).
+2. Copy the existing corpus — stored embeddings are reused, nothing is
+   re-embedded:
+   `python examples/general-chat/scripts/migrate_vectors_to_pinecone.py --dry-run`,
+   then without the flag, then `--verify 20`.
+3. Flip **Pengaturan → Basis Data Vektor** to `pinecone` in the admin panel.
+4. Restart the worker container so new uploads index into Pinecone too.
+
+**Rollback:** flip the setting back to `postgres` (and restart the worker).
+The migration never writes to Postgres, so the pgvector corpus stays intact.
+
+**Known limits:** keyword (full-text) recall degrades to vector-only on
+Pinecone — exact rare-term lookups can miss chunks outside the vector top-k.
+Postgres stays one dropdown flip away. Id listing (`--verify`, idempotent
+re-index) requires a **serverless** index.
+
 **Note:** `deploy.sh wipe-chat-data` drops the two new tables and removes the
 Parquet directory. Chunks and Parquet are copies of uploaded content, so a wipe
 that skipped them would leave deleted material answering questions.
