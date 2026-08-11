@@ -28,12 +28,7 @@ from this list in the same PR. Use the shared fixtures in
 ## MCP subsystem
 
 - [ ] `src/openbench/mcp/adapters.py`
-- [ ] `src/openbench/mcp/discovery.py`
-- [ ] `src/openbench/mcp/errors.py`
 - [ ] `src/openbench/mcp/observability.py`
-- [ ] `src/openbench/mcp/prompts.py`
-- [ ] `src/openbench/mcp/resources.py`
-- [ ] `src/openbench/mcp/transports.py`
 
 ## Integrations & misc
 
