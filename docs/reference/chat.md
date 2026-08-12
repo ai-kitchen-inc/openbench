@@ -10,7 +10,22 @@
 .. automodule:: openbench.chat.session
    :members:
 
+.. automodule:: openbench.chat.session_store
+   :members:
+
+.. automodule:: openbench.chat.stores.sqlite
+   :members:
+
+.. automodule:: openbench.chat.files
+   :members:
+
+.. automodule:: openbench.chat.render_queue
+   :members:
+
 .. automodule:: openbench.chat.a2ui.builder
+   :members:
+
+.. automodule:: openbench.chat.a2ui.catalog
    :members:
 
 .. automodule:: openbench.chat.a2ui.schema
@@ -56,5 +71,11 @@
    :members:
 
 .. automodule:: openbench.chat.transport.agui_actions
+   :members:
+
+.. automodule:: openbench.chat.transport.sessions
+   :members:
+
+.. automodule:: openbench.chat.transport.validation
    :members:
 ```
