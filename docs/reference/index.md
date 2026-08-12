@@ -9,6 +9,7 @@ core
 data
 intelligence
 chat
+mcp
 output
 workflows
 adapters
