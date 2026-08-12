@@ -6,4 +6,7 @@
 
 .. automodule:: openbench.integrations.firebase_auth
    :members:
+
+.. automodule:: openbench.integrations.gcp
+   :members:
 ```

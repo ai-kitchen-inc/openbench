@@ -16,6 +16,18 @@
 .. automodule:: openbench.core.providers
    :members:
 
+.. automodule:: openbench.core.registry
+   :members:
+
+.. automodule:: openbench.core.context
+   :members:
+
+.. automodule:: openbench.core.state
+   :members:
+
+.. automodule:: openbench.core.constants
+   :members:
+
 .. automodule:: openbench.core.storage
    :members:
 ```
