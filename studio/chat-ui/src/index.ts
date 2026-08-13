@@ -19,6 +19,17 @@ export {
   resolveValue,
   setAtPath,
 } from "./a2ui/data-binding";
+export {
+  CUSTOM_CATALOG,
+  ObCallout,
+  ObChart,
+  ObCodeBlock,
+  ObDashboardFrame,
+  ObFileCard,
+  ObMarkdown,
+  ObTable,
+} from "./a2ui/custom";
+export { STANDARD_CATALOG } from "./a2ui/standard";
 export type { SurfaceRendererProps } from "./a2ui/surface-renderer";
 // ── A2UI (rendering layer) ──
 export { SurfaceRenderer } from "./a2ui/surface-renderer";
