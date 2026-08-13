@@ -51,6 +51,8 @@ export { SessionSidebar } from "./components/SessionSidebar";
 export type { StepIndicatorProps } from "./components/StepIndicator";
 export { StepIndicator } from "./components/StepIndicator";
 export { StreamingIndicator } from "./components/StreamingIndicator";
+export type { VoiceRecorderProps } from "./components/VoiceRecorder";
+export { VoiceRecorder } from "./components/VoiceRecorder";
 export type { WelcomeScreenProps } from "./components/WelcomeScreen";
 export { WelcomeScreen } from "./components/WelcomeScreen";
 export type { ChatActions, ChatState, ChatStore } from "./core/chat-store";
@@ -63,6 +65,7 @@ export { StreamManager } from "./core/stream-manager";
 export type { AGUIEventListener, StatusListener } from "./core/transport";
 // ── Core (headless / framework-agnostic) ──
 export { AGUITransport } from "./core/transport";
+export { runWithConcurrency } from "./core/upload-queue";
 export {
   formatFileSize,
   formatRelativeTime,
