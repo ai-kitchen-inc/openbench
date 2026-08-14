@@ -329,10 +329,10 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
-# Floor set just below the measured ~74% line coverage. Ratchet upward as
+# Floor set just below the measured ~76% line coverage. Ratchet upward as
 # coverage improves; keep it under the real number so unrelated PRs don't
 # fail CI on noise.
-fail_under = 70
+fail_under = 74
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
