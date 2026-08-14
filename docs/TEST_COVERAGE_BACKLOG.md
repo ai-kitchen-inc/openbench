@@ -35,8 +35,6 @@ from this list in the same PR. Use the shared fixtures in
 - [ ] `src/openbench/integrations/gdrive/_etag_cache.py`
 - [ ] `src/openbench/integrations/gdrive/_pending_sync_worker.py`
 - [ ] `src/openbench/intelligence/scratchpads/local_md.py`
-- [ ] `src/openbench/data/exceptions.py`
-- [ ] `src/openbench/data/stores/exceptions.py`
 
 ## Likely already covered indirectly (confirm, then drop)
 
