@@ -23,6 +23,9 @@ from fastapi.staticfiles import StaticFiles
 from general_chat.admin_store import build_settings_store, build_user_store, seed_users
 from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
 from general_chat.capabilities import CapabilityCache, blocked_flag_for
+from general_chat.pii import redact_pii
+from general_chat.privacy import PrivacySettingsCache
+from general_chat.retention import run_retention_sweep
 from general_chat.runtime_settings import RuntimeSettingsCache
 from general_chat.extractor import DoclingContentExtractor
 from general_chat.google_drive import (
@@ -497,6 +500,7 @@ def create_app() -> FastAPI:
     settings_store = build_settings_store(storage_root)
     capability_cache = CapabilityCache(settings_store)
     runtime_settings_cache = RuntimeSettingsCache(settings_store)
+    privacy_cache = PrivacySettingsCache(settings_store)
     # The vector_store selection must land before check_embeddings()
     # builds the index singleton, or the probe exercises the wrong backend.
     set_vector_store(runtime_settings_cache.value.get("vector_store"))
@@ -697,6 +701,24 @@ def create_app() -> FastAPI:
         """Owner-scoped source store view for one request."""
         return source_store.for_owner(owner)
 
+    def _retention_memory_store():
+        if chat_memory_store is not None:
+            return chat_memory_store
+        from openbench.intelligence.memory import SQLiteMemoryStore
+
+        return SQLiteMemoryStore(db_path=db_path)
+
+    def _run_retention_sweep_now() -> dict[str, int]:
+        """One retention pass over every known owner, using current settings."""
+        return run_retention_sweep(
+            retention_days=privacy_cache.value.get("retention_days", 0),
+            user_store=user_store,
+            session_store_for=_session_store_for,
+            sources_for=_sources_for,
+            purge_artifacts=_purge_source_artifacts,
+            memory_store=_retention_memory_store(),
+        )
+
     def _cleanup_source_uploads_after_use(records: list, scoped_source_store) -> None:
         records_with_uploads = [
             record
@@ -882,7 +904,30 @@ def create_app() -> FastAPI:
         print("  Upload         : POST /chat/upload")
         print("  Attachments    : POST /chat/attachments/upload")
         print("  Direct upload  : POST /chat/uploads/initiate")
-        print("  Sessions API   : GET/DELETE /sessions[/{id}]\n")
+        print("  Sessions API   : GET/DELETE /sessions[/{id}]")
+        retention_days = privacy_cache.value.get("retention_days", 0)
+        print(f"  Retention      : {retention_days or 'disabled'} days\n")
+        app.state.retention_task = asyncio.create_task(_retention_loop())
+
+    async def _retention_loop() -> None:
+        # Only runs under a real server (TestClient never fires startup).
+        # Settings are re-read each tick so an admin change applies without
+        # a restart; retention_days == 0 makes the tick a no-op.
+        interval = max(60, _env_int("GENERAL_CHAT_RETENTION_SWEEP_INTERVAL_SECONDS", 86400))
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                summary = await asyncio.to_thread(_run_retention_sweep_now)
+                if summary["deleted_sessions"]:
+                    logger.info("Retention sweep deleted %d session(s)", summary["deleted_sessions"])
+            except Exception:
+                logger.exception("Retention sweep failed")
+
+    @app.on_event("shutdown")
+    async def shutdown() -> None:
+        task = getattr(app.state, "retention_task", None)
+        if task is not None:
+            task.cancel()
 
     @app.get("/health")
     async def health() -> dict:
@@ -1879,6 +1924,8 @@ def create_app() -> FastAPI:
         capability_cache=capability_cache,
         runtime_settings_cache=runtime_settings_cache,
         agent_holder=agent_holder,
+        privacy_cache=privacy_cache,
+        retention_sweep=_run_retention_sweep_now,
     )
 
     @app.post("/awp")
@@ -1924,6 +1971,9 @@ def create_app() -> FastAPI:
             source_records=source_records,
             on_stream_complete=on_stream_complete,
             mcp_permission_coordinator=mcp_permission_coordinator,
+            # Read per request so an admin toggle applies to the next turn
+            # without an agent rebuild.
+            redactor=redact_pii if privacy_cache.value.get("pii_redaction") else None,
         )
         return await handler.handle(request)
 

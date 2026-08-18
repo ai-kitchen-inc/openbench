@@ -216,6 +216,40 @@ export async function putRuntimeSettings(
   return parseJsonResponse<RuntimeSettingsState>(response);
 }
 
+// ── /admin/privacy ──
+
+export type PrivacySettings = {
+  retentionDays: number;
+  piiRedaction: boolean;
+};
+
+export async function getPrivacySettings(): Promise<PrivacySettings> {
+  const response = await apiFetch(apiPath("/admin/privacy"));
+  return parseJsonResponse<PrivacySettings>(response);
+}
+
+/** Partial update; the backend returns the full resolved state. */
+export async function putPrivacySettings(
+  patch: Partial<PrivacySettings>,
+): Promise<PrivacySettings> {
+  const response = await apiFetch(apiPath("/admin/privacy"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return parseJsonResponse<PrivacySettings>(response);
+}
+
+export type PrivacySweepResult = {
+  deletedSessions: number;
+  ownersScanned: number;
+};
+
+export async function runPrivacySweep(): Promise<PrivacySweepResult> {
+  const response = await apiFetch(apiPath("/admin/privacy/sweep"), { method: "POST" });
+  return parseJsonResponse<PrivacySweepResult>(response);
+}
+
 // ── /admin/persona ──
 
 export type PersonaSettings = {

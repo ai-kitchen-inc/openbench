@@ -931,6 +931,7 @@ class GeneralChatHandler(AGUIHandler):
         source_records: list[SourceRecord] | None = None,
         on_stream_complete: Callable[[list[SourceRecord]], None] | None = None,
         mcp_permission_coordinator: GeneralChatMCPPermissionCoordinator | None = None,
+        redactor: Callable[[str], tuple[str, bool]] | None = None,
     ):
         super().__init__(engine)
         self._memory_store = memory_store or SQLiteMemoryStore(db_path=db_path)
@@ -939,6 +940,7 @@ class GeneralChatHandler(AGUIHandler):
         self._source_records = source_records or []
         self._on_stream_complete = on_stream_complete
         self._mcp_permission_coordinator = mcp_permission_coordinator
+        self._redactor = redactor
 
     async def _event_stream(self, body: dict[str, Any], accept: str) -> Any:
         try:
@@ -951,6 +953,14 @@ class GeneralChatHandler(AGUIHandler):
     def _extract_content(self, body):
         content, draft_attachments = super()._extract_content(body)
         attachments = _enrich_draft_attachments(draft_attachments)
+        if self._redactor is not None:
+            # Only user-supplied text is redacted: the message itself and
+            # the drafts' extracted text. Source-context attachments built
+            # below are admin/user-curated documents, not chat input.
+            content, _ = self._redactor(content)
+            for attachment in attachments:
+                if attachment.extracted_text:
+                    attachment.extracted_text, _ = self._redactor(attachment.extracted_text)
         source_attachments: list[Attachment] = []
         if self._source_records:
             source_attachments.extend(

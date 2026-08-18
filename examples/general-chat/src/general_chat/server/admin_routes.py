@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 
 from general_chat.admin_store import DuplicateUserError, UnknownUserError
 from general_chat.capabilities import CapabilityCache, capability_definitions_payload
+from general_chat.privacy import PrivacySettingsCache, invalid_privacy_values
 from general_chat.persona_templates import (
     PERSONA_SETTINGS_KEY,
     get_template,
@@ -61,6 +62,8 @@ def register_admin_routes(
     capability_cache: CapabilityCache,
     runtime_settings_cache: RuntimeSettingsCache,
     agent_holder: Any,
+    privacy_cache: PrivacySettingsCache,
+    retention_sweep: Any,
 ) -> None:
     """Register /account/* and /admin/* endpoints."""
 
@@ -250,6 +253,50 @@ def register_admin_routes(
                     detail=f"Pengaturan tersimpan, tetapi pemuatan ulang agen gagal: {exc}",
                 ) from exc
         return {"values": merged, "options": runtime_settings_options()}
+
+    # ------------------------------------------------------------------
+    # Admin: privacy
+    # ------------------------------------------------------------------
+
+    def _privacy_payload() -> dict:
+        return {
+            "retentionDays": privacy_cache.value["retention_days"],
+            "piiRedaction": privacy_cache.value["pii_redaction"],
+        }
+
+    @app.get("/admin/privacy")
+    async def get_privacy(request: Request) -> dict:
+        require_role(request, "admin")
+        return _privacy_payload()
+
+    @app.put("/admin/privacy")
+    async def put_privacy(request: Request) -> dict:
+        require_role(request, "admin")
+        body = await request.json()
+        partial = {}
+        if isinstance(body, dict):
+            if "retentionDays" in body:
+                partial["retention_days"] = body["retentionDays"]
+            if "piiRedaction" in body:
+                partial["pii_redaction"] = body["piiRedaction"]
+        invalid = invalid_privacy_values(partial)
+        if invalid:
+            key, value = next(iter(invalid.items()))
+            raise HTTPException(
+                status_code=400,
+                detail=f"Nilai pengaturan privasi tidak valid untuk {key}: {value!r}",
+            )
+        privacy_cache.update(partial, updated_by=_requester_email(request))
+        return _privacy_payload()
+
+    @app.post("/admin/privacy/sweep")
+    async def run_privacy_sweep(request: Request) -> dict:
+        require_role(request, "admin")
+        summary = retention_sweep()
+        return {
+            "deletedSessions": summary["deleted_sessions"],
+            "ownersScanned": summary["owners_scanned"],
+        }
 
     # ------------------------------------------------------------------
     # Admin: persona
