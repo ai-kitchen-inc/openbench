@@ -216,6 +216,59 @@ export async function putRuntimeSettings(
   return parseJsonResponse<RuntimeSettingsState>(response);
 }
 
+// ── /admin/audit ──
+
+export type AuditEntry = {
+  ts: string;
+  actor: string;
+  role: string;
+  action: string;
+  target: string;
+  detail: Record<string, unknown>;
+  status: string;
+};
+
+export type AuditPageResult = {
+  items: AuditEntry[];
+  total: number;
+};
+
+export type AuditFilters = {
+  actor?: string;
+  action?: string;
+  since?: string;
+  until?: string;
+};
+
+function auditQuery(filters: AuditFilters, limit?: number, offset?: number): string {
+  const params = new URLSearchParams();
+  if (filters.actor) params.set("actor", filters.actor);
+  if (filters.action) params.set("action", filters.action);
+  if (filters.since) params.set("since", filters.since);
+  if (filters.until) params.set("until", filters.until);
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (offset !== undefined) params.set("offset", String(offset));
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+export async function getAuditEntries(
+  filters: AuditFilters,
+  limit: number,
+  offset: number,
+): Promise<AuditPageResult> {
+  const response = await apiFetch(apiPath(`/admin/audit${auditQuery(filters, limit, offset)}`));
+  return parseJsonResponse<AuditPageResult>(response);
+}
+
+export async function exportAuditCsv(filters: AuditFilters): Promise<Blob> {
+  const response = await apiFetch(apiPath(`/admin/audit/export${auditQuery(filters)}`));
+  if (!response.ok) {
+    throw new Error(`Ekspor audit gagal (${response.status})`);
+  }
+  return response.blob();
+}
+
 // ── /admin/privacy ──
 
 export type PrivacySettings = {

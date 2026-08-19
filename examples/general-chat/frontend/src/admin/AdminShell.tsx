@@ -5,6 +5,7 @@ import { setLocalRole } from "../api";
 import { BrandMark } from "../brand/BrandMark";
 import {
   BookIcon,
+  ClipboardIcon,
   CodeIcon,
   LayoutIcon,
   MessageIcon,
@@ -17,6 +18,7 @@ import {
 import { UserChat } from "../chat/UserChat";
 import { APP_NAME, APP_TAGLINE, COMMON, LOCAL_ROLE } from "../i18n/id";
 import { ThemeIcon, useDarkMode } from "../theme";
+import { AuditPage } from "./pages/AuditPage";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FunctionsPage } from "./pages/FunctionsPage";
@@ -38,6 +40,7 @@ const NAV_ITEMS: { page: AdminPage; label: string; icon: ReactNode }[] = [
   { page: "mcp", label: "Server MCP", icon: <ServerIcon /> },
   { page: "fungsi", label: "Fungsi Kustom", icon: <CodeIcon /> },
   { page: "skill", label: "Skill Kustom", icon: <BookIcon /> },
+  { page: "audit", label: "Audit", icon: <ClipboardIcon /> },
   { page: "chat", label: "Buka Chat", icon: <MessageIcon /> },
 ];
 
@@ -51,6 +54,7 @@ const PAGE_TITLES: Record<AdminPage, string> = {
   mcp: "Server MCP",
   fungsi: "Fungsi Kustom",
   skill: "Skill Kustom",
+  audit: "Jejak Audit",
   chat: "Buka Chat",
 };
 
@@ -155,6 +159,7 @@ export function AdminShell({
                 {page === "mcp" && <McpServersPage />}
                 {page === "fungsi" && <FunctionsPage />}
                 {page === "skill" && <CustomSkillsPage />}
+                {page === "audit" && <AuditPage />}
               </div>
             </main>
           </div>
