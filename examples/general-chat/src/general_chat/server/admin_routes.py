@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
 
 from general_chat.admin_store import DuplicateUserError, UnknownUserError
 from general_chat.capabilities import CapabilityCache, capability_definitions_payload
@@ -64,8 +64,14 @@ def register_admin_routes(
     agent_holder: Any,
     privacy_cache: PrivacySettingsCache,
     retention_sweep: Any,
+    audit_store: Any,
+    audit: Any,
 ) -> None:
-    """Register /account/* and /admin/* endpoints."""
+    """Register /account/* and /admin/* endpoints.
+
+    ``audit`` is the app's ``_audit(request, action, target, detail)``
+    helper; ``audit_store`` backs the read/export endpoints.
+    """
 
     # ------------------------------------------------------------------
     # Account (any authenticated user)
@@ -124,6 +130,7 @@ def register_admin_routes(
             ) from None
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
+        audit(request, "user.add", target=record.email, detail={"role": record.role})
         return record.to_dict()
 
     @app.patch("/admin/users/{email}")
@@ -155,6 +162,7 @@ def register_admin_routes(
             raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan.") from None
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
+        audit(request, "user.update", target=record.email, detail={"role": record.role})
         return record.to_dict()
 
     @app.delete("/admin/users/{email}")
@@ -175,6 +183,7 @@ def register_admin_routes(
                 detail="Tidak dapat menghapus admin terakhir.",
             )
         user_store.remove(normalized)
+        audit(request, "user.delete", target=normalized)
         return {"ok": True, "email": normalized}
 
     # ------------------------------------------------------------------
@@ -206,6 +215,7 @@ def register_admin_routes(
                     status_code=500,
                     detail=f"Kemampuan tersimpan, tetapi pemuatan ulang agen gagal: {exc}",
                 ) from exc
+        audit(request, "capabilities.update")
         return {
             "definitions": capability_definitions_payload(),
             **merged,
@@ -252,6 +262,7 @@ def register_admin_routes(
                     status_code=500,
                     detail=f"Pengaturan tersimpan, tetapi pemuatan ulang agen gagal: {exc}",
                 ) from exc
+        audit(request, "runtime_settings.update", detail=dict(merged))
         return {"values": merged, "options": runtime_settings_options()}
 
     # ------------------------------------------------------------------
@@ -287,16 +298,98 @@ def register_admin_routes(
                 detail=f"Nilai pengaturan privasi tidak valid untuk {key}: {value!r}",
             )
         privacy_cache.update(partial, updated_by=_requester_email(request))
+        audit(request, "privacy.update", detail=dict(privacy_cache.value))
         return _privacy_payload()
 
     @app.post("/admin/privacy/sweep")
     async def run_privacy_sweep(request: Request) -> dict:
         require_role(request, "admin")
         summary = retention_sweep()
+        audit(request, "privacy.sweep", detail=dict(summary))
         return {
             "deletedSessions": summary["deleted_sessions"],
             "ownersScanned": summary["owners_scanned"],
         }
+
+    # ------------------------------------------------------------------
+    # Admin: audit trail
+    # ------------------------------------------------------------------
+
+    def _audit_filters(
+        actor: str, action: str, since: str, until: str
+    ) -> dict[str, str | None]:
+        return {
+            "actor": actor.strip() or None,
+            "action": action.strip() or None,
+            "since": since.strip() or None,
+            "until": until.strip() or None,
+        }
+
+    @app.get("/admin/audit")
+    async def list_audit(
+        request: Request,
+        actor: str = "",
+        action: str = "",
+        since: str = "",
+        until: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        require_role(request, "admin")
+        filters = _audit_filters(actor, action, since, until)
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+        items = audit_store.list(**filters, limit=limit, offset=offset)
+        return {
+            "items": [record.to_dict() for record in items],
+            "total": audit_store.count(**filters),
+        }
+
+    @app.get("/admin/audit/export")
+    async def export_audit(
+        request: Request,
+        actor: str = "",
+        action: str = "",
+        since: str = "",
+        until: str = "",
+    ) -> Response:
+        require_role(request, "admin")
+        filters = _audit_filters(actor, action, since, until)
+        audit(request, "audit.export", detail={k: v for k, v in filters.items() if v})
+
+        import csv
+        import io
+        import json as json_module
+        from datetime import date
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["ts", "actor", "role", "action", "target", "status", "detail"])
+        offset = 0
+        page_size = 500
+        while True:
+            page = audit_store.list(**filters, limit=page_size, offset=offset)
+            for record in page:
+                writer.writerow(
+                    [
+                        record.ts,
+                        record.actor,
+                        record.role,
+                        record.action,
+                        record.target,
+                        record.status,
+                        json_module.dumps(record.detail, ensure_ascii=False),
+                    ]
+                )
+            if len(page) < page_size:
+                break
+            offset += page_size
+        filename = f"audit-{date.today().isoformat()}.csv"
+        return Response(
+            content=buffer.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     # ------------------------------------------------------------------
     # Admin: persona
@@ -355,6 +448,7 @@ def register_admin_routes(
                 detail="Persona kosong: isi minimal salah satu dari soul/style/agents.",
             )
         settings_store.set(PERSONA_SETTINGS_KEY, value, updated_by=_requester_email(request))
+        audit(request, "persona.update")
         try:
             agent_holder.rebuild()
         except Exception as exc:

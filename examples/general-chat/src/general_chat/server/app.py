@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from general_chat.admin_store import build_settings_store, build_user_store, seed_users
+from general_chat.audit_store import AuditRecord, build_audit_store
 from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
 from general_chat.capabilities import CapabilityCache, blocked_flag_for
 from general_chat.pii import redact_pii
@@ -48,6 +49,7 @@ from general_chat.persona_templates import (
 from general_chat.server.admin_routes import register_admin_routes, require_role
 from general_chat.server.agent_holder import AgentHolder
 from general_chat.server.auth import (
+    LOCAL_OWNER,
     auth_enabled,
     current_owner,
     current_role,
@@ -501,6 +503,7 @@ def create_app() -> FastAPI:
     capability_cache = CapabilityCache(settings_store)
     runtime_settings_cache = RuntimeSettingsCache(settings_store)
     privacy_cache = PrivacySettingsCache(settings_store)
+    audit_store = build_audit_store(storage_root)
     # The vector_store selection must land before check_embeddings()
     # builds the index singleton, or the probe exercises the wrong backend.
     set_vector_store(runtime_settings_cache.value.get("vector_store"))
@@ -794,6 +797,38 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    def _audit(
+        request: Request | None,
+        action: str,
+        target: str = "",
+        detail: dict | None = None,
+        status_label: str = "ok",
+    ) -> None:
+        """Append one audit event; a broken audit store must never break a request."""
+        actor = ""
+        role = ""
+        if request is not None:
+            try:
+                actor = LOCAL_OWNER if not auth_enabled() else current_owner(request)
+                role = current_role(request)
+            except Exception:
+                # Identity resolution can fail on unauthenticated requests;
+                # the event is still worth keeping.
+                actor = ""
+        try:
+            audit_store.append(
+                AuditRecord(
+                    action=action,
+                    actor=actor,
+                    role=role,
+                    target=target,
+                    detail=detail or {},
+                    status=status_label,
+                )
+            )
+        except Exception:
+            logger.warning("Audit append failed for action=%s", action, exc_info=True)
+
     def _role_gate_response(path: str, role: str) -> JSONResponse | None:
         """Shared non-admin gate: /admin* 403 + capability-flag 403.
 
@@ -825,6 +860,13 @@ def create_app() -> FastAPI:
                 try:
                     await require_firebase_user(request, user_store)
                 except HTTPException as exc:
+                    _audit(
+                        None,
+                        "auth.failure",
+                        target=path,
+                        detail={"method": request.method, "status_code": exc.status_code},
+                        status_label="denied",
+                    )
                     return JSONResponse(
                         {"detail": exc.detail},
                         status_code=exc.status_code,
@@ -832,6 +874,13 @@ def create_app() -> FastAPI:
                     )
                 denied = _role_gate_response(path, current_role(request))
                 if denied is not None:
+                    _audit(
+                        request,
+                        "capability.denied",
+                        target=path,
+                        detail={"method": request.method},
+                        status_label="denied",
+                    )
                     return denied
             else:
                 # Local dev: optionally act as a plain "user" account
@@ -842,6 +891,13 @@ def create_app() -> FastAPI:
                     request.state.user_role = role
                     denied = _role_gate_response(path, role)
                     if denied is not None:
+                        _audit(
+                            request,
+                            "capability.denied",
+                            target=path,
+                            detail={"method": request.method},
+                            status_label="denied",
+                        )
                         return denied
         return await call_next(request)
 
@@ -1005,6 +1061,7 @@ def create_app() -> FastAPI:
                     f"agen lama masih aktif: {exc}"
                 ),
             ) from exc
+        _audit(request, "custom_skill.save", target=str(meta.get("id", "")))
         return meta
 
     @app.delete("/admin/custom-skills/{skill_id}")
@@ -1027,6 +1084,7 @@ def create_app() -> FastAPI:
                     f"agen lama masih aktif: {exc}"
                 ),
             ) from exc
+        _audit(request, "custom_skill.delete", target=skill_id)
         return {"ok": True, "id": skill_id}
 
     @app.get("/mcp/tools")
@@ -1462,7 +1520,14 @@ def create_app() -> FastAPI:
         see, so no cross-user leak is possible.
         """
         owner = current_owner(request)
-        return await _ingest_source_upload(owner, session_id or "default", file)
+        result = await _ingest_source_upload(owner, session_id or "default", file)
+        _audit(
+            request,
+            "source.upload",
+            target=str(file.filename or ""),
+            detail={"session": session_id or "default"},
+        )
+        return result
 
     @app.post("/chat/uploads/initiate")
     async def initiate_large_upload(request: Request) -> dict:
@@ -1702,6 +1767,7 @@ def create_app() -> FastAPI:
         deleted = srcs.delete(thread_id, source_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Source not found")
+        _audit(request, "source.delete", target=source_id, detail={"session": thread_id})
         return {"ok": True, "sourceId": source_id}
 
     @app.delete("/chat/sources/{thread_id}")
@@ -1742,7 +1808,9 @@ def create_app() -> FastAPI:
         file: UploadFile = File(...),
     ):
         require_role(request, "admin")
-        return await _ingest_source_upload(SHARED_SOURCES_OWNER, SHARED_SOURCES_THREAD, file)
+        result = await _ingest_source_upload(SHARED_SOURCES_OWNER, SHARED_SOURCES_THREAD, file)
+        _audit(request, "shared_source.add", target=str(file.filename or ""), detail={"via": "upload"})
+        return result
 
     @app.post("/admin/shared-sources/text")
     async def add_shared_text_source(request: Request) -> dict:
@@ -1755,6 +1823,7 @@ def create_app() -> FastAPI:
             parser=source_parser,
         )
         _shared_sources().add(record)
+        _audit(request, "shared_source.add", target=record.id, detail={"via": "text"})
         return record.to_dict(include_text=False)
 
     @app.post("/admin/shared-sources/url")
@@ -1789,6 +1858,7 @@ def create_app() -> FastAPI:
             max_bytes=max_source_bytes,
         )
         _shared_sources().add(record)
+        _audit(request, "shared_source.add", target=record.id, detail={"via": "url"})
         return record.to_dict(include_text=False)
 
     @app.delete("/admin/shared-sources/{source_id}")
@@ -1802,6 +1872,7 @@ def create_app() -> FastAPI:
         _purge_source_artifacts([target])
         if not srcs.delete(SHARED_SOURCES_THREAD, source_id):
             raise HTTPException(status_code=404, detail="Source not found")
+        _audit(request, "shared_source.delete", target=source_id)
         return {"ok": True, "sourceId": source_id}
 
     # Per-user Google Drive OAuth (/auth/drive/*). Registered inside
@@ -1926,6 +1997,8 @@ def create_app() -> FastAPI:
         agent_holder=agent_holder,
         privacy_cache=privacy_cache,
         retention_sweep=_run_retention_sweep_now,
+        audit_store=audit_store,
+        audit=_audit,
     )
 
     @app.post("/awp")
@@ -1964,6 +2037,12 @@ def create_app() -> FastAPI:
         except SessionOwnershipError:
             raise HTTPException(status_code=404, detail="Session not found") from None
         engine = _build_engine(session, owner)
+        _audit(
+            request,
+            "chat.turn",
+            target=session.session_id,
+            detail={"model": getattr(engine.agent, "model", "")},
+        )
         handler = GeneralChatHandler(
             engine=engine,
             db_path=db_path,
@@ -2042,6 +2121,7 @@ def create_app() -> FastAPI:
         _purge_source_artifacts(srcs.list(session_id))
         srcs.clear(session_id)
         handler.delete(session_id)
+        _audit(request, "session.delete", target=session_id)
         return {"ok": True, "sessionId": session_id}
 
     @app.post("/dashboard/export/grafana")
@@ -2099,16 +2179,18 @@ def create_app() -> FastAPI:
             )
         except CustomFunctionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _audit(request, "custom_function.save", target=str(meta.get("name", "")))
         return meta
 
     @app.delete("/functions/{name}")
-    async def delete_custom_function(name: str) -> dict:
+    async def delete_custom_function(name: str, request: Request) -> dict:
         try:
             existed = custom_functions.delete(name)
         except CustomFunctionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not existed:
             raise HTTPException(status_code=404, detail="Function not found")
+        _audit(request, "custom_function.delete", target=name)
         return {"ok": True, "name": name}
 
     @app.post("/functions/{name}/run")
