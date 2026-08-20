@@ -932,6 +932,8 @@ class GeneralChatHandler(AGUIHandler):
         on_stream_complete: Callable[[list[SourceRecord]], None] | None = None,
         mcp_permission_coordinator: GeneralChatMCPPermissionCoordinator | None = None,
         redactor: Callable[[str], tuple[str, bool]] | None = None,
+        owner: str | None = None,
+        usage_recorder: Any | None = None,
     ):
         super().__init__(engine)
         self._memory_store = memory_store or SQLiteMemoryStore(db_path=db_path)
@@ -941,6 +943,13 @@ class GeneralChatHandler(AGUIHandler):
         self._on_stream_complete = on_stream_complete
         self._mcp_permission_coordinator = mcp_permission_coordinator
         self._redactor = redactor
+        self._owner = owner
+        self._usage_recorder = usage_recorder
+        if usage_recorder is not None and not owner:
+            logger.warning(
+                "Usage recorder installed without an owner — rows will be "
+                "attributed to '(unknown)'"
+            )
 
     async def _event_stream(self, body: dict[str, Any], accept: str) -> Any:
         try:
@@ -1096,6 +1105,28 @@ class GeneralChatHandler(AGUIHandler):
             agent_copy._llm = _DebugLLMProvider(
                 agent_copy._llm or agent_copy._get_llm(),
                 session_id=session_id,
+            )
+        if self._usage_recorder is not None:
+            from general_chat.usage_metering import _MeteringLLMProvider
+
+            recorder = self._usage_recorder
+            owner = self._owner or "(unknown)"
+
+            def _on_usage(model: str, prompt_tokens: int, completion_tokens: int) -> None:
+                recorder.record(
+                    owner=owner,
+                    # Read at call time — the title-generation call can run
+                    # after the session id is resolved mid-stream.
+                    session_id=str(getattr(self._local, "session_id", "") or ""),
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+
+            # Metering wraps outermost so it also meters debug-wrapped calls.
+            agent_copy._llm = _MeteringLLMProvider(
+                agent_copy._llm or agent_copy._get_llm(),
+                _on_usage,
             )
         agent_copy.tools = agent.tools
         return agent_copy

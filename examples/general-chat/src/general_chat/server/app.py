@@ -25,8 +25,12 @@ from general_chat.audit_store import AuditRecord, build_audit_store
 from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
 from general_chat.capabilities import CapabilityCache, blocked_flag_for
 from general_chat.pii import redact_pii
+from general_chat.pricing import PricingCache
 from general_chat.privacy import PrivacySettingsCache
+from general_chat.quotas import QuotaCache
 from general_chat.retention import run_retention_sweep
+from general_chat.usage_metering import UsageRecorder
+from general_chat.usage_store import build_usage_store
 from general_chat.runtime_settings import RuntimeSettingsCache
 from general_chat.extractor import DoclingContentExtractor
 from general_chat.google_drive import (
@@ -504,6 +508,10 @@ def create_app() -> FastAPI:
     runtime_settings_cache = RuntimeSettingsCache(settings_store)
     privacy_cache = PrivacySettingsCache(settings_store)
     audit_store = build_audit_store(storage_root)
+    pricing_cache = PricingCache(settings_store)
+    quota_cache = QuotaCache(settings_store)
+    usage_store = build_usage_store(storage_root)
+    usage_recorder = UsageRecorder(usage_store, pricing_cache)
     # The vector_store selection must land before check_embeddings()
     # builds the index singleton, or the probe exercises the wrong backend.
     set_vector_store(runtime_settings_cache.value.get("vector_store"))
@@ -1999,6 +2007,9 @@ def create_app() -> FastAPI:
         retention_sweep=_run_retention_sweep_now,
         audit_store=audit_store,
         audit=_audit,
+        pricing_cache=pricing_cache,
+        quota_cache=quota_cache,
+        usage_store=usage_store,
     )
 
     @app.post("/awp")
@@ -2053,6 +2064,8 @@ def create_app() -> FastAPI:
             # Read per request so an admin toggle applies to the next turn
             # without an agent rebuild.
             redactor=redact_pii if privacy_cache.value.get("pii_redaction") else None,
+            owner=owner,
+            usage_recorder=usage_recorder,
         )
         return await handler.handle(request)
 

@@ -19,7 +19,10 @@ from fastapi import FastAPI, HTTPException, Request, Response, status
 
 from general_chat.admin_store import DuplicateUserError, UnknownUserError
 from general_chat.capabilities import CapabilityCache, capability_definitions_payload
+from general_chat.pricing import invalid_pricing_values
 from general_chat.privacy import PrivacySettingsCache, invalid_privacy_values
+from general_chat.quotas import invalid_quota_values, quota_status
+from general_chat.usage_store import current_month
 from general_chat.persona_templates import (
     PERSONA_SETTINGS_KEY,
     get_template,
@@ -66,6 +69,9 @@ def register_admin_routes(
     retention_sweep: Any,
     audit_store: Any,
     audit: Any,
+    pricing_cache: Any,
+    quota_cache: Any,
+    usage_store: Any,
 ) -> None:
     """Register /account/* and /admin/* endpoints.
 
@@ -309,6 +315,102 @@ def register_admin_routes(
         return {
             "deletedSessions": summary["deleted_sessions"],
             "ownersScanned": summary["owners_scanned"],
+        }
+
+    # ------------------------------------------------------------------
+    # Usage metering (user-facing summary + admin dashboard)
+    # ------------------------------------------------------------------
+
+    def _month_param(month: str) -> str:
+        month = month.strip()
+        if month and len(month) == 7 and month[4] == "-":
+            return month
+        return current_month()
+
+    @app.get("/account/usage")
+    async def account_usage(request: Request) -> dict:
+        """The requester's own usage — available to every role (warn-only)."""
+        email = _requester_email(request)
+        month = current_month()
+        summary = usage_store.summarize_owner(email, month)
+        limit = quota_cache.quota_for(email)
+        return {
+            "month": month,
+            **summary,
+            "quota": quota_status(limit, summary["totalTokens"]),
+            "recent": [record.to_dict() for record in usage_store.recent(email, limit=20)],
+        }
+
+    @app.get("/admin/usage")
+    async def admin_usage(request: Request, month: str = "") -> dict:
+        require_role(request, "admin")
+        resolved_month = _month_param(month)
+        users = usage_store.summarize_all(resolved_month)
+        totals = {
+            "promptTokens": sum(u["promptTokens"] for u in users),
+            "completionTokens": sum(u["completionTokens"] for u in users),
+            "totalTokens": sum(u["totalTokens"] for u in users),
+            "costUsd": sum(u["costUsd"] for u in users),
+            "calls": sum(u["calls"] for u in users),
+        }
+        enriched = []
+        for user in users:
+            limit = quota_cache.quota_for(user["owner"])
+            enriched.append(
+                {**user, "quota": quota_status(limit, user["totalTokens"])}
+            )
+        return {"month": resolved_month, "totals": totals, "users": enriched}
+
+    @app.get("/admin/pricing")
+    async def get_pricing(request: Request) -> dict:
+        require_role(request, "admin")
+        return dict(pricing_cache.value)
+
+    @app.put("/admin/pricing")
+    async def put_pricing(request: Request) -> dict:
+        require_role(request, "admin")
+        body = await request.json()
+        invalid = invalid_pricing_values(body)
+        if invalid:
+            key, value = next(iter(invalid.items()))
+            raise HTTPException(
+                status_code=400,
+                detail=f"Nilai harga tidak valid untuk {key}: {value!r}",
+            )
+        merged = pricing_cache.update(body, updated_by=_requester_email(request))
+        audit(request, "pricing.update")
+        return dict(merged)
+
+    @app.get("/admin/quotas")
+    async def get_quotas(request: Request) -> dict:
+        require_role(request, "admin")
+        return {
+            "defaultMonthlyTokens": quota_cache.value["default_monthly_tokens"],
+            "overrides": dict(quota_cache.value["overrides"]),
+        }
+
+    @app.put("/admin/quotas")
+    async def put_quotas(request: Request) -> dict:
+        require_role(request, "admin")
+        body = await request.json()
+        partial = {}
+        if isinstance(body, dict):
+            if "defaultMonthlyTokens" in body:
+                partial["default_monthly_tokens"] = body["defaultMonthlyTokens"]
+            if "overrides" in body:
+                partial["overrides"] = body["overrides"]
+        invalid = invalid_quota_values(partial)
+        if invalid:
+            key, value = next(iter(invalid.items()))
+            raise HTTPException(
+                status_code=400,
+                detail=f"Nilai kuota tidak valid untuk {key}: {value!r}",
+            )
+        merged = quota_cache.update(partial, updated_by=_requester_email(request))
+        audit(request, "quota.update")
+        return {
+            "defaultMonthlyTokens": merged["default_monthly_tokens"],
+            "overrides": dict(merged["overrides"]),
         }
 
     # ------------------------------------------------------------------
