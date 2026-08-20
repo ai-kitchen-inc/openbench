@@ -934,7 +934,11 @@ class TestGeminiLLMProviderGenerateStream(unittest.TestCase):
 
         results = list(self.provider.generate_stream("test", model="gemini-2.5-flash"))
         texts = [r.text for r in results]
-        self.assertEqual(texts, ["Hello ", "world!"])
+        # Text deltas plus a trailing usage-bearing final (empty text).
+        self.assertEqual(texts, ["Hello ", "world!", ""])
+        self.assertEqual(results[-1].tokens_used, 15)
+        self.assertEqual(results[-1].metadata["prompt_tokens"], 10)
+        self.assertEqual(results[-1].metadata["completion_tokens"], 5)
 
     @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
     def test_stream_filters_thought_parts(self, mock_get_client):
@@ -955,7 +959,36 @@ class TestGeminiLLMProviderGenerateStream(unittest.TestCase):
 
         results = list(self.provider.generate_stream("test", model="gemini-3-flash-preview"))
         texts = [r.text for r in results]
-        self.assertEqual(texts, ["The answer is 42."])
+        self.assertEqual(texts, ["The answer is 42.", ""])
+        self.assertEqual(results[-1].tokens_used, 30)
+
+    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
+    def test_stream_text_only_ends_with_usage_response(self, mock_get_client):
+        """A text-only stream must end with a usage-bearing final response.
+
+        Without it, streamed turns meter as zero tokens (the deltas all
+        carry tokens_used=0) — the final response is what usage metering
+        and BaseAgent's per-turn accounting read.
+        """
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        chunks = [
+            self._make_chunk(text="Halo"),
+            self._make_chunk(text=" dunia", usage={"prompt": 7, "completion": 3, "total": 10}),
+        ]
+        mock_client.models.generate_content_stream.return_value = iter(chunks)
+
+        results = list(self.provider.generate_stream("test", model="gemini-3.5-flash"))
+
+        final = results[-1]
+        self.assertEqual(final.text, "")
+        self.assertEqual(final.tokens_used, 10)
+        self.assertEqual(final.metadata["prompt_tokens"], 7)
+        self.assertEqual(final.metadata["completion_tokens"], 3)
+        self.assertIsNone(getattr(final, "tool_calls", None))
+        # Accumulated visible text is unchanged by the trailing response.
+        self.assertEqual("".join(r.text for r in results), "Halo dunia")
 
     @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
     def test_stream_empty_response_yields_final(self, mock_get_client):

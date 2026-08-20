@@ -682,3 +682,20 @@ class GeminiLLMProvider(_GeminiToolConversionMixin, _GeminiResponseMixin, LLMPro
                     "empty_response_diagnostics": part_summary,
                 },
             )
+
+        else:
+            # Text-only stream: the deltas above carried tokens_used=0, so
+            # without this trailing usage-bearing response the whole call
+            # would meter as zero tokens. Consumers accumulate text from
+            # the deltas (BaseAgent restores it onto the final response),
+            # so text stays empty here to avoid double emission.
+            yield LLMResponse(
+                text="",
+                model=model,
+                tokens_used=total_tokens,
+                cost=cost,
+                metadata={
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                },
+            )
