@@ -216,6 +216,95 @@ export async function putRuntimeSettings(
   return parseJsonResponse<RuntimeSettingsState>(response);
 }
 
+// ── /account/usage + /admin/usage ──
+
+export type UsageSummary = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  calls: number;
+};
+
+export type QuotaStatus = {
+  limit: number;
+  used: number;
+  warning: boolean;
+  percent: number;
+};
+
+export type UsageRow = {
+  ts: string;
+  sessionId: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  costUsd: number;
+};
+
+export type AccountUsage = UsageSummary & {
+  month: string;
+  quota: QuotaStatus;
+  recent: UsageRow[];
+};
+
+export async function getAccountUsage(): Promise<AccountUsage> {
+  const response = await apiFetch(apiPath("/account/usage"));
+  return parseJsonResponse<AccountUsage>(response);
+}
+
+export type AdminUsage = {
+  month: string;
+  totals: UsageSummary;
+  users: (UsageSummary & { owner: string; quota: QuotaStatus })[];
+};
+
+export async function getAdminUsage(month?: string): Promise<AdminUsage> {
+  const suffix = month ? `?month=${encodeURIComponent(month)}` : "";
+  const response = await apiFetch(apiPath(`/admin/usage${suffix}`));
+  return parseJsonResponse<AdminUsage>(response);
+}
+
+// ── /admin/pricing + /admin/quotas ──
+
+export type PricingState = {
+  models: Record<string, { input_per_1m: number; output_per_1m: number }>;
+};
+
+export async function getPricing(): Promise<PricingState> {
+  const response = await apiFetch(apiPath("/admin/pricing"));
+  return parseJsonResponse<PricingState>(response);
+}
+
+export async function putPricing(patch: PricingState): Promise<PricingState> {
+  const response = await apiFetch(apiPath("/admin/pricing"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return parseJsonResponse<PricingState>(response);
+}
+
+export type QuotasState = {
+  defaultMonthlyTokens: number;
+  overrides: Record<string, number>;
+};
+
+export async function getQuotas(): Promise<QuotasState> {
+  const response = await apiFetch(apiPath("/admin/quotas"));
+  return parseJsonResponse<QuotasState>(response);
+}
+
+export async function putQuotas(patch: Partial<QuotasState>): Promise<QuotasState> {
+  const response = await apiFetch(apiPath("/admin/quotas"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return parseJsonResponse<QuotasState>(response);
+}
+
 // ── /admin/audit ──
 
 export type AuditEntry = {

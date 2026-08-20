@@ -14,7 +14,7 @@ import {
 } from "@openbench/chat-ui";
 import type { User } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Me } from "../account/api";
+import { getAccountUsage, type AccountUsage, type Me } from "../account/api";
 import { apiFetch, apiPath, getLocalRole, setLocalRole, transcribeAudio } from "../api";
 import { BookIcon } from "../brand/icons";
 import { ErrorBoundary } from "../ErrorBoundary";
@@ -228,7 +228,91 @@ function SkillBadge() {
   );
 }
 
-type SettingsView = "artifact" | "tools" | "persona";
+function formatUsd(value: number): string {
+  return `$${value.toFixed(value >= 1 ? 2 : 4)}`;
+}
+
+function UsageBadge() {
+  const [usage, setUsage] = useState<AccountUsage | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    (async () => {
+      try {
+        const data = await getAccountUsage();
+        if (!cancelled) setUsage(data);
+      } catch (error) {
+        if (!cancelled) setLoadError(readErrorMessage(error));
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (isLoading) return <BadgeSkeleton title="Penggunaan" rows={3} />;
+  if (loadError || !usage) {
+    return (
+      <div className="skill-badge skill-badge--empty">
+        Gagal memuat penggunaan{loadError ? `: ${loadError}` : ""}
+      </div>
+    );
+  }
+
+  return (
+    <div className="persona-badge usage-badge">
+      <div className="skill-badge__title">Penggunaan bulan {usage.month}</div>
+      <div className="persona-badge__row">
+        <span>Token</span>
+        <span>{usage.totalTokens.toLocaleString("id-ID")}</span>
+      </div>
+      <div className="persona-badge__row">
+        <span>Perkiraan biaya (USD)</span>
+        <span>{formatUsd(usage.costUsd)}</span>
+      </div>
+      <div className="persona-badge__row">
+        <span>Jumlah panggilan</span>
+        <span>{usage.calls.toLocaleString("id-ID")}</span>
+      </div>
+      {usage.quota.limit > 0 && (
+        <>
+          <div className="persona-badge__row persona-badge__row--total">
+            <span>Kuota bulanan</span>
+            <span>
+              {usage.quota.used.toLocaleString("id-ID")} /{" "}
+              {usage.quota.limit.toLocaleString("id-ID")}
+            </span>
+          </div>
+          <div
+            className="usage-badge__bar"
+            role="progressbar"
+            aria-valuenow={usage.quota.percent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div
+              className={`usage-badge__bar-fill${usage.quota.warning ? " usage-badge__bar-fill--over" : ""}`}
+              style={{ width: `${usage.quota.percent}%` }}
+            />
+          </div>
+          {usage.quota.warning && (
+            <div className="usage-badge__warning">
+              Anda telah melampaui kuota bulanan token. Percakapan tetap dapat
+              digunakan.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+type SettingsView = "artifact" | "tools" | "persona" | "usage";
 type ToolsView = "menu" | "mcp" | "function";
 
 function SidebarSettingsButton({ onClick }: { onClick: () => void }) {
@@ -298,7 +382,7 @@ function SettingsDialog({
         <div className="settings-dialog__header">
           <div>
             <h2>Pengaturan</h2>
-            <p>Kelola sumber, perangkat, dan persona.</p>
+            <p>Kelola sumber, perangkat, persona, dan penggunaan.</p>
           </div>
           <button type="button" className="settings-dialog__close" onClick={onClose} aria-label="Tutup pengaturan">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -321,6 +405,9 @@ function SettingsDialog({
             )}
             <button type="button" className={view === "persona" ? "is-active" : ""} onClick={() => setView("persona")}>
               Persona
+            </button>
+            <button type="button" className={view === "usage" ? "is-active" : ""} onClick={() => setView("usage")}>
+              Penggunaan
             </button>
           </nav>
           <section className="settings-dialog__content">
@@ -376,6 +463,11 @@ function SettingsDialog({
               <div className="settings-persona">
                 <PersonaBadge />
                 <SkillBadge />
+              </div>
+            )}
+            {view === "usage" && (
+              <div className="settings-persona">
+                <UsageBadge />
               </div>
             )}
           </section>

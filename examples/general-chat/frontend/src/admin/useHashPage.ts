@@ -11,6 +11,7 @@ export type AdminPage =
   | "fungsi"
   | "skill"
   | "audit"
+  | "penggunaan"
   | "chat";
 
 const DEFAULT_PAGE: AdminPage = "ringkasan";
@@ -25,6 +26,7 @@ const VALID_PAGES: readonly AdminPage[] = [
   "fungsi",
   "skill",
   "audit",
+  "penggunaan",
   "chat",
 ];
 

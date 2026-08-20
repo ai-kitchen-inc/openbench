@@ -5,6 +5,7 @@ import { setLocalRole } from "../api";
 import { BrandMark } from "../brand/BrandMark";
 import {
   BookIcon,
+  ChartIcon,
   ClipboardIcon,
   CodeIcon,
   LayoutIcon,
@@ -27,6 +28,7 @@ import { McpServersPage } from "./pages/McpServersPage";
 import { PersonaPage } from "./pages/PersonaPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
+import { UsagePage } from "./pages/UsagePage";
 import { UsersPage } from "./pages/UsersPage";
 import { useHashPage, type AdminPage } from "./useHashPage";
 
@@ -41,6 +43,7 @@ const NAV_ITEMS: { page: AdminPage; label: string; icon: ReactNode }[] = [
   { page: "fungsi", label: "Fungsi Kustom", icon: <CodeIcon /> },
   { page: "skill", label: "Skill Kustom", icon: <BookIcon /> },
   { page: "audit", label: "Audit", icon: <ClipboardIcon /> },
+  { page: "penggunaan", label: "Penggunaan", icon: <ChartIcon /> },
   { page: "chat", label: "Buka Chat", icon: <MessageIcon /> },
 ];
 
@@ -55,6 +58,7 @@ const PAGE_TITLES: Record<AdminPage, string> = {
   fungsi: "Fungsi Kustom",
   skill: "Skill Kustom",
   audit: "Jejak Audit",
+  penggunaan: "Penggunaan",
   chat: "Buka Chat",
 };
 
@@ -160,6 +164,7 @@ export function AdminShell({
                 {page === "fungsi" && <FunctionsPage />}
                 {page === "skill" && <CustomSkillsPage />}
                 {page === "audit" && <AuditPage />}
+                {page === "penggunaan" && <UsagePage />}
               </div>
             </main>
           </div>
