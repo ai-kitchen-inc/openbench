@@ -14,6 +14,7 @@ import {
   ServerIcon,
   SettingsIcon,
   SlidersIcon,
+  UsersGroupIcon,
   UsersIcon,
 } from "../brand/icons";
 import { UserChat } from "../chat/UserChat";
@@ -23,6 +24,7 @@ import { AuditPage } from "./pages/AuditPage";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FunctionsPage } from "./pages/FunctionsPage";
+import { GroupsPage } from "./pages/GroupsPage";
 import { CustomSkillsPage } from "./pages/CustomSkillsPage";
 import { McpServersPage } from "./pages/McpServersPage";
 import { PersonaPage } from "./pages/PersonaPage";
@@ -39,6 +41,7 @@ const NAV_ITEMS: { page: AdminPage; label: string; icon: ReactNode }[] = [
   { page: "kemampuan", label: "Kemampuan", icon: <SlidersIcon /> },
   { page: "pengaturan", label: "Pengaturan", icon: <SettingsIcon /> },
   { page: "pengguna", label: "Pengguna", icon: <UsersIcon /> },
+  { page: "grup", label: "Grup", icon: <UsersGroupIcon /> },
   { page: "mcp", label: "Server MCP", icon: <ServerIcon /> },
   { page: "fungsi", label: "Fungsi Kustom", icon: <CodeIcon /> },
   { page: "skill", label: "Skill Kustom", icon: <BookIcon /> },
@@ -54,6 +57,7 @@ const PAGE_TITLES: Record<AdminPage, string> = {
   kemampuan: "Kemampuan",
   pengaturan: "Pengaturan",
   pengguna: "Pengguna",
+  grup: "Grup",
   mcp: "Server MCP",
   fungsi: "Fungsi Kustom",
   skill: "Skill Kustom",
@@ -160,6 +164,7 @@ export function AdminShell({
                 {page === "kemampuan" && <CapabilitiesPage />}
                 {page === "pengaturan" && <SettingsPage />}
                 {page === "pengguna" && <UsersPage currentEmail={me.email} />}
+                {page === "grup" && <GroupsPage />}
                 {page === "mcp" && <McpServersPage />}
                 {page === "fungsi" && <FunctionsPage />}
                 {page === "skill" && <CustomSkillsPage />}

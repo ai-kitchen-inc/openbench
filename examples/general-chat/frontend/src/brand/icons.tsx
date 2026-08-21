@@ -158,3 +158,14 @@ export function ChartIcon({ size = 16 }: IconProps) {
     </svg>
   );
 }
+
+export function UsersGroupIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...iconAttrs(size)}>
+      <circle cx="9" cy="7" r="3" />
+      <path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2" />
+      <circle cx="17" cy="8" r="2.5" />
+      <path d="M22 20v-1.5a4 4 0 0 0-3-3.87" />
+    </svg>
+  );
+}

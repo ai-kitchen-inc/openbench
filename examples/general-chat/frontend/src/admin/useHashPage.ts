@@ -7,6 +7,7 @@ export type AdminPage =
   | "kemampuan"
   | "pengaturan"
   | "pengguna"
+  | "grup"
   | "mcp"
   | "fungsi"
   | "skill"
@@ -22,6 +23,7 @@ const VALID_PAGES: readonly AdminPage[] = [
   "kemampuan",
   "pengaturan",
   "pengguna",
+  "grup",
   "mcp",
   "fungsi",
   "skill",

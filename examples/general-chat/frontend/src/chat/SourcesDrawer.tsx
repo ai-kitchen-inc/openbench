@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listAccountSharedSources, readErrorMessage, type SharedSource } from "../account/api";
+import { listAccountSources, readErrorMessage, type SharedSource } from "../account/api";
 import { XIcon } from "../brand/icons";
 
 function kindLabel(source: SharedSource): string {
@@ -12,10 +12,38 @@ function kindLabel(source: SharedSource): string {
   return source.kind.toUpperCase();
 }
 
-/** Read-only view of the admin-curated global sources — lets users verify the
- * source names the assistant cites without being able to change anything. */
+function SourceItemView({ source }: { source: SharedSource }) {
+  return (
+    <div className="guest-source-item">
+      <div className="guest-source-item__head">
+        <span className="source-row__badge">{kindLabel(source)}</span>
+        <span className="guest-source-item__name">{source.name}</span>
+      </div>
+      {source.url && (
+        <a
+          className="guest-source-item__link"
+          href={source.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {source.url}
+        </a>
+      )}
+      {source.textPreview && (
+        <div className="guest-source-item__preview">
+          {source.textPreview}
+          {source.textTruncated ? "…" : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Read-only view of the admin-curated global + group sources — lets users
+ * verify the source names the assistant cites without changing anything. */
 export function SourcesDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [sources, setSources] = useState<SharedSource[]>([]);
+  const [groupSources, setGroupSources] = useState<SharedSource[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -24,9 +52,11 @@ export function SourcesDrawer({ open, onClose }: { open: boolean; onClose: () =>
     let cancelled = false;
     setIsLoading(true);
     setError(null);
-    void listAccountSharedSources()
+    void listAccountSources()
       .then((items) => {
-        if (!cancelled) setSources(items);
+        if (cancelled) return;
+        setSources(items.sources);
+        setGroupSources(items.groupSources);
       })
       .catch((err) => {
         if (!cancelled) setError(readErrorMessage(err));
@@ -56,36 +86,25 @@ export function SourcesDrawer({ open, onClose }: { open: boolean; onClose: () =>
             <div className="guest-sources-empty">Memuat sumber...</div>
           ) : error ? (
             <div className="guest-sources-empty">{error}</div>
-          ) : sources.length === 0 ? (
+          ) : sources.length === 0 && groupSources.length === 0 ? (
             <div className="guest-sources-empty">
               Belum ada sumber global yang dikonfigurasi. Hubungi administrator untuk
               menambahkannya.
             </div>
           ) : (
-            sources.map((source) => (
-              <div key={source.id} className="guest-source-item">
-                <div className="guest-source-item__head">
-                  <span className="source-row__badge">{kindLabel(source)}</span>
-                  <span className="guest-source-item__name">{source.name}</span>
-                </div>
-                {source.url && (
-                  <a
-                    className="guest-source-item__link"
-                    href={source.url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {source.url}
-                  </a>
-                )}
-                {source.textPreview && (
-                  <div className="guest-source-item__preview">
-                    {source.textPreview}
-                    {source.textTruncated ? "…" : ""}
-                  </div>
-                )}
-              </div>
-            ))
+            <>
+              {sources.map((source) => (
+                <SourceItemView key={source.id} source={source} />
+              ))}
+              {groupSources.length > 0 && (
+                <>
+                  <div className="drawer__title">Sumber Grup</div>
+                  {groupSources.map((source) => (
+                    <SourceItemView key={source.id} source={source} />
+                  ))}
+                </>
+              )}
+            </>
           )}
         </div>
       </aside>

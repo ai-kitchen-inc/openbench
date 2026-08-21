@@ -53,6 +53,8 @@ export type Me = {
   email: string;
   role: Role;
   displayName: string;
+  /** Workspace/team group id; empty when ungrouped. */
+  group?: string;
   capabilities: Capabilities;
   global: { file_generation: boolean };
   /** True when the backend runs with auth disabled (local dev) — the UI
@@ -110,6 +112,20 @@ export async function listAccountSharedSources(): Promise<SharedSource[]> {
   return payload.sources ?? [];
 }
 
+/** Shared + group sources in one call (group slice is empty when the
+ * requester has no group). */
+export async function listAccountSources(): Promise<{
+  sources: SharedSource[];
+  groupSources: SharedSource[];
+}> {
+  const response = await apiFetch(apiPath("/account/shared-sources"));
+  const payload = await parseJsonResponse<{
+    sources: SharedSource[];
+    groupSources?: SharedSource[];
+  }>(response);
+  return { sources: payload.sources ?? [], groupSources: payload.groupSources ?? [] };
+}
+
 // ── /admin/users ──
 
 export type UserItem = {
@@ -118,6 +134,7 @@ export type UserItem = {
   displayName: string;
   createdAt: string | null;
   addedBy: string | null;
+  group?: string;
 };
 
 export async function listUsers(): Promise<UserItem[]> {
@@ -141,7 +158,7 @@ export async function addUser(
 
 export async function updateUser(
   email: string,
-  patch: { role?: Role; displayName?: string },
+  patch: { role?: Role; displayName?: string; group?: string },
 ): Promise<UserItem> {
   const response = await apiFetch(apiPath(`/admin/users/${encodeURIComponent(email)}`), {
     method: "PATCH",
@@ -158,6 +175,95 @@ export async function deleteUser(email: string): Promise<void> {
   await parseJsonResponse<{ ok: boolean; email: string }>(response);
 }
 
+// ── /admin/groups ──
+
+export type GroupItem = {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  createdBy: string;
+  memberCount: number;
+};
+
+export async function listGroups(): Promise<GroupItem[]> {
+  const response = await apiFetch(apiPath("/admin/groups"));
+  const payload = await parseJsonResponse<{ groups: GroupItem[] }>(response);
+  return payload.groups ?? [];
+}
+
+export async function addGroup(name: string, description?: string): Promise<GroupItem> {
+  const response = await apiFetch(apiPath("/admin/groups"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(description ? { name, description } : { name }),
+  });
+  return parseJsonResponse<GroupItem>(response);
+}
+
+export async function deleteGroup(groupId: string): Promise<void> {
+  const response = await apiFetch(apiPath(`/admin/groups/${encodeURIComponent(groupId)}`), {
+    method: "DELETE",
+  });
+  await parseJsonResponse<{ ok: boolean; id: string }>(response);
+}
+
+export type GroupSourceItem = {
+  id: string;
+  name: string;
+  kind?: string;
+  status?: string;
+};
+
+export async function listGroupSources(groupId: string): Promise<GroupSourceItem[]> {
+  const response = await apiFetch(
+    apiPath(`/admin/groups/${encodeURIComponent(groupId)}/sources`),
+  );
+  const payload = await parseJsonResponse<{ sources: GroupSourceItem[] }>(response);
+  return payload.sources ?? [];
+}
+
+export async function addGroupTextSource(
+  groupId: string,
+  name: string,
+  text: string,
+): Promise<GroupSourceItem> {
+  const response = await apiFetch(
+    apiPath(`/admin/groups/${encodeURIComponent(groupId)}/sources/text`),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, text }),
+    },
+  );
+  return parseJsonResponse<GroupSourceItem>(response);
+}
+
+export async function addGroupUrlSource(
+  groupId: string,
+  url: string,
+): Promise<GroupSourceItem> {
+  const response = await apiFetch(
+    apiPath(`/admin/groups/${encodeURIComponent(groupId)}/sources/url`),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    },
+  );
+  return parseJsonResponse<GroupSourceItem>(response);
+}
+
+export async function deleteGroupSource(groupId: string, sourceId: string): Promise<void> {
+  const response = await apiFetch(
+    apiPath(
+      `/admin/groups/${encodeURIComponent(groupId)}/sources/${encodeURIComponent(sourceId)}`,
+    ),
+    { method: "DELETE" },
+  );
+  await parseJsonResponse<{ ok: boolean; sourceId: string }>(response);
+}
+
 // ── /admin/capabilities ──
 
 export type CapabilityDefinition = {
@@ -171,6 +277,8 @@ export type CapabilityDefinition = {
 export type CapabilitiesState = {
   definitions: CapabilityDefinition[];
   roles: { user: Record<string, boolean> };
+  /** Sparse per-group overrides; null in a PUT removes an override. */
+  groups?: Record<string, Record<string, boolean>>;
   global: Record<string, boolean>;
 };
 
@@ -182,6 +290,7 @@ export async function getCapabilities(): Promise<CapabilitiesState> {
 /** Partial update; the backend returns the full resolved state. */
 export async function putCapabilities(patch: {
   roles?: { user: Record<string, boolean> };
+  groups?: Record<string, Record<string, boolean | null>>;
   global?: Record<string, boolean>;
 }): Promise<CapabilitiesState> {
   const response = await apiFetch(apiPath("/admin/capabilities"), {
