@@ -106,12 +106,22 @@ _GLOBAL_DEFINITIONS = tuple(d for d in CAPABILITY_DEFINITIONS if d.kind == "glob
 GATED_ROLES = ("user",)
 
 
+#: Valid route-flag ids, used to validate group overrides.
+_ROUTE_FLAG_IDS = frozenset(d.id for d in _ROUTE_DEFINITIONS)
+
+
 def default_capabilities() -> dict[str, Any]:
-    """The fully-resolved default capability state."""
+    """The fully-resolved default capability state.
+
+    ``groups`` holds sparse per-group overrides of route flags: absence
+    of a flag means "inherit the role default". Group ids are validated
+    against the group store at the admin PUT, not here.
+    """
     return {
         "roles": {
             role: {d.id: d.default for d in _ROUTE_DEFINITIONS} for role in GATED_ROLES
         },
+        "groups": {},
         "global": {d.id: d.default for d in _GLOBAL_DEFINITIONS},
     }
 
@@ -134,6 +144,18 @@ def resolve_capabilities(stored: Any) -> dict[str, Any]:
             for flag_id in flags:
                 if isinstance(overrides.get(flag_id), bool):
                     flags[flag_id] = overrides[flag_id]
+    stored_groups = stored.get("groups")
+    if isinstance(stored_groups, dict):
+        for group_id, overrides in stored_groups.items():
+            if not isinstance(group_id, str) or not isinstance(overrides, dict):
+                continue
+            kept = {
+                flag_id: value
+                for flag_id, value in overrides.items()
+                if flag_id in _ROUTE_FLAG_IDS and isinstance(value, bool)
+            }
+            if kept:
+                resolved["groups"][group_id] = kept
     stored_global = stored.get("global")
     if isinstance(stored_global, dict):
         for flag_id in resolved["global"]:
@@ -171,9 +193,17 @@ class CapabilityCache:
         self.value: dict[str, Any] = resolve_capabilities(settings_store.get(SETTINGS_KEY))
 
     def role_allows(self, role: str, flag_id: str) -> bool:
+        return self.allows(role, "", flag_id)
+
+    def allows(self, role: str, group: str, flag_id: str) -> bool:
+        """Effective flag for one requester: group override wins over role."""
         flags = self.value["roles"].get(role)
         if flags is None:
             return True  # unknown/ungated role (e.g. admin) bypasses
+        if group:
+            override = self.value.get("groups", {}).get(group, {}).get(flag_id)
+            if isinstance(override, bool):
+                return override
         return bool(flags.get(flag_id, True))
 
     def global_enabled(self, flag_id: str) -> bool:
@@ -190,6 +220,9 @@ class CapabilityCache:
 def _overlay(current: dict[str, Any], partial: Any) -> dict[str, Any]:
     result = {
         "roles": {role: dict(flags) for role, flags in current["roles"].items()},
+        "groups": {
+            group: dict(flags) for group, flags in current.get("groups", {}).items()
+        },
         "global": dict(current["global"]),
     }
     if not isinstance(partial, dict):
@@ -201,10 +234,36 @@ def _overlay(current: dict[str, Any], partial: Any) -> dict[str, Any]:
                 result["roles"][role].update(
                     {k: v for k, v in overrides.items() if isinstance(v, bool)}
                 )
+    partial_groups = partial.get("groups")
+    if isinstance(partial_groups, dict):
+        for group, overrides in partial_groups.items():
+            if not isinstance(group, str) or not isinstance(overrides, dict):
+                continue
+            flags = result["groups"].setdefault(group, {})
+            for flag_id, value in overrides.items():
+                if isinstance(value, bool):
+                    flags[flag_id] = value
+                elif value is None:
+                    # Deliberate carve-out from the bool-only rule: null
+                    # removes the override ("inherit role default").
+                    flags.pop(flag_id, None)
+            if not flags:
+                result["groups"].pop(group, None)
     partial_global = partial.get("global")
     if isinstance(partial_global, dict):
         result["global"].update({k: v for k, v in partial_global.items() if isinstance(v, bool)})
     return result
+
+
+def strip_group_overrides(cache: "CapabilityCache", group_id: str, *, updated_by: str = "") -> None:
+    """Remove every override for ``group_id`` (used by group deletion)."""
+    overrides = cache.value.get("groups", {}).get(group_id)
+    if not overrides:
+        return
+    cache.update(
+        {"groups": {group_id: {flag_id: None for flag_id in overrides}}},
+        updated_by=updated_by,
+    )
 
 
 def capability_definitions_payload() -> list[dict[str, Any]]:

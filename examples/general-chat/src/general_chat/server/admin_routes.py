@@ -36,7 +36,13 @@ from general_chat.runtime_settings import (
     invalid_runtime_values,
     runtime_settings_options,
 )
-from general_chat.server.auth import LOCAL_OWNER, auth_enabled, current_owner, current_role
+from general_chat.server.auth import (
+    LOCAL_OWNER,
+    auth_enabled,
+    current_group,
+    current_owner,
+    current_role,
+)
 from general_chat.source_index import set_vector_store
 
 logger = logging.getLogger(__name__)
@@ -72,6 +78,7 @@ def register_admin_routes(
     pricing_cache: Any,
     quota_cache: Any,
     usage_store: Any,
+    group_store: Any,
 ) -> None:
     """Register /account/* and /admin/* endpoints.
 
@@ -88,17 +95,23 @@ def register_admin_routes(
         role = current_role(request)
         email = _requester_email(request)
         record = user_store.get(email) if email != LOCAL_OWNER else None
+        group = current_group(request) or (getattr(record, "group", "") if record else "")
         if role == "admin":
             flags = {
                 flag_id: True
                 for flag_id in capability_cache.value["roles"].get("user", {})
             }
         else:
-            flags = dict(capability_cache.value["roles"].get(role, {}))
+            # Group-effective flags: overrides win over role defaults.
+            flags = {
+                flag_id: capability_cache.allows(role, group, flag_id)
+                for flag_id in capability_cache.value["roles"].get(role, {})
+            }
         return {
             "email": email,
             "role": role,
             "displayName": record.display_name if record else "",
+            "group": group,
             "capabilities": flags,
             "global": dict(capability_cache.value["global"]),
             # Local-dev signal: when True the UI may offer the
@@ -145,6 +158,7 @@ def register_admin_routes(
         body = await request.json()
         role = body.get("role")
         display_name = body.get("displayName")
+        group = body.get("group")
         existing = user_store.get(email)
         if existing is None:
             raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan.")
@@ -158,11 +172,18 @@ def register_admin_routes(
                 status_code=400,
                 detail="Tidak dapat menurunkan peran admin terakhir.",
             )
+        if group is not None:
+            group = str(group).strip().lower()
+            if group and group_store.get(group) is None:
+                raise HTTPException(
+                    status_code=400, detail=f"Grup tidak dikenal: {group}"
+                )
         try:
             record = user_store.update(
                 email,
                 role=str(role) if role is not None else None,
                 display_name=str(display_name) if display_name is not None else None,
+                group=group,
             )
         except UnknownUserError:
             raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan.") from None
@@ -208,6 +229,12 @@ def register_admin_routes(
     async def put_capabilities(request: Request) -> dict:
         require_role(request, "admin")
         body = await request.json()
+        if isinstance(body, dict) and isinstance(body.get("groups"), dict):
+            for group_id in body["groups"]:
+                if group_store.get(str(group_id)) is None:
+                    raise HTTPException(
+                        status_code=400, detail=f"Grup tidak dikenal: {group_id}"
+                    )
         previous_global = dict(capability_cache.value["global"])
         merged = capability_cache.update(body, updated_by=_requester_email(request))
         # Global flags steer agent construction (which skills load) —

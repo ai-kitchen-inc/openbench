@@ -20,6 +20,9 @@ LOCAL_OWNER = "local"
 LOCAL_ROLE_HEADER = "X-Local-Role"
 """Request header selecting the local-dev role when auth is disabled."""
 
+LOCAL_GROUP_HEADER = "X-Local-Group"
+"""Request header selecting the local-dev group when auth is disabled."""
+
 _LOCAL_ROLES = frozenset({"admin", "user"})
 
 
@@ -63,6 +66,19 @@ def local_role(request: Request) -> str:
         return header
     env = (os.getenv("GENERAL_CHAT_LOCAL_ROLE") or "").strip().lower()
     return env if env in _LOCAL_ROLES else "admin"
+
+
+def local_group(request: Request) -> str:
+    """Local-dev group when auth is disabled: header > env > "".
+
+    Same trust model as :func:`local_role` — the middleware consults
+    this ONLY on the auth-disabled branch, so the header cannot select
+    a group on real deployments.
+    """
+    header = (request.headers.get(LOCAL_GROUP_HEADER) or "").strip().lower()
+    if header:
+        return header
+    return (os.getenv("GENERAL_CHAT_LOCAL_GROUP") or "").strip().lower()
 
 
 def allowed_domains() -> set[str]:
@@ -141,6 +157,7 @@ async def require_firebase_user(request: Request, user_store=None) -> FirebaseUs
             )
         request.state.firebase_user = user
         request.state.user_role = record.role
+        request.state.user_group = getattr(record, "group", "") or ""
         return user
 
     emails = allowed_emails()
@@ -176,6 +193,16 @@ def current_role(request: Request) -> str:
     if getattr(request.state, "owner_override", None) or not auth_enabled():
         return "admin"
     return "user"
+
+
+def current_group(request: Request) -> str:
+    """Return the requester's group id, or "" when ungrouped.
+
+    Stamped on ``request.state.user_group`` by
+    :func:`require_firebase_user` (Firebase path) or the auth
+    middleware's local-dev branch.
+    """
+    return str(getattr(request.state, "user_group", "") or "")
 
 
 def current_owner(request: Request) -> str:

@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from general_chat.admin_store import build_settings_store, build_user_store, seed_users
 from general_chat.audit_store import AuditRecord, build_audit_store
 from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
-from general_chat.capabilities import CapabilityCache, blocked_flag_for
+from general_chat.capabilities import CapabilityCache, blocked_flag_for, strip_group_overrides
 from general_chat.pii import redact_pii
 from general_chat.pricing import PricingCache
 from general_chat.privacy import PrivacySettingsCache
@@ -52,11 +52,18 @@ from general_chat.persona_templates import (
 )
 from general_chat.server.admin_routes import register_admin_routes, require_role
 from general_chat.server.agent_holder import AgentHolder
+from general_chat.group_store import (
+    DuplicateGroupError,
+    UnknownGroupError,
+    build_group_store,
+)
 from general_chat.server.auth import (
     LOCAL_OWNER,
     auth_enabled,
+    current_group,
     current_owner,
     current_role,
+    local_group,
     local_role,
     require_firebase_user,
 )
@@ -213,6 +220,16 @@ _AUTH_PROTECTED_PREFIXES = (
 SHARED_SOURCES_OWNER = "shared"
 SHARED_SOURCES_THREAD = "global-sources"
 
+# Group-scoped shared sources live under a per-group sentinel owner.
+# The colon guarantees no collision with email owners, "local", or
+# "shared".
+GROUP_SOURCES_THREAD = "group-sources"
+GROUP_OWNER_PREFIX = "group:"
+
+
+def group_owner(group_id: str) -> str:
+    return f"{GROUP_OWNER_PREFIX}{group_id}"
+
 # Cap on Google Drive links auto-ingested from a single chat message —
 # each is a synchronous download before the turn starts streaming.
 _MAX_CHAT_DRIVE_LINKS = 3
@@ -239,6 +256,7 @@ def _upload_access_allowed(
     file_id: str,
     upload_dir: str,
     source_store,
+    group: str = "",
 ) -> bool:
     """Return whether ``owner`` may read the upload ``file_id``.
 
@@ -255,7 +273,10 @@ def _upload_access_allowed(
     except OSError:
         stamped = ""
     if stamped:
-        return stamped in {owner, SHARED_SOURCES_OWNER} or role == "admin"
+        allowed = {owner, SHARED_SOURCES_OWNER}
+        if group:
+            allowed.add(group_owner(group))
+        return stamped in allowed or role == "admin"
     if source_store.for_owner(owner).find_by_upload_file_id(file_id) is not None:
         return True
     if source_store.for_owner(SHARED_SOURCES_OWNER).find_by_upload_file_id(file_id) is not None:
@@ -512,6 +533,7 @@ def create_app() -> FastAPI:
     quota_cache = QuotaCache(settings_store)
     usage_store = build_usage_store(storage_root)
     usage_recorder = UsageRecorder(usage_store, pricing_cache)
+    group_store = build_group_store(storage_root)
     # The vector_store selection must land before check_embeddings()
     # builds the index singleton, or the probe exercises the wrong backend.
     set_vector_store(runtime_settings_cache.value.get("vector_store"))
@@ -712,6 +734,20 @@ def create_app() -> FastAPI:
         """Owner-scoped source store view for one request."""
         return source_store.for_owner(owner)
 
+    def _requester_group(request: Request) -> str:
+        """The requester's group id for grounding, or "".
+
+        Auth-enabled requests carry the group stamped by
+        require_firebase_user; local-dev admins (never stamped by the
+        middleware) fall back to the X-Local-Group header/env.
+        """
+        group = current_group(request)
+        if group:
+            return group
+        if not auth_enabled():
+            return local_group(request)
+        return ""
+
     def _retention_memory_store():
         if chat_memory_store is not None:
             return chat_memory_store
@@ -837,10 +873,11 @@ def create_app() -> FastAPI:
         except Exception:
             logger.warning("Audit append failed for action=%s", action, exc_info=True)
 
-    def _role_gate_response(path: str, role: str) -> JSONResponse | None:
+    def _role_gate_response(path: str, role: str, group: str = "") -> JSONResponse | None:
         """Shared non-admin gate: /admin* 403 + capability-flag 403.
 
-        Returns None when the request may proceed.
+        Group overrides win over role defaults. Returns None when the
+        request may proceed.
         """
         if role == "admin":
             return None
@@ -850,7 +887,7 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_403_FORBIDDEN,
             )
         flag = blocked_flag_for(path)
-        if flag and not capability_cache.role_allows(role, flag):
+        if flag and not capability_cache.allows(role, group, flag):
             return JSONResponse(
                 {
                     "detail": "Fitur ini tidak diaktifkan untuk akun Anda.",
@@ -880,7 +917,9 @@ def create_app() -> FastAPI:
                         status_code=exc.status_code,
                         headers=exc.headers,
                     )
-                denied = _role_gate_response(path, current_role(request))
+                denied = _role_gate_response(
+                    path, current_role(request), current_group(request)
+                )
                 if denied is not None:
                     _audit(
                         request,
@@ -897,7 +936,10 @@ def create_app() -> FastAPI:
                 role = local_role(request)
                 if role != "admin":
                     request.state.user_role = role
-                    denied = _role_gate_response(path, role)
+                    group = local_group(request)
+                    if group:
+                        request.state.user_group = group
+                    denied = _role_gate_response(path, role, group)
                     if denied is not None:
                         _audit(
                             request,
@@ -1792,17 +1834,29 @@ def create_app() -> FastAPI:
         return _sources_for(SHARED_SOURCES_OWNER)
 
     @app.get("/account/shared-sources")
-    async def list_shared_sources_preview() -> dict:
+    async def list_shared_sources_preview(request: Request) -> dict:
         """Read-only listing so users can see what grounds the assistant."""
-        records = _shared_sources().list(SHARED_SOURCES_THREAD)
-        items = []
-        for record in records:
-            payload = record.to_dict(include_text=False)
-            text = record.text or ""
-            payload["textPreview"] = text[:500]
-            payload["textTruncated"] = len(text) > 500
-            items.append(payload)
-        return {"sources": items}
+
+        def _preview_items(records) -> list[dict]:
+            items = []
+            for record in records:
+                payload = record.to_dict(include_text=False)
+                text = record.text or ""
+                payload["textPreview"] = text[:500]
+                payload["textTruncated"] = len(text) > 500
+                items.append(payload)
+            return items
+
+        requester_group = _requester_group(request)
+        group_records = (
+            _sources_for(group_owner(requester_group)).list(GROUP_SOURCES_THREAD)
+            if requester_group
+            else []
+        )
+        return {
+            "sources": _preview_items(_shared_sources().list(SHARED_SOURCES_THREAD)),
+            "groupSources": _preview_items(group_records),
+        }
 
     @app.get("/admin/shared-sources")
     async def list_shared_sources_admin(request: Request) -> dict:
@@ -1883,6 +1937,190 @@ def create_app() -> FastAPI:
         _audit(request, "shared_source.delete", target=source_id)
         return {"ok": True, "sourceId": source_id}
 
+    # --- Groups (team workspaces) -------------------------------------------
+
+    def _require_group(group_id: str):
+        record = group_store.get(group_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Grup tidak ditemukan.")
+        return record
+
+    def _group_sources(group_id: str):
+        return _sources_for(group_owner(group_id))
+
+    def _member_count(group_id: str) -> int:
+        return sum(1 for record in user_store.list_users() if record.group == group_id)
+
+    @app.get("/admin/groups")
+    async def list_groups(request: Request) -> dict:
+        require_role(request, "admin")
+        return {
+            "groups": [
+                {**record.to_dict(), "memberCount": _member_count(record.id)}
+                for record in group_store.list()
+            ]
+        }
+
+    @app.post("/admin/groups", status_code=status.HTTP_201_CREATED)
+    async def add_group(request: Request) -> dict:
+        require_role(request, "admin")
+        body = await request.json()
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Nama grup wajib diisi.")
+        try:
+            record = group_store.add(
+                name,
+                description=str(body.get("description") or ""),
+                created_by=LOCAL_OWNER if not auth_enabled() else current_owner(request),
+            )
+        except DuplicateGroupError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Grup dengan nama tersebut sudah ada.",
+            ) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        _audit(request, "group.add", target=record.id)
+        return {**record.to_dict(), "memberCount": 0}
+
+    @app.patch("/admin/groups/{group_id}")
+    async def update_group(group_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        _require_group(group_id)
+        body = await request.json()
+        try:
+            record = group_store.update(
+                group_id,
+                name=body.get("name"),
+                description=body.get("description"),
+            )
+        except UnknownGroupError:
+            raise HTTPException(status_code=404, detail="Grup tidak ditemukan.") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        _audit(request, "group.update", target=record.id)
+        return {**record.to_dict(), "memberCount": _member_count(record.id)}
+
+    @app.delete("/admin/groups/{group_id}")
+    async def delete_group(group_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        record = _require_group(group_id)
+        # Cascade: clear members, purge the group's sources, strip
+        # capability overrides — then drop the group row.
+        for user in user_store.list_users():
+            if user.group == record.id:
+                user_store.update(user.email, group="")
+        group_srcs = _group_sources(record.id)
+        _purge_source_artifacts(group_srcs.list(GROUP_SOURCES_THREAD))
+        group_srcs.clear(GROUP_SOURCES_THREAD)
+        strip_group_overrides(
+            capability_cache,
+            record.id,
+            updated_by=LOCAL_OWNER if not auth_enabled() else current_owner(request),
+        )
+        group_store.remove(record.id)
+        _audit(request, "group.delete", target=record.id)
+        return {"ok": True, "id": record.id}
+
+    @app.get("/admin/groups/{group_id}/sources")
+    async def list_group_sources(group_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        _require_group(group_id)
+        records = _group_sources(group_id).list(GROUP_SOURCES_THREAD)
+        return {"sources": [record.to_dict(include_text=False) for record in records]}
+
+    @app.post("/admin/groups/{group_id}/sources/upload")
+    async def upload_group_source(
+        group_id: str,
+        request: Request,
+        file: UploadFile = File(...),
+    ):
+        require_role(request, "admin")
+        _require_group(group_id)
+        result = await _ingest_source_upload(
+            group_owner(group_id), GROUP_SOURCES_THREAD, file
+        )
+        _audit(
+            request,
+            "group_source.add",
+            target=str(file.filename or ""),
+            detail={"group": group_id, "via": "upload"},
+        )
+        return result
+
+    @app.post("/admin/groups/{group_id}/sources/text")
+    async def add_group_text_source(group_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        _require_group(group_id)
+        body = await request.json()
+        record = source_record_from_text(
+            session_id=GROUP_SOURCES_THREAD,
+            name=str(body.get("name") or body.get("title") or "Pasted text"),
+            text=str(body.get("text") or ""),
+            parser=source_parser,
+        )
+        _group_sources(group_id).add(record)
+        _audit(
+            request, "group_source.add", target=record.id, detail={"group": group_id, "via": "text"}
+        )
+        return record.to_dict(include_text=False)
+
+    @app.post("/admin/groups/{group_id}/sources/url")
+    async def add_group_url_source(group_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        _require_group(group_id)
+        body = await request.json()
+        url = str(body.get("url") or "")
+        try:
+            link = parse_drive_url(url)
+        except DriveAccessError as exc:
+            record = _failed_url_record(GROUP_SOURCES_THREAD, url, str(exc))
+            _group_sources(group_id).add(record)
+            return record.to_dict(include_text=False)
+        if link is not None:
+            if link.doc_kind == "folder":
+                return _ingest_drive_folder(
+                    group_owner(group_id),
+                    GROUP_SOURCES_THREAD,
+                    link,
+                    credential_owner=current_owner(request),
+                )
+            return _ingest_drive_source(
+                group_owner(group_id),
+                GROUP_SOURCES_THREAD,
+                link,
+                credential_owner=current_owner(request),
+            )
+        record = source_record_from_url(
+            session_id=GROUP_SOURCES_THREAD,
+            url=url,
+            parser=source_parser,
+            max_bytes=max_source_bytes,
+        )
+        _group_sources(group_id).add(record)
+        _audit(
+            request, "group_source.add", target=record.id, detail={"group": group_id, "via": "url"}
+        )
+        return record.to_dict(include_text=False)
+
+    @app.delete("/admin/groups/{group_id}/sources/{source_id}")
+    async def delete_group_source(group_id: str, source_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        _require_group(group_id)
+        srcs = _group_sources(group_id)
+        records = srcs.list(GROUP_SOURCES_THREAD)
+        target = next((record for record in records if record.id == source_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+        _purge_source_artifacts([target])
+        if not srcs.delete(GROUP_SOURCES_THREAD, source_id):
+            raise HTTPException(status_code=404, detail="Source not found")
+        _audit(
+            request, "group_source.delete", target=source_id, detail={"group": group_id}
+        )
+        return {"ok": True, "sourceId": source_id}
+
     # Per-user Google Drive OAuth (/auth/drive/*). Registered inside
     # create_app() so these routes always precede the SPA catch-all.
     app.include_router(drive_oauth.build_router())
@@ -1959,7 +2197,9 @@ def create_app() -> FastAPI:
         try:
             if not session_id:
                 return
-            if not capability_cache.role_allows(current_role(request), "session_sources"):
+            if not capability_cache.allows(
+                current_role(request), _requester_group(request), "session_sources"
+            ):
                 return
             text = _latest_user_message_text(body)
             if "drive.google.com" not in text and "docs.google.com" not in text:
@@ -2010,6 +2250,7 @@ def create_app() -> FastAPI:
         pricing_cache=pricing_cache,
         quota_cache=quota_cache,
         usage_store=usage_store,
+        group_store=group_store,
     )
 
     @app.post("/awp")
@@ -2037,10 +2278,23 @@ def create_app() -> FastAPI:
             # session's own sources. They are persistent — the one-shot
             # upload cleanup must only ever see the session slice.
             global_records = _sources_for(SHARED_SOURCES_OWNER).list(SHARED_SOURCES_THREAD)
+            requester_group = _requester_group(request)
+            group_records = (
+                _sources_for(group_owner(requester_group)).list(GROUP_SOURCES_THREAD)
+                if requester_group
+                else []
+            )
             session_records = srcs.list(session_id) if session_id else []
-            source_records = global_records + session_records
+            source_records = global_records + group_records + session_records
+            # Curated shared/group sources are persistent — the one-shot
+            # upload cleanup must only ever see the session slice.
             on_stream_complete = lambda records: _cleanup_source_uploads_after_use(
-                [record for record in records if record.owner != SHARED_SOURCES_OWNER],
+                [
+                    record
+                    for record in records
+                    if record.owner != SHARED_SOURCES_OWNER
+                    and not record.owner.startswith(GROUP_OWNER_PREFIX)
+                ],
                 srcs,
             )
         try:
@@ -2265,6 +2519,7 @@ def create_app() -> FastAPI:
             file_id=file_id,
             upload_dir=upload_dir,
             source_store=source_store,
+            group=_requester_group(request),
         ):
             raise HTTPException(status_code=404, detail="File not found")
         candidate = (upload_root / file_id / safe_name).resolve()

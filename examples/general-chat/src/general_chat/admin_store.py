@@ -63,13 +63,19 @@ def validate_role(role: str) -> str:
 
 @dataclass
 class UserRecord:
-    """A single account granted access to the app."""
+    """A single account granted access to the app.
+
+    ``group`` is the workspace/team axis, orthogonal to ``role``; empty
+    means no group. The Postgres column is ``group_name`` (``group`` is
+    an SQL keyword) but the JSON/dict key stays ``group``.
+    """
 
     email: str
     role: str = "user"
     display_name: str = ""
     created_at: str = field(default_factory=_utcnow_iso)
     added_by: str = ""
+    group: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +84,7 @@ class UserRecord:
             "displayName": self.display_name,
             "createdAt": self.created_at,
             "addedBy": self.added_by,
+            "group": self.group,
         }
 
     @classmethod
@@ -88,6 +95,7 @@ class UserRecord:
             display_name=str(data.get("displayName", data.get("display_name", "")) or ""),
             created_at=str(data.get("createdAt", data.get("created_at", "")) or _utcnow_iso()),
             added_by=str(data.get("addedBy", data.get("added_by", "")) or ""),
+            group=str(data.get("group", data.get("group_name", "")) or ""),
         )
 
 
@@ -147,6 +155,7 @@ class JsonUserStore:
         *,
         role: str | None = None,
         display_name: str | None = None,
+        group: str | None = None,
     ) -> UserRecord:
         email = normalize_email(email)
         users = self._read()
@@ -157,6 +166,8 @@ class JsonUserStore:
             record.role = validate_role(role)
         if display_name is not None:
             record.display_name = display_name.strip()
+        if group is not None:
+            record.group = group.strip()
         self._write(users)
         return record
 
@@ -213,7 +224,7 @@ class PostgresUserStore:
         with self._connection() as conn, conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT email, role, display_name, created_at, added_by
+                SELECT email, role, display_name, created_at, added_by, group_name
                 FROM {self.table_name} ORDER BY email
                 """
             )
@@ -225,7 +236,7 @@ class PostgresUserStore:
         with self._connection() as conn, conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT email, role, display_name, created_at, added_by
+                SELECT email, role, display_name, created_at, added_by, group_name
                 FROM {self.table_name} WHERE email = %s
                 """,
                 (email,),
@@ -254,11 +265,18 @@ class PostgresUserStore:
                 cur.execute(
                     f"""
                     INSERT INTO {self.table_name}
-                        (email, role, display_name, created_at, added_by)
-                    VALUES (%s, %s, %s, %s, %s)
+                        (email, role, display_name, created_at, added_by, group_name)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (email) DO NOTHING
                     """,
-                    (record.email, record.role, record.display_name, record.created_at, record.added_by),
+                    (
+                        record.email,
+                        record.role,
+                        record.display_name,
+                        record.created_at,
+                        record.added_by,
+                        record.group,
+                    ),
                 )
                 inserted = cur.rowcount
             conn.commit()
@@ -272,6 +290,7 @@ class PostgresUserStore:
         *,
         role: str | None = None,
         display_name: str | None = None,
+        group: str | None = None,
     ) -> UserRecord:
         email = normalize_email(email)
         assignments: list[str] = []
@@ -282,6 +301,9 @@ class PostgresUserStore:
         if display_name is not None:
             assignments.append("display_name = %s")
             params.append(display_name.strip())
+        if group is not None:
+            assignments.append("group_name = %s")
+            params.append(group.strip())
         if assignments:
             with self._connection() as conn:
                 with conn.cursor() as cur:
@@ -323,9 +345,15 @@ class PostgresUserStore:
                         role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
                         display_name TEXT NOT NULL DEFAULT '',
                         created_at TEXT NOT NULL,
-                        added_by TEXT NOT NULL DEFAULT ''
+                        added_by TEXT NOT NULL DEFAULT '',
+                        group_name TEXT NOT NULL DEFAULT ''
                     )
                     """
+                )
+                # Additive migration for tables created before groups existed.
+                cur.execute(
+                    f"ALTER TABLE {self.table_name} "
+                    "ADD COLUMN IF NOT EXISTS group_name TEXT NOT NULL DEFAULT ''"
                 )
             conn.commit()
 
@@ -348,6 +376,7 @@ class PostgresUserStore:
             display_name=str(row[2] or ""),
             created_at=str(row[3] or ""),
             added_by=str(row[4] or ""),
+            group=str(row[5] or "") if len(row) > 5 else "",
         )
 
 
