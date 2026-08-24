@@ -1090,14 +1090,22 @@ def create_app() -> FastAPI:
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="Expected a JSON object")
         try:
-            meta = custom_skills.save(
-                str(body.get("id") or ""),
-                name=str(body.get("name") or ""),
-                description=str(body.get("description") or ""),
-                triggers=body.get("triggers"),
-                instructions=str(body.get("instructions") or ""),
-                version=str(body.get("version") or "0.1.0"),
-            )
+            if "skill_md" in body:
+                meta = custom_skills.save_markdown(
+                    str(body.get("id") or ""),
+                    str(body.get("skill_md") or ""),
+                )
+            elif "prompt" in body:
+                meta = custom_skills.save_from_prompt(str(body.get("prompt") or ""))
+            else:
+                meta = custom_skills.save(
+                    str(body.get("id") or ""),
+                    name=str(body.get("name") or ""),
+                    description=str(body.get("description") or ""),
+                    triggers=body.get("triggers"),
+                    instructions=str(body.get("instructions") or ""),
+                    version=str(body.get("version") or "0.1.0"),
+                )
         except CustomSkillError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:

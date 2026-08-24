@@ -65,6 +65,49 @@ class TestCustomSkillStore(unittest.TestCase):
         with self.assertRaises(CustomSkillError):
             self.store.save("ok-skill", name="OK", instructions="Do things.", version="vNext")
 
+    def test_save_from_prompt_generates_unique_markdown(self):
+        first = self.store.save_from_prompt(
+            "Buat skill untuk review kontrak vendor. Agent harus menilai klausul risiko, "
+            "kewajiban, dan rekomendasi negosiasi."
+        )
+        second = self.store.save_from_prompt(
+            "Buat skill untuk review kontrak vendor. Agent harus menilai klausul risiko."
+        )
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertTrue(first["id"].startswith("review-kontrak-vendor"))
+        self.assertIn("## Instructions", first["skill_md"])
+        self.assertIn("## Triggers", first["skill_md"])
+
+    def test_save_markdown_updates_metadata_from_skill_md(self):
+        saved = self.store.save_from_prompt("Buat skill untuk review risiko.")
+        updated = self.store.save_markdown(
+            saved["id"],
+            "\n".join(
+                [
+                    "# Audit SOP",
+                    "",
+                    "Membantu audit internal.",
+                    "",
+                    "## Triggers",
+                    "",
+                    "- audit internal",
+                    "",
+                    "## Instructions",
+                    "",
+                    "Selalu susun temuan dan rekomendasi.",
+                    "",
+                    "## Version",
+                    "",
+                    "0.2.0",
+                ]
+            ),
+        )
+        self.assertEqual(updated["id"], saved["id"])
+        self.assertEqual(updated["name"], "Audit SOP")
+        self.assertEqual(updated["version"], "0.2.0")
+        self.assertEqual(updated["triggers"], ["audit internal"])
+        self.assertIn("Selalu susun", updated["instructions"])
+
 
 class TestCustomSkillRoutes(unittest.TestCase):
     def _client(self) -> TestClient:
@@ -127,15 +170,15 @@ class TestCustomSkillRoutes(unittest.TestCase):
             "/admin/custom-skills",
             headers=ADMIN_H,
             json={
-                "id": "risk-review",
-                "name": "Risk Review",
-                "description": "Reviews decision risks.",
-                "triggers": ["risk", "mitigation"],
-                "instructions": "Return a table with risk, impact, mitigation, and owner.",
+                "prompt": (
+                    "Buat skill untuk risk review. Return a table with risk, impact, "
+                    "mitigation, and owner."
+                ),
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["id"], "risk-review")
+        created_id = response.json()["id"]
+        self.assertTrue(created_id)
         self.assertEqual(len(self.create_agent_calls), builds_before + 1)
         loaded_paths = self.create_agent_calls[-1]["custom_skill_paths"]
         self.assertEqual(len(loaded_paths), 1)
@@ -143,11 +186,22 @@ class TestCustomSkillRoutes(unittest.TestCase):
 
         listed = client.get("/admin/custom-skills", headers=ADMIN_H)
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual([skill["id"] for skill in listed.json()["skills"]], ["risk-review"])
+        self.assertEqual([skill["id"] for skill in listed.json()["skills"]], [created_id])
 
-        deleted = client.delete("/admin/custom-skills/risk-review", headers=ADMIN_H)
+        edited = client.post(
+            "/admin/custom-skills",
+            headers=ADMIN_H,
+            json={
+                "id": created_id,
+                "skill_md": "# Risk Review\n\nUpdated.\n\n## Version\n\n0.1.1",
+            },
+        )
+        self.assertEqual(edited.status_code, 200)
+        self.assertEqual(edited.json()["name"], "Risk Review")
+
+        deleted = client.delete(f"/admin/custom-skills/{created_id}", headers=ADMIN_H)
         self.assertEqual(deleted.status_code, 200)
-        second_delete = client.delete("/admin/custom-skills/risk-review", headers=ADMIN_H)
+        second_delete = client.delete(f"/admin/custom-skills/{created_id}", headers=ADMIN_H)
         self.assertEqual(second_delete.status_code, 404)
 
     def test_save_validation_errors_are_400(self):
@@ -155,10 +209,10 @@ class TestCustomSkillRoutes(unittest.TestCase):
         response = client.post(
             "/admin/custom-skills",
             headers=ADMIN_H,
-            json={"id": "bad-skill", "name": "Bad", "instructions": ""},
+            json={"prompt": ""},
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("instructions are required", response.json()["detail"])
+        self.assertIn("prompt is required", response.json()["detail"])
 
 
 if __name__ == "__main__":

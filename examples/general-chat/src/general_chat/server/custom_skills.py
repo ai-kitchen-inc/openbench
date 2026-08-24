@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,30 @@ from openbench.intelligence.skill import Skill
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){0,2}(?:[-+][a-zA-Z0-9.-]+)?$")
 MAX_TEXT_BYTES = 64 * 1024
+TITLE_STOPWORDS = {
+    "agar",
+    "akan",
+    "atau",
+    "bisa",
+    "buat",
+    "buatkan",
+    "bikin",
+    "dalam",
+    "dan",
+    "dengan",
+    "jadi",
+    "kustom",
+    "mau",
+    "membantu",
+    "membuat",
+    "menjadi",
+    "saya",
+    "skill",
+    "supaya",
+    "untuk",
+    "user",
+    "yang",
+}
 
 
 class CustomSkillError(ValueError):
@@ -67,6 +92,130 @@ def _clean_triggers(value: Any) -> list[str]:
         seen.add(key)
         triggers.append(item)
     return triggers[:20]
+
+
+def _section_text(markdown: str, heading: str) -> str:
+    lines = markdown.splitlines()
+    wanted = heading.strip().lower()
+    collecting = False
+    section_lines: list[str] = []
+    for line in lines:
+        match = re.match(r"^##\s+(.+?)\s*$", line)
+        if match:
+            if collecting:
+                break
+            collecting = match.group(1).strip().lower() == wanted
+            continue
+        if collecting:
+            section_lines.append(line)
+    return "\n".join(section_lines).strip()
+
+
+def _slugify(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    if not cleaned:
+        cleaned = "custom-skill"
+    if not cleaned[0].isalpha():
+        cleaned = f"skill-{cleaned}"
+    if len(cleaned) < 2:
+        cleaned = f"{cleaned}-skill"
+    return cleaned[:64].strip("-") or "custom-skill"
+
+
+def _display_name(value: str) -> str:
+    words: list[str] = []
+    for raw in re.findall(r"[A-Za-z0-9]+", value):
+        if raw.lower() in TITLE_STOPWORDS:
+            continue
+        words.append(raw.upper() if raw.isupper() else raw.capitalize())
+        if len(words) >= 5:
+            break
+    return " ".join(words) or "Skill Kustom"
+
+
+def _topic_from_prompt(prompt: str) -> str:
+    first_line = next((line.strip() for line in prompt.splitlines() if line.strip()), prompt)
+    text = _clean_single_line(first_line, max_len=180)
+    text = re.sub(
+        r"^(tolong\s+)?(buatkan|buat|bikin|mohon|saya\s+mau)\s+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"^(skill\s+kustom\s+|skill\s+untuk\s+|skill\s+yang\s+)",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.split(r"\b(agar|supaya|dengan|untuk menghasilkan|yang bisa)\b", text, maxsplit=1)[0]
+    return _display_name(text)
+
+
+def _keywords_from_prompt(prompt: str) -> list[str]:
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for word in re.findall(r"[A-Za-z0-9][A-Za-z0-9-]{3,}", prompt.lower()):
+        if word in TITLE_STOPWORDS or word in seen:
+            continue
+        seen.add(word)
+        keywords.append(word)
+        if len(keywords) >= 6:
+            break
+    return keywords
+
+
+def _prompt_detail_lines(prompt: str) -> list[str]:
+    details: list[str] = []
+    for line in prompt.splitlines():
+        cleaned = _clean_single_line(line.lstrip("-*0123456789. "), max_len=180)
+        if cleaned:
+            details.append(cleaned)
+        if len(details) >= 8:
+            break
+    if not details:
+        details.append(_clean_single_line(prompt, max_len=220))
+    return details
+
+
+def _skill_spec_from_prompt(prompt: str) -> dict[str, Any]:
+    prompt = _clean_multiline(prompt)
+    if not prompt:
+        raise CustomSkillError("prompt is required")
+    name = _topic_from_prompt(prompt)
+    topic = name.lower()
+    keywords = _keywords_from_prompt(prompt)
+    keyword_text = ", ".join(keywords[:4]) if keywords else topic
+    details = _prompt_detail_lines(prompt)
+    detail_block = "\n".join(f"- {line}" for line in details)
+    description = (
+        f"Skill kustom untuk membantu agent menangani permintaan terkait {topic} "
+        "berdasarkan kebutuhan yang ditulis admin."
+    )
+    triggers = [
+        f"User meminta bantuan terkait {topic}.",
+        f"User ingin agent mengikuti SOP, gaya, atau batasan khusus untuk {topic}.",
+        f"Permintaan user memuat konteks atau kata kunci seperti {keyword_text}.",
+    ]
+    instructions = (
+        "Gunakan skill ini hanya saat permintaan user cocok dengan trigger.\n\n"
+        "SOP:\n"
+        "1. Pahami tujuan user, data yang tersedia, dan hasil akhir yang diminta.\n"
+        "2. Terapkan detail kebutuhan berikut sebagai aturan kerja utama:\n"
+        f"{detail_block}\n"
+        "3. Susun jawaban dengan struktur yang jelas, praktis, dan langsung bisa dipakai.\n"
+        "4. Jika informasi penting belum tersedia, jelaskan asumsi dan minta input lanjutan "
+        "yang spesifik.\n"
+        "5. Jangan mengklaim sudah menjalankan alat, mengakses data, atau membuat file jika "
+        "hal itu belum benar-benar dilakukan."
+    )
+    return {
+        "name": name,
+        "description": description,
+        "triggers": triggers,
+        "instructions": instructions,
+        "version": "0.1.0",
+    }
 
 
 def _render_skill_md(
@@ -117,6 +266,16 @@ class CustomSkillStore:
 
     def _path_for(self, skill_id: str) -> Path:
         return self.root / self._validate_id(skill_id)
+
+    def _unique_id(self, seed: str) -> str:
+        base = self._validate_id(_slugify(seed))
+        candidate = base
+        counter = 2
+        while (self.root / candidate / "SKILL.md").is_file():
+            suffix = f"-{counter}"
+            candidate = f"{base[: 64 - len(suffix)]}{suffix}".strip("-")
+            counter += 1
+        return candidate
 
     def paths(self) -> list[Path]:
         return [
@@ -170,6 +329,50 @@ class CustomSkillStore:
             "triggers": list(loaded.triggers),
             "instructions": instructions,
             "version": loaded.version,
+            "created_at": created_at,
+            "updated_at": updated_at,
+        }
+        (skill_dir / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+        return self._serialize(skill_dir, include_markdown=True)
+
+    def save_from_prompt(self, prompt: str) -> dict[str, Any]:
+        spec = _skill_spec_from_prompt(prompt)
+        return self.save(
+            self._unique_id(spec["name"]),
+            name=spec["name"],
+            description=spec["description"],
+            triggers=spec["triggers"],
+            instructions=spec["instructions"],
+            version=spec["version"],
+        )
+
+    def save_markdown(self, skill_id: str, markdown: str) -> dict[str, Any]:
+        skill_id = self._validate_id(skill_id)
+        markdown = _clean_multiline(markdown)
+        if not markdown:
+            raise CustomSkillError("skill markdown is required")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_dir = Path(tmp) / skill_id
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            (temp_dir / "SKILL.md").write_text(markdown, encoding="utf-8")
+            loaded = Skill.from_dir(temp_dir)
+        version = self._validate_version(loaded.version)
+
+        skill_dir = self._path_for(skill_id)
+        existing = self.get(skill_id, include_markdown=False)
+        created_at = existing.get("created_at") if existing else _utc_now()
+        updated_at = _utc_now()
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(markdown.strip() + "\n", encoding="utf-8")
+        loaded = Skill.from_dir(skill_dir)
+        meta = {
+            "id": skill_id,
+            "name": loaded.name,
+            "description": loaded.description,
+            "triggers": list(loaded.triggers),
+            "instructions": _section_text(loaded.raw_skill_md, "Instructions"),
+            "version": version,
             "created_at": created_at,
             "updated_at": updated_at,
         }

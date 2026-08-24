@@ -30,20 +30,21 @@ export async function listCustomSkills(): Promise<CustomSkill[]> {
   return payload.skills ?? [];
 }
 
-export async function saveCustomSkill(payload: {
-  id: string;
-  name: string;
-  description: string;
-  triggers: string[];
-  instructions: string;
-  version: string;
-}): Promise<CustomSkill> {
+async function postCustomSkill(payload: Record<string, unknown>): Promise<CustomSkill> {
   const response = await apiFetch(apiPath("/admin/custom-skills"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   return parseJsonResponse<CustomSkill>(response);
+}
+
+export async function createCustomSkillFromPrompt(prompt: string): Promise<CustomSkill> {
+  return postCustomSkill({ prompt });
+}
+
+export async function saveCustomSkillMarkdown(id: string, skillMd: string): Promise<CustomSkill> {
+  return postCustomSkill({ id, skill_md: skillMd });
 }
 
 export async function deleteCustomSkill(id: string): Promise<void> {

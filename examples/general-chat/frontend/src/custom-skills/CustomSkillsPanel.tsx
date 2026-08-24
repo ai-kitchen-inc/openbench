@@ -1,37 +1,51 @@
 import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../Toast";
-import { deleteCustomSkill, listCustomSkills, saveCustomSkill } from "./api";
+import {
+  createCustomSkillFromPrompt,
+  deleteCustomSkill,
+  listCustomSkills,
+  saveCustomSkillMarkdown,
+} from "./api";
 import type { CustomSkill } from "./types";
 
-const DEFAULT_INSTRUCTIONS = `Saat skill ini relevan, ikuti SOP berikut:
-1. Pahami tujuan user dan konteks yang tersedia.
-2. Gunakan istilah yang konsisten dengan domain skill.
-3. Jika data tidak cukup, jelaskan asumsi dan minta input yang spesifik.
-4. Tutup dengan hasil yang bisa langsung dipakai user.`;
+const PROMPT_PLACEHOLDER = [
+  "Jelaskan skill kustom yang ingin ditambahkan ke agent.",
+  "Tuliskan tujuan skill, kapan harus dipakai, gaya jawaban, aturan khusus, batasan, atau format output yang kamu inginkan.",
+].join("\n");
 
-function triggersFromText(value: string): string[] {
-  return value
-    .split("\n")
-    .map((line) => line.replace(/^[-*]\s*/, "").trim())
-    .filter(Boolean);
-}
-
-function textFromTriggers(triggers: string[]): string {
-  return triggers.join("\n");
+function markdownForSkill(skill: CustomSkill): string {
+  return (
+    skill.skill_md ||
+    [
+      `# ${skill.name}`,
+      "",
+      skill.description || "Custom General Chat skill.",
+      "",
+      "## Triggers",
+      "",
+      ...(skill.triggers.length > 0 ? skill.triggers.map((trigger) => `- ${trigger}`) : ["- Use when relevant."]),
+      "",
+      "## Instructions",
+      "",
+      skill.instructions || "Tuliskan instruksi skill di sini.",
+      "",
+      "## Version",
+      "",
+      skill.version || "0.1.0",
+    ].join("\n")
+  );
 }
 
 export function CustomSkillsPanel() {
   const toast = useToast();
   const [skills, setSkills] = useState<CustomSkill[]>([]);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [savingPrompt, setSavingPrompt] = useState(false);
+  const [savingMarkdown, setSavingMarkdown] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [id, setId] = useState("");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [triggers, setTriggers] = useState("");
-  const [instructions, setInstructions] = useState(DEFAULT_INSTRUCTIONS);
-  const [version, setVersion] = useState("0.1.0");
+  const [prompt, setPrompt] = useState("");
+  const [editingSkill, setEditingSkill] = useState<CustomSkill | null>(null);
+  const [markdownDraft, setMarkdownDraft] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -48,44 +62,52 @@ export function CustomSkillsPanel() {
     void load();
   }, [load]);
 
-  function resetForm() {
-    setId("");
-    setName("");
-    setDescription("");
-    setTriggers("");
-    setInstructions(DEFAULT_INSTRUCTIONS);
-    setVersion("0.1.0");
+  function resetPrompt() {
+    setPrompt("");
+    setFormError(null);
+  }
+
+  function closeEditor() {
+    setEditingSkill(null);
+    setMarkdownDraft("");
     setFormError(null);
   }
 
   function handleEdit(skill: CustomSkill) {
-    setId(skill.id);
-    setName(skill.name);
-    setDescription(skill.description ?? "");
-    setTriggers(textFromTriggers(skill.triggers ?? []));
-    setInstructions(skill.instructions || DEFAULT_INSTRUCTIONS);
-    setVersion(skill.version || "0.1.0");
+    setEditingSkill(skill);
+    setMarkdownDraft(markdownForSkill(skill));
     setFormError(null);
   }
 
-  async function handleSave() {
-    setSaving(true);
+  async function handleCreateFromPrompt() {
+    setSavingPrompt(true);
     setFormError(null);
     try {
-      const saved = await saveCustomSkill({
-        id: id.trim(),
-        name: name.trim(),
-        description: description.trim(),
-        triggers: triggersFromText(triggers),
-        instructions: instructions.trim(),
-        version: version.trim() || "0.1.0",
-      });
-      toast.show(`Skill "${saved.name}" tersimpan dan agent dimuat ulang`, "success");
+      const saved = await createCustomSkillFromPrompt(prompt.trim());
+      toast.show(`Skill "${saved.name}" dibuat dan agent dimuat ulang`, "success");
+      setPrompt("");
       await load();
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : "Gagal menyimpan skill");
+      setFormError(error instanceof Error ? error.message : "Gagal membuat skill");
     } finally {
-      setSaving(false);
+      setSavingPrompt(false);
+    }
+  }
+
+  async function handleSaveMarkdown() {
+    if (!editingSkill) return;
+    setSavingMarkdown(true);
+    setFormError(null);
+    try {
+      const saved = await saveCustomSkillMarkdown(editingSkill.id, markdownDraft.trim());
+      toast.show(`Skill "${saved.name}" diperbarui dan agent dimuat ulang`, "success");
+      setEditingSkill(saved);
+      setMarkdownDraft(markdownForSkill(saved));
+      await load();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Gagal menyimpan markdown skill");
+    } finally {
+      setSavingMarkdown(false);
     }
   }
 
@@ -94,100 +116,102 @@ export function CustomSkillsPanel() {
       await deleteCustomSkill(skill.id);
       toast.show(`Skill "${skill.name}" dihapus dan agent dimuat ulang`, "success");
       await load();
-      if (id === skill.id) resetForm();
+      if (editingSkill?.id === skill.id) closeEditor();
     } catch (error) {
       toast.show(error instanceof Error ? error.message : "Gagal menghapus skill", "error");
     }
   }
 
   return (
-    <div className="mcp-catalog">
-      <section className="mcp-section">
+    <div className="mcp-catalog custom-skills">
+      <section className="mcp-section custom-skills__composer">
         <div className="mcp-section__header">
           <div>
-            <h3>Definisikan skill</h3>
+            <h3>Buat skill dari prompt</h3>
             <p>
-              Skill tersimpan sebagai OpenBench Skill dan masuk ke prompt agent setelah disimpan.
+              Tulis kebutuhan skill dalam bahasa natural. Sistem akan menyusun ID unik, nama,
+              deskripsi, trigger, instruksi, dan versi dalam format SKILL.md.
             </p>
           </div>
           <div className="mcp-section__actions">
-            <button type="button" className="mcp-btn" onClick={resetForm}>
+            <button type="button" className="mcp-btn" onClick={resetPrompt}>
               Kosongkan
             </button>
           </div>
         </div>
-        <label className="mcp-field">
-          <span>Skill ID</span>
-          <input
-            value={id}
-            placeholder="id unik skill, huruf kecil dan tanda hubung"
-            onChange={(event) => setId(event.target.value)}
-          />
-        </label>
-        <label className="mcp-field">
-          <span>Nama skill</span>
-          <input
-            value={name}
-            placeholder="nama skill yang tampil di daftar"
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        <label className="mcp-field">
-          <span>Deskripsi</span>
-          <input
-            value={description}
-            placeholder="ringkasan singkat tujuan atau kemampuan skill"
-            onChange={(event) => setDescription(event.target.value)}
-          />
-        </label>
-        <label className="mcp-field">
-          <span>Trigger, satu per baris</span>
+
+        <label className="mcp-field custom-skills__prompt">
+          <span>Prompt kebutuhan skill</span>
           <textarea
-            value={triggers}
-            spellCheck={false}
-            rows={4}
-            placeholder={[
-              "kondisi kapan skill perlu digunakan",
-              "jenis permintaan user yang relevan",
-              "kata kunci atau situasi pemicu",
-            ].join("\n")}
-            onChange={(event) => setTriggers(event.target.value)}
+            value={prompt}
+            rows={9}
+            placeholder={PROMPT_PLACEHOLDER}
+            onChange={(event) => setPrompt(event.target.value)}
           />
         </label>
-        <label className="mcp-field">
-          <span>Instruksi skill</span>
-          <textarea
-            value={instructions}
-            spellCheck={false}
-            rows={12}
-            placeholder="tulis SOP, aturan jawaban, format output, batasan, atau langkah kerja agent"
-            onChange={(event) => setInstructions(event.target.value)}
-          />
-        </label>
-        <label className="mcp-field">
-          <span>Versi</span>
-          <input
-            value={version}
-            placeholder="versi skill"
-            onChange={(event) => setVersion(event.target.value)}
-          />
-        </label>
-        {formError && (
+
+        {formError && !editingSkill && (
           <div className="mcp-state mcp-state--error" role="alert">
             {formError}
           </div>
         )}
-        <div className="mcp-dialog__actions">
+
+        <div className="mcp-dialog__actions custom-skills__actions">
           <button
             type="button"
             className="mcp-btn mcp-btn--primary"
-            onClick={() => void handleSave()}
-            disabled={saving || !id.trim() || !name.trim() || !instructions.trim()}
+            onClick={() => void handleCreateFromPrompt()}
+            disabled={savingPrompt || !prompt.trim()}
           >
-            {saving ? "Menyimpan..." : "Simpan skill"}
+            {savingPrompt ? "Menyusun skill..." : "Buat dan simpan skill"}
           </button>
         </div>
       </section>
+
+      {editingSkill && (
+        <section className="mcp-section custom-skills__editor">
+          <div className="mcp-section__header">
+            <div>
+              <h3>Edit SKILL.md</h3>
+              <p>
+                Mengedit {editingSkill.name} | ID tetap: {editingSkill.id}
+              </p>
+            </div>
+            <div className="mcp-section__actions">
+              <button type="button" className="mcp-btn" onClick={closeEditor}>
+                Tutup editor
+              </button>
+            </div>
+          </div>
+
+          <label className="mcp-field custom-skills__markdown">
+            <span>Markdown skill</span>
+            <textarea
+              value={markdownDraft}
+              spellCheck={false}
+              rows={18}
+              onChange={(event) => setMarkdownDraft(event.target.value)}
+            />
+          </label>
+
+          {formError && (
+            <div className="mcp-state mcp-state--error" role="alert">
+              {formError}
+            </div>
+          )}
+
+          <div className="mcp-dialog__actions custom-skills__actions">
+            <button
+              type="button"
+              className="mcp-btn mcp-btn--primary"
+              onClick={() => void handleSaveMarkdown()}
+              disabled={savingMarkdown || !markdownDraft.trim()}
+            >
+              {savingMarkdown ? "Menyimpan..." : "Simpan perubahan MD"}
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className="mcp-section">
         <div className="mcp-section__header">
@@ -203,21 +227,21 @@ export function CustomSkillsPanel() {
         </div>
         {loading && <div className="mcp-state">Memuat skill...</div>}
         {!loading && skills.length === 0 && (
-          <div className="mcp-state">Belum ada skill. Buat satu di formulir.</div>
+          <div className="mcp-state">Belum ada skill. Tulis kebutuhan skill di prompt.</div>
         )}
-        <div className="mcp-config-list">
+        <div className="mcp-catalog-list custom-skills__list">
           {skills.map((skill) => (
-            <div key={skill.id} className="mcp-section__header">
+            <div key={skill.id} className="mcp-catalog-row custom-skills__item">
               <div>
-                <h3>{skill.name}</h3>
-                <p>
+                <strong>{skill.name}</strong>
+                <span>
                   {skill.description || "Tanpa deskripsi"} | ID: {skill.id} |{" "}
                   {skill.context_chars} karakter konteks
-                </p>
+                </span>
               </div>
-              <div className="mcp-section__actions">
+              <div className="mcp-catalog-row__actions">
                 <button type="button" className="mcp-btn" onClick={() => handleEdit(skill)}>
-                  Edit
+                  Edit MD
                 </button>
                 <button
                   type="button"

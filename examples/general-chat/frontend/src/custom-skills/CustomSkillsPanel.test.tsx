@@ -52,33 +52,58 @@ describe("CustomSkillsPanel", () => {
       .mockResolvedValueOnce(jsonResponse(riskSkill))
       .mockResolvedValueOnce(jsonResponse({ skills: [riskSkill] }));
     renderPanel();
-    await screen.findByText("Belum ada skill. Buat satu di formulir.");
+    await screen.findByText("Belum ada skill. Tulis kebutuhan skill di prompt.");
 
-    await userEvent.type(screen.getByLabelText("Skill ID"), "risk-review");
-    await userEvent.type(screen.getByLabelText("Nama skill"), "Risk Review");
-    await userEvent.click(screen.getByRole("button", { name: "Simpan skill" }));
+    await userEvent.type(
+      screen.getByLabelText("Prompt kebutuhan skill"),
+      "Buat skill untuk review risiko keputusan dan mitigasinya.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Buat dan simpan skill" }));
 
     expect(await screen.findByText("Risk Review")).toBeInTheDocument();
     const saveCall = fetchMock.mock.calls[1];
     expect(String(saveCall[0])).toContain("/admin/custom-skills");
     expect((saveCall[1] as RequestInit).method).toBe("POST");
+    expect(JSON.parse(String((saveCall[1] as RequestInit).body))).toEqual({
+      prompt: "Buat skill untuk review risiko keputusan dan mitigasinya.",
+    });
+  });
+
+  it("opens generated markdown for manual editing", async () => {
+    const updatedSkill = { ...riskSkill, skill_md: "# Risk Review\n\nUpdated." };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ skills: [riskSkill] }))
+      .mockResolvedValueOnce(jsonResponse(updatedSkill))
+      .mockResolvedValueOnce(jsonResponse({ skills: [updatedSkill] }));
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit MD" }));
+    const editor = screen.getByLabelText("Markdown skill");
+    expect(editor).toHaveValue("# Risk Review");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "# Risk Review\n\nUpdated.");
+    await userEvent.click(screen.getByRole("button", { name: "Simpan perubahan MD" }));
+
+    const saveCall = fetchMock.mock.calls[1];
+    expect(JSON.parse(String((saveCall[1] as RequestInit).body))).toEqual({
+      id: "risk-review",
+      skill_md: "# Risk Review\n\nUpdated.",
+    });
   });
 
   it("shows validation errors from the API", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse({ skills: [] }))
-      .mockResolvedValueOnce(jsonResponse({ detail: "invalid version" }, 400));
+      .mockResolvedValueOnce(jsonResponse({ detail: "prompt is required" }, 400));
     renderPanel();
-    await screen.findByText("Belum ada skill. Buat satu di formulir.");
+    await screen.findByText("Belum ada skill. Tulis kebutuhan skill di prompt.");
 
-    await userEvent.type(screen.getByLabelText("Skill ID"), "risk-review");
-    await userEvent.type(screen.getByLabelText("Nama skill"), "Risk Review");
-    await userEvent.clear(screen.getByLabelText("Versi"));
-    await userEvent.type(screen.getByLabelText("Versi"), "vNext");
-    await userEvent.click(screen.getByRole("button", { name: "Simpan skill" }));
+    await userEvent.type(screen.getByLabelText("Prompt kebutuhan skill"), "Buat skill uji");
+    await userEvent.click(screen.getByRole("button", { name: "Buat dan simpan skill" }));
 
     await waitFor(() => {
-      expect(screen.getByText("invalid version")).toBeInTheDocument();
+      expect(screen.getByText("prompt is required")).toBeInTheDocument();
     });
   });
 });
