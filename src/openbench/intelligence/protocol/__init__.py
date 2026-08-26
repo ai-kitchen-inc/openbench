@@ -13,6 +13,12 @@ answers to a stronger agent.
 
 from openbench.intelligence.protocol.descriptor import AgentDescriptor, AgentDirectory
 from openbench.intelligence.protocol.envelope import AgentRequest, AgentResponse
+from openbench.intelligence.protocol.escalation import (
+    CONFIDENCE_MARKER_RE,
+    CONFIDENCE_PROTOCOL_PROMPT,
+    DEFAULT_CONFIDENCE_THRESHOLD,
+    extract_confidence,
+)
 from openbench.intelligence.protocol.router import RouteDecision, build_router_prompt, route
 
 __all__ = [
@@ -20,7 +26,11 @@ __all__ = [
     "AgentDirectory",
     "AgentRequest",
     "AgentResponse",
+    "CONFIDENCE_MARKER_RE",
+    "CONFIDENCE_PROTOCOL_PROMPT",
+    "DEFAULT_CONFIDENCE_THRESHOLD",
     "RouteDecision",
     "build_router_prompt",
+    "extract_confidence",
     "route",
 ]
