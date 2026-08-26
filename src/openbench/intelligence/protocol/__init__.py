@@ -13,10 +13,14 @@ answers to a stronger agent.
 
 from openbench.intelligence.protocol.descriptor import AgentDescriptor, AgentDirectory
 from openbench.intelligence.protocol.envelope import AgentRequest, AgentResponse
+from openbench.intelligence.protocol.router import RouteDecision, build_router_prompt, route
 
 __all__ = [
     "AgentDescriptor",
     "AgentDirectory",
     "AgentRequest",
     "AgentResponse",
+    "RouteDecision",
+    "build_router_prompt",
+    "route",
 ]
