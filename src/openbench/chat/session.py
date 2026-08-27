@@ -163,10 +163,15 @@ class ChatSession:
         self,
         session_id: str | None = None,
         title: str = "New Chat",
+        metadata: dict[str, Any] | None = None,
     ):
         self.session_id = session_id or str(uuid.uuid4())
         self.title = title
         self.messages: list[ChatMessage] = []
+        # Per-session preferences (e.g. the selected agent id). Serialized
+        # only when non-empty so stored rows and their consumers are
+        # unaffected until a preference is actually set.
+        self.metadata: dict[str, Any] = metadata or {}
         self.created_at = datetime.now(timezone.utc)
         self.updated_at = datetime.now(timezone.utc)
 
@@ -231,13 +236,16 @@ class ChatSession:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict."""
-        return {
+        result = {
             "sessionId": self.session_id,
             "title": self.title,
             "messages": [m.to_dict() for m in self.messages],
             "createdAt": self.created_at.isoformat(),
             "updatedAt": self.updated_at.isoformat(),
         }
+        if self.metadata:
+            result["metadata"] = self.metadata
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ChatSession:
@@ -248,9 +256,11 @@ class ChatSession:
         top-level fields instead of raising — a corrupt row should degrade, not
         500 the history endpoint.
         """
+        raw_metadata = data.get("metadata")
         session = cls(
             session_id=data.get("sessionId") or str(uuid.uuid4()),
             title=data.get("title", "New Chat"),
+            metadata=raw_metadata if isinstance(raw_metadata, dict) else None,
         )
 
         messages: list[ChatMessage] = []

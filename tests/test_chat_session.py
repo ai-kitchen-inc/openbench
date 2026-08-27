@@ -220,6 +220,30 @@ class TestChatSession(unittest.TestCase):
         session.add_user_message("test")
         self.assertGreaterEqual(session.updated_at, initial)
 
+    def test_metadata_defaults_empty(self):
+        session = ChatSession()
+        self.assertEqual(session.metadata, {})
+        # Empty metadata must not appear in the serialized form (old rows
+        # and their consumers stay byte-identical).
+        self.assertNotIn("metadata", session.to_dict())
+
+    def test_metadata_roundtrip(self):
+        session = ChatSession(session_id="s1", metadata={"agentId": "finance-analyst"})
+        data = session.to_dict()
+        self.assertEqual(data["metadata"], {"agentId": "finance-analyst"})
+        restored = ChatSession.from_dict(data)
+        self.assertEqual(restored.metadata, {"agentId": "finance-analyst"})
+
+    def test_metadata_absent_key_defaults(self):
+        restored = ChatSession.from_dict({"sessionId": "s1", "title": "T", "messages": []})
+        self.assertEqual(restored.metadata, {})
+
+    def test_metadata_non_dict_tolerated(self):
+        restored = ChatSession.from_dict(
+            {"sessionId": "s1", "title": "T", "messages": [], "metadata": "junk"}
+        )
+        self.assertEqual(restored.metadata, {})
+
     def test_repr(self):
         session = ChatSession(session_id="abc")
         session.add_user_message("hello")
