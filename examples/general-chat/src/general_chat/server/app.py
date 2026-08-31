@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +23,12 @@ from fastapi.staticfiles import StaticFiles
 
 from general_chat.admin_store import build_settings_store, build_user_store, seed_users
 from general_chat.audit_store import AuditRecord, build_audit_store
-from general_chat.agent import create_agent, get_persona_dir, reload_external_mcp_tools
+from general_chat.agent import (
+    _sdk_skill_dir,
+    create_agent,
+    get_persona_dir,
+    reload_external_mcp_tools,
+)
 from general_chat.capabilities import CapabilityCache, blocked_flag_for, strip_group_overrides
 from general_chat.pii import redact_pii
 from general_chat.pricing import PricingCache
@@ -31,7 +37,7 @@ from general_chat.quotas import QuotaCache
 from general_chat.retention import run_retention_sweep
 from general_chat.usage_metering import UsageRecorder
 from general_chat.usage_store import build_usage_store
-from general_chat.runtime_settings import RuntimeSettingsCache
+from general_chat.runtime_settings import RuntimeSettingsCache, runtime_settings_options
 from general_chat.extractor import DoclingContentExtractor
 from general_chat.google_drive import (
     MSG_FOLDER_EMPTY,
@@ -56,7 +62,10 @@ from general_chat.server.agent_holder import AgentHolder
 from general_chat.server.agent_registry import AgentProfileRegistry
 from general_chat.agent_store import (
     AgentProfileRecord,
+    DuplicateAgentProfileError,
+    UnknownAgentProfileError,
     build_agent_profile_store,
+    slugify_agent_name,
 )
 from general_chat.group_store import (
     DuplicateGroupError,
@@ -2185,6 +2194,173 @@ def create_app() -> FastAPI:
             request, "group_source.delete", target=source_id, detail={"group": group_id}
         )
         return {"ok": True, "sourceId": source_id}
+
+    # ------------------------------------------------------------------
+    # Admin: agent profiles (specialist agents)
+    # ------------------------------------------------------------------
+
+    def _available_sdk_skills() -> list[str]:
+        root = _sdk_skill_dir("")
+        if not root.is_dir():
+            return []
+        return sorted(
+            entry.name
+            for entry in root.iterdir()
+            if entry.is_dir() and (entry / "SKILL.md").is_file()
+        )
+
+    def _require_agent_profile(agent_id: str) -> AgentProfileRecord:
+        record = agent_profile_store.get(agent_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Agen tidak ditemukan.")
+        return record
+
+    def _agent_changes_from_body(body: dict, *, agent_id: str = "") -> dict:
+        """Map the camelCase wire payload to validated store changes."""
+        changes: dict[str, Any] = {}
+        for wire_key, field_name in (
+            ("name", "name"),
+            ("description", "description"),
+            ("enabled", "enabled"),
+            ("persona", "persona"),
+            ("model", "model"),
+            ("temperature", "temperature"),
+            ("skills", "skills"),
+            ("customSkillIds", "custom_skill_ids"),
+            ("useSources", "use_sources"),
+            ("escalationAgentId", "escalation_agent_id"),
+            ("confidenceThreshold", "confidence_threshold"),
+        ):
+            if wire_key in body:
+                changes[field_name] = body[wire_key]
+        model_value = str(changes.get("model") or "").strip()
+        if model_value:
+            options = runtime_settings_options()["llm_model"]
+            if model_value not in options:
+                raise HTTPException(
+                    status_code=400, detail=f"Model tidak dikenal: {model_value}"
+                )
+        available_skills = set(_available_sdk_skills())
+        for skill_name in changes.get("skills") or []:
+            if str(skill_name) not in available_skills:
+                raise HTTPException(
+                    status_code=400, detail=f"Skill SDK tidak dikenal: {skill_name}"
+                )
+        available_custom = {path.name for path in custom_skills.paths()}
+        for custom_id in changes.get("custom_skill_ids") or []:
+            if str(custom_id) not in available_custom:
+                raise HTTPException(
+                    status_code=400, detail=f"Skill kustom tidak dikenal: {custom_id}"
+                )
+        escalation_target = str(changes.get("escalation_agent_id") or "").strip().lower()
+        if escalation_target:
+            if escalation_target == agent_id:
+                raise HTTPException(
+                    status_code=400, detail="Agen tidak dapat eskalasi ke dirinya sendiri."
+                )
+            if agent_profile_store.get(escalation_target) is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Agen tujuan eskalasi tidak ditemukan: {escalation_target}",
+                )
+        return changes
+
+    def _check_routable(record: AgentProfileRecord) -> None:
+        """Enabled agents must carry a router-usable description."""
+        if record.enabled and not record.description.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Deskripsi wajib diisi untuk agen aktif (dipakai perutean).",
+            )
+
+    @app.get("/admin/agents")
+    async def list_agent_profiles(request: Request) -> dict:
+        require_role(request, "admin")
+        return {"agents": [record.to_dict() for record in agent_profile_store.list()]}
+
+    @app.get("/admin/agents/options")
+    async def agent_profile_options(request: Request) -> dict:
+        require_role(request, "admin")
+        return {
+            "models": runtime_settings_options()["llm_model"],
+            "sdkSkills": _available_sdk_skills(),
+            "customSkills": [path.name for path in custom_skills.paths()],
+            "escalationTargets": [
+                {"id": record.id, "name": record.name}
+                for record in agent_profile_store.list()
+            ],
+            "defaults": {"confidenceThreshold": 0.5},
+        }
+
+    @app.post("/admin/agents", status_code=status.HTTP_201_CREATED)
+    async def add_agent_profile(request: Request) -> dict:
+        require_role(request, "admin")
+        body = await request.json()
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Nama agen wajib diisi.")
+        slug = slugify_agent_name(name)
+        if not slug:
+            raise HTTPException(status_code=400, detail="Nama agen tidak valid.")
+        changes = _agent_changes_from_body(body, agent_id=slug)
+        record = AgentProfileRecord(
+            id=slug,
+            name=name,
+            created_by=LOCAL_OWNER if not auth_enabled() else current_owner(request),
+        )
+        record.apply_changes(changes)
+        _check_routable(record)
+        try:
+            agent_profile_store.add(record)
+        except DuplicateAgentProfileError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Agen dengan nama tersebut sudah ada.",
+            ) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        _audit(request, "agent.add", target=record.id)
+        return record.to_dict()
+
+    @app.get("/admin/agents/{agent_id}")
+    async def get_agent_profile(agent_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        return _require_agent_profile(agent_id).to_dict()
+
+    @app.put("/admin/agents/{agent_id}")
+    async def update_agent_profile(agent_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        existing = _require_agent_profile(agent_id)
+        body = await request.json()
+        changes = _agent_changes_from_body(body, agent_id=existing.id)
+        # Validate the prospective state before persisting anything.
+        preview = AgentProfileRecord.from_dict(existing.to_dict())
+        preview.apply_changes(changes)
+        _check_routable(preview)
+        try:
+            record = agent_profile_store.update(existing.id, changes)
+        except UnknownAgentProfileError:
+            raise HTTPException(status_code=404, detail="Agen tidak ditemukan.") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        agent_registry.invalidate(record.id)
+        _audit(request, "agent.update", target=record.id)
+        return record.to_dict()
+
+    @app.delete("/admin/agents/{agent_id}")
+    async def delete_agent_profile(agent_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        record = _require_agent_profile(agent_id)
+        # Cascade: profiles escalating to this one lose their target
+        # (validated references only ever point at existing profiles).
+        for other in agent_profile_store.list():
+            if other.escalation_agent_id == record.id:
+                agent_profile_store.update(other.id, {"escalation_agent_id": ""})
+                agent_registry.invalidate(other.id)
+        agent_profile_store.remove(record.id)
+        agent_registry.invalidate(record.id)
+        _audit(request, "agent.delete", target=record.id)
+        return {"ok": True, "id": record.id}
 
     # Per-user Google Drive OAuth (/auth/drive/*). Registered inside
     # create_app() so these routes always precede the SPA catch-all.
