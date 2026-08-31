@@ -582,6 +582,48 @@ Edit these files to change the agent's personality without touching code.
 
 ---
 
+## Specialist agents (Agent Communication Protocol)
+
+Beyond the single default assistant, admins can define **specialist agents**
+("AI department heads") from the admin panel's **Agen** page. Each agent
+profile is DB-backed (no deploy needed to change it) and carries its own:
+
+- **Persona** — SOUL/STYLE/AGENTS/goal texts; empty fields inherit the global
+  admin persona.
+- **Skills** — a selection of SDK skills plus admin-uploaded custom skills.
+- **Sources** — curated documents scoped to the agent (upload / text / URL),
+  grounding every turn that agent handles.
+- **Model & temperature** — defaults to the runtime-settings model when unset.
+- **Escalation** — an optional stronger agent to fall back to.
+
+How a chat turn picks its agent:
+
+1. Users pick per session in chat settings → **Agen**: *Otomatis* (default),
+   a specific agent, or *Asisten bawaan*. Gated by the `agent_selection`
+   capability.
+2. *Otomatis* runs one small LLM routing call over the enabled agents'
+   names + descriptions (`openbench.intelligence.protocol.route`); no fit or
+   any router failure falls back to the default assistant.
+3. The answering agent appears as a live "Agen: …" step and as a badge on
+   the assistant message.
+
+**Escalation**: an agent with an escalation target is instructed to end each
+answer with a `[[CONFIDENCE=x.y]]` marker (stripped before display). Below
+the profile's threshold, the answer is discarded (memory rolled back), the
+stronger agent re-answers, and the message is badged *eskalasi*. Trade-off:
+escalation-enabled agents buffer their primary answer instead of token
+streaming, so users never see a retracted weak answer.
+
+**Compatibility**: with zero agent profiles the server behaves exactly as
+before — no router call, no wrapper — so wrapper deployments
+(controlled-source-chat) are unaffected. The SDK primitives live in
+`src/openbench/intelligence/protocol/` (`AgentDirectory`, `route`,
+`ProtocolAgent`) and accept any `Agent`/`FrameworkAdapter`, which is the seam
+for orchestrating external framework agents (LangChain/CrewAI/ADK adapters)
+later.
+
+---
+
 ## Mode pengguna lokal (uji peran "user" tanpa login)
 
 Local development only — works whenever backend auth is disabled

@@ -173,6 +173,12 @@ openbench/
 │   │   ├── persona.py           # Persona (SOUL/STYLE/AGENTS) — agent identity layer
 │   │   ├── skill.py             # Skill dataclass — reusable capability packages
 │   │   ├── skill_registry.py    # SkillRegistry (two-tier: SDK + project)
+│   │   ├── protocol/            # Agent communication protocol (multi-agent)
+│   │   │   ├── descriptor.py    # AgentDescriptor + AgentDirectory (lazy resolve)
+│   │   │   ├── envelope.py      # AgentRequest / AgentResponse handoff envelope
+│   │   │   ├── router.py        # route() — LLM dispatch over descriptors
+│   │   │   ├── escalation.py    # [[CONFIDENCE=x.y]] marker protocol
+│   │   │   └── agent.py         # ProtocolAgent — identity + escalation wrapper
 │   │   └── layer.py             # AgentFactory for creating agents
 │   ├── skills/                  # Bundled SDK skills (loaded by SkillRegistry.load_sdk_skills())
 │   │   ├── data-context-extractor/  # Read CSV/TSV/XLSX/JSON → normalized payload
@@ -295,6 +301,23 @@ agent = BaseAgent(goal="Analyze data", persona=Persona.from_prompt("You are...")
 
 `persona=` takes precedence over `system_prompt=` — passing both logs a
 warning. `PersistentMemory` sessions replay the persona on resume.
+
+#### Agent Communication Protocol — multi-agent coordination
+
+`openbench.intelligence.protocol` coordinates *configured agent instances*
+(not classes — that is `PluginRegistry`'s job): register agents in an
+`AgentDirectory` with an `AgentDescriptor` (id/name/description) and a lazy
+`resolve()`; `route(message, directory, complete)` runs one small LLM call to
+pick the best specialist (any failure degrades to "use the default agent");
+`ProtocolAgent(inner, descriptor, fallback=...)` wraps an agent to add
+identity metadata (`agentId`/`agentName` on every result), a live
+"Agen: <name>" progress step, and low-confidence escalation via a trailing
+`[[CONFIDENCE=x.y]]` marker (`escalation.py`; missing marker = confident).
+general-chat builds on this: DB-backed agent profiles (`agent_store.py`),
+per-profile lazy builds (`server/agent_registry.py`), a per-session picker
+stored in `ChatSession.metadata["agentId"]`, and agent-scoped sources
+(`agent:<id>` owner prefix). Zero profiles = single-agent behavior,
+bit-identical to before.
 
 #### Skills — reusable capability packages
 
@@ -565,6 +588,7 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/intelligence/persona.py` | Persona (SOUL/STYLE/AGENTS composer) — agent identity layer |
 | `src/openbench/intelligence/skill.py` | Skill dataclass — SKILL.md + references/ + tools.py loader |
 | `src/openbench/intelligence/skill_registry.py` | SkillRegistry — two-tier SDK + project skill resolution |
+| `src/openbench/intelligence/protocol/` | Agent communication protocol: AgentDirectory, LLM router, confidence-marker escalation, ProtocolAgent wrapper |
 | `src/openbench/intelligence/layer.py` | AgentFactory for creating agents |
 | `src/openbench/skills/data-context-extractor/` | SDK skill: CSV/TSV/XLSX/JSON reader with schema summary |
 | `src/openbench/skills/data-visualization/` | SDK skill: ObChart-compatible chart dict builders |
