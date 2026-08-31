@@ -181,6 +181,12 @@ export function MessageBubble({
         {/* Metadata footer */}
         <div className="chat-message__meta">
           <span className="chat-message__time">{formatTime(message.timestamp)}</span>
+          {message.metadata?.agentName && (
+            <span className="chat-message__agent">
+              {message.metadata.agentName}
+              {message.metadata.escalated ? " · eskalasi" : ""}
+            </span>
+          )}
           {message.metadata?.model && (
             <span className="chat-message__model">{message.metadata.model}</span>
           )}

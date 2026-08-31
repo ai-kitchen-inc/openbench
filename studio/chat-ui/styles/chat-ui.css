@@ -396,6 +396,14 @@
   opacity: 0.6;
 }
 
+.chat-message__agent {
+  padding: 1px 6px;
+  border: 1px solid var(--ob-border);
+  border-radius: var(--ob-radius-sm, 6px);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .chat-message__error-badge {
   color: var(--ob-error);
   font-weight: 600;

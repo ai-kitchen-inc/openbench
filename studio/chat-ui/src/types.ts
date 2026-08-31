@@ -30,6 +30,15 @@ export interface MessageMetadata {
   cost?: number;
   latencyMs?: number;
   toolCalls?: ToolCallInfo[];
+  /** Id of the specialist agent that produced this message. */
+  agentId?: string;
+  /** Display name of that agent, rendered as a badge on the message. */
+  agentName?: string;
+  /**
+   * True when the answer came from an escalation fallback (the primary
+   * agent self-reported low confidence and a stronger agent answered).
+   */
+  escalated?: boolean;
   /**
    * True when the assistant turn never completed — the backend caught a
    * mid-turn exception (Gemini 500, tool crash, process signal) and
