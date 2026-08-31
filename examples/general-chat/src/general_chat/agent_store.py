@@ -33,21 +33,6 @@ _SLUG_RE = re.compile(r"^[a-z0-9-]{1,64}$")
 
 DEFAULT_CONFIDENCE_THRESHOLD = 0.5
 
-#: Profile fields an update() may change, with their normalizers.
-_UPDATABLE_FIELDS = (
-    "name",
-    "description",
-    "enabled",
-    "persona",
-    "model",
-    "temperature",
-    "skills",
-    "custom_skill_ids",
-    "use_sources",
-    "escalation_agent_id",
-    "confidence_threshold",
-)
-
 
 class DuplicateAgentProfileError(ValueError):
     """Raised when adding a profile whose id already exists."""

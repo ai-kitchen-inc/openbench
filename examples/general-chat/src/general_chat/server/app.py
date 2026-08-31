@@ -47,11 +47,17 @@ from general_chat.persona_templates import (
     DEFAULT_TEMPLATE_ID,
     PERSONA_SETTINGS_KEY,
     get_template,
+    normalize_persona_settings,
     persona_from_settings,
     settings_from_template,
 )
 from general_chat.server.admin_routes import register_admin_routes, require_role
 from general_chat.server.agent_holder import AgentHolder
+from general_chat.server.agent_registry import AgentProfileRegistry
+from general_chat.agent_store import (
+    AgentProfileRecord,
+    build_agent_profile_store,
+)
 from general_chat.group_store import (
     DuplicateGroupError,
     UnknownGroupError,
@@ -585,6 +591,54 @@ def create_app() -> FastAPI:
         )
 
     agent_holder = AgentHolder(_agent_factory)
+
+    agent_profile_store = build_agent_profile_store(storage_root)
+
+    def _with_confidence_protocol(persona_value: Any) -> dict[str, Any]:
+        """Persona settings value with the confidence protocol appended.
+
+        Escalation-enabled profile agents must emit the trailing
+        ``[[CONFIDENCE=x.y]]`` marker; the instruction rides in the
+        persona rules ("agents") text. With no usable persona anywhere,
+        the protocol becomes the whole rules text so the marker still
+        arrives.
+        """
+        from openbench.intelligence.protocol import CONFIDENCE_PROTOCOL_PROMPT
+
+        normalized = normalize_persona_settings(persona_value) or {"agents": ""}
+        value = dict(normalized)
+        agents_text = str(value.get("agents", "") or "").rstrip()
+        value["agents"] = (
+            f"{agents_text}\n\n{CONFIDENCE_PROTOCOL_PROMPT}"
+            if agents_text
+            else CONFIDENCE_PROTOCOL_PROMPT
+        )
+        return value
+
+    def _profile_agent_factory(profile: AgentProfileRecord):
+        """Build one specialist agent from its admin-managed profile.
+
+        Empty profile persona inherits the global admin persona (the same
+        value ``_agent_factory`` uses). Kept as a closure over the
+        module-level ``create_agent`` name so tests patching
+        ``general_chat.server.app.create_agent`` cover profile builds too.
+        """
+        persona_value = profile.persona or settings_store.get(PERSONA_SETTINGS_KEY)
+        if profile.escalation_agent_id:
+            persona_value = _with_confidence_protocol(persona_value)
+        persona, goal, _source_label = persona_from_settings(persona_value)
+        custom_ids = set(profile.custom_skill_ids)
+        return create_agent(
+            model=profile.model or runtime_settings_cache.value.get("llm_model") or None,
+            temperature=profile.temperature if profile.temperature is not None else 0.3,
+            persona=persona,
+            goal=goal or None,
+            enable_file_generation=capability_cache.global_enabled("file_generation"),
+            custom_skill_paths=[p for p in custom_skills.paths() if p.name in custom_ids],
+            extra_skill_names=list(profile.skills),
+        )
+
+    agent_registry = AgentProfileRegistry(agent_profile_store, _profile_agent_factory)
     chat_memory_store = storage.memory_store() if os.getenv("GENERAL_CHAT_DATABASE_URL") else None
 
     def _storage_for_session(session_id: str):
@@ -833,6 +887,9 @@ def create_app() -> FastAPI:
     # Disable the interactive docs / schema endpoints in deployed environments:
     # they are not behind the auth middleware and would disclose the API surface.
     app = FastAPI(title="General Chat", docs_url=None, redoc_url=None, openapi_url=None)
+    # Exposed for tests and diagnostics; route handlers use the closures.
+    app.state.agent_registry = agent_registry
+    app.state.agent_profile_store = agent_profile_store
 
     app.add_middleware(
         CORSMiddleware,

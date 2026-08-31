@@ -1146,6 +1146,7 @@ def create_agent(
     goal: str | None = None,
     enable_file_generation: bool = True,
     custom_skill_paths: list[str | Path] | None = None,
+    extra_skill_names: list[str] | None = None,
 ) -> BaseAgent:
     """Create the general-purpose chat agent.
 
@@ -1159,11 +1160,19 @@ def create_agent(
     configure via env pass nothing and keep the old behavior.
     ``enable_file_generation=False`` skips the export skills (the
     admin-controlled ``file_generation`` capability).
+    ``extra_skill_names=`` adds SDK skills by directory name on top of the
+    defaults (agent profiles select their own skill set); unknown names
+    raise ``ValueError`` at construction, matching the fail-fast skill
+    rules — the admin endpoints validate before ever storing one.
     """
     key = api_key or os.getenv("GOOGLE_API_KEY")
     resolved_model = model or os.getenv("GENERAL_CHAT_MODEL", "gemini-3.5-flash")
     if not key:
         raise RuntimeError("GOOGLE_API_KEY is required. Set it in .env or the environment.")
+    # Fail fast on unknown skill names, before any provider/vision setup.
+    for name in extra_skill_names or []:
+        if not _sdk_skill_dir(name).is_dir():
+            raise ValueError(f"Unknown SDK skill: {name!r}")
 
     _configure_general_chat_provider(key, resolved_model)
     vision_agent, vlm_summary = _create_vision_agent(key)
@@ -1264,6 +1273,9 @@ def create_agent(
     skill_names: list[str] = []
     if enable_file_generation and _env_flag("GENERAL_CHAT_FILE_GENERATION_ENABLED", default=True):
         skill_names.extend(["export-excel", "pdf-tools", "export-markdown"])
+    for name in extra_skill_names or []:
+        if name not in skill_names:
+            skill_names.append(name)
 
     bindings: dict = {}
     if _env_flag("GENERAL_CHAT_SOURCE_INDEX_ENABLED"):
