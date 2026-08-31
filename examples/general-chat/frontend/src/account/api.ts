@@ -264,6 +264,140 @@ export async function deleteGroupSource(groupId: string, sourceId: string): Prom
   await parseJsonResponse<{ ok: boolean; sourceId: string }>(response);
 }
 
+// ── /admin/agents (agent profiles) ──
+
+export type AgentProfileItem = {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  /** template/soul/style/agents/goal texts; empty = inherit global persona. */
+  persona: Record<string, string>;
+  model: string;
+  temperature: number | null;
+  skills: string[];
+  customSkillIds: string[];
+  useSources: boolean;
+  escalationAgentId: string;
+  confidenceThreshold: number;
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+};
+
+export type AgentProfilePatch = Partial<
+  Pick<
+    AgentProfileItem,
+    | "name"
+    | "description"
+    | "enabled"
+    | "persona"
+    | "model"
+    | "temperature"
+    | "skills"
+    | "customSkillIds"
+    | "useSources"
+    | "escalationAgentId"
+    | "confidenceThreshold"
+  >
+>;
+
+export type AgentProfileOptions = {
+  models: string[];
+  sdkSkills: string[];
+  customSkills: string[];
+  escalationTargets: { id: string; name: string }[];
+  defaults: { confidenceThreshold: number };
+};
+
+export async function listAgents(): Promise<AgentProfileItem[]> {
+  const response = await apiFetch(apiPath("/admin/agents"));
+  const payload = await parseJsonResponse<{ agents: AgentProfileItem[] }>(response);
+  return payload.agents ?? [];
+}
+
+export async function getAgentOptions(): Promise<AgentProfileOptions> {
+  const response = await apiFetch(apiPath("/admin/agents/options"));
+  return parseJsonResponse<AgentProfileOptions>(response);
+}
+
+export async function addAgent(name: string, description: string): Promise<AgentProfileItem> {
+  const response = await apiFetch(apiPath("/admin/agents"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, description }),
+  });
+  return parseJsonResponse<AgentProfileItem>(response);
+}
+
+export async function updateAgent(
+  agentId: string,
+  patch: AgentProfilePatch,
+): Promise<AgentProfileItem> {
+  const response = await apiFetch(apiPath(`/admin/agents/${encodeURIComponent(agentId)}`), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return parseJsonResponse<AgentProfileItem>(response);
+}
+
+export async function deleteAgent(agentId: string): Promise<void> {
+  const response = await apiFetch(apiPath(`/admin/agents/${encodeURIComponent(agentId)}`), {
+    method: "DELETE",
+  });
+  await parseJsonResponse<{ ok: boolean; id: string }>(response);
+}
+
+export async function listAgentSources(agentId: string): Promise<GroupSourceItem[]> {
+  const response = await apiFetch(
+    apiPath(`/admin/agents/${encodeURIComponent(agentId)}/sources`),
+  );
+  const payload = await parseJsonResponse<{ sources: GroupSourceItem[] }>(response);
+  return payload.sources ?? [];
+}
+
+export async function addAgentTextSource(
+  agentId: string,
+  name: string,
+  text: string,
+): Promise<GroupSourceItem> {
+  const response = await apiFetch(
+    apiPath(`/admin/agents/${encodeURIComponent(agentId)}/sources/text`),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, text }),
+    },
+  );
+  return parseJsonResponse<GroupSourceItem>(response);
+}
+
+export async function addAgentUrlSource(
+  agentId: string,
+  url: string,
+): Promise<GroupSourceItem> {
+  const response = await apiFetch(
+    apiPath(`/admin/agents/${encodeURIComponent(agentId)}/sources/url`),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    },
+  );
+  return parseJsonResponse<GroupSourceItem>(response);
+}
+
+export async function deleteAgentSource(agentId: string, sourceId: string): Promise<void> {
+  const response = await apiFetch(
+    apiPath(
+      `/admin/agents/${encodeURIComponent(agentId)}/sources/${encodeURIComponent(sourceId)}`,
+    ),
+    { method: "DELETE" },
+  );
+  await parseJsonResponse<{ ok: boolean; sourceId: string }>(response);
+}
+
 // ── /admin/capabilities ──
 
 export type CapabilityDefinition = {

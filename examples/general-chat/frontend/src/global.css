@@ -5125,3 +5125,25 @@ body {
   font-size: 12px;
   color: var(--sss-warning);
 }
+
+/* ── Admin: Agen (agent profiles) ── */
+
+.agents-skill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 4px 12px;
+  padding: 8px 0;
+}
+
+.agents-skill-grid__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--sss-text);
+  cursor: pointer;
+}
+
+.agents-skill-grid__item input {
+  accent-color: var(--sss-primary);
+}

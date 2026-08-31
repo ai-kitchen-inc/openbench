@@ -5,6 +5,7 @@ import { setLocalRole } from "../api";
 import { BrandMark } from "../brand/BrandMark";
 import {
   BookIcon,
+  BotIcon,
   ChartIcon,
   ClipboardIcon,
   CodeIcon,
@@ -20,6 +21,7 @@ import {
 import { UserChat } from "../chat/UserChat";
 import { APP_NAME, APP_TAGLINE, COMMON, LOCAL_ROLE } from "../i18n/id";
 import { ThemeIcon, useDarkMode } from "../theme";
+import { AgentsPage } from "./pages/AgentsPage";
 import { AuditPage } from "./pages/AuditPage";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -38,6 +40,7 @@ const NAV_ITEMS: { page: AdminPage; label: string; icon: ReactNode }[] = [
   { page: "ringkasan", label: "Ringkasan", icon: <LayoutIcon /> },
   { page: "sumber", label: "Sumber Global", icon: <BookIcon /> },
   { page: "persona", label: "Persona", icon: <PersonaIcon /> },
+  { page: "agen", label: "Agen", icon: <BotIcon /> },
   { page: "kemampuan", label: "Kemampuan", icon: <SlidersIcon /> },
   { page: "pengaturan", label: "Pengaturan", icon: <SettingsIcon /> },
   { page: "pengguna", label: "Pengguna", icon: <UsersIcon /> },
@@ -54,6 +57,7 @@ const PAGE_TITLES: Record<AdminPage, string> = {
   ringkasan: "Ringkasan",
   sumber: "Sumber Global",
   persona: "Persona",
+  agen: "Agen",
   kemampuan: "Kemampuan",
   pengaturan: "Pengaturan",
   pengguna: "Pengguna",
@@ -161,6 +165,7 @@ export function AdminShell({
                 {page === "ringkasan" && <DashboardPage onNavigate={setPage} />}
                 {page === "sumber" && <SourcesPage />}
                 {page === "persona" && <PersonaPage />}
+                {page === "agen" && <AgentsPage />}
                 {page === "kemampuan" && <CapabilitiesPage />}
                 {page === "pengaturan" && <SettingsPage />}
                 {page === "pengguna" && <UsersPage currentEmail={me.email} />}
