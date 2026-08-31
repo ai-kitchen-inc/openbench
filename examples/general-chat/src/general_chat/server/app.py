@@ -59,7 +59,7 @@ from general_chat.persona_templates import (
 )
 from general_chat.server.admin_routes import register_admin_routes, require_role
 from general_chat.server.agent_holder import AgentHolder
-from general_chat.server.agent_registry import AgentProfileRegistry
+from general_chat.server.agent_registry import AgentProfileRegistry, descriptor_from_profile
 from general_chat.agent_store import (
     AgentProfileRecord,
     DuplicateAgentProfileError,
@@ -2734,6 +2734,33 @@ def create_app() -> FastAPI:
                 "routed": routed,
             },
         )
+        protocol_kwargs: dict[str, Any] = {}
+        if active_profile is not None:
+            protocol_kwargs["agent_descriptor"] = descriptor_from_profile(active_profile)
+            protocol_kwargs["confidence_threshold"] = active_profile.confidence_threshold
+            if active_profile.escalation_agent_id:
+                escalation_profile = agent_registry.profile(active_profile.escalation_agent_id)
+                escalation_agent = None
+                if escalation_profile is not None:
+                    try:
+                        escalation_agent = agent_registry.get(escalation_profile.id)
+                    except Exception:
+                        logger.exception(
+                            "Building escalation agent %r failed; escalation disabled "
+                            "for this turn",
+                            escalation_profile.id,
+                        )
+                else:
+                    logger.warning(
+                        "Escalation target %r of agent %r is missing or disabled",
+                        active_profile.escalation_agent_id,
+                        active_profile.id,
+                    )
+                if escalation_agent is not None:
+                    protocol_kwargs["escalation_agent"] = escalation_agent
+                    protocol_kwargs["escalation_descriptor"] = descriptor_from_profile(
+                        escalation_profile
+                    )
         handler = GeneralChatHandler(
             engine=engine,
             db_path=db_path,
@@ -2746,6 +2773,7 @@ def create_app() -> FastAPI:
             redactor=redact_pii if privacy_cache.value.get("pii_redaction") else None,
             owner=owner,
             usage_recorder=usage_recorder,
+            **protocol_kwargs,
         )
         return await handler.handle(request)
 

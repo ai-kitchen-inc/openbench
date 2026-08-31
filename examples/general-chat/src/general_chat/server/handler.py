@@ -21,6 +21,7 @@ from openbench.chat.transport import AGUIHandler
 from openbench.core.abstractions import ExecutionContext, LLMProvider, LLMResponse
 from openbench.intelligence.base import AgentMemory, BaseAgent, Message, MessageRole
 from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
+from openbench.intelligence.protocol import ProtocolAgent
 from openbench.mcp.permissions import MCPPermissionContext
 
 if TYPE_CHECKING:
@@ -934,9 +935,20 @@ class GeneralChatHandler(AGUIHandler):
         redactor: Callable[[str], tuple[str, bool]] | None = None,
         owner: str | None = None,
         usage_recorder: Any | None = None,
+        agent_descriptor: Any | None = None,
+        escalation_agent: Any | None = None,
+        escalation_descriptor: Any | None = None,
+        confidence_threshold: float = 0.5,
     ):
         super().__init__(engine)
         self._memory_store = memory_store or SQLiteMemoryStore(db_path=db_path)
+        # Specialist-agent protocol wiring (all None on the default path —
+        # the request agent is then a bare BaseAgent copy, byte-identical
+        # to pre-protocol behavior).
+        self._agent_descriptor = agent_descriptor
+        self._escalation_agent = escalation_agent
+        self._escalation_descriptor = escalation_descriptor
+        self._confidence_threshold = confidence_threshold
         self._local = threading.local()
         self._doc_context = doc_context
         self._source_records = source_records or []
@@ -1041,7 +1053,24 @@ class GeneralChatHandler(AGUIHandler):
         return MCPPermissionContext(provider)
 
     def _create_request_agent(self):
-        agent = self.engine.agent
+        primary = self._prepare_base_agent(self.engine.agent)
+        if self._agent_descriptor is None or not isinstance(primary, BaseAgent):
+            return primary
+        fallback = (
+            self._prepare_base_agent(self._escalation_agent)
+            if self._escalation_agent is not None
+            else None
+        )
+        return ProtocolAgent(
+            primary,
+            self._agent_descriptor,
+            fallback=fallback,
+            fallback_descriptor=self._escalation_descriptor,
+            confidence_threshold=self._confidence_threshold,
+        )
+
+    def _prepare_base_agent(self, agent):
+        """Per-turn copy with session memory, prompt refresh, and metering."""
         if not isinstance(agent, BaseAgent):
             return agent
 
