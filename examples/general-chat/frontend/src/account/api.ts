@@ -47,6 +47,8 @@ export type Capabilities = {
   custom_functions: boolean;
   dashboards: boolean;
   image_search: boolean;
+  /** Optional: older backends omit it; treat absent as allowed. */
+  agent_selection?: boolean;
 };
 
 export type Me = {

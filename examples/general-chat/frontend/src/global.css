@@ -5147,3 +5147,48 @@ body {
 .agents-skill-grid__item input {
   accent-color: var(--sss-primary);
 }
+
+/* ── Chat settings: agent picker ── */
+
+.agent-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-picker__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--sss-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 150ms ease;
+}
+
+.agent-picker__option:has(input:checked) {
+  border-color: var(--sss-primary);
+}
+
+.agent-picker__option input {
+  margin-top: 3px;
+  accent-color: var(--sss-primary);
+}
+
+.agent-picker__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-picker__name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--sss-text);
+}
+
+.agent-picker__desc {
+  font-size: 12px;
+  color: var(--sss-text-2);
+}
