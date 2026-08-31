@@ -90,6 +90,16 @@ CAPABILITY_DEFINITIONS: tuple[CapabilityDefinition, ...] = (
         description="Akses pratinjau hasil pencarian gambar.",
     ),
     CapabilityDefinition(
+        id="agent_selection",
+        kind="route",
+        # Both prefixes listed: blocked_flag_for matches by prefix and
+        # "/chat/agent-selection" does not start with "/chat/agents/".
+        prefixes=("/chat/agents", "/chat/agent-selection"),
+        default=True,
+        label="Pemilihan Agen",
+        description="Pilih agen spesialis atau perutean otomatis per sesi percakapan.",
+    ),
+    CapabilityDefinition(
         id="file_generation",
         kind="global",
         prefixes=(),

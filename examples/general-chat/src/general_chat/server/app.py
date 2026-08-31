@@ -119,6 +119,7 @@ from openbench.chat.files import LocalFileStore
 from openbench.chat.session_store import SessionOwnershipError
 from openbench.chat.transport import AGUIActionHandler
 from openbench.chat.transport.sessions import AGUISessionHandler
+from openbench.intelligence.protocol import route
 from openbench.mcp.toolhive import ToolHiveError, ToolHiveService
 from openbench.utils.download_tokens import download_secret, verify_download_token
 
@@ -871,14 +872,73 @@ def create_app() -> FastAPI:
     def clear_render_items_fn() -> None:
         shared_render_queue.clear()
 
-    def _build_engine(session, owner: str) -> ChatEngine:
+    def _build_engine(session, owner: str, agent: Any | None = None) -> ChatEngine:
         return ChatEngine(
-            agent=agent_holder.agent,
+            agent=agent if agent is not None else agent_holder.agent,
             session=session,
             session_store=_session_store_for(owner),
             render_items_fn=render_items_fn,
             clear_render_items_fn=clear_render_items_fn,
         )
+
+    def _router_complete(prompt: str) -> str:
+        """One small non-streaming LLM call for the agent router."""
+        agent = agent_holder.agent
+        llm = agent._get_llm()
+        response = llm.generate(
+            prompt,
+            model=getattr(agent, "model", "") or "",
+            temperature=0.0,
+        )
+        return str(getattr(response, "text", None) or response or "")
+
+    def _resolve_active_agent(session, body: dict) -> tuple[Any | None, Any | None, bool]:
+        """Resolve the specialist agent for this turn, if any.
+
+        Returns ``(agent, profile, routed)`` — all ``(None, None, False)``
+        on the default path (zero profiles, explicit default selection,
+        stale ids, router misses, and every failure mode). ``routed`` is
+        True when the auto-router made the pick.
+        """
+        descriptors = agent_registry.descriptors()
+        if not descriptors:
+            return None, None, False
+        if "agentId" in session.metadata:
+            # An explicitly stored "" means "the default assistant" —
+            # distinct from an unset session, which defaults to auto.
+            selection = str(session.metadata.get("agentId") or "")
+            if not selection:
+                return None, None, False
+        else:
+            selection = "auto"
+        routed = False
+        if selection == "auto":
+            # route() is defensive about LLM failures, but a router bug
+            # must still never take down the chat turn.
+            try:
+                decision = route(
+                    _latest_user_message_text(body), agent_registry.directory(), _router_complete
+                )
+            except Exception:
+                logger.exception("Agent router crashed; using default agent")
+                return None, None, False
+            target_id = decision.agent_id or ""
+            routed = target_id != ""
+            if decision.fallback_used:
+                logger.warning("Agent router fell back to the default agent")
+        else:
+            target_id = selection
+        if not target_id:
+            return None, None, False
+        profile = agent_registry.profile(target_id)
+        if profile is None:
+            # Stale or disabled selection — the default agent serves.
+            return None, None, False
+        try:
+            return agent_registry.get(profile.id), profile, routed
+        except Exception:
+            logger.exception("Building agent %r failed; using default agent", profile.id)
+            return None, None, False
 
     def _resolve_session(thread_id: str | None, owner: str):
         """Load the owner's session or create-and-claim a new one.
@@ -2655,12 +2715,24 @@ def create_app() -> FastAPI:
             session = _resolve_session(session_id, owner)
         except SessionOwnershipError:
             raise HTTPException(status_code=404, detail="Session not found") from None
-        engine = _build_engine(session, owner)
+        active_agent, active_profile, routed = _resolve_active_agent(session, body)
+        if active_profile is not None and active_profile.use_sources:
+            # The specialist's curated sources ground the turn alongside
+            # the global/group/session records. Persistent — the one-shot
+            # cleanup filter excludes the agent owner prefix.
+            source_records = source_records + _sources_for(agent_owner(active_profile.id)).list(
+                AGENT_SOURCES_THREAD
+            )
+        engine = _build_engine(session, owner, agent=active_agent)
         _audit(
             request,
             "chat.turn",
             target=session.session_id,
-            detail={"model": getattr(engine.agent, "model", "")},
+            detail={
+                "model": getattr(engine.agent, "model", ""),
+                "agent": active_profile.id if active_profile else "",
+                "routed": routed,
+            },
         )
         handler = GeneralChatHandler(
             engine=engine,
@@ -2700,6 +2772,60 @@ def create_app() -> FastAPI:
         handler = AGUIActionHandler(engine=None)
         handler.register("mcp_permission_decision", lambda action: [])
         return {"actions": handler.get_registered_actions()}
+
+    @app.get("/chat/agents")
+    async def list_chat_agents() -> dict:
+        """Enabled specialist agents, for the per-session picker."""
+        profiles = agent_registry.profiles()
+        return {
+            "agents": [
+                {"id": record.id, "name": record.name, "description": record.description}
+                for record in profiles
+            ],
+            "defaultMode": "auto" if profiles else "default",
+        }
+
+    def _valid_selection_values() -> set[str]:
+        return {"", "auto"} | {record.id for record in agent_registry.profiles()}
+
+    @app.get("/chat/agent-selection")
+    async def get_agent_selection(request: Request, threadId: str = "") -> dict:
+        owner = current_owner(request)
+        stored = ""
+        explicit = False
+        if threadId:
+            try:
+                session = _session_store_for(owner).load(threadId)
+            except Exception:
+                session = None
+            if session is not None and "agentId" in session.metadata:
+                stored = str(session.metadata.get("agentId") or "")
+                explicit = True
+        if stored and stored not in _valid_selection_values():
+            # Stale/disabled selection behaves like an unset session.
+            stored, explicit = "", False
+        if not explicit and not stored:
+            stored = "auto" if agent_registry.profiles() else ""
+        return {"agentId": stored}
+
+    @app.put("/chat/agent-selection")
+    async def put_agent_selection(request: Request) -> dict:
+        owner = current_owner(request)
+        body = await request.json()
+        thread_id = str(body.get("threadId") or "").strip()
+        if not thread_id:
+            raise HTTPException(status_code=400, detail="threadId wajib diisi.")
+        agent_id = str(body.get("agentId") or "").strip().lower()
+        if agent_id not in _valid_selection_values():
+            raise HTTPException(status_code=400, detail=f"Agen tidak dikenal: {agent_id}")
+        try:
+            session = _resolve_session(thread_id, owner)
+        except SessionOwnershipError:
+            raise HTTPException(status_code=404, detail="Session not found") from None
+        session.metadata["agentId"] = agent_id
+        _session_store_for(owner).save(session)
+        _audit(request, "chat.agent_selection", target=thread_id, detail={"agent": agent_id})
+        return {"ok": True, "agentId": agent_id}
 
     @app.get("/sessions")
     async def list_sessions(request: Request, limit: int = 50, offset: int = 0) -> list[dict]:
