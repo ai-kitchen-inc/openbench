@@ -245,6 +245,17 @@ GROUP_OWNER_PREFIX = "group:"
 def group_owner(group_id: str) -> str:
     return f"{GROUP_OWNER_PREFIX}{group_id}"
 
+
+# Agent-scoped curated sources live under a per-agent sentinel owner,
+# exactly like group sources. The "agent:" prefix keeps the namespace
+# disjoint from email owners, "local", "shared", and "group:".
+AGENT_SOURCES_THREAD = "agent-sources"
+AGENT_OWNER_PREFIX = "agent:"
+
+
+def agent_owner(agent_id: str) -> str:
+    return f"{AGENT_OWNER_PREFIX}{agent_id}"
+
 # Cap on Google Drive links auto-ingested from a single chat message —
 # each is a synchronous download before the turn starts streaming.
 _MAX_CHAT_DRIVE_LINKS = 3
@@ -2347,12 +2358,19 @@ def create_app() -> FastAPI:
         _audit(request, "agent.update", target=record.id)
         return record.to_dict()
 
+    def _agent_sources(agent_id: str):
+        return _sources_for(agent_owner(agent_id))
+
     @app.delete("/admin/agents/{agent_id}")
     async def delete_agent_profile(agent_id: str, request: Request) -> dict:
         require_role(request, "admin")
         record = _require_agent_profile(agent_id)
-        # Cascade: profiles escalating to this one lose their target
-        # (validated references only ever point at existing profiles).
+        # Cascade: purge the agent's curated sources, then break every
+        # escalation reference pointing here (validated references only
+        # ever point at existing profiles).
+        agent_srcs = _agent_sources(record.id)
+        _purge_source_artifacts(agent_srcs.list(AGENT_SOURCES_THREAD))
+        agent_srcs.clear(AGENT_SOURCES_THREAD)
         for other in agent_profile_store.list():
             if other.escalation_agent_id == record.id:
                 agent_profile_store.update(other.id, {"escalation_agent_id": ""})
@@ -2361,6 +2379,100 @@ def create_app() -> FastAPI:
         agent_registry.invalidate(record.id)
         _audit(request, "agent.delete", target=record.id)
         return {"ok": True, "id": record.id}
+
+    @app.get("/admin/agents/{agent_id}/sources")
+    async def list_agent_sources(agent_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        _require_agent_profile(agent_id)
+        records = _agent_sources(agent_id).list(AGENT_SOURCES_THREAD)
+        return {"sources": [record.to_dict(include_text=False) for record in records]}
+
+    @app.post("/admin/agents/{agent_id}/sources/upload")
+    async def upload_agent_source(
+        agent_id: str,
+        request: Request,
+        file: UploadFile = File(...),
+    ):
+        require_role(request, "admin")
+        _require_agent_profile(agent_id)
+        result = await _ingest_source_upload(agent_owner(agent_id), AGENT_SOURCES_THREAD, file)
+        _audit(
+            request,
+            "agent_source.add",
+            target=str(file.filename or ""),
+            detail={"agent": agent_id, "via": "upload"},
+        )
+        return result
+
+    @app.post("/admin/agents/{agent_id}/sources/text")
+    async def add_agent_text_source(agent_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        _require_agent_profile(agent_id)
+        body = await request.json()
+        record = source_record_from_text(
+            session_id=AGENT_SOURCES_THREAD,
+            name=str(body.get("name") or body.get("title") or "Pasted text"),
+            text=str(body.get("text") or ""),
+            parser=source_parser,
+        )
+        _agent_sources(agent_id).add(record)
+        _audit(
+            request, "agent_source.add", target=record.id, detail={"agent": agent_id, "via": "text"}
+        )
+        return record.to_dict(include_text=False)
+
+    @app.post("/admin/agents/{agent_id}/sources/url")
+    async def add_agent_url_source(agent_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        _require_agent_profile(agent_id)
+        body = await request.json()
+        url = str(body.get("url") or "")
+        try:
+            link = parse_drive_url(url)
+        except DriveAccessError as exc:
+            record = _failed_url_record(AGENT_SOURCES_THREAD, url, str(exc))
+            _agent_sources(agent_id).add(record)
+            return record.to_dict(include_text=False)
+        if link is not None:
+            if link.doc_kind == "folder":
+                return _ingest_drive_folder(
+                    agent_owner(agent_id),
+                    AGENT_SOURCES_THREAD,
+                    link,
+                    credential_owner=current_owner(request),
+                )
+            return _ingest_drive_source(
+                agent_owner(agent_id),
+                AGENT_SOURCES_THREAD,
+                link,
+                credential_owner=current_owner(request),
+            )
+        record = source_record_from_url(
+            session_id=AGENT_SOURCES_THREAD,
+            url=url,
+            parser=source_parser,
+            max_bytes=max_source_bytes,
+        )
+        _agent_sources(agent_id).add(record)
+        _audit(
+            request, "agent_source.add", target=record.id, detail={"agent": agent_id, "via": "url"}
+        )
+        return record.to_dict(include_text=False)
+
+    @app.delete("/admin/agents/{agent_id}/sources/{source_id}")
+    async def delete_agent_source(agent_id: str, source_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        _require_agent_profile(agent_id)
+        srcs = _agent_sources(agent_id)
+        records = srcs.list(AGENT_SOURCES_THREAD)
+        target = next((record for record in records if record.id == source_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+        _purge_source_artifacts([target])
+        if not srcs.delete(AGENT_SOURCES_THREAD, source_id):
+            raise HTTPException(status_code=404, detail="Source not found")
+        _audit(request, "agent_source.delete", target=source_id, detail={"agent": agent_id})
+        return {"ok": True, "sourceId": source_id}
 
     # Per-user Google Drive OAuth (/auth/drive/*). Registered inside
     # create_app() so these routes always precede the SPA catch-all.
@@ -2535,6 +2647,7 @@ def create_app() -> FastAPI:
                     for record in records
                     if record.owner != SHARED_SOURCES_OWNER
                     and not record.owner.startswith(GROUP_OWNER_PREFIX)
+                    and not record.owner.startswith(AGENT_OWNER_PREFIX)
                 ],
                 srcs,
             )
