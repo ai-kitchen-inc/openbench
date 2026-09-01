@@ -2,7 +2,7 @@
  * src/api.ts). All error `detail` strings coming from the backend are already
  * in Bahasa Indonesia and are surfaced verbatim. */
 import { apiFetch, apiPath, authHeaders } from "../api";
-import { parseJsonResponse, readErrorMessage } from "../shared/apiHelpers";
+import { parseJsonResponse, readErrorMessage, xhrUpload } from "../shared/apiHelpers";
 
 // ── Shared helpers (re-exported for existing importers) ──
 
@@ -187,7 +187,12 @@ export type GroupSourceItem = {
   name: string;
   kind?: string;
   status?: string;
+  error?: string | null;
+  url?: string | null;
 };
+
+/** Drive folder links expand into several records on the backend. */
+export type FolderSourceResult = { folder: true; count: number; records: GroupSourceItem[] };
 
 export async function listGroupSources(groupId: string): Promise<GroupSourceItem[]> {
   const response = await apiFetch(
@@ -216,7 +221,7 @@ export async function addGroupTextSource(
 export async function addGroupUrlSource(
   groupId: string,
   url: string,
-): Promise<GroupSourceItem> {
+): Promise<GroupSourceItem | FolderSourceResult> {
   const response = await apiFetch(
     apiPath(`/admin/groups/${encodeURIComponent(groupId)}/sources/url`),
     {
@@ -225,7 +230,24 @@ export async function addGroupUrlSource(
       body: JSON.stringify({ url }),
     },
   );
-  return parseJsonResponse<GroupSourceItem>(response);
+  return parseJsonResponse<GroupSourceItem | FolderSourceResult>(response);
+}
+
+/** Multipart upload of a group source with progress reporting. */
+export async function uploadGroupSourceFile(
+  groupId: string,
+  file: File,
+  onProgress: (fraction: number) => void,
+): Promise<GroupSourceItem> {
+  const form = new FormData();
+  form.append("file", file);
+  return (await xhrUpload(
+    "POST",
+    apiPath(`/admin/groups/${encodeURIComponent(groupId)}/sources/upload`),
+    form,
+    await authHeaders(),
+    onProgress,
+  )) as GroupSourceItem;
 }
 
 export async function deleteGroupSource(groupId: string, sourceId: string): Promise<void> {
@@ -350,7 +372,7 @@ export async function addAgentTextSource(
 export async function addAgentUrlSource(
   agentId: string,
   url: string,
-): Promise<GroupSourceItem> {
+): Promise<GroupSourceItem | FolderSourceResult> {
   const response = await apiFetch(
     apiPath(`/admin/agents/${encodeURIComponent(agentId)}/sources/url`),
     {
@@ -359,7 +381,24 @@ export async function addAgentUrlSource(
       body: JSON.stringify({ url }),
     },
   );
-  return parseJsonResponse<GroupSourceItem>(response);
+  return parseJsonResponse<GroupSourceItem | FolderSourceResult>(response);
+}
+
+/** Multipart upload of an agent source with progress reporting. */
+export async function uploadAgentSourceFile(
+  agentId: string,
+  file: File,
+  onProgress: (fraction: number) => void,
+): Promise<GroupSourceItem> {
+  const form = new FormData();
+  form.append("file", file);
+  return (await xhrUpload(
+    "POST",
+    apiPath(`/admin/agents/${encodeURIComponent(agentId)}/sources/upload`),
+    form,
+    await authHeaders(),
+    onProgress,
+  )) as GroupSourceItem;
 }
 
 export async function deleteAgentSource(agentId: string, sourceId: string): Promise<void> {

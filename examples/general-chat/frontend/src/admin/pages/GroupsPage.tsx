@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   addGroup,
   addGroupTextSource,
@@ -10,11 +10,12 @@ import {
   listUsers,
   readErrorMessage,
   updateUser,
+  uploadGroupSourceFile,
   type GroupItem,
-  type GroupSourceItem,
   type UserItem,
 } from "../../account/api";
 import { XIcon } from "../../brand/icons";
+import { SourceManager, type SourceManagerApi } from "../../sources/SourceManager";
 import { useToast } from "../../Toast";
 import { COMMON } from "../../i18n/id";
 
@@ -28,27 +29,22 @@ function GroupDetail({
   onMembershipChange: () => void;
 }) {
   const { show: showToast } = useToast();
-  const [sources, setSources] = useState<GroupSourceItem[] | null>(null);
-  const [sourceName, setSourceName] = useState("");
-  const [sourceText, setSourceText] = useState("");
-  const [sourceUrl, setSourceUrl] = useState("");
   const [memberEmail, setMemberEmail] = useState("");
   const [isBusy, setIsBusy] = useState(false);
 
   const members = users.filter((user) => user.group === group.id);
   const candidates = users.filter((user) => user.group !== group.id);
 
-  const loadSources = useCallback(async () => {
-    try {
-      setSources(await listGroupSources(group.id));
-    } catch (error) {
-      showToast(`Gagal memuat sumber grup: ${readErrorMessage(error)}`, "error");
-    }
-  }, [group.id, showToast]);
-
-  useEffect(() => {
-    void loadSources();
-  }, [loadSources]);
+  const sourcesApi = useMemo<SourceManagerApi>(
+    () => ({
+      list: () => listGroupSources(group.id),
+      uploadFile: (file, onProgress) => uploadGroupSourceFile(group.id, file, onProgress),
+      addText: (name, text) => addGroupTextSource(group.id, name, text),
+      addUrl: (url) => addGroupUrlSource(group.id, url),
+      remove: (sourceId) => deleteGroupSource(group.id, sourceId),
+    }),
+    [group.id],
+  );
 
   const run = useCallback(
     async (action: () => Promise<void>, successMessage: string) => {
@@ -124,94 +120,11 @@ function GroupDetail({
           </div>
         </div>
       </div>
-      {sources === null ? (
-        <div className="sources-list__empty">{COMMON.loading}</div>
-      ) : sources.length === 0 ? (
-        <div className="sources-list__empty">Belum ada sumber grup.</div>
-      ) : (
-        <div className="sources-list">
-          {sources.map((source) => (
-            <div className="source-row" key={source.id}>
-              <span className="source-row__badge source-row__badge--filled">
-                {source.kind ?? "teks"}
-              </span>
-              <div className="source-row__main">
-                <div className="source-row__name">{source.name}</div>
-              </div>
-              <button
-                type="button"
-                className="source-row__remove"
-                aria-label={`Hapus ${source.name}`}
-                disabled={isBusy}
-                onClick={() =>
-                  void run(async () => {
-                    await deleteGroupSource(group.id, source.id);
-                    await loadSources();
-                  }, "Sumber grup dihapus.")
-                }
-              >
-                <XIcon />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <form
-        className="sources-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!sourceText.trim()) return;
-          void run(async () => {
-            await addGroupTextSource(group.id, sourceName.trim() || "Teks", sourceText);
-            setSourceName("");
-            setSourceText("");
-            await loadSources();
-          }, "Sumber teks ditambahkan.");
-        }}
-      >
-        <div className="sources-form__row">
-          <input
-            type="text"
-            placeholder="Nama sumber"
-            aria-label="Nama sumber"
-            value={sourceName}
-            onChange={(event) => setSourceName(event.target.value)}
-          />
-          <input
-            type="text"
-            placeholder="Tempel teks kebijakan/dokumen"
-            aria-label="Teks sumber"
-            value={sourceText}
-            onChange={(event) => setSourceText(event.target.value)}
-          />
-          <button type="submit" className="panel-button" disabled={isBusy}>
-            Tambah teks
-          </button>
-        </div>
-        <div className="sources-form__row">
-          <input
-            type="url"
-            placeholder="https://..."
-            aria-label="URL sumber"
-            value={sourceUrl}
-            onChange={(event) => setSourceUrl(event.target.value)}
-          />
-          <button
-            type="button"
-            className="panel-button"
-            disabled={isBusy || !sourceUrl.trim()}
-            onClick={() =>
-              void run(async () => {
-                await addGroupUrlSource(group.id, sourceUrl.trim());
-                setSourceUrl("");
-                await loadSources();
-              }, "Sumber URL ditambahkan.")
-            }
-          >
-            Tambah URL
-          </button>
-        </div>
-      </form>
+      <SourceManager
+        api={sourcesApi}
+        emptyState={<div className="sources-list__empty">Belum ada sumber grup.</div>}
+        urlPlaceholder="https://..."
+      />
     </div>
   );
 }

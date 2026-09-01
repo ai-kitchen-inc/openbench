@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   addAgent,
   addAgentTextSource,
@@ -10,13 +10,14 @@ import {
   listAgentSources,
   readErrorMessage,
   updateAgent,
+  uploadAgentSourceFile,
   type AgentProfileItem,
   type AgentProfileOptions,
   type AgentProfilePatch,
-  type GroupSourceItem,
 } from "../../account/api";
 import { XIcon } from "../../brand/icons";
 import { COMMON } from "../../i18n/id";
+import { SourceManager, type SourceManagerApi } from "../../sources/SourceManager";
 import { useToast } from "../../Toast";
 
 const PERSONA_FIELDS: { key: string; label: string; rows: number }[] = [
@@ -39,27 +40,22 @@ function AgentDetail({
 }) {
   const { show: showToast } = useToast();
   const [draft, setDraft] = useState<AgentProfilePatch>({});
-  const [sources, setSources] = useState<GroupSourceItem[] | null>(null);
-  const [sourceName, setSourceName] = useState("");
-  const [sourceText, setSourceText] = useState("");
-  const [sourceUrl, setSourceUrl] = useState("");
   const [isBusy, setIsBusy] = useState(false);
 
   const value = { ...agent, ...draft };
   const persona = (draft.persona ?? agent.persona ?? {}) as Record<string, string>;
   const escalationCandidates = agents.filter((other) => other.id !== agent.id);
 
-  const loadSources = useCallback(async () => {
-    try {
-      setSources(await listAgentSources(agent.id));
-    } catch (error) {
-      showToast(`Gagal memuat sumber agen: ${readErrorMessage(error)}`, "error");
-    }
-  }, [agent.id, showToast]);
-
-  useEffect(() => {
-    void loadSources();
-  }, [loadSources]);
+  const sourcesApi = useMemo<SourceManagerApi>(
+    () => ({
+      list: () => listAgentSources(agent.id),
+      uploadFile: (file, onProgress) => uploadAgentSourceFile(agent.id, file, onProgress),
+      addText: (name, text) => addAgentTextSource(agent.id, name, text),
+      addUrl: (url) => addAgentUrlSource(agent.id, url),
+      remove: (sourceId) => deleteAgentSource(agent.id, sourceId),
+    }),
+    [agent.id],
+  );
 
   const run = useCallback(
     async (action: () => Promise<void>, successMessage: string) => {
@@ -258,94 +254,11 @@ function AgentDetail({
           />
         </div>
       </div>
-      {sources === null ? (
-        <div className="sources-list__empty">{COMMON.loading}</div>
-      ) : sources.length === 0 ? (
-        <div className="sources-list__empty">Belum ada sumber agen.</div>
-      ) : (
-        <div className="sources-list">
-          {sources.map((source) => (
-            <div className="source-row" key={source.id}>
-              <span className="source-row__badge source-row__badge--filled">
-                {source.kind ?? "teks"}
-              </span>
-              <div className="source-row__main">
-                <div className="source-row__name">{source.name}</div>
-              </div>
-              <button
-                type="button"
-                className="source-row__remove"
-                aria-label={`Hapus ${source.name}`}
-                disabled={isBusy}
-                onClick={() =>
-                  void run(async () => {
-                    await deleteAgentSource(agent.id, source.id);
-                    await loadSources();
-                  }, "Sumber agen dihapus.")
-                }
-              >
-                <XIcon />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <form
-        className="sources-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!sourceText.trim()) return;
-          void run(async () => {
-            await addAgentTextSource(agent.id, sourceName.trim() || "Teks", sourceText);
-            setSourceName("");
-            setSourceText("");
-            await loadSources();
-          }, "Sumber teks ditambahkan.");
-        }}
-      >
-        <div className="sources-form__row">
-          <input
-            type="text"
-            placeholder="Nama sumber"
-            aria-label="Nama sumber"
-            value={sourceName}
-            onChange={(event) => setSourceName(event.target.value)}
-          />
-          <input
-            type="text"
-            placeholder="Tempel teks kebijakan/dokumen"
-            aria-label="Teks sumber"
-            value={sourceText}
-            onChange={(event) => setSourceText(event.target.value)}
-          />
-          <button type="submit" className="panel-button" disabled={isBusy}>
-            Tambah teks
-          </button>
-        </div>
-        <div className="sources-form__row">
-          <input
-            type="url"
-            placeholder="https://..."
-            aria-label="URL sumber"
-            value={sourceUrl}
-            onChange={(event) => setSourceUrl(event.target.value)}
-          />
-          <button
-            type="button"
-            className="panel-button"
-            disabled={isBusy || !sourceUrl.trim()}
-            onClick={() =>
-              void run(async () => {
-                await addAgentUrlSource(agent.id, sourceUrl.trim());
-                setSourceUrl("");
-                await loadSources();
-              }, "Sumber URL ditambahkan.")
-            }
-          >
-            Tambah URL
-          </button>
-        </div>
-      </form>
+      <SourceManager
+        api={sourcesApi}
+        emptyState={<div className="sources-list__empty">Belum ada sumber agen.</div>}
+        urlPlaceholder="https://..."
+      />
 
       <div className="sources-form__row">
         <button

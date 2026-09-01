@@ -95,6 +95,33 @@ describe("AgentsPage", () => {
     });
   });
 
+  it("shows the full source manager (incl. upload) in the agent detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") {
+          return jsonResponse({
+            sources: [{ id: "src-1", name: "kebijakan.pdf", kind: "document" }],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    expect(await screen.findByText("kebijakan.pdf")).toBeDefined();
+    expect(screen.getByText("Unggah Dokumen")).toBeDefined();
+    expect(screen.getByText("Tempel Teks")).toBeDefined();
+    expect(screen.getByText("Tambah URL")).toBeDefined();
+  });
+
   it("requires a description before enabling create", async () => {
     vi.stubGlobal(
       "fetch",
