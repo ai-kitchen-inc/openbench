@@ -2,39 +2,11 @@
  * src/api.ts). All error `detail` strings coming from the backend are already
  * in Bahasa Indonesia and are surfaced verbatim. */
 import { apiFetch, apiPath, authHeaders } from "../api";
+import { parseJsonResponse, readErrorMessage } from "../shared/apiHelpers";
 
-// ── Shared helpers ──
+// ── Shared helpers (re-exported for existing importers) ──
 
-export function readErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
-export async function parseJsonResponse<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  let payload: Record<string, unknown> = {};
-  if (text) {
-    try {
-      payload = JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      const compact = text.replace(/\s+/g, " ").trim();
-      if (!response.ok) {
-        throw new Error(compact || `${response.status} ${response.statusText}`);
-      }
-      throw new Error("Server mengembalikan respons JSON yang tidak valid.");
-    }
-  }
-  if (!response.ok) {
-    const detail =
-      typeof payload?.detail === "string"
-        ? payload.detail
-        : typeof payload?.error === "string"
-          ? payload.error
-          : `${response.status} ${response.statusText}`;
-    throw new Error(detail);
-  }
-  return payload as T;
-}
+export { parseJsonResponse, readErrorMessage };
 
 // ── /account/me ──
 

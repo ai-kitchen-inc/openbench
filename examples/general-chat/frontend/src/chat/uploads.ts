@@ -2,6 +2,13 @@
  * extracted from the legacy general-chat UI. */
 import type { Attachment } from "@openbench/chat-ui";
 import { apiFetch, apiPath, authHeaders } from "../api";
+import {
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  parseJsonResponse,
+  readErrorMessage,
+  xhrUpload,
+} from "../shared/apiHelpers";
+import { formatSourceMeta, sourceKindLabel } from "../sources/model";
 
 export const SOURCE_ACCEPT =
   ".xlsx,.xls,.pdf,.epub,.docx,.doc,.pptx,.ppt,.txt,.md,.markdown,.html,.htm,.csv,.json," +
@@ -9,14 +16,11 @@ export const SOURCE_ACCEPT =
   ".mp3,.wav,.m4a,.ogg,.aac,.flac," +
   ".mp4,.webm,.mov,.avi";
 export const DIRECT_UPLOAD_THRESHOLD_BYTES = 25 * 1024 * 1024;
-/** Mirrors MAX_ATTACHMENTS in openbench.chat.transport.validation. Enforced
- * in the composer so a big batch is rejected with a readable message instead
- * of a 422 after every file has already been uploaded.
- *
- * Note there is deliberately no client-side per-file size cap: files over
+/** Note there is deliberately no client-side per-file size cap: files over
  * DIRECT_UPLOAD_THRESHOLD_BYTES are legitimate and route to the direct
  * Cloud Storage upload path instead of multipart. */
-export const MAX_ATTACHMENTS_PER_MESSAGE = 50;
+export { MAX_ATTACHMENTS_PER_MESSAGE, parseJsonResponse, readErrorMessage };
+export { formatSourceMeta, sourceKindLabel };
 const DIRECT_UPLOAD_POLL_INTERVAL_MS = 2000;
 const DIRECT_UPLOAD_MAX_POLLS = 90;
 
@@ -61,54 +65,6 @@ function normalizeDirectUploadStatus(
     fileId,
     source,
   };
-}
-
-export function readErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
-export async function parseJsonResponse<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  let payload: Record<string, unknown> = {};
-  if (text) {
-    try {
-      payload = JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      const compact = text.replace(/\s+/g, " ").trim();
-      if (!response.ok) {
-        throw new Error(
-          compact || `${response.status} ${response.statusText}` || "Permintaan gagal",
-        );
-      }
-      throw new Error("Server mengembalikan respons JSON yang tidak valid.");
-    }
-  }
-  if (!response.ok) {
-    const coded = translateErrorDetail(payload?.detail);
-    const detail =
-      coded ??
-      (typeof payload?.detail === "string"
-        ? payload.detail
-        : typeof payload?.error === "string"
-          ? payload.error
-          : `${response.status} ${response.statusText}`);
-    throw new Error(detail);
-  }
-  return payload as T;
-}
-
-/** Turn a structured `{code, ...}` error detail into Indonesian copy.
- * The transport returns a code rather than a sentence so the wording
- * lives here with the rest of the UI strings. */
-function translateErrorDetail(detail: unknown): string | null {
-  if (!detail || typeof detail !== "object") return null;
-  const { code, max } = detail as { code?: unknown; max?: unknown };
-  if (code === "too_many_attachments") {
-    const limit = typeof max === "number" ? max : MAX_ATTACHMENTS_PER_MESSAGE;
-    return `Terlalu banyak berkas dalam satu pesan (maksimum ${limit}). Kirim sebagian dulu.`;
-  }
-  return null;
 }
 
 export function sourceToAttachment(source: SourceItem): Attachment | null {
@@ -165,68 +121,6 @@ function sourceToComposerAttachment(source: SourceItem): Attachment {
     extractedText: errorText,
     extractedPreview: errorText,
   };
-}
-
-export function sourceKindLabel(source: SourceItem): string {
-  if (source.kind === "url") return "WEB";
-  if (source.kind === "text") return "TEKS";
-  if (source.kind === "spreadsheet") {
-    return source.name.toLowerCase().endsWith(".csv") ? "CSV" : "XLSX";
-  }
-  if (source.kind === "image") return "GAMBAR";
-  return source.kind.toUpperCase();
-}
-
-export function formatSourceMeta(source: SourceItem): string | null {
-  const metadata = source.metadata ?? {};
-  if (source.status === "processing") {
-    const parseStatus = typeof metadata.parseStatus === "string" ? metadata.parseStatus : "";
-    return parseStatus ? `Memproses: ${parseStatus}` : "Memproses sumber";
-  }
-  if (source.kind === "image") {
-    const description = typeof metadata.description === "string" ? metadata.description : "";
-    return description || "OCR gambar siap";
-  }
-  if (source.url) return source.url;
-  return null;
-}
-
-function xhrUpload(
-  method: string,
-  url: string,
-  body: XMLHttpRequestBodyInit,
-  headers: Record<string, string> | undefined,
-  onProgress: (fraction: number) => void,
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open(method, url);
-    request.responseType = "json";
-    for (const [key, value] of Object.entries(headers ?? {})) {
-      if (key.toLowerCase() === "content-length") continue;
-      request.setRequestHeader(key, value);
-    }
-    request.upload.addEventListener("progress", (event) => {
-      if (event.lengthComputable && event.total > 0) {
-        onProgress(event.loaded / event.total);
-      }
-    });
-    request.addEventListener("load", () => {
-      if (request.status >= 200 && request.status < 300) {
-        resolve(request.response);
-        return;
-      }
-      const detail =
-        typeof request.response?.detail === "string"
-          ? request.response.detail
-          : request.statusText || "Unggahan gagal";
-      reject(new Error(detail));
-    });
-    request.addEventListener("error", () => {
-      reject(new Error("Kesalahan jaringan saat mengunggah. Periksa pengaturan HTTPS API dan CORS bucket."));
-    });
-    request.send(body);
-  });
 }
 
 async function uploadMultipartSourceFile(

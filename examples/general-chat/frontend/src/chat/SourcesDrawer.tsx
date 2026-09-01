@@ -1,22 +1,13 @@
 import { useEffect, useState } from "react";
 import { listAccountSources, readErrorMessage, type SharedSource } from "../account/api";
 import { XIcon } from "../brand/icons";
-
-function kindLabel(source: SharedSource): string {
-  if (source.kind === "url") return "WEB";
-  if (source.kind === "text") return "TEKS";
-  if (source.kind === "spreadsheet") {
-    return source.name.toLowerCase().endsWith(".csv") ? "CSV" : "XLSX";
-  }
-  if (source.kind === "image") return "GAMBAR";
-  return source.kind.toUpperCase();
-}
+import { sourceKindLabel } from "../sources/model";
 
 function SourceItemView({ source }: { source: SharedSource }) {
   return (
     <div className="guest-source-item">
       <div className="guest-source-item__head">
-        <span className="source-row__badge">{kindLabel(source)}</span>
+        <span className="source-row__badge">{sourceKindLabel(source)}</span>
         <span className="guest-source-item__name">{source.name}</span>
       </div>
       {source.url && (
