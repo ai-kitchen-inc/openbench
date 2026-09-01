@@ -1233,7 +1233,11 @@ def create_app() -> FastAPI:
                     str(body.get("skill_md") or ""),
                 )
             elif "prompt" in body:
-                meta = custom_skills.save_from_prompt(str(body.get("prompt") or ""))
+                meta = custom_skills.save_from_prompt(
+                    str(body.get("prompt") or ""),
+                    custom_functions=custom_functions,
+                    mcp_registry=mcp_registry_store,
+                )
             else:
                 meta = custom_skills.save(
                     str(body.get("id") or ""),

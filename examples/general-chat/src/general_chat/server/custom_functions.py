@@ -98,6 +98,24 @@ class CustomFunctionStore:
                 result.append(meta)
         return result
 
+    def names(self) -> set[str]:
+        """Return valid saved function names without loading function code."""
+        names: set[str] = set()
+        for meta_path in sorted(self.root.glob("*.json")):
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            name = str(meta.get("name") or meta_path.stem)
+            if NAME_RE.match(name) and (self.root / f"{name}.py").is_file():
+                names.add(name)
+        return names
+
+    def exists(self, name: str) -> bool:
+        """Return whether a valid function definition is already saved."""
+        name = self._validate_name(name)
+        return name in self.names()
+
     def delete(self, name: str) -> bool:
         name = self._validate_name(name)
         existed = False

@@ -25,6 +25,31 @@ const riskSkill: CustomSkill = {
   skill_md: "# Risk Review",
 };
 
+const budgetSkill: CustomSkill = {
+  ...riskSkill,
+  id: "budget-estimation",
+  name: "Budget Estimation",
+  tooling: {
+    required: [
+      {
+        capability: "budget_estimation",
+        label: "Budget estimation",
+        status: "available",
+        type: "custom_function",
+        name: "custom_skill_estimate_budget",
+      },
+    ],
+    created_functions: [
+      {
+        capability: "budget_estimation",
+        name: "custom_skill_estimate_budget",
+        type: "custom_function",
+      },
+    ],
+    reused_tools: [],
+  },
+};
+
 function renderPanel() {
   return render(
     <ToastProvider>
@@ -39,10 +64,13 @@ describe("CustomSkillsPanel", () => {
   });
 
   it("lists saved skills", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ skills: [riskSkill] }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ skills: [budgetSkill] }));
     renderPanel();
-    expect(await screen.findByText("Risk Review")).toBeInTheDocument();
+    expect(await screen.findByText("Budget Estimation")).toBeInTheDocument();
     expect(screen.getByText(/Reviews decision risks/)).toBeInTheDocument();
+    expect(screen.getByText(/1\/1 tool tersedia/)).toBeInTheDocument();
+    expect(screen.getByText(/1 fungsi dibuat/)).toBeInTheDocument();
+    expect(screen.getByText("Fungsi: custom_skill_estimate_budget")).toBeInTheDocument();
   });
 
   it("saves a skill and reloads the list", async () => {
@@ -90,6 +118,27 @@ describe("CustomSkillsPanel", () => {
       id: "risk-review",
       skill_md: "# Risk Review\n\nUpdated.",
     });
+  });
+
+  it("removes a deleted skill from the visible list immediately", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ skills: [riskSkill] }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    renderPanel();
+
+    expect(await screen.findByText("Risk Review")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Hapus" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Risk Review")).not.toBeInTheDocument();
+    });
+    const deleteCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url).includes("/admin/custom-skills/risk-review") &&
+        (init as RequestInit | undefined)?.method === "DELETE",
+    );
+    expect(deleteCall).toBeTruthy();
   });
 
   it("shows validation errors from the API", async () => {

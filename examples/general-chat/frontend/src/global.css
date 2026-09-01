@@ -1002,6 +1002,17 @@ body {
   gap: 5px;
 }
 
+.custom-skills__tooling {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.custom-skills__tooling code {
+  overflow-wrap: anywhere;
+}
+
 /* Icon-only sidebar on narrow screens */
 @media (max-width: 1100px) {
   .admin-sidebar {

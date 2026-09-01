@@ -10,8 +10,20 @@ import type { CustomSkill } from "./types";
 
 const PROMPT_PLACEHOLDER = [
   "Jelaskan skill kustom yang ingin ditambahkan ke agent.",
-  "Tuliskan tujuan skill, kapan harus dipakai, gaya jawaban, aturan khusus, batasan, atau format output yang kamu inginkan.",
+  "Tuliskan tujuan skill, kapan harus dipakai, gaya jawaban, aturan khusus, batasan, format output, dan kebutuhan tool/script jika ada.",
 ].join("\n");
+
+function toolingSummary(skill: CustomSkill): string {
+  const required = skill.tooling?.required ?? [];
+  if (required.length === 0) return "Knowledge-only";
+  const available = required.filter((tool) => tool.status === "available").length;
+  const created = skill.tooling?.created_functions?.length ?? 0;
+  const missing = required.filter((tool) => tool.status === "missing").length;
+  const parts = [`${available}/${required.length} tool tersedia`];
+  if (created > 0) parts.push(`${created} fungsi dibuat`);
+  if (missing > 0) parts.push(`${missing} belum tersedia`);
+  return parts.join(" | ");
+}
 
 function markdownForSkill(skill: CustomSkill): string {
   return (
@@ -114,8 +126,8 @@ export function CustomSkillsPanel() {
   async function handleDelete(skill: CustomSkill) {
     try {
       await deleteCustomSkill(skill.id);
+      setSkills((current) => current.filter((item) => item.id !== skill.id));
       toast.show(`Skill "${skill.name}" dihapus dan agent dimuat ulang`, "success");
-      await load();
       if (editingSkill?.id === skill.id) closeEditor();
     } catch (error) {
       toast.show(error instanceof Error ? error.message : "Gagal menghapus skill", "error");
@@ -130,7 +142,8 @@ export function CustomSkillsPanel() {
             <h3>Buat skill dari prompt</h3>
             <p>
               Tulis kebutuhan skill dalam bahasa natural. Sistem akan menyusun ID unik, nama,
-              deskripsi, trigger, instruksi, dan versi dalam format SKILL.md.
+              deskripsi, trigger, instruksi, dependency tool opsional, dan versi dalam format
+              SKILL.md. Script baru dibuat lewat Fungsi Kustom saat memang diperlukan.
             </p>
           </div>
           <div className="mcp-section__actions">
@@ -236,8 +249,19 @@ export function CustomSkillsPanel() {
                 <strong>{skill.name}</strong>
                 <span>
                   {skill.description || "Tanpa deskripsi"} | ID: {skill.id} |{" "}
-                  {skill.context_chars} karakter konteks
+                  {skill.context_chars} karakter konteks | {toolingSummary(skill)}
                 </span>
+                {(skill.tooling?.required?.length ?? 0) > 0 && (
+                  <div className="custom-skills__tooling">
+                    {skill.tooling?.required.map((tool) => (
+                      <code key={`${tool.capability}-${tool.name ?? tool.status}`}>
+                        {tool.status === "available"
+                          ? `${tool.type === "mcp" ? "MCP" : "Fungsi"}: ${tool.name}`
+                          : `${tool.label}: belum tersedia`}
+                      </code>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="mcp-catalog-row__actions">
                 <button type="button" className="mcp-btn" onClick={() => handleEdit(skill)}>

@@ -18,6 +18,7 @@ GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-c
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
+from general_chat.server.custom_functions import CustomFunctionStore  # noqa: E402
 from general_chat.server.custom_skills import CustomSkillError, CustomSkillStore  # noqa: E402
 
 ADMIN = FirebaseUser(uid="admin-1", email="boss@example.com")
@@ -28,7 +29,10 @@ class TestCustomSkillStore(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        env_patch = patch.dict(environ, {"GENERAL_CHAT_CUSTOM_SKILLS_DIR": ""})
+        env_patch = patch.dict(
+            environ,
+            {"GENERAL_CHAT_CUSTOM_SKILLS_DIR": "", "CUSTOM_FN_DATA_PATH": ""},
+        )
         env_patch.start()
         self.addCleanup(env_patch.stop)
         self.store = CustomSkillStore(self._tmp.name)
@@ -77,6 +81,149 @@ class TestCustomSkillStore(unittest.TestCase):
         self.assertTrue(first["id"].startswith("review-kontrak-vendor"))
         self.assertIn("## Instructions", first["skill_md"])
         self.assertIn("## Triggers", first["skill_md"])
+
+    def test_save_from_prompt_reuses_existing_custom_function(self):
+        functions = CustomFunctionStore(self._tmp.name)
+        functions.save(
+            "custom_skill_image_brief",
+            "\n".join(
+                [
+                    "def custom_skill_image_brief(project_description):",
+                    "    return {",
+                    "        'computed_by': 'custom_skill_image_brief',",
+                    "        'prompt': project_description,",
+                    "    }",
+                ]
+            ),
+            "Existing image brief function.",
+        )
+
+        saved = self.store.save_from_prompt(
+            "Buat skill rancangan proyek pembangunan yang juga butuh gambar visual.",
+            custom_functions=functions,
+        )
+
+        tooling = saved["tooling"]
+        self.assertEqual(tooling["created_functions"], [])
+        self.assertEqual(tooling["required"][0]["name"], "custom_skill_image_brief")
+        self.assertEqual(tooling["required"][0]["type"], "custom_function")
+        self.assertIn("## Tooling", saved["skill_md"])
+        self.assertIn("custom_function_run_function", saved["skill_md"])
+
+    def test_save_from_prompt_reuses_manual_function_by_semantic_name(self):
+        functions = CustomFunctionStore(self._tmp.name)
+        functions.save(
+            "add",
+            "\n".join(
+                [
+                    "def add(a, b):",
+                    "    return {'computed_by': 'add', 'result': float(a) + float(b)}",
+                ]
+            ),
+            "Menjumlahkan dua angka.",
+        )
+
+        saved = self.store.save_from_prompt(
+            "Buat skill untuk menghitung penjumlahan dua angka. Saat user memberi "
+            "dua angka, hasil harus akurat dan konsisten.",
+            custom_functions=functions,
+        )
+
+        tooling = saved["tooling"]
+        self.assertEqual(tooling["created_functions"], [])
+        self.assertEqual(tooling["required"][0]["name"], "add")
+        self.assertIn('name="add"', saved["skill_md"])
+
+    def test_save_from_prompt_creates_missing_custom_function(self):
+        functions = CustomFunctionStore(self._tmp.name)
+
+        saved = self.store.save_from_prompt(
+            "Buat skill estimasi anggaran proyek pembangunan dari bahan baku dan biaya.",
+            custom_functions=functions,
+        )
+
+        tooling = saved["tooling"]
+        self.assertEqual(tooling["created_functions"][0]["name"], "custom_skill_estimate_budget")
+        self.assertTrue((functions.root / "custom_skill_estimate_budget.py").is_file())
+        self.assertIn("custom_skill_estimate_budget", saved["skill_md"])
+
+    def test_save_from_prompt_recommends_function_for_plain_calculation_prompt(self):
+        functions = CustomFunctionStore(self._tmp.name)
+
+        saved = self.store.save_from_prompt(
+            "Buat skill untuk menghitung luas bangunan persegi panjang. Saat user "
+            "memberikan panjang dan lebar tanah, berikan hasil luas yang akurat "
+            "dan konsisten.",
+            custom_functions=functions,
+        )
+
+        tooling = saved["tooling"]
+        self.assertEqual(tooling["created_functions"][0]["name"], "hitung_luas_bangunan")
+        self.assertTrue((functions.root / "hitung_luas_bangunan.py").is_file())
+        self.assertIn('name="hitung_luas_bangunan"', saved["skill_md"])
+
+    def test_save_from_prompt_creates_explicit_named_custom_function(self):
+        functions = CustomFunctionStore(self._tmp.name)
+
+        saved = self.store.save_from_prompt(
+            "Saya ingin membuat skill menghitung luas bangunan berbentuk persegi panjang "
+            "ketika user melampirkan panjang dan lebar tanah. Perhitungan harus membuat "
+            "fungsi kustom dengan nama fungsi luas_bangunan.",
+            custom_functions=functions,
+        )
+
+        tooling = saved["tooling"]
+        self.assertEqual(tooling["created_functions"][0]["name"], "luas_bangunan")
+        self.assertTrue((functions.root / "luas_bangunan.py").is_file())
+        code = (functions.root / "luas_bangunan.py").read_text(encoding="utf-8")
+        self.assertIn("def luas_bangunan", code)
+        self.assertIn("panjang_value * lebar_value", code)
+
+    def test_save_from_prompt_keeps_plain_guidance_skill_knowledge_only(self):
+        functions = CustomFunctionStore(self._tmp.name)
+
+        saved = self.store.save_from_prompt(
+            "Buat skill untuk membantu menulis balasan customer service dengan nada "
+            "ramah, singkat, dan profesional.",
+            custom_functions=functions,
+        )
+
+        self.assertEqual(saved["tooling"]["required"], [])
+        self.assertEqual(functions.names(), set())
+
+    def test_save_from_prompt_reuses_matching_mcp_tool_before_creating_function(self):
+        class FakeMCPRegistry:
+            def list_payload(self):
+                return {
+                    "servers": [
+                        {
+                            "id": "image-server",
+                            "name": "image",
+                            "enabled": True,
+                            "tools": [
+                                {
+                                    "name": "generate_image",
+                                    "registered_tool_name": "image_generate_image",
+                                    "description": "Generate image previews",
+                                    "enabled": True,
+                                }
+                            ],
+                        }
+                    ]
+                }
+
+        functions = CustomFunctionStore(self._tmp.name)
+        saved = self.store.save_from_prompt(
+            "Buat skill kampanye yang perlu generate image untuk poster.",
+            custom_functions=functions,
+            mcp_registry=FakeMCPRegistry(),
+        )
+
+        tooling = saved["tooling"]
+        self.assertEqual(tooling["created_functions"], [])
+        self.assertEqual(tooling["required"][0]["type"], "mcp")
+        self.assertEqual(tooling["required"][0]["name"], "image_generate_image")
+        self.assertFalse((functions.root / "custom_skill_image_brief.py").exists())
 
     def test_save_markdown_updates_metadata_from_skill_md(self):
         saved = self.store.save_from_prompt("Buat skill untuk review risiko.")
@@ -213,6 +360,27 @@ class TestCustomSkillRoutes(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("prompt is required", response.json()["detail"])
+
+    def test_prompt_route_can_create_custom_function_dependency(self):
+        client = self._client()
+        response = client.post(
+            "/admin/custom-skills",
+            headers=ADMIN_H,
+            json={
+                "prompt": (
+                    "Buat skill untuk menghitung luas bangunan persegi panjang. Saat user "
+                    "memberikan panjang dan lebar tanah, berikan hasil luas yang akurat "
+                    "dan konsisten."
+                ),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            payload["tooling"]["created_functions"][0]["name"],
+            "hitung_luas_bangunan",
+        )
+        self.assertIn('name="hitung_luas_bangunan"', payload["skill_md"])
 
 
 if __name__ == "__main__":
