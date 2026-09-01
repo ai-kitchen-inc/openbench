@@ -9,29 +9,7 @@ import type {
   ToolHiveWorkload,
 } from "./types";
 import { apiFetch, apiPath } from "../api";
-
-async function parseJsonResponse<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  let payload: Record<string, unknown> = {};
-  if (text) {
-    try {
-      payload = JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      if (!response.ok) throw new Error(text.trim() || "Request failed");
-      throw new Error("Server returned an invalid JSON response.");
-    }
-  }
-  if (!response.ok) {
-    const detail =
-      typeof payload.detail === "string"
-        ? payload.detail
-        : typeof payload.error === "string"
-          ? payload.error
-          : `${response.status} ${response.statusText}`;
-    throw new Error(detail);
-  }
-  return payload as T;
-}
+import { parseJsonResponse } from "../shared/apiHelpers";
 
 export async function listServers(): Promise<MCPRegistryPayload> {
   return parseJsonResponse<MCPRegistryPayload>(await apiFetch(apiPath("/mcp/catalogs")));
