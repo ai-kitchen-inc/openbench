@@ -152,9 +152,9 @@ export function SourceManager({
   );
 
   const panel = variant === "panel";
-  const buttonClass = panel ? "source-panel__mini-btn" : "panel-button";
+  const buttonClass = panel ? "source-panel__add-btn" : "panel-button";
   const primaryButtonClass = panel
-    ? "source-panel__mini-btn"
+    ? "source-panel__add-btn"
     : "panel-button panel-button--primary";
   const rowClass = panel ? "source-panel__item" : "source-row";
   const rowPrefix = panel ? "source-panel__item" : "source-row";

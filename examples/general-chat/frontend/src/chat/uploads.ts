@@ -164,7 +164,7 @@ async function uploadLargeSourceFile(
   return completed.source;
 }
 
-function uploadSourceFile(
+export function uploadSourceFile(
   file: File,
   sessionId: string,
   onProgress: (fraction: number) => void,

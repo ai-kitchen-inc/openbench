@@ -3368,6 +3368,24 @@ body {
   cursor: not-allowed;
 }
 
+.source-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.source-manager--panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.source-manager--panel .sources-form input,
+.source-manager--panel .sources-form textarea {
+  font-size: 11px;
+  padding: 5px 8px;
+}
+
 .source-panel__empty {
   display: flex;
   flex-direction: column;
