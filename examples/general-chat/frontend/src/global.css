@@ -1904,6 +1904,12 @@ body {
   font-size: 14px;
   line-height: 1.55;
   padding: 9px 8px;
+  color: var(--sss-text);
+}
+
+.chat-input__textarea::placeholder {
+  color: var(--sss-text-2);
+  opacity: 1;
 }
 
 .chat-input__attach-btn,
@@ -5046,6 +5052,15 @@ body {
 .status-pill--info {
   border: 1px solid color-mix(in srgb, var(--sss-border) 74%, var(--sss-cyan-500));
   background: color-mix(in srgb, var(--sss-wash) 72%, var(--sss-surface));
+}
+
+/* Filled badges (AKTIF, role, quota) keep their solid primary fill — the
+   wash above would otherwise strip the background while the light
+   primary-text color survives, leaving unreadable white-on-white. */
+.source-row__badge--filled {
+  border-color: var(--sss-primary);
+  background: var(--sss-primary);
+  color: var(--sss-primary-text);
 }
 
 .panel-empty {
