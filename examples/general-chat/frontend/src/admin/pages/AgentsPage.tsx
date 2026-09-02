@@ -87,6 +87,57 @@ function AgentDetail({
       <div className="cap-group">
         <div className="cap-row">
           <div className="cap-row__main">
+            <div className="cap-row__label">Persona</div>
+            <div className="cap-row__desc">
+              Pilih templat sebagai titik awal atau tulis sendiri. Kosongkan semua kolom
+              untuk mewarisi persona global admin.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="sources-form">
+        <select
+          aria-label="Templat persona"
+          value=""
+          onChange={(event) => {
+            const template = options.personaTemplates.find(
+              (candidate) => candidate.id === event.target.value,
+            );
+            if (!template) return;
+            set({
+              persona: {
+                soul: template.soul,
+                style: template.style,
+                agents: template.agents,
+                goal: template.goal,
+              },
+            });
+          }}
+        >
+          <option value="">Mulai dari templat…</option>
+          {options.personaTemplates.map((template) => (
+            <option key={template.id} value={template.id}>
+              {template.name} — {template.description}
+            </option>
+          ))}
+        </select>
+        {PERSONA_FIELDS.map((field) => (
+          <textarea
+            key={field.key}
+            rows={field.rows}
+            aria-label={field.label}
+            placeholder={field.label}
+            value={persona[field.key] ?? ""}
+            onChange={(event) =>
+              set({ persona: { ...persona, [field.key]: event.target.value } })
+            }
+          />
+        ))}
+      </div>
+
+      <div className="cap-group">
+        <div className="cap-row">
+          <div className="cap-row__main">
             <div className="cap-row__label">Profil</div>
             <div className="cap-row__desc">
               Deskripsi dipakai perutean otomatis — tulis seperti petunjuk dispatch.
@@ -209,31 +260,6 @@ function AgentDetail({
         {options.sdkSkills.length === 0 && options.customSkills.length === 0 && (
           <div className="sources-list__empty">Tidak ada skill tersedia.</div>
         )}
-      </div>
-
-      <div className="cap-group">
-        <div className="cap-row">
-          <div className="cap-row__main">
-            <div className="cap-row__label">Persona</div>
-            <div className="cap-row__desc">
-              Kosongkan semua kolom untuk mewarisi persona global admin.
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="sources-form">
-        {PERSONA_FIELDS.map((field) => (
-          <textarea
-            key={field.key}
-            rows={field.rows}
-            aria-label={field.label}
-            placeholder={field.label}
-            value={persona[field.key] ?? ""}
-            onChange={(event) =>
-              set({ persona: { ...persona, [field.key]: event.target.value } })
-            }
-          />
-        ))}
       </div>
 
       <div className="cap-group">

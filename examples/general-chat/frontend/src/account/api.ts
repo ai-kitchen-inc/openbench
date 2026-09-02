@@ -303,6 +303,7 @@ export type AgentProfileOptions = {
   sdkSkills: string[];
   customSkills: string[];
   escalationTargets: { id: string; name: string }[];
+  personaTemplates: PersonaTemplate[];
   defaults: { confidenceThreshold: number };
 };
 

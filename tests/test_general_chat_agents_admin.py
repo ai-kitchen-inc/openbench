@@ -180,6 +180,12 @@ class TestAgentAdminCrud(_AppHarness):
         self.assertIn("export-excel", options["sdkSkills"])
         self.assertEqual(options["escalationTargets"], [{"id": "senior", "name": "Senior"}])
         self.assertEqual(options["defaults"]["confidenceThreshold"], 0.5)
+        template_ids = [template["id"] for template in options["personaTemplates"]]
+        self.assertIn("soft-grounded", template_ids)
+        self.assertIn("strict", template_ids)
+        for template in options["personaTemplates"]:
+            for key in ("name", "description", "soul", "style", "agents", "goal"):
+                self.assertIn(key, template)
 
     def test_update_invalidates_registry_cache(self):
         client = self._client()

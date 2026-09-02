@@ -56,6 +56,7 @@ from general_chat.persona_templates import (
     normalize_persona_settings,
     persona_from_settings,
     settings_from_template,
+    templates_payload,
 )
 from general_chat.server.admin_routes import register_admin_routes, require_role
 from general_chat.server.agent_holder import AgentHolder
@@ -2364,6 +2365,7 @@ def create_app() -> FastAPI:
                 {"id": record.id, "name": record.name}
                 for record in agent_profile_store.list()
             ],
+            "personaTemplates": templates_payload(),
             "defaults": {"confidenceThreshold": 0.5},
         }
 
