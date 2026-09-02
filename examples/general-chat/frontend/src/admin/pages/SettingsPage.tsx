@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
+  getModelCatalog,
   getPrivacySettings,
   getRuntimeSettings,
+  putModelCatalog,
   putPrivacySettings,
   putRuntimeSettings,
   readErrorMessage,
   runPrivacySweep,
+  type ModelCatalogState,
   type PrivacySettings,
   type RuntimeSettingsState,
 } from "../../account/api";
+import { XIcon } from "../../brand/icons";
 import { useToast } from "../../Toast";
 import { COMMON } from "../../i18n/id";
 
@@ -77,6 +81,7 @@ function SettingRow({
 export function SettingsPage() {
   const { show: showToast } = useToast();
   const [state, setState] = useState<RuntimeSettingsState | null>(null);
+  const [catalog, setCatalog] = useState<ModelCatalogState | null>(null);
   const [privacy, setPrivacy] = useState<PrivacySettings | null>(null);
   const [retentionDraft, setRetentionDraft] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -88,11 +93,13 @@ export function SettingsPage() {
     setIsLoading(true);
     setLoadError("");
     try {
-      const [runtime, privacySettings] = await Promise.all([
+      const [runtime, modelCatalog, privacySettings] = await Promise.all([
         getRuntimeSettings(),
+        getModelCatalog(),
         getPrivacySettings(),
       ]);
       setState(runtime);
+      setCatalog(modelCatalog);
       setPrivacy(privacySettings);
       setRetentionDraft(String(privacySettings.retentionDays));
     } catch (error) {
@@ -115,6 +122,40 @@ export function SettingsPage() {
         showToast(`${field.label} disimpan: ${next}.`, "success");
       } catch (error) {
         showToast(`Gagal menyimpan ${field.label}: ${readErrorMessage(error)}`, "error");
+      } finally {
+        setSavingId(null);
+      }
+    },
+    [showToast],
+  );
+
+  const saveCatalog = useCallback(
+    async (next: Partial<ModelCatalogState>, label: string) => {
+      setSavingId("catalog");
+      try {
+        const resolved = await putModelCatalog(next);
+        setCatalog(resolved);
+        // Runtime option lists follow the catalog.
+        setState(await getRuntimeSettings());
+        showToast(`${label} disimpan.`, "success");
+      } catch (error) {
+        showToast(`Gagal menyimpan ${label}: ${readErrorMessage(error)}`, "error");
+      } finally {
+        setSavingId(null);
+      }
+    },
+    [showToast],
+  );
+
+  const makeDefaultModel = useCallback(
+    async (modelId: string) => {
+      setSavingId("catalog");
+      try {
+        const resolved = await putRuntimeSettings({ llm_model: modelId });
+        setState(resolved);
+        showToast(`Model bawaan: ${modelId}.`, "success");
+      } catch (error) {
+        showToast(`Gagal mengganti model bawaan: ${readErrorMessage(error)}`, "error");
       } finally {
         setSavingId(null);
       }
@@ -167,7 +208,7 @@ export function SettingsPage() {
     return <div className="sources-list__empty">{COMMON.loading}</div>;
   }
 
-  if (loadError || !state || !privacy) {
+  if (loadError || !state || !privacy || !catalog) {
     return (
       <div className="sources-list__empty">
         Gagal memuat pengaturan: {loadError}{" "}
@@ -210,6 +251,14 @@ export function SettingsPage() {
           </div>
         </div>
       </section>
+
+      <ModelCatalogSection
+        catalog={catalog}
+        activeModel={state.values.llm_model ?? ""}
+        disabled={savingId !== null}
+        onSave={saveCatalog}
+        onMakeDefault={makeDefaultModel}
+      />
 
       <section className="panel-section" aria-label="Privasi">
         <div className="panel-section__header">
@@ -276,5 +325,212 @@ export function SettingsPage() {
         </div>
       </section>
     </>
+  );
+}
+
+function ModelCatalogSection({
+  catalog,
+  activeModel,
+  disabled,
+  onSave,
+  onMakeDefault,
+}: {
+  catalog: ModelCatalogState;
+  activeModel: string;
+  disabled: boolean;
+  onSave: (next: Partial<ModelCatalogState>, label: string) => Promise<void>;
+  onMakeDefault: (modelId: string) => Promise<void>;
+}) {
+  const [newChatId, setNewChatId] = useState("");
+  const [newChatLabel, setNewChatLabel] = useState("");
+  const [newEmbId, setNewEmbId] = useState("");
+  const [newEmbProvider, setNewEmbProvider] = useState("google");
+  const [newEmbDimension, setNewEmbDimension] = useState("1536");
+
+  const handleAddChatModel = (event: FormEvent) => {
+    event.preventDefault();
+    const id = newChatId.trim();
+    if (!id) return;
+    void onSave(
+      {
+        chatModels: [
+          ...catalog.chatModels,
+          { id, label: newChatLabel.trim() || id },
+        ],
+      },
+      "Katalog model",
+    ).then(() => {
+      setNewChatId("");
+      setNewChatLabel("");
+    });
+  };
+
+  const handleAddEmbeddingModel = (event: FormEvent) => {
+    event.preventDefault();
+    const id = newEmbId.trim();
+    const dimension = Number.parseInt(newEmbDimension, 10);
+    if (!id || Number.isNaN(dimension)) return;
+    void onSave(
+      {
+        embeddingModels: [
+          ...catalog.embeddingModels,
+          { id, provider: newEmbProvider, dimension, label: id },
+        ],
+      },
+      "Katalog embedding",
+    ).then(() => setNewEmbId(""));
+  };
+
+  return (
+    <section className="panel-section" aria-label="Katalog model">
+      <div className="panel-section__header">
+        <div>
+          <div className="panel-section__title">Katalog Model</div>
+          <div className="panel-section__subtitle">
+            Kelola model chat dan embedding yang bisa dipilih di pengaturan runtime dan
+            profil agen. Model bawaan aktif tidak bisa dihapus.
+          </div>
+        </div>
+      </div>
+      <div className="panel-section__body">
+        <div className="sources-list">
+          {catalog.chatModels.map((model) => (
+            <div className="source-row" key={model.id}>
+              <span
+                className={`source-row__badge${
+                  model.id === activeModel ? " source-row__badge--filled" : ""
+                }`}
+              >
+                {model.id === activeModel ? "bawaan" : "chat"}
+              </span>
+              <div className="source-row__main">
+                <div className="source-row__name">{model.label}</div>
+                <div className="source-row__meta">{model.id}</div>
+              </div>
+              {model.id !== activeModel && (
+                <button
+                  type="button"
+                  className="panel-button"
+                  disabled={disabled}
+                  onClick={() => void onMakeDefault(model.id)}
+                >
+                  Jadikan bawaan
+                </button>
+              )}
+              <button
+                type="button"
+                className="source-row__remove"
+                aria-label={`Hapus ${model.id}`}
+                disabled={disabled || model.id === activeModel}
+                onClick={() =>
+                  void onSave(
+                    {
+                      chatModels: catalog.chatModels.filter(
+                        (entry) => entry.id !== model.id,
+                      ),
+                    },
+                    "Katalog model",
+                  )
+                }
+              >
+                <XIcon size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <form className="sources-form" onSubmit={handleAddChatModel}>
+          <div className="sources-form__row">
+            <input
+              type="text"
+              placeholder="ID model (mis. gemini-4-pro-preview)"
+              aria-label="ID model chat"
+              value={newChatId}
+              onChange={(event) => setNewChatId(event.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Label (opsional)"
+              aria-label="Label model chat"
+              value={newChatLabel}
+              onChange={(event) => setNewChatLabel(event.target.value)}
+            />
+            <button
+              type="submit"
+              className="panel-button panel-button--primary"
+              disabled={disabled || !newChatId.trim()}
+            >
+              Tambah model chat
+            </button>
+          </div>
+        </form>
+
+        <div className="sources-list">
+          {catalog.embeddingModels.map((model) => (
+            <div className="source-row" key={model.id}>
+              <span className="source-row__badge">embedding</span>
+              <div className="source-row__main">
+                <div className="source-row__name">{model.label}</div>
+                <div className="source-row__meta">
+                  {model.id} · {model.provider} · dim {model.dimension}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="source-row__remove"
+                aria-label={`Hapus ${model.id}`}
+                disabled={disabled}
+                onClick={() =>
+                  void onSave(
+                    {
+                      embeddingModels: catalog.embeddingModels.filter(
+                        (entry) => entry.id !== model.id,
+                      ),
+                    },
+                    "Katalog embedding",
+                  )
+                }
+              >
+                <XIcon size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <form className="sources-form" onSubmit={handleAddEmbeddingModel}>
+          <div className="sources-form__row">
+            <input
+              type="text"
+              placeholder="ID model embedding"
+              aria-label="ID model embedding"
+              value={newEmbId}
+              onChange={(event) => setNewEmbId(event.target.value)}
+            />
+            <select
+              aria-label="Provider embedding"
+              value={newEmbProvider}
+              onChange={(event) => setNewEmbProvider(event.target.value)}
+            >
+              <option value="google">google</option>
+              <option value="openai">openai</option>
+            </select>
+            <input
+              type="number"
+              min={1}
+              max={2000}
+              placeholder="Dimensi"
+              aria-label="Dimensi embedding"
+              value={newEmbDimension}
+              onChange={(event) => setNewEmbDimension(event.target.value)}
+            />
+            <button
+              type="submit"
+              className="panel-button panel-button--primary"
+              disabled={disabled || !newEmbId.trim()}
+            >
+              Tambah model embedding
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
   );
 }

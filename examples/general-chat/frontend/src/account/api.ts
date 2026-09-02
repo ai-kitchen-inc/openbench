@@ -543,6 +543,39 @@ export async function putPricing(patch: PricingState): Promise<PricingState> {
   return parseJsonResponse<PricingState>(response);
 }
 
+// ── /admin/models (model catalog) ──
+
+export type ChatModelEntry = { id: string; label: string };
+
+export type EmbeddingModelEntry = {
+  id: string;
+  provider: string;
+  dimension: number;
+  label: string;
+};
+
+export type ModelCatalogState = {
+  chatModels: ChatModelEntry[];
+  embeddingModels: EmbeddingModelEntry[];
+};
+
+export async function getModelCatalog(): Promise<ModelCatalogState> {
+  const response = await apiFetch(apiPath("/admin/models"));
+  return parseJsonResponse<ModelCatalogState>(response);
+}
+
+/** Whole-object PUT: the submitted lists replace the stored ones. */
+export async function putModelCatalog(
+  catalog: Partial<ModelCatalogState>,
+): Promise<ModelCatalogState> {
+  const response = await apiFetch(apiPath("/admin/models"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(catalog),
+  });
+  return parseJsonResponse<ModelCatalogState>(response);
+}
+
 export type QuotasState = {
   defaultMonthlyTokens: number;
   overrides: Record<string, number>;
