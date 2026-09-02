@@ -41,6 +41,7 @@ from general_chat.usage_store import build_usage_store
 from general_chat.runtime_settings import (
     RuntimeSettingsCache,
     runtime_settings_options,
+    set_embedding_options_provider,
     set_model_options_provider,
 )
 from general_chat.extractor import DoclingContentExtractor
@@ -99,8 +100,10 @@ from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordina
 from general_chat.server.publish_store import PublishStore
 from general_chat.source_index import (
     check_embeddings,
+    active_embedding_selection,
     deindex_records,
     index_source_record,
+    set_embedding_selection,
     set_vector_store,
     source_index_enabled,
 )
@@ -561,9 +564,12 @@ def create_app() -> FastAPI:
     capability_cache = CapabilityCache(settings_store)
     model_catalog_cache = ModelCatalogCache(settings_store)
     # Must be wired before RuntimeSettingsCache resolves: a stored
-    # llm_model that only exists in the catalog would otherwise be
+    # selection that only exists in the catalog would otherwise be
     # dropped back to the default at startup.
     set_model_options_provider(model_catalog_cache.chat_model_ids)
+    set_embedding_options_provider(
+        lambda: [entry["id"] for entry in model_catalog_cache.value["embeddingModels"]]
+    )
     runtime_settings_cache = RuntimeSettingsCache(settings_store)
     privacy_cache = PrivacySettingsCache(settings_store)
     audit_store = build_audit_store(storage_root)
@@ -575,6 +581,15 @@ def create_app() -> FastAPI:
     # The vector_store selection must land before check_embeddings()
     # builds the index singleton, or the probe exercises the wrong backend.
     set_vector_store(runtime_settings_cache.value.get("vector_store"))
+    _embedding_entry = model_catalog_cache.embedding_model(
+        runtime_settings_cache.value.get("embedding_model", "")
+    )
+    if _embedding_entry is not None:
+        set_embedding_selection(
+            _embedding_entry["provider"],
+            _embedding_entry["id"],
+            _embedding_entry["dimension"],
+        )
     if source_index_enabled():
         # One explicit line in the log beats a silent indexStatus=failed on
         # every upload when the key or the dimension is wrong.
@@ -2376,6 +2391,7 @@ def create_app() -> FastAPI:
                 for record in agent_profile_store.list()
             ],
             "personaTemplates": templates_payload(),
+            "activeEmbedding": active_embedding_selection(),
             "defaults": {"confidenceThreshold": 0.5},
         }
 

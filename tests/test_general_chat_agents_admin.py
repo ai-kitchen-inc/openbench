@@ -53,11 +53,15 @@ class _AppHarness(unittest.TestCase):
             return agent
 
         stack.enter_context(patch("general_chat.server.app.create_agent", side_effect=_fresh_agent))
-        # create_app wires the module-global options provider to this
-        # app's catalog cache — reset it so later tests see the default.
-        from general_chat.runtime_settings import set_model_options_provider
+        # create_app wires module-global option providers to this app's
+        # catalog cache — reset them so later tests see the defaults.
+        from general_chat.runtime_settings import (
+            set_embedding_options_provider,
+            set_model_options_provider,
+        )
 
         self.addCleanup(set_model_options_provider, None)
+        self.addCleanup(set_embedding_options_provider, None)
         from general_chat.server.app import create_app
 
         return TestClient(create_app())

@@ -304,6 +304,8 @@ export type AgentProfileOptions = {
   customSkills: string[];
   escalationTargets: { id: string; name: string }[];
   personaTemplates: PersonaTemplate[];
+  /** Global source-index embedding (read-only on the agent form). */
+  activeEmbedding: { provider: string; model: string; dimension: number };
   defaults: { confidenceThreshold: number };
 };
 
@@ -454,6 +456,8 @@ export async function putCapabilities(patch: {
 export type RuntimeSettingsState = {
   values: Record<string, string>;
   options: Record<string, string[]>;
+  /** Present after an embedding_model change: probe result + re-index warning. */
+  embedding?: { ok: boolean | null; warning: string };
 };
 
 export async function getRuntimeSettings(): Promise<RuntimeSettingsState> {

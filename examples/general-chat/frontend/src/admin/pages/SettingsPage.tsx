@@ -40,6 +40,12 @@ const FIELDS: FieldDefinition[] = [
     description:
       "Penyimpanan vektor untuk indeks sumber. Berlaku segera; worker perlu restart untuk ikut berpindah.",
   },
+  {
+    id: "embedding_model",
+    label: "Model Embedding",
+    description:
+      "Model embedding untuk indeks sumber, dari katalog model. Mengganti model membuat vektor lama tidak cocok sampai sumber diindeks ulang.",
+  },
 ];
 
 function SettingRow({
@@ -120,6 +126,9 @@ export function SettingsPage() {
         const resolved = await putRuntimeSettings({ [field.id]: next });
         setState(resolved);
         showToast(`${field.label} disimpan: ${next}.`, "success");
+        if (resolved.embedding?.warning) {
+          showToast(resolved.embedding.warning, "info", 9000);
+        }
       } catch (error) {
         showToast(`Gagal menyimpan ${field.label}: ${readErrorMessage(error)}`, "error");
       } finally {

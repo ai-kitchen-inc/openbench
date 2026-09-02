@@ -120,11 +120,18 @@ class TestModelCatalogRoutes(unittest.TestCase):
         stack.enter_context(
             patch("general_chat.server.app.create_agent", side_effect=lambda **kw: Mock())
         )
-        # create_app wires the module-global options provider to this
-        # app's catalog cache — reset it so later tests see the default.
-        from general_chat.runtime_settings import set_model_options_provider
+        # create_app wires module-global providers/selections to this
+        # app's caches — reset them so later tests see the defaults.
+        import general_chat.source_index as source_index
+        from general_chat.runtime_settings import (
+            set_embedding_options_provider,
+            set_model_options_provider,
+        )
 
         self.addCleanup(set_model_options_provider, None)
+        self.addCleanup(set_embedding_options_provider, None)
+        self.addCleanup(setattr, source_index, "_embedding_selection", None)
+        self.addCleanup(setattr, source_index, "_document_index", source_index._UNSET)
         from general_chat.server.app import create_app
 
         return TestClient(create_app())
@@ -166,6 +173,40 @@ class TestModelCatalogRoutes(unittest.TestCase):
         client = self._client()
         response = client.put("/admin/models", json={"chatModels": [{"id": ""}]})
         self.assertEqual(response.status_code, 400)
+
+    def test_put_rejects_removing_active_embedding(self):
+        client = self._client()
+        active = client.get("/admin/runtime-settings").json()["values"]["embedding_model"]
+        response = client.put("/admin/models", json={"embeddingModels": []})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(active, response.json()["detail"])
+
+    def test_embedding_change_applies_selection_and_warns(self):
+        client = self._client()
+        catalog = client.get("/admin/models").json()
+        catalog["embeddingModels"].append(
+            {
+                "id": "text-embedding-3-small",
+                "provider": "openai",
+                "dimension": 1536,
+                "label": "OpenAI small",
+            }
+        )
+        self.assertEqual(client.put("/admin/models", json=catalog).status_code, 200)
+
+        response = client.put(
+            "/admin/runtime-settings", json={"embedding_model": "text-embedding-3-small"}
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["values"]["embedding_model"], "text-embedding-3-small")
+        self.assertIn("Indeks ulang", payload["embedding"]["warning"])
+
+        from general_chat.source_index import active_embedding_selection
+
+        selection = active_embedding_selection()
+        self.assertEqual(selection["model"], "text-embedding-3-small")
+        self.assertEqual(selection["provider"], "openai")
 
 
 if __name__ == "__main__":

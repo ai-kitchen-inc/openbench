@@ -14,6 +14,11 @@ Fields:
 * ``vector_store`` — ``postgres`` or ``pinecone``. Applied to the
   document index: a change swaps the index singleton and rebuilds the
   agent. The Pub/Sub worker reads it at startup only.
+* ``embedding_model`` — the source-index embedding model, chosen from
+  the admin model catalog. Applied via
+  :func:`general_chat.source_index.set_embedding_selection`; a change
+  drops the cached index, and existing vectors stay in the old space
+  until sources are re-indexed.
 """
 
 from __future__ import annotations
@@ -63,6 +68,37 @@ def _chat_model_options() -> list[str]:
     return list(LLM_MODEL_OPTIONS)
 
 
+#: Optional override for the embedding-model option list, wired to the
+#: admin model catalog the same way as the chat-model provider above.
+_embedding_options_provider: Callable[[], list[str]] | None = None
+
+
+def set_embedding_options_provider(provider: Callable[[], list[str]] | None) -> None:
+    global _embedding_options_provider
+    _embedding_options_provider = provider
+
+
+def _default_embedding_model() -> str:
+    from general_chat.source_index import DEFAULT_EMBEDDING_MODEL
+
+    return os.getenv("OPENBENCH_EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODEL
+
+
+def _embedding_model_options() -> list[str]:
+    if _embedding_options_provider is not None:
+        try:
+            provided = [
+                model
+                for model in _embedding_options_provider()
+                if isinstance(model, str) and model
+            ]
+        except Exception:
+            provided = []
+        if provided:
+            return provided
+    return [_default_embedding_model()]
+
+
 def _default_vlm_model() -> str:
     # Late import: agent.py pulls in the whole SDK, which this module
     # must not require at import time (tests import it standalone).
@@ -84,6 +120,7 @@ def default_runtime_settings() -> dict[str, str]:
         "llm_model": os.getenv("GENERAL_CHAT_MODEL", DEFAULT_LLM_MODEL) or DEFAULT_LLM_MODEL,
         "vlm_model": _default_vlm_model(),
         "vector_store": "postgres",
+        "embedding_model": _default_embedding_model(),
     }
 
 
@@ -96,10 +133,14 @@ def runtime_settings_options() -> dict[str, list[str]]:
     vlm = _vlm_model_options()
     if defaults["vlm_model"] not in vlm:
         vlm.insert(0, defaults["vlm_model"])
+    embedding = _embedding_model_options()
+    if defaults["embedding_model"] not in embedding:
+        embedding.insert(0, defaults["embedding_model"])
     return {
         "llm_model": llm,
         "vlm_model": vlm,
         "vector_store": list(VECTOR_STORE_OPTIONS),
+        "embedding_model": embedding,
     }
 
 

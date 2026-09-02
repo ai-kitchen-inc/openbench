@@ -198,6 +198,10 @@ function AgentDetail({
             }
           />
         </div>
+        <div className="cap-row__desc">
+          Embedding global: {options.activeEmbedding.model} ({options.activeEmbedding.provider},
+          dim {options.activeEmbedding.dimension}) — diatur di Pengaturan.
+        </div>
         <div className="sources-form__row">
           <select
             aria-label="Agen eskalasi"

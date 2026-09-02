@@ -46,6 +46,10 @@ _table_catalog: Any = _UNSET
 #: driven by the database URL). Seeded from the runtime settings at
 #: startup and swapped by the admin PUT.
 _vector_store_setting: str | None = None
+#: Admin-managed embedding selection: ``(provider, model, dimension)`` or
+#: ``None`` to fall back to env/defaults. Same lifecycle as the vector
+#: store setting above.
+_embedding_selection: tuple[str, str, int] | None = None
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -116,6 +120,33 @@ def set_vector_store(value: str | None) -> None:
     _document_index = _UNSET
 
 
+def set_embedding_selection(provider: str, model: str, dimension: int) -> None:
+    """Apply the admin-managed embedding model selection.
+
+    The cached index is dropped only on an actual change. Existing
+    vectors were produced by the previous model — after a model change
+    they no longer match new query vectors, and after a dimension change
+    pgvector rejects them outright until the sources are re-indexed.
+    """
+    global _embedding_selection, _document_index
+    selection = (provider, model, int(dimension))
+    if selection == _embedding_selection:
+        return
+    _embedding_selection = selection
+    _document_index = _UNSET
+
+
+def active_embedding_selection() -> dict[str, Any]:
+    """The provider/model/dimension the next index build will use."""
+    if _embedding_selection is not None:
+        provider, model, dimension = _embedding_selection
+    else:
+        provider = os.getenv("OPENBENCH_EMBEDDING_PROVIDER") or DEFAULT_EMBEDDING_PROVIDER
+        model = os.getenv("OPENBENCH_EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODEL
+        dimension = _env_int("OPENBENCH_EMBEDDING_DIM", DEFAULT_EMBEDDING_DIM)
+    return {"provider": provider, "model": model, "dimension": dimension}
+
+
 def get_document_index() -> Any:
     """Process-wide document index, or ``None`` when disabled.
 
@@ -133,20 +164,19 @@ def get_document_index() -> Any:
     try:
         from openbench.data.stores.document_index import build_document_index
 
+        # Admin selection wins; env/defaults otherwise. Without a provider
+        # name the SDK resolver falls through to OpenAI, and this
+        # deployment has a GOOGLE_API_KEY but no OPENAI_API_KEY. Dimension
+        # must stay <= 2000: pgvector's HNSW index rejects more, and
+        # gemini-embedding-001 defaults to 3072 unless asked otherwise.
+        embedding = active_embedding_selection()
         _document_index = build_document_index(
             database_url=_database_url(),
             storage_root=storage_root(),
             vector_backend=_vector_store_setting,
-            # Default to Google explicitly. Without a provider name the SDK
-            # resolver falls through to OpenAI, and this deployment has a
-            # GOOGLE_API_KEY but no OPENAI_API_KEY.
-            embedding_provider_name=(
-                os.getenv("OPENBENCH_EMBEDDING_PROVIDER") or DEFAULT_EMBEDDING_PROVIDER
-            ),
-            embedding_model=(os.getenv("OPENBENCH_EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODEL),
-            # Must stay <= 2000: pgvector's HNSW index rejects more, and
-            # gemini-embedding-001 defaults to 3072 unless asked otherwise.
-            dimension=_env_int("OPENBENCH_EMBEDDING_DIM", DEFAULT_EMBEDDING_DIM),
+            embedding_provider_name=embedding["provider"],
+            embedding_model=embedding["model"],
+            dimension=embedding["dimension"],
         )
     except Exception:
         logger.warning("Could not build the document index; sources stay unindexed", exc_info=True)

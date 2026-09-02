@@ -44,7 +44,12 @@ from general_chat.server.auth import (
     current_owner,
     current_role,
 )
-from general_chat.source_index import set_vector_store
+from general_chat.source_index import (
+    check_embeddings,
+    set_embedding_selection,
+    set_vector_store,
+    source_index_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -281,10 +286,25 @@ def register_admin_routes(
             )
         previous_llm_model = runtime_settings_cache.value.get("llm_model")
         previous_vector_store = runtime_settings_cache.value.get("vector_store")
+        previous_embedding = runtime_settings_cache.value.get("embedding_model")
         merged = runtime_settings_cache.update(body, updated_by=_requester_email(request))
         vector_store_changed = merged.get("vector_store") != previous_vector_store
         if vector_store_changed:
             set_vector_store(merged.get("vector_store"))
+        embedding_status: dict | None = None
+        if merged.get("embedding_model") != previous_embedding:
+            entry = model_catalog_cache.embedding_model(merged.get("embedding_model", ""))
+            if entry is not None:
+                set_embedding_selection(entry["provider"], entry["id"], entry["dimension"])
+                probe = check_embeddings(log=False) if source_index_enabled() else None
+                embedding_status = {
+                    "ok": bool(probe.get("ok")) if probe else None,
+                    "warning": (
+                        "Vektor lama dibuat dengan model sebelumnya dan tidak lagi cocok "
+                        "dengan kueri baru; perubahan dimensi membuatnya tak terbaca. "
+                        "Indeks ulang sumber agar pencarian akurat."
+                    ),
+                }
         # The LLM model steers agent construction, and the vector store is
         # captured by the agent's source-retrieval bindings — rebuild once
         # when either actually changed (same contract as capability flags).
@@ -298,7 +318,10 @@ def register_admin_routes(
                     detail=f"Pengaturan tersimpan, tetapi pemuatan ulang agen gagal: {exc}",
                 ) from exc
         audit(request, "runtime_settings.update", detail=dict(merged))
-        return {"values": merged, "options": runtime_settings_options()}
+        payload = {"values": merged, "options": runtime_settings_options()}
+        if embedding_status is not None:
+            payload["embedding"] = embedding_status
+        return payload
 
     # ------------------------------------------------------------------
     # Admin: privacy
@@ -443,6 +466,21 @@ def register_admin_routes(
                     detail=(
                         f"Model bawaan aktif {active!r} tidak boleh dihapus dari katalog. "
                         "Ganti model bawaan di pengaturan runtime terlebih dahulu."
+                    ),
+                )
+        if isinstance(body, dict) and isinstance(body.get("embeddingModels"), list):
+            submitted_ids = {
+                str(entry.get("id") or "").strip()
+                for entry in body["embeddingModels"]
+                if isinstance(entry, dict)
+            }
+            active = runtime_settings_cache.value.get("embedding_model", "")
+            if active and active not in submitted_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Model embedding aktif {active!r} tidak boleh dihapus dari "
+                        "katalog. Ganti model embedding di pengaturan runtime dahulu."
                     ),
                 )
         merged = model_catalog_cache.update(body, updated_by=_requester_email(request))

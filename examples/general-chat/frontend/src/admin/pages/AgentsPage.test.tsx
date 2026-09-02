@@ -45,6 +45,7 @@ const OPTIONS = {
       sourceContextLabel: "Sumber",
     },
   ],
+  activeEmbedding: { provider: "google", model: "gemini-embedding-001", dimension: 1536 },
   defaults: { confidenceThreshold: 0.5 },
 };
 
