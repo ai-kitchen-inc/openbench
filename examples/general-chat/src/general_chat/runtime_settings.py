@@ -19,7 +19,7 @@ Fields:
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Callable
 
 SETTINGS_KEY = "runtime_models"
 
@@ -36,6 +36,31 @@ LLM_MODEL_OPTIONS: tuple[str, ...] = (
 )
 
 VECTOR_STORE_OPTIONS: tuple[str, ...] = ("postgres", "pinecone")
+
+#: Optional override for the chat-model option list. The app wires this
+#: to the admin model catalog at startup; the tuple above stays as the
+#: fallback so standalone imports (and the seed itself) keep working.
+_chat_model_options_provider: Callable[[], list[str]] | None = None
+
+
+def set_model_options_provider(provider: Callable[[], list[str]] | None) -> None:
+    global _chat_model_options_provider
+    _chat_model_options_provider = provider
+
+
+def _chat_model_options() -> list[str]:
+    if _chat_model_options_provider is not None:
+        try:
+            provided = [
+                model
+                for model in _chat_model_options_provider()
+                if isinstance(model, str) and model
+            ]
+        except Exception:
+            provided = []
+        if provided:
+            return provided
+    return list(LLM_MODEL_OPTIONS)
 
 
 def _default_vlm_model() -> str:
@@ -65,7 +90,7 @@ def default_runtime_settings() -> dict[str, str]:
 def runtime_settings_options() -> dict[str, list[str]]:
     """Dropdown options per field, always containing the default value."""
     defaults = default_runtime_settings()
-    llm = list(LLM_MODEL_OPTIONS)
+    llm = _chat_model_options()
     if defaults["llm_model"] not in llm:
         llm.insert(0, defaults["llm_model"])
     vlm = _vlm_model_options()

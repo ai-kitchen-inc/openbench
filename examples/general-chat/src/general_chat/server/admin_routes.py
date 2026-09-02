@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, status
 
 from general_chat.admin_store import DuplicateUserError, UnknownUserError
 from general_chat.capabilities import CapabilityCache, capability_definitions_payload
+from general_chat.model_catalog import invalid_catalog_values
 from general_chat.pricing import invalid_pricing_values
 from general_chat.privacy import PrivacySettingsCache, invalid_privacy_values
 from general_chat.quotas import invalid_quota_values, quota_status
@@ -79,6 +80,7 @@ def register_admin_routes(
     quota_cache: Any,
     usage_store: Any,
     group_store: Any,
+    model_catalog_cache: Any,
 ) -> None:
     """Register /account/* and /admin/* endpoints.
 
@@ -406,6 +408,45 @@ def register_admin_routes(
             )
         merged = pricing_cache.update(body, updated_by=_requester_email(request))
         audit(request, "pricing.update")
+        return dict(merged)
+
+    # ------------------------------------------------------------------
+    # Admin: model catalog (chat + embedding models)
+    # ------------------------------------------------------------------
+
+    @app.get("/admin/models")
+    async def get_model_catalog(request: Request) -> dict:
+        require_role(request, "admin")
+        return dict(model_catalog_cache.value)
+
+    @app.put("/admin/models")
+    async def put_model_catalog(request: Request) -> dict:
+        require_role(request, "admin")
+        body = await request.json()
+        invalid = invalid_catalog_values(body)
+        if invalid:
+            key, value = next(iter(invalid.items()))
+            raise HTTPException(
+                status_code=400,
+                detail=f"Entri katalog model tidak valid untuk {key}: {value!r}",
+            )
+        if isinstance(body, dict) and isinstance(body.get("chatModels"), list):
+            submitted_ids = {
+                str(entry.get("id") or "").strip()
+                for entry in body["chatModels"]
+                if isinstance(entry, dict)
+            }
+            active = runtime_settings_cache.value.get("llm_model", "")
+            if active and active not in submitted_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Model bawaan aktif {active!r} tidak boleh dihapus dari katalog. "
+                        "Ganti model bawaan di pengaturan runtime terlebih dahulu."
+                    ),
+                )
+        merged = model_catalog_cache.update(body, updated_by=_requester_email(request))
+        audit(request, "models.update", detail={"chatModels": len(merged["chatModels"])})
         return dict(merged)
 
     @app.get("/admin/quotas")

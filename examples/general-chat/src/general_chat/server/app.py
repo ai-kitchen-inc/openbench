@@ -31,13 +31,18 @@ from general_chat.agent import (
 )
 from general_chat.capabilities import CapabilityCache, blocked_flag_for, strip_group_overrides
 from general_chat.pii import redact_pii
+from general_chat.model_catalog import ModelCatalogCache
 from general_chat.pricing import PricingCache
 from general_chat.privacy import PrivacySettingsCache
 from general_chat.quotas import QuotaCache
 from general_chat.retention import run_retention_sweep
 from general_chat.usage_metering import UsageRecorder
 from general_chat.usage_store import build_usage_store
-from general_chat.runtime_settings import RuntimeSettingsCache, runtime_settings_options
+from general_chat.runtime_settings import (
+    RuntimeSettingsCache,
+    runtime_settings_options,
+    set_model_options_provider,
+)
 from general_chat.extractor import DoclingContentExtractor
 from general_chat.google_drive import (
     MSG_FOLDER_EMPTY,
@@ -554,6 +559,11 @@ def create_app() -> FastAPI:
     user_store = build_user_store(storage_root)
     settings_store = build_settings_store(storage_root)
     capability_cache = CapabilityCache(settings_store)
+    model_catalog_cache = ModelCatalogCache(settings_store)
+    # Must be wired before RuntimeSettingsCache resolves: a stored
+    # llm_model that only exists in the catalog would otherwise be
+    # dropped back to the default at startup.
+    set_model_options_provider(model_catalog_cache.chat_model_ids)
     runtime_settings_cache = RuntimeSettingsCache(settings_store)
     privacy_cache = PrivacySettingsCache(settings_store)
     audit_store = build_audit_store(storage_root)
@@ -2670,6 +2680,7 @@ def create_app() -> FastAPI:
         quota_cache=quota_cache,
         usage_store=usage_store,
         group_store=group_store,
+        model_catalog_cache=model_catalog_cache,
     )
 
     @app.post("/awp")
