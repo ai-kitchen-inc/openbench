@@ -24,6 +24,7 @@ import { McpCatalogPanel } from "../mcp-catalog/McpCatalogPanel";
 import { ThemeIcon, useDarkMode } from "../theme";
 import { useToast } from "../Toast";
 import { AgentPickerPanel } from "./AgentPicker";
+import { AgentSelect } from "./AgentSelect";
 import { listChatAgents, type ChatAgentItem } from "./agentsApi";
 import {
   DashboardArtifactPanel,
@@ -679,6 +680,7 @@ function ChatLayout({
           onAttachmentError={(message) => toast.show(message, "error")}
           onTranscribe={me.capabilities.attachments ? transcribeAudio : undefined}
           renderSurfaceFooter={renderDashboardSurfaceFooter}
+          headerLeft={<AgentSelect enabled={me.capabilities.agent_selection !== false} />}
           headerRight={
             <div className="chat-header-actions">
               <button
