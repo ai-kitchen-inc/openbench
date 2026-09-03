@@ -274,6 +274,8 @@ export type AgentProfileItem = {
   skills: string[];
   customSkillIds: string[];
   useSources: boolean;
+  /** Extra per-agent rules appended to the persona at build time. */
+  guardrails: string;
   escalationAgentId: string;
   confidenceThreshold: number;
   createdAt: string;
@@ -293,6 +295,7 @@ export type AgentProfilePatch = Partial<
     | "skills"
     | "customSkillIds"
     | "useSources"
+    | "guardrails"
     | "escalationAgentId"
     | "confidenceThreshold"
   >

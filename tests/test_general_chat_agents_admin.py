@@ -206,6 +206,62 @@ class TestAgentAdminCrud(_AppHarness):
         second = registry.get("analis")
         self.assertIsNot(first, second)
 
+    def test_guardrails_saved_and_validated(self):
+        client = self._client()
+        client.post("/admin/agents", json={"name": "Analis", "description": "Keuangan."})
+        saved = client.put(
+            "/admin/agents/analis", json={"guardrails": "Hanya topik keuangan."}
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["guardrails"], "Hanya topik keuangan.")
+
+        self.assertEqual(
+            client.put("/admin/agents/analis", json={"guardrails": 123}).status_code, 400
+        )
+        self.assertEqual(
+            client.put(
+                "/admin/agents/analis", json={"guardrails": "x" * 8001}
+            ).status_code,
+            400,
+        )
+
+    def test_guardrails_composed_before_confidence_protocol(self):
+        client = self._client()
+        client.post("/admin/agents", json={"name": "Senior", "description": "Konsultan."})
+        client.post("/admin/agents", json={"name": "Analis", "description": "Keuangan."})
+        client.put(
+            "/admin/agents/analis",
+            json={
+                "guardrails": "Hanya jawab topik keuangan.",
+                "escalationAgentId": "senior",
+            },
+        )
+
+        from general_chat.server import app as app_module
+        from openbench.intelligence.protocol import CONFIDENCE_PROTOCOL_PROMPT
+
+        captured: dict = {}
+        real = app_module.persona_from_settings
+
+        def spy(value):
+            captured["value"] = value
+            return real(value)
+
+        with patch("general_chat.server.app.persona_from_settings", side_effect=spy):
+            self.assertIsNotNone(client.app.state.agent_registry.get("analis"))
+
+        agents_text = captured["value"]["agents"]
+        self.assertIn("## Guardrails (Agen)", agents_text)
+        self.assertIn("Hanya jawab topik keuangan.", agents_text)
+        # The escalation marker instruction must stay last in the rules.
+        protocol_head = CONFIDENCE_PROTOCOL_PROMPT.strip()[:40]
+        self.assertLess(
+            agents_text.index("## Guardrails (Agen)"), agents_text.index(protocol_head)
+        )
+        self.assertTrue(
+            agents_text.rstrip().endswith(CONFIDENCE_PROTOCOL_PROMPT.strip())
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -87,6 +87,9 @@ class AgentProfileRecord:
     skills: list[str] = field(default_factory=list)  # SDK skill dir names
     custom_skill_ids: list[str] = field(default_factory=list)
     use_sources: bool = True
+    #: Extra per-agent rules appended to the persona's agents text at
+    #: build time. "" = no extra guardrails.
+    guardrails: str = ""
     escalation_agent_id: str = ""  # another profile id, "" = none
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
     created_at: str = field(default_factory=_utcnow_iso)
@@ -105,6 +108,7 @@ class AgentProfileRecord:
             "skills": list(self.skills),
             "customSkillIds": list(self.custom_skill_ids),
             "useSources": self.use_sources,
+            "guardrails": self.guardrails,
             "escalationAgentId": self.escalation_agent_id,
             "confidenceThreshold": self.confidence_threshold,
             "createdAt": self.created_at,
@@ -132,6 +136,7 @@ class AgentProfileRecord:
             skills=_str_list(data.get("skills")),
             custom_skill_ids=_str_list(data.get("customSkillIds")),
             use_sources=bool(data.get("useSources", True)),
+            guardrails=str(data.get("guardrails", "") or ""),
             escalation_agent_id=str(data.get("escalationAgentId", "") or "").strip().lower(),
             confidence_threshold=_clamp_threshold(
                 data.get("confidenceThreshold", DEFAULT_CONFIDENCE_THRESHOLD)
@@ -164,6 +169,8 @@ class AgentProfileRecord:
             self.custom_skill_ids = _str_list(changes["custom_skill_ids"])
         if "use_sources" in changes:
             self.use_sources = bool(changes["use_sources"])
+        if "guardrails" in changes:
+            self.guardrails = str(changes["guardrails"] or "").strip()
         if "escalation_agent_id" in changes:
             self.escalation_agent_id = str(changes["escalation_agent_id"] or "").strip().lower()
         if "confidence_threshold" in changes:

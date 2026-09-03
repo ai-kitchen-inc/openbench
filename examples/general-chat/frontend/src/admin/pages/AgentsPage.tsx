@@ -133,6 +133,13 @@ function AgentDetail({
             }
           />
         ))}
+        <textarea
+          rows={4}
+          aria-label="Batasan Pengaman Agen"
+          placeholder="Batasan Pengaman Agen — aturan tambahan khusus agen ini (mis. topik terlarang, batas jawaban). Ditambahkan setelah persona."
+          value={value.guardrails ?? ""}
+          onChange={(event) => set({ guardrails: event.target.value })}
+        />
       </div>
 
       <div className="cap-group">

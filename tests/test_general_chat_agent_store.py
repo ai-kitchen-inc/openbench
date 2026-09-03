@@ -54,6 +54,7 @@ class TestRecord(unittest.TestCase):
         self.assertEqual(record.skills, [])
         self.assertEqual(record.custom_skill_ids, [])
         self.assertTrue(record.use_sources)
+        self.assertEqual(record.guardrails, "")
         self.assertEqual(record.escalation_agent_id, "")
         self.assertEqual(record.confidence_threshold, 0.5)
         self.assertTrue(record.created_at)
@@ -66,11 +67,20 @@ class TestRecord(unittest.TestCase):
             skills=["export-excel"],
             custom_skill_ids=["ldi-parser"],
             use_sources=False,
+            guardrails="Jangan menjawab di luar topik keuangan.",
             escalation_agent_id="konsultan-senior",
             confidence_threshold=0.7,
         )
         restored = AgentProfileRecord.from_dict(record.to_dict())
         self.assertEqual(restored.to_dict(), record.to_dict())
+        self.assertEqual(restored.guardrails, "Jangan menjawab di luar topik keuangan.")
+
+    def test_apply_changes_guardrails_stripped(self):
+        record = _record()
+        record.apply_changes({"guardrails": "  Batasi ke sumber resmi.  "})
+        self.assertEqual(record.guardrails, "Batasi ke sumber resmi.")
+        record.apply_changes({"guardrails": None})
+        self.assertEqual(record.guardrails, "")
 
     def test_threshold_clamped(self):
         self.assertEqual(

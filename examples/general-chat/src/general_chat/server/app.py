@@ -662,6 +662,19 @@ def create_app() -> FastAPI:
         )
         return value
 
+    def _with_guardrails(persona_value: Any, guardrails: str) -> dict[str, Any]:
+        """Persona settings value with per-agent guardrails appended.
+
+        Applied before the confidence protocol so the trailing
+        ``[[CONFIDENCE=x.y]]`` instruction stays last in the rules text.
+        """
+        normalized = normalize_persona_settings(persona_value) or {"agents": ""}
+        value = dict(normalized)
+        agents_text = str(value.get("agents", "") or "").rstrip()
+        block = f"## Guardrails (Agen)\n{guardrails.strip()}"
+        value["agents"] = f"{agents_text}\n\n{block}" if agents_text else block
+        return value
+
     def _profile_agent_factory(profile: AgentProfileRecord):
         """Build one specialist agent from its admin-managed profile.
 
@@ -671,6 +684,8 @@ def create_app() -> FastAPI:
         ``general_chat.server.app.create_agent`` cover profile builds too.
         """
         persona_value = profile.persona or settings_store.get(PERSONA_SETTINGS_KEY)
+        if profile.guardrails.strip():
+            persona_value = _with_guardrails(persona_value, profile.guardrails)
         if profile.escalation_agent_id:
             persona_value = _with_confidence_protocol(persona_value)
         persona, goal, _source_label = persona_from_settings(persona_value)
@@ -2329,11 +2344,23 @@ def create_app() -> FastAPI:
             ("skills", "skills"),
             ("customSkillIds", "custom_skill_ids"),
             ("useSources", "use_sources"),
+            ("guardrails", "guardrails"),
             ("escalationAgentId", "escalation_agent_id"),
             ("confidenceThreshold", "confidence_threshold"),
         ):
             if wire_key in body:
                 changes[field_name] = body[wire_key]
+        guardrails_value = changes.get("guardrails")
+        if guardrails_value is not None:
+            if not isinstance(guardrails_value, str):
+                raise HTTPException(
+                    status_code=400, detail="Guardrails harus berupa teks."
+                )
+            if len(guardrails_value) > 8000:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Guardrails terlalu panjang (maksimum 8000 karakter).",
+                )
         model_value = str(changes.get("model") or "").strip()
         if model_value:
             options = runtime_settings_options()["llm_model"]
