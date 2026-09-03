@@ -23,6 +23,9 @@ export interface ChatPanelProps {
   title?: string;
   /** Extra content rendered in the header-right area (e.g. theme toggle). */
   headerRight?: React.ReactNode;
+  /** Extra content rendered in the header-left area after the title
+   * (e.g. an agent/model picker, ChatGPT-style). */
+  headerLeft?: React.ReactNode;
   /** Attachments that should be included with every sent message. */
   persistentAttachments?: Attachment[];
   /** Comma-separated accept policy forwarded to the composer file input/drop zone. */
@@ -50,6 +53,7 @@ export function ChatPanel({
   suggestions,
   title,
   headerRight,
+  headerLeft,
   persistentAttachments,
   acceptedFileTypes,
   onAttachmentError,
@@ -109,6 +113,7 @@ export function ChatPanel({
             </button>
           )}
           <span className="chat-panel__title">{headerTitle}</span>
+          {headerLeft}
         </div>
         <div className="chat-panel__header-right">
           {connectionStatus === "error" && (

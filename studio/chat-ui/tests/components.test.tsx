@@ -833,4 +833,19 @@ describe("ChatPanel — session loading state", () => {
     const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
     expect(input?.getAttribute("accept")).toBe(".pdf,.png");
   });
+
+  it("renders headerLeft content after the title", () => {
+    const { container } = render(
+      <ChatPanel title="Chat" headerLeft={<button type="button">Pick agent</button>} />,
+    );
+    const headerLeft = container.querySelector(".chat-panel__header-left") as HTMLElement;
+    expect(headerLeft.textContent).toContain("Chat");
+    expect(headerLeft.textContent).toContain("Pick agent");
+    // Title precedes the injected slot content.
+    const title = headerLeft.querySelector(".chat-panel__title") as HTMLElement;
+    const slotButton = screen.getByText("Pick agent");
+    expect(
+      title.compareDocumentPosition(slotButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });
