@@ -23,9 +23,7 @@ import { APP_NAME, COMMON, LOCAL_ROLE } from "../i18n/id";
 import { McpCatalogPanel } from "../mcp-catalog/McpCatalogPanel";
 import { ThemeIcon, useDarkMode } from "../theme";
 import { useToast } from "../Toast";
-import { AgentPickerPanel } from "./AgentPicker";
 import { AgentSelect } from "./AgentSelect";
-import { listChatAgents, type ChatAgentItem } from "./agentsApi";
 import {
   DashboardArtifactPanel,
   dashboardArtifactsForSurface,
@@ -315,7 +313,7 @@ function UsageBadge() {
   );
 }
 
-type SettingsView = "artifact" | "tools" | "agent" | "persona" | "usage";
+type SettingsView = "artifact" | "tools" | "persona" | "usage";
 type ToolsView = "menu" | "mcp" | "function";
 
 function SidebarSettingsButton({ onClick }: { onClick: () => void }) {
@@ -360,13 +358,9 @@ function SettingsDialog({
   const showMcp = me.capabilities.mcp_management;
   const showFunctions = me.capabilities.custom_functions;
   const showTools = showMcp || showFunctions;
-  const canPickAgent = me.capabilities.agent_selection !== false;
   const defaultView: SettingsView = showSources ? "artifact" : showTools ? "tools" : "persona";
   const [view, setView] = useState<SettingsView>(defaultView);
   const [toolsView, setToolsView] = useState<ToolsView>("menu");
-  const [chatAgents, setChatAgents] = useState<ChatAgentItem[]>([]);
-  // The tab only appears when the deployment actually has agents.
-  const showAgents = canPickAgent && chatAgents.length > 0;
 
   useEffect(() => {
     if (open) {
@@ -374,22 +368,6 @@ function SettingsDialog({
       setToolsView("menu");
     }
   }, [open, defaultView]);
-
-  useEffect(() => {
-    if (!open || !canPickAgent) return undefined;
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await listChatAgents();
-        if (!cancelled) setChatAgents(list.agents);
-      } catch {
-        if (!cancelled) setChatAgents([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, canPickAgent]);
 
   if (!open) return null;
 
@@ -424,11 +402,6 @@ function SettingsDialog({
             {showTools && (
               <button type="button" className={view === "tools" ? "is-active" : ""} onClick={() => setView("tools")}>
                 Perangkat
-              </button>
-            )}
-            {showAgents && (
-              <button type="button" className={view === "agent" ? "is-active" : ""} onClick={() => setView("agent")}>
-                Agen
               </button>
             )}
             <button type="button" className={view === "persona" ? "is-active" : ""} onClick={() => setView("persona")}>
@@ -486,9 +459,6 @@ function SettingsDialog({
                   </div>
                 )}
               </div>
-            )}
-            {view === "agent" && showAgents && (
-              <AgentPickerPanel sessionId={sessionId} agents={chatAgents} />
             )}
             {view === "persona" && (
               <div className="settings-persona">
