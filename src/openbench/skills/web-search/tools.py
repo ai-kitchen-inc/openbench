@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import html as _html
 import ipaddress
+import os
 import re
 import socket
+import time
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlparse
@@ -42,6 +44,53 @@ def _error(message: str) -> dict[str, Any]:
     return {"error": message}
 
 
+#: Error-text markers that indicate a transient provider condition worth
+#: one or two retries (Gemini 503/high-demand, rate limits, timeouts).
+_TRANSIENT_MARKERS = (
+    "503",
+    "unavailable",
+    "overloaded",
+    "high demand",
+    "429",
+    "resource_exhausted",
+    "timed out",
+    "timeout",
+)
+_RETRY_DELAYS_SECONDS = (1.0, 3.0)
+
+
+def _available_providers(source_cls: Any) -> list[str]:
+    """Providers whose API key env vars are actually configured."""
+    return [
+        provider
+        for provider, keys in source_cls.ENV_KEYS.items()
+        if any(os.getenv(key) for key in keys)
+    ]
+
+
+def _resolve_provider(source_cls: Any, provider: str) -> tuple[str, str | None]:
+    """Pick a usable provider, falling back when the requested one has no key.
+
+    The model sometimes selects a provider from the schema enum whose key
+    is not configured (e.g. "perplexity" without PERPLEXITY_API_KEY);
+    silently falling back to a configured provider beats a hard error.
+    With no keys at all the requested provider passes through so
+    ``validate()`` raises its precise message.
+    """
+    available = _available_providers(source_cls)
+    if not available or provider in available:
+        return provider, None
+    fallback = available[0]
+    return fallback, (
+        f"Provider {provider!r} has no API key configured; used {fallback!r} instead."
+    )
+
+
+def _is_transient_error(error: Exception) -> bool:
+    text = str(error).lower()
+    return any(marker in text for marker in _TRANSIENT_MARKERS)
+
+
 def _do_search(
     query: str,
     provider: str = "gemini",
@@ -60,16 +109,28 @@ def _do_search(
             "google-genai is required for web search. Install with: pip install openbench[google]"
         )
 
-    try:
-        source = GroundedSearchSource(
-            query=query,
-            provider=provider,
-            model=model,
-        )
-        source.validate()
-        result = source.extract()
-    except Exception as e:
-        return _error(f"Search failed: {e}")
+    provider, provider_note = _resolve_provider(GroundedSearchSource, provider)
+
+    result = None
+    last_error: Exception | None = None
+    for delay in (0.0, *_RETRY_DELAYS_SECONDS):
+        if delay:
+            time.sleep(delay)
+        try:
+            source = GroundedSearchSource(
+                query=query,
+                provider=provider,
+                model=model,
+            )
+            source.validate()
+            result = source.extract()
+            break
+        except Exception as e:
+            last_error = e
+            if not _is_transient_error(e):
+                return _error(f"Search failed: {e}")
+    if result is None:
+        return _error(f"Search failed after retries: {last_error}")
 
     # Normalize the result into a clean tool-return shape.
     # GroundedSearchSource.extract() returns RawData; the actual
@@ -85,12 +146,15 @@ def _do_search(
         if isinstance(s, dict) and s.get("url")
     ]
 
-    return {
+    payload = {
         "query": query,
         "answer": str(content),
         "sources": web_sources,
         "source_count": len(web_sources),
     }
+    if provider_note:
+        payload["provider_note"] = provider_note
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +448,10 @@ WEB_SEARCH_SCHEMA = _schema(
         },
         "provider": {
             "type": "string",
-            "description": "Search provider. Default 'gemini'.",
+            "description": (
+                "Search provider. Default 'gemini'. A provider without a "
+                "configured API key falls back to one that has a key."
+            ),
             "enum": ["gemini", "perplexity"],
         },
     },
@@ -425,7 +492,10 @@ WEB_SEARCH_MULTI_SCHEMA = _schema(
         },
         "provider": {
             "type": "string",
-            "description": "Search provider. Default 'gemini'.",
+            "description": (
+                "Search provider. Default 'gemini'. A provider without a "
+                "configured API key falls back to one that has a key."
+            ),
             "enum": ["gemini", "perplexity"],
         },
     },

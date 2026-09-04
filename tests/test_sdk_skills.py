@@ -2144,6 +2144,84 @@ class TestWebSearchSkill(unittest.TestCase):
             if saved:
                 os.environ["GOOGLE_API_KEY"] = saved
 
+    def _search_source_mock(self, *, answer: str = "jawaban"):
+        raw = mock.Mock()
+        raw.content = answer
+        raw.metadata = {"sources": [{"title": "T", "url": "https://x.example"}]}
+        instance = mock.Mock()
+        instance.validate.return_value = True
+        instance.extract.return_value = raw
+        source_cls = mock.Mock(return_value=instance)
+        source_cls.ENV_KEYS = {
+            "gemini": ["GOOGLE_API_KEY"],
+            "perplexity": ["PERPLEXITY_API_KEY"],
+        }
+        return source_cls, instance
+
+    def test_web_search_falls_back_when_provider_key_missing(self):
+        """A provider without a key falls back to a configured one."""
+        source_cls, _ = self._search_source_mock()
+        with mock.patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}, clear=False):
+            os.environ.pop("PERPLEXITY_API_KEY", None)
+            with mock.patch(
+                "openbench.data.sources.grounded_search.GroundedSearchSource",
+                source_cls,
+            ):
+                result = self.tools["web_search"]("uji", provider="perplexity")
+        self.assertNotIn("error", result)
+        self.assertIn("perplexity", result["provider_note"])
+        self.assertEqual(source_cls.call_args.kwargs["provider"], "gemini")
+
+    def test_web_search_retries_transient_503(self):
+        """A 503/UNAVAILABLE failure is retried and can then succeed."""
+        source_cls, instance = self._search_source_mock()
+        instance.extract.side_effect = [
+            RuntimeError("503 UNAVAILABLE: model is experiencing high demand"),
+            instance.extract.return_value,
+        ]
+        with (
+            mock.patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}, clear=False),
+            mock.patch(
+                "openbench.data.sources.grounded_search.GroundedSearchSource",
+                source_cls,
+            ),
+            mock.patch("time.sleep") as sleep_mock,
+        ):
+            result = self.tools["web_search"]("uji")
+        self.assertNotIn("error", result)
+        self.assertEqual(result["answer"], "jawaban")
+        sleep_mock.assert_called()
+
+    def test_web_search_gives_up_after_retries(self):
+        source_cls, instance = self._search_source_mock()
+        instance.extract.side_effect = RuntimeError("503 UNAVAILABLE")
+        with (
+            mock.patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}, clear=False),
+            mock.patch(
+                "openbench.data.sources.grounded_search.GroundedSearchSource",
+                source_cls,
+            ),
+            mock.patch("time.sleep"),
+        ):
+            result = self.tools["web_search"]("uji")
+        self.assertIn("error", result)
+        self.assertIn("after retries", result["error"])
+
+    def test_web_search_does_not_retry_permanent_errors(self):
+        source_cls, instance = self._search_source_mock()
+        instance.validate.side_effect = ValueError("API key required for gemini")
+        with (
+            mock.patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}, clear=False),
+            mock.patch(
+                "openbench.data.sources.grounded_search.GroundedSearchSource",
+                source_cls,
+            ),
+            mock.patch("time.sleep") as sleep_mock,
+        ):
+            result = self.tools["web_search"]("uji")
+        self.assertIn("error", result)
+        sleep_mock.assert_not_called()
+
 
 class TestWebSearchFetchUrl(unittest.TestCase):
     """Tests for the fetch_url tool on the web-search SDK skill."""
