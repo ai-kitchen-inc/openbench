@@ -775,6 +775,9 @@ def create_app() -> FastAPI:
         enabled_tool_count: int = 0,
     ) -> dict:
         reload_summary = reload_external_mcp_tools(agent_holder.agent, server_ids=server_ids)
+        # Cached profile agents hold the previous tool set — drop them so
+        # the next turn rebuilds against the changed MCP catalog.
+        agent_registry.invalidate()
         diagnostics = reload_summary.get("diagnostics")
         diagnostic_text = ""
         if isinstance(diagnostics, list) and diagnostics:
@@ -1313,6 +1316,8 @@ def create_app() -> FastAPI:
                     f"agen lama masih aktif: {exc}"
                 ),
             ) from exc
+        # Profile agents load custom skills too — drop their cached builds.
+        agent_registry.invalidate()
         _audit(request, "custom_skill.save", target=str(meta.get("id", "")))
         return meta
 
@@ -1336,6 +1341,8 @@ def create_app() -> FastAPI:
                     f"agen lama masih aktif: {exc}"
                 ),
             ) from exc
+        # Profile agents load custom skills too — drop their cached builds.
+        agent_registry.invalidate()
         _audit(request, "custom_skill.delete", target=skill_id)
         return {"ok": True, "id": skill_id}
 
@@ -1481,6 +1488,7 @@ def create_app() -> FastAPI:
         except MCPRegistryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         reload_summary = reload_external_mcp_tools(agent_holder.agent, server_ids={server_id})
+        agent_registry.invalidate()
         return {"ok": True, "serverId": server_id, "reload": reload_summary}
 
     @app.get("/mcp/catalogs/servers/{server_id}")
@@ -1554,6 +1562,7 @@ def create_app() -> FastAPI:
         except MCPRegistryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         reload_summary = reload_external_mcp_tools(agent_holder.agent, server_ids={server_id})
+        agent_registry.invalidate()
         return {"ok": True, "serverId": server_id, "reload": reload_summary}
 
     @app.post("/chat/attachments/upload")

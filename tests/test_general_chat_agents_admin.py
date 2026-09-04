@@ -251,6 +251,24 @@ class TestAgentAdminCrud(_AppHarness):
             self.assertIsNotNone(client.app.state.agent_registry.get("analis"))
         reload_mock.assert_not_called()
 
+    def test_mcp_toggle_invalidates_profile_agents(self):
+        client = self._client()
+        client.post("/admin/agents", json={"name": "Analis", "description": "Keuangan."})
+        registry = client.app.state.agent_registry
+        first = registry.get("analis")
+        self.assertIsNotNone(first)
+        with patch(
+            "general_chat.server.app.reload_external_mcp_tools",
+            return_value={"available_to_chat": True},
+        ):
+            response = client.post(
+                "/mcp/catalogs/servers/internal-openbench/enable",
+                json={"enabled": True},
+            )
+        self.assertEqual(response.status_code, 200)
+        second = registry.get("analis")
+        self.assertIsNot(first, second)
+
     def test_guardrails_saved_and_validated(self):
         client = self._client()
         client.post("/admin/agents", json={"name": "Analis", "description": "Keuangan."})

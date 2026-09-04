@@ -351,6 +351,26 @@ class TestCustomSkillRoutes(unittest.TestCase):
         second_delete = client.delete(f"/admin/custom-skills/{created_id}", headers=ADMIN_H)
         self.assertEqual(second_delete.status_code, 404)
 
+    def test_save_invalidates_cached_profile_agents(self):
+        client = self._client()
+        client.post(
+            "/admin/agents",
+            headers=ADMIN_H,
+            json={"name": "Analis", "description": "Keuangan."},
+        )
+        registry = client.app.state.agent_registry
+        first = registry.get("analis")
+        self.assertIsNotNone(first)
+        response = client.post(
+            "/admin/custom-skills",
+            headers=ADMIN_H,
+            json={"prompt": "Buat skill untuk audit internal singkat."},
+        )
+        self.assertEqual(response.status_code, 200)
+        # The cached profile agent must be rebuilt to pick up the skill.
+        second = registry.get("analis")
+        self.assertIsNot(first, second)
+
     def test_save_validation_errors_are_400(self):
         client = self._client()
         response = client.post(
