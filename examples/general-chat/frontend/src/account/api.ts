@@ -314,6 +314,9 @@ export type AgentProfileOptions = {
   activeEmbedding: { provider: string; model: string; dimension: number };
   /** MCP registry servers selectable per agent. */
   mcpServers: { id: string; name: string; enabled: boolean; toolCount: number }[];
+  /** Per-SDK-skill problem summary (load error or warnings); healthy skills absent.
+   * Full detail lives at GET /admin/skills/health. */
+  sdkSkillWarnings: Record<string, string>;
   defaults: { confidenceThreshold: number };
 };
 

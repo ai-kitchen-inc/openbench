@@ -251,16 +251,27 @@ function AgentDetail({
         </div>
       </div>
       <div className="agents-skill-grid">
-        {options.sdkSkills.map((skill) => (
-          <label key={skill} className="agents-skill-grid__item">
-            <input
-              type="checkbox"
-              checked={(value.skills ?? []).includes(skill)}
-              onChange={() => toggleListValue("skills", skill)}
-            />
-            {skill}
-          </label>
-        ))}
+        {options.sdkSkills.map((skill) => {
+          const warning = options.sdkSkillWarnings[skill];
+          return (
+            <label key={skill} className="agents-skill-grid__item">
+              <input
+                type="checkbox"
+                checked={(value.skills ?? []).includes(skill)}
+                onChange={() => toggleListValue("skills", skill)}
+              />
+              {skill}
+              {warning && (
+                <span
+                  className="skill-health-dot"
+                  role="img"
+                  title={warning}
+                  aria-label={`Peringatan skill ${skill}: ${warning}`}
+                />
+              )}
+            </label>
+          );
+        })}
         {options.customSkills.map((skill) => (
           <label key={`custom-${skill}`} className="agents-skill-grid__item">
             <input

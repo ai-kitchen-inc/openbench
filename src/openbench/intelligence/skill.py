@@ -175,6 +175,28 @@ def _discover_tools(module: Any) -> list[tuple[str, Callable, dict]]:
     return tools
 
 
+def discover_tool_gaps(module: Any) -> list[str]:
+    """Convention violations that make ``_discover_tools`` silently skip.
+
+    Returns human-readable descriptions for every ``FOO_SCHEMA`` without a
+    matching ``foo`` callable (or with a non-dict schema). Discovery itself
+    stays fail-open; health checks surface what it dropped.
+    """
+    gaps: list[str] = []
+    for attr_name in dir(module):
+        if not attr_name.endswith("_SCHEMA") or attr_name.startswith("_"):
+            continue
+        schema = getattr(module, attr_name)
+        fn_name = attr_name[: -len("_SCHEMA")].lower()
+        if not isinstance(schema, dict):
+            gaps.append(f"{attr_name} is not a dict — tool {fn_name!r} skipped")
+            continue
+        fn = getattr(module, fn_name, None)
+        if fn is None or not callable(fn):
+            gaps.append(f"{attr_name} has no matching callable {fn_name!r} — tool skipped")
+    return gaps
+
+
 # ---------------------------------------------------------------------------
 # Skill dataclass
 # ---------------------------------------------------------------------------

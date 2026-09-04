@@ -188,6 +188,31 @@ class TestSkillFromDir:
         assert tools["echo"]("hi") == "hi"
         assert tools["shout"]("hi") == "HI"
 
+    def test_discover_tool_gaps_reports_silently_skipped_tools(self, tmp_path):
+        from openbench.intelligence.skill import discover_tool_gaps
+
+        gapped_tools = (
+            _TOOLS_SAMPLE
+            + '\n\nORPHAN_SCHEMA = {"type": "function"}\n'
+            + 'BROKEN_SCHEMA = "not a dict"\n'
+        )
+        d = _write_skill(tmp_path, "gappy", tools_py=gapped_tools)
+        skill = Skill.from_dir(d)
+
+        # Discovery itself stays fail-open: only the valid pairs load.
+        assert {n for n, _, _ in skill.tools} == {"echo", "shout"}
+        gaps = discover_tool_gaps(skill._tools_module)
+        assert len(gaps) == 2
+        assert any("ORPHAN_SCHEMA" in gap and "orphan" in gap for gap in gaps)
+        assert any("BROKEN_SCHEMA" in gap and "not a dict" in gap for gap in gaps)
+
+    def test_discover_tool_gaps_clean_module(self, tmp_path):
+        from openbench.intelligence.skill import discover_tool_gaps
+
+        d = _write_skill(tmp_path, "clean-tools", tools_py=_TOOLS_SAMPLE)
+        skill = Skill.from_dir(d)
+        assert discover_tool_gaps(skill._tools_module) == []
+
 
 # ---------------------------------------------------------------------------
 # Skill.from_dir — error handling

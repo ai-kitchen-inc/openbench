@@ -5237,6 +5237,17 @@ body {
   color: var(--sss-text-2);
 }
 
+/* Amber status dot on skills the health scan flagged (hover for detail). */
+.skill-health-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: #d97706;
+  vertical-align: middle;
+}
+
 /* ── In-chat agent dropdown (header, ChatGPT position) ── */
 
 .agent-select {

@@ -2346,6 +2346,78 @@ def create_app() -> FastAPI:
             if entry.is_dir() and (entry / "SKILL.md").is_file()
         )
 
+    #: Skills whose tools bind to the source index — selected without
+    #: GENERAL_CHAT_SOURCE_INDEX_ENABLED every call errors "no sources".
+    _INDEX_BOUND_SKILLS = {"source-retrieval", "table-query"}
+
+    def _skill_health_entries() -> list[dict]:
+        """Actually load every SDK + custom skill and report per-skill status.
+
+        The directory listing above only checks that SKILL.md exists; this
+        runs the real loader (markdown parse + tools.py import + tool
+        discovery) per skill in isolation, so one broken skill flags
+        itself instead of failing the whole scan.
+        """
+        from openbench.intelligence.skill import Skill, discover_tool_gaps
+
+        candidates: list[tuple[str, Path]] = []
+        sdk_root = _sdk_skill_dir("")
+        if sdk_root.is_dir():
+            candidates.extend(
+                ("sdk", entry)
+                for entry in sorted(sdk_root.iterdir())
+                if entry.is_dir() and (entry / "SKILL.md").is_file()
+            )
+        candidates.extend(("custom", path) for path in custom_skills.paths())
+
+        entries: list[dict] = []
+        for source, path in candidates:
+            entry: dict[str, Any] = {
+                "id": path.name,
+                "source": source,
+                "ok": True,
+                "error": "",
+                "tools": [],
+                "toolCount": 0,
+                "warnings": [],
+            }
+            try:
+                skill = Skill.from_dir(path)
+            except Exception as exc:
+                entry["ok"] = False
+                entry["error"] = str(exc)
+                entries.append(entry)
+                continue
+            entry["tools"] = [name for name, _fn, _schema in skill.tools]
+            entry["toolCount"] = len(skill.tools)
+            module = getattr(skill, "_tools_module", None)
+            if module is not None:
+                entry["warnings"].extend(discover_tool_gaps(module))
+            if path.name in _INDEX_BOUND_SKILLS and not source_index_enabled():
+                entry["warnings"].append(
+                    "Perlu indeks sumber (GENERAL_CHAT_SOURCE_INDEX_ENABLED); "
+                    "tanpa itu setiap panggilan menjawab 'tidak ada sumber'."
+                )
+            entries.append(entry)
+        return entries
+
+    def _sdk_skill_warnings() -> dict[str, str]:
+        """Per-skill problem summary for the agent-settings grid."""
+        warnings: dict[str, str] = {}
+        for entry in _skill_health_entries():
+            if entry["source"] != "sdk":
+                continue
+            if not entry["ok"]:
+                warnings[entry["id"]] = entry["error"]
+            elif entry["warnings"]:
+                warnings[entry["id"]] = "; ".join(entry["warnings"])
+        return warnings
+
+    @app.get("/admin/skills/health")
+    async def skills_health(request: Request) -> dict:
+        require_role(request, "admin")
+        return {"skills": _skill_health_entries()}
+
     def _require_agent_profile(agent_id: str) -> AgentProfileRecord:
         record = agent_profile_store.get(agent_id)
         if record is None:
@@ -2452,6 +2524,7 @@ def create_app() -> FastAPI:
             ],
             "personaTemplates": templates_payload(),
             "activeEmbedding": active_embedding_selection(),
+            "sdkSkillWarnings": _sdk_skill_warnings(),
             "mcpServers": [
                 {
                     "id": server.get("id"),

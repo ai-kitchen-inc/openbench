@@ -51,6 +51,7 @@ const OPTIONS = {
   mcpServers: [
     { id: "internal-openbench", name: "openbench", enabled: true, toolCount: 44 },
   ],
+  sdkSkillWarnings: { "query-explorer": "Contoh peringatan skill." },
   defaults: { confidenceThreshold: 0.5 },
 };
 
@@ -138,6 +139,10 @@ describe("AgentsPage", () => {
     expect(screen.getByText("Unggah Dokumen")).toBeDefined();
     expect(screen.getByText("Tempel Teks")).toBeDefined();
     expect(screen.getByText("Tambah URL")).toBeDefined();
+    // Flagged skills carry a health dot with the warning as its label.
+    expect(
+      screen.getByLabelText(/Peringatan skill query-explorer: Contoh peringatan skill\./),
+    ).toBeDefined();
   });
 
   it("puts persona first in the detail and prefills from a template", async () => {
