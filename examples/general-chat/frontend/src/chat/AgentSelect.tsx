@@ -1,5 +1,5 @@
-/** ChatGPT-style agent dropdown in the chat header. Replaces the old
- * settings-modal picker: selection is per-session
+/** ChatGPT-style agent dropdown rendered beside the composer. Replaces
+ * the old settings-modal picker: selection is per-session
  * (session.metadata.agentId), "auto" routes each message. */
 
 import { useChatContext } from "@openbench/chat-ui";
@@ -25,7 +25,14 @@ const DEFAULT_OPTION: ChatAgentItem = {
   description: "Asisten umum tanpa spesialisasi.",
 };
 
-export function AgentSelect({ enabled = true }: { enabled?: boolean }) {
+export function AgentSelect({
+  enabled = true,
+  direction = "down",
+}: {
+  enabled?: boolean;
+  /** "up" opens the menu above the trigger (composer placement). */
+  direction?: "down" | "up";
+}) {
   const { activeSessionId } = useChatContext();
   const toast = useToast();
   const [agents, setAgents] = useState<ChatAgentItem[]>([]);
@@ -111,7 +118,10 @@ export function AgentSelect({ enabled = true }: { enabled?: boolean }) {
   const active = options.find((option) => option.id === selection) ?? AUTO_OPTION;
 
   return (
-    <div className="agent-select" ref={rootRef}>
+    <div
+      className={`agent-select${direction === "up" ? " agent-select--up" : ""}`}
+      ref={rootRef}
+    >
       <button
         type="button"
         className="agent-select__trigger"

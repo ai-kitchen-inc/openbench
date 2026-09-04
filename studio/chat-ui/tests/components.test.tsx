@@ -848,4 +848,20 @@ describe("ChatPanel — session loading state", () => {
       title.compareDocumentPosition(slotButton) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
+
+  it("renders composerAccessory inside the input row before the send button", () => {
+    const { container, rerender } = render(<ChatPanel />);
+    expect(container.querySelector(".chat-input__accessory")).toBeNull();
+
+    rerender(<ChatPanel composerAccessory={<button type="button">Pick agent</button>} />);
+    const accessory = container.querySelector(
+      ".chat-input__row .chat-input__accessory",
+    ) as HTMLElement;
+    expect(accessory.textContent).toContain("Pick agent");
+    // Accessory precedes the send button in the row.
+    const send = container.querySelector(".chat-input__send-btn") as HTMLElement;
+    expect(
+      accessory.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });

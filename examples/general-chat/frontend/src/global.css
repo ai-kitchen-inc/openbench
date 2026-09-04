@@ -5255,6 +5255,39 @@ body {
   margin-left: 8px;
 }
 
+/* Composer placement: borderless pill between textarea and send button,
+   same 36px height as the composer icon buttons (ChatGPT-style). */
+.chat-input__accessory .agent-select {
+  margin-left: 0;
+}
+
+.chat-input__accessory .agent-select__trigger {
+  height: 36px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sss-text-2);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.chat-input__accessory .agent-select__trigger:hover:not(:disabled) {
+  background: var(--sss-wash);
+  color: var(--sss-text);
+}
+
+.agent-select--up .agent-select__trigger svg {
+  transform: rotate(180deg);
+}
+
+.agent-select--up .agent-select__menu {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: auto;
+  right: 0;
+}
+
 .agent-select__trigger {
   display: inline-flex;
   align-items: center;

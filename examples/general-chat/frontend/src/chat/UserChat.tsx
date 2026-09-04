@@ -650,7 +650,12 @@ function ChatLayout({
           onAttachmentError={(message) => toast.show(message, "error")}
           onTranscribe={me.capabilities.attachments ? transcribeAudio : undefined}
           renderSurfaceFooter={renderDashboardSurfaceFooter}
-          headerLeft={<AgentSelect enabled={me.capabilities.agent_selection !== false} />}
+          composerAccessory={
+            <AgentSelect
+              enabled={me.capabilities.agent_selection !== false}
+              direction="up"
+            />
+          }
           headerRight={
             <div className="chat-header-actions">
               <button

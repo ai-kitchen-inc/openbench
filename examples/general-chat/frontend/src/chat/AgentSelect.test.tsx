@@ -59,6 +59,25 @@ describe("AgentSelect", () => {
     expect(trigger.textContent).toContain("Analis Keuangan");
   });
 
+  it("adds the drop-up modifier when direction is up", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/chat/agents") return jsonResponse(AGENTS);
+        if (url.startsWith("/chat/agent-selection")) return jsonResponse({ agentId: "auto" });
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    const { container } = render(
+      <ToastProvider>
+        <AgentSelect direction="up" />
+      </ToastProvider>,
+    );
+    await screen.findByLabelText("Pilih agen");
+    expect(container.querySelector(".agent-select--up")).not.toBeNull();
+  });
+
   it("renders nothing when there are no agents", async () => {
     vi.stubGlobal(
       "fetch",

@@ -26,6 +26,9 @@ export interface ChatPanelProps {
   /** Extra content rendered in the header-left area after the title
    * (e.g. an agent/model picker, ChatGPT-style). */
   headerLeft?: React.ReactNode;
+  /** Host control rendered inside the composer row between the textarea
+   * and the send button (e.g. an agent picker that drops upward). */
+  composerAccessory?: React.ReactNode;
   /** Attachments that should be included with every sent message. */
   persistentAttachments?: Attachment[];
   /** Comma-separated accept policy forwarded to the composer file input/drop zone. */
@@ -54,6 +57,7 @@ export function ChatPanel({
   title,
   headerRight,
   headerLeft,
+  composerAccessory,
   persistentAttachments,
   acceptedFileTypes,
   onAttachmentError,
@@ -174,6 +178,7 @@ export function ChatPanel({
           attachmentMessages={attachmentMessages}
           allowAttachments={allowAttachments}
           onTranscribe={onTranscribe}
+          accessoryRight={composerAccessory}
         />
       </div>
     </div>

@@ -49,6 +49,13 @@ export interface ChatInputProps {
    * and Web Speech is unavailable, the mic button is hidden.
    */
   onTranscribe?: (audio: Blob) => Promise<string>;
+  /**
+   * Optional host control rendered inside the composer row between the
+   * textarea and the send button (e.g. an agent/model picker,
+   * ChatGPT-style). The host owns its behavior; dropdowns should open
+   * upward since the composer sits at the bottom of the panel.
+   */
+  accessoryRight?: React.ReactNode;
 }
 
 export function ChatInput({
@@ -63,6 +70,7 @@ export function ChatInput({
   maxAttachments,
   attachmentMessages,
   onTranscribe,
+  accessoryRight,
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -418,6 +426,9 @@ export function ChatInput({
             disabled={disabled}
             rows={1}
           />
+          {accessoryRight && (
+            <div className="chat-input__accessory">{accessoryRight}</div>
+          )}
           <button
             className="chat-input__send-btn"
             onClick={handleSend}
