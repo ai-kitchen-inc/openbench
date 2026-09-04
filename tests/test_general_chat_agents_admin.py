@@ -206,6 +206,51 @@ class TestAgentAdminCrud(_AppHarness):
         second = registry.get("analis")
         self.assertIsNot(first, second)
 
+    def test_mcp_server_ids_saved_and_validated(self):
+        client = self._client()
+        client.post("/admin/agents", json={"name": "Analis", "description": "Keuangan."})
+        # The registry always contains the internal OpenBench server.
+        options = client.get("/admin/agents/options").json()
+        server_ids = [server["id"] for server in options["mcpServers"]]
+        self.assertIn("internal-openbench", server_ids)
+
+        saved = client.put(
+            "/admin/agents/analis", json={"mcpServerIds": ["internal-openbench"]}
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["mcpServerIds"], ["internal-openbench"])
+
+        rejected = client.put(
+            "/admin/agents/analis", json={"mcpServerIds": ["tidak-ada"]}
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertIn("tidak-ada", rejected.json()["detail"])
+
+    def test_profile_build_attaches_selected_mcp_servers(self):
+        client = self._client()
+        client.post("/admin/agents", json={"name": "Analis", "description": "Keuangan."})
+        client.put("/admin/agents/analis", json={"mcpServerIds": ["internal-openbench"]})
+        with patch(
+            "general_chat.server.app.reload_external_mcp_tools"
+        ) as reload_mock:
+            agent = client.app.state.agent_registry.get("analis")
+        self.assertIsNotNone(agent)
+        reload_mock.assert_called_once()
+        called_agent = reload_mock.call_args.args[0]
+        self.assertIs(called_agent, agent)
+        self.assertEqual(
+            reload_mock.call_args.kwargs["server_ids"], {"internal-openbench"}
+        )
+
+    def test_profile_build_skips_mcp_attach_without_selection(self):
+        client = self._client()
+        client.post("/admin/agents", json={"name": "Analis", "description": "Keuangan."})
+        with patch(
+            "general_chat.server.app.reload_external_mcp_tools"
+        ) as reload_mock:
+            self.assertIsNotNone(client.app.state.agent_registry.get("analis"))
+        reload_mock.assert_not_called()
+
     def test_guardrails_saved_and_validated(self):
         client = self._client()
         client.post("/admin/agents", json={"name": "Analis", "description": "Keuangan."})

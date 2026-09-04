@@ -690,7 +690,7 @@ def create_app() -> FastAPI:
             persona_value = _with_confidence_protocol(persona_value)
         persona, goal, _source_label = persona_from_settings(persona_value)
         custom_ids = set(profile.custom_skill_ids)
-        return create_agent(
+        agent = create_agent(
             model=profile.model or runtime_settings_cache.value.get("llm_model") or None,
             temperature=profile.temperature if profile.temperature is not None else 0.3,
             persona=persona,
@@ -699,6 +699,18 @@ def create_app() -> FastAPI:
             custom_skill_paths=[p for p in custom_skills.paths() if p.name in custom_ids],
             extra_skill_names=list(profile.skills),
         )
+        if profile.mcp_server_ids:
+            # Registry-backed tools attach directly to this fresh agent —
+            # independent of GENERAL_CHAT_MCP_ENABLED, which only gates the
+            # legacy local allowlist inside create_agent. A load failure
+            # keeps the agent usable without MCP tools.
+            try:
+                reload_external_mcp_tools(agent, server_ids=set(profile.mcp_server_ids))
+            except Exception:
+                logger.warning(
+                    "mcp.profile_attach_failed agent=%s", profile.id, exc_info=True
+                )
+        return agent
 
     agent_registry = AgentProfileRegistry(agent_profile_store, _profile_agent_factory)
     chat_memory_store = storage.memory_store() if os.getenv("GENERAL_CHAT_DATABASE_URL") else None
@@ -2343,6 +2355,7 @@ def create_app() -> FastAPI:
             ("temperature", "temperature"),
             ("skills", "skills"),
             ("customSkillIds", "custom_skill_ids"),
+            ("mcpServerIds", "mcp_server_ids"),
             ("useSources", "use_sources"),
             ("guardrails", "guardrails"),
             ("escalationAgentId", "escalation_agent_id"),
@@ -2380,6 +2393,17 @@ def create_app() -> FastAPI:
                 raise HTTPException(
                     status_code=400, detail=f"Skill kustom tidak dikenal: {custom_id}"
                 )
+        if changes.get("mcp_server_ids"):
+            known_servers = {
+                str(server.get("id"))
+                for server in mcp_registry_store.list_payload()["servers"]
+            }
+            for server_id in changes["mcp_server_ids"]:
+                if str(server_id) not in known_servers:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Server MCP tidak dikenal: {server_id}",
+                    )
         escalation_target = str(changes.get("escalation_agent_id") or "").strip().lower()
         if escalation_target:
             if escalation_target == agent_id:
@@ -2419,6 +2443,15 @@ def create_app() -> FastAPI:
             ],
             "personaTemplates": templates_payload(),
             "activeEmbedding": active_embedding_selection(),
+            "mcpServers": [
+                {
+                    "id": server.get("id"),
+                    "name": server.get("name") or server.get("id"),
+                    "enabled": bool(server.get("enabled")),
+                    "toolCount": len(server.get("tools") or []),
+                }
+                for server in mcp_registry_store.list_payload()["servers"]
+            ],
             "defaults": {"confidenceThreshold": 0.5},
         }
 

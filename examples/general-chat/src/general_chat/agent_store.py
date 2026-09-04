@@ -86,6 +86,8 @@ class AgentProfileRecord:
     temperature: float | None = None
     skills: list[str] = field(default_factory=list)  # SDK skill dir names
     custom_skill_ids: list[str] = field(default_factory=list)
+    #: MCP registry server ids whose enabled tools attach to this agent.
+    mcp_server_ids: list[str] = field(default_factory=list)
     use_sources: bool = True
     #: Extra per-agent rules appended to the persona's agents text at
     #: build time. "" = no extra guardrails.
@@ -107,6 +109,7 @@ class AgentProfileRecord:
             "temperature": self.temperature,
             "skills": list(self.skills),
             "customSkillIds": list(self.custom_skill_ids),
+            "mcpServerIds": list(self.mcp_server_ids),
             "useSources": self.use_sources,
             "guardrails": self.guardrails,
             "escalationAgentId": self.escalation_agent_id,
@@ -135,6 +138,7 @@ class AgentProfileRecord:
             temperature=temperature,
             skills=_str_list(data.get("skills")),
             custom_skill_ids=_str_list(data.get("customSkillIds")),
+            mcp_server_ids=_str_list(data.get("mcpServerIds")),
             use_sources=bool(data.get("useSources", True)),
             guardrails=str(data.get("guardrails", "") or ""),
             escalation_agent_id=str(data.get("escalationAgentId", "") or "").strip().lower(),
@@ -167,6 +171,8 @@ class AgentProfileRecord:
             self.skills = _str_list(changes["skills"])
         if "custom_skill_ids" in changes:
             self.custom_skill_ids = _str_list(changes["custom_skill_ids"])
+        if "mcp_server_ids" in changes:
+            self.mcp_server_ids = _str_list(changes["mcp_server_ids"])
         if "use_sources" in changes:
             self.use_sources = bool(changes["use_sources"])
         if "guardrails" in changes:
