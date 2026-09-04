@@ -20,7 +20,9 @@ const AGENT = {
   temperature: null,
   skills: ["query-explorer"],
   customSkillIds: [],
+  mcpServerIds: [],
   useSources: true,
+  guardrails: "",
   escalationAgentId: "",
   confidenceThreshold: 0.5,
   createdAt: "2026-08-24T00:00:00Z",
@@ -46,6 +48,9 @@ const OPTIONS = {
     },
   ],
   activeEmbedding: { provider: "google", model: "gemini-embedding-001", dimension: 1536 },
+  mcpServers: [
+    { id: "internal-openbench", name: "openbench", enabled: true, toolCount: 44 },
+  ],
   defaults: { confidenceThreshold: 0.5 },
 };
 
@@ -168,6 +173,37 @@ describe("AgentsPage", () => {
     expect(screen.getByLabelText("STYLE — gaya menjawab")).toHaveValue("STYLE ketat");
     expect(screen.getByLabelText("AGENTS — aturan kerja")).toHaveValue("AGENTS ketat");
     expect(screen.getByLabelText("Goal (opsional)")).toHaveValue("GOAL ketat");
+  });
+
+  it("saves an MCP server selection from the grid", async () => {
+    const putBodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan" && init?.method === "PUT") {
+          putBodies.push(JSON.parse(String(init.body)));
+          return jsonResponse({ ...AGENT, mcpServerIds: ["internal-openbench"] });
+        }
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") {
+          return jsonResponse({ sources: [] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    await userEvent.click(screen.getByText(/openbench \(44 tool\)/));
+    await userEvent.click(screen.getByText("Simpan agen"));
+    await waitFor(() =>
+      expect(putBodies).toEqual([{ mcpServerIds: ["internal-openbench"] }]),
+    );
   });
 
   it("requires a description before enabling create", async () => {

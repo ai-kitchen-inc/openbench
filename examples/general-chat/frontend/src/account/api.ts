@@ -273,6 +273,8 @@ export type AgentProfileItem = {
   temperature: number | null;
   skills: string[];
   customSkillIds: string[];
+  /** MCP registry server ids whose enabled tools attach to this agent. */
+  mcpServerIds: string[];
   useSources: boolean;
   /** Extra per-agent rules appended to the persona at build time. */
   guardrails: string;
@@ -294,6 +296,7 @@ export type AgentProfilePatch = Partial<
     | "temperature"
     | "skills"
     | "customSkillIds"
+    | "mcpServerIds"
     | "useSources"
     | "guardrails"
     | "escalationAgentId"
@@ -309,6 +312,8 @@ export type AgentProfileOptions = {
   personaTemplates: PersonaTemplate[];
   /** Global source-index embedding (read-only on the agent form). */
   activeEmbedding: { provider: string; model: string; dimension: number };
+  /** MCP registry servers selectable per agent. */
+  mcpServers: { id: string; name: string; enabled: boolean; toolCount: number }[];
   defaults: { confidenceThreshold: number };
 };
 

@@ -74,7 +74,10 @@ function AgentDetail({
 
   const set = (patch: AgentProfilePatch) => setDraft((prev) => ({ ...prev, ...patch }));
 
-  const toggleListValue = (key: "skills" | "customSkillIds", item: string) => {
+  const toggleListValue = (
+    key: "skills" | "customSkillIds" | "mcpServerIds",
+    item: string,
+  ) => {
     const current = (value[key] ?? []) as string[];
     const next = current.includes(item)
       ? current.filter((entry) => entry !== item)
@@ -270,6 +273,32 @@ function AgentDetail({
         ))}
         {options.sdkSkills.length === 0 && options.customSkills.length === 0 && (
           <div className="sources-list__empty">Tidak ada skill tersedia.</div>
+        )}
+      </div>
+
+      <div className="cap-group">
+        <div className="cap-row">
+          <div className="cap-row__main">
+            <div className="cap-row__label">Server MCP</div>
+            <div className="cap-row__desc">
+              Perangkat dari server MCP terpilih ikut dimuat untuk agen ini.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="agents-skill-grid">
+        {options.mcpServers.map((server) => (
+          <label key={server.id} className="agents-skill-grid__item">
+            <input
+              type="checkbox"
+              checked={(value.mcpServerIds ?? []).includes(server.id)}
+              onChange={() => toggleListValue("mcpServerIds", server.id)}
+            />
+            {server.name} ({server.toolCount} tool{server.enabled ? "" : " · nonaktif"})
+          </label>
+        ))}
+        {options.mcpServers.length === 0 && (
+          <div className="sources-list__empty">Belum ada server MCP terdaftar.</div>
         )}
       </div>
 
