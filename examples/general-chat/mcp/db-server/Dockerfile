@@ -1,5 +1,6 @@
 # Multi-stage build for efficient MCP Database Server
-FROM python:alpine AS builder
+# Pinned: a floating tag drifted to mcp 2.x on 2026-09-07 and broke `mcp.server.fastmcp`.
+FROM python:3.14-alpine AS builder
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -25,7 +26,7 @@ RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
 # Production stage
-FROM python:alpine
+FROM python:3.14-alpine
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \

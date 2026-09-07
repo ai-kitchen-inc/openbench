@@ -84,6 +84,14 @@ class TestForkServerNeverEchoesRawDsn(unittest.TestCase):
         self.assertIn("from redact import redact_dsn", source)
         self.assertIn("redact_dsn(os.getenv('DATABASE_URL'))", source)
 
+    def test_mcp_dependency_pinned_below_2(self) -> None:
+        # mcp 2.x dropped `mcp.server.fastmcp`; an unpinned rebuild broke prod on 2026-09-07.
+        reqs = (FORK / "requirements.txt").read_text(encoding="utf-8")
+        self.assertRegex(reqs, r"(?m)^mcp>=1.*<2")
+        self.assertRegex(reqs, r"(?m)^fastmcp>=3.*<4")
+        dockerfile = (FORK / "Dockerfile").read_text(encoding="utf-8")
+        self.assertNotIn("FROM python:alpine", dockerfile)
+
     def test_dynamic_connect_gated_off_by_default(self) -> None:
         source = (FORK / "mcp_server.py").read_text(encoding="utf-8")
         self.assertIn('os.getenv("MCP_ALLOW_DYNAMIC_CONNECT", "0")', source)

@@ -1,6 +1,8 @@
 # Core MCP and async dependencies
-mcp>=1.0.0
-fastmcp>=0.2.0
+# mcp 2.x removed `mcp.server.fastmcp` (import at mcp_server.py) and fastmcp 4.x
+# requires mcp 2 -- keep both on the 1.x/3.x line that the server was written for.
+mcp>=1.28,<2
+fastmcp>=3.4,<4
 
 # Web API framework
 fastapi>=0.104.0
