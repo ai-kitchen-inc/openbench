@@ -3,6 +3,11 @@ mcp:
     allow_remote_servers: false
     allowed_servers:
       - db_server
+    # connect_to_database lets the model repoint the server at any reachable
+    # database; the image also disables it (MCP_ALLOW_DYNAMIC_CONNECT unset),
+    # this is the registry-side belt to that brace.
+    denied_tools:
+      - db_server.connect_to_database
     max_timeout_seconds: 60
 
   servers:
@@ -19,7 +24,7 @@ mcp:
         - MCP_ALLOW_WRITES=${MCP_ALLOW_WRITES}
         - "-e"
         - MCP_MAX_ROWS=${MCP_MAX_ROWS}
-        - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/mcp-db-server:1.3.1-ob1
+        - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/mcp-db-server:1.3.1-ob2
       namespace: db_server
       allowed: true
       discovery_timeout_seconds: 15

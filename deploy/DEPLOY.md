@@ -169,7 +169,7 @@ Or individually:
 |---------|------|
 | `deploy/deploy.sh backend` | Cloud Build the API+SPA image (SPA built in stage 1 with the `_VITE_FIREBASE_*` substitutions), `docker pull` + `docker-compose up -d` on the VM, wait for `/health`. Also ships the `aggregate_data` / `dashboard_generator` stdio MCP servers, which live *inside* the API image at `/app/mcp/<name>` (unlike `mcp-image`/`fn-image`) — redeploy `backend` to update them. |
 | `deploy/deploy.sh frontend` | Alias of `backend` — the SPA ships inside the API image. |
-| `deploy/deploy.sh mcp-image` | Cloud Build the forked `db_server` MCP image (`mcp-db-server:1.3.1-ob1`) and `docker pull` it on the VM. |
+| `deploy/deploy.sh mcp-image` | Cloud Build the forked `db_server` MCP image (`mcp-db-server:1.3.1-ob2`) and `docker pull` it on the VM. |
 | `deploy/deploy.sh fn-image` | Cloud Build the `custom_function` MCP image + `docker pull` on the VM (+ functions dir). |
 | `deploy/deploy.sh grafana` | Provision + start the self-hosted Grafana on the VM (env gen, datasources, health). |
 | `deploy/deploy.sh nginx` | scp `docker-compose.gce.yml` + nginx conf to the VM, `nginx -t` + reload. Run only when those files change. |
@@ -443,7 +443,7 @@ grant app access (the `openbench_users` table does).
 The `db_server` MCP is a vendored fork of
 [souhardyak/mcp-db-server](https://github.com/Souhar-dya/mcp-db-server) at
 [`examples/general-chat/mcp/db-server/`](../examples/general-chat/mcp/db-server/),
-built to `mcp-db-server:1.3.1-ob1` in Artifact Registry. The API spawns it via the
+built to `mcp-db-server:1.3.1-ob2` in Artifact Registry. The API spawns it via the
 mounted docker socket; it reaches Cloud SQL over the instance's **public IP**
 (`MCP_DB_DATABASE_URL`) — the same path `GENERAL_CHAT_DATABASE_URL` already uses.
 
@@ -456,6 +456,16 @@ Data lives in the **`appdata`** database on the existing Cloud SQL instance
 The `mcp_app` role is scoped to `appdata` only (SELECT on `public`, full control of
 `mart`). Writes are gated by `MCP_ALLOW_WRITES`; read queries are capped by
 `MCP_MAX_ROWS`.
+
+Credential hygiene (fork additions, image `1.3.1-ob2`, 2026-09-07): tool results
+and logs redact the DSN password (`app/redact.py`) — before this, any chat user
+could read the `mcp_app` password via `get_current_database_info`. The
+`connect_to_database` tool (repoints the server at *any* reachable database, no
+host allowlist) is disabled unless `MCP_ALLOW_DYNAMIC_CONNECT=1` is passed to the
+container, and is additionally listed under `denied_tools` in
+[`db-server-docker.yaml`](../examples/general-chat/mcp/db-server-docker.yaml).
+Rotate the `mcp_app` password after deploying the fix (see "Adding data"),
+updating `MCP_DB_DATABASE_URL`, `GRAFANA_PG_PASSWORD` and the Grafana datasource.
 
 **Prerequisite:** the VM's public egress IP must be an **authorized network** on
 the Cloud SQL instance (already true — chat memory uses the same public-IP path).

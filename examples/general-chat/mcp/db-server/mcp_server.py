@@ -30,6 +30,7 @@ from dotenv import load_dotenv
 # Import our database functionality
 from db import DatabaseManager
 from nl_to_sql import NLToSQLConverter
+from redact import redact_dsn
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +58,20 @@ _WRITES_DISABLED_MSG = (
 
 def _writes_enabled() -> bool:
     return os.getenv("MCP_ALLOW_WRITES", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+# connect_to_database lets the model repoint this server at ANY reachable
+# database (no host allowlist) and swaps the global connection for the life
+# of the container. That is a lateral-movement primitive when the caller is
+# an untrusted chat user, so it is off unless the operator opts in.
+_DYNAMIC_CONNECT_DISABLED_MSG = (
+    "ERROR: dynamic database connections are disabled on this server. "
+    "Set MCP_ALLOW_DYNAMIC_CONNECT=1 to enable connect_to_database."
+)
+
+
+def _dynamic_connect_enabled() -> bool:
+    return os.getenv("MCP_ALLOW_DYNAMIC_CONNECT", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _max_rows() -> int:
@@ -242,7 +257,11 @@ async def connect_to_database(database_url: str) -> str:
         Connection status and available tables
     """
     global db_manager
-    
+
+    if not _dynamic_connect_enabled():
+        return _DYNAMIC_CONNECT_DISABLED_MSG
+    safe_url = redact_dsn(database_url)
+
     try:
         # Validate URL format
         supported_types = [
@@ -268,7 +287,7 @@ async def connect_to_database(database_url: str) -> str:
             # Restore previous URL on failure
             if previous_url != 'None':
                 os.environ['DATABASE_URL'] = previous_url
-            return f"Failed to connect to database: {database_url}"
+            return f"Failed to connect to database: {safe_url}"
         
         # If successful, update the global manager
         db_manager = new_db_manager
@@ -278,12 +297,12 @@ async def connect_to_database(database_url: str) -> str:
         table_info = [f"  - {table['table_name']} ({table['column_count']} columns)" for table in tables]
         
         response = f"Successfully connected to database!\n"
-        response += f" Database URL: {database_url}\n"
+        response += f" Database URL: {safe_url}\n"
         response += f" Database Type: {db_manager.database_type}\n"
         response += f" Available Tables ({len(tables)}):\n"
         response += "\n".join(table_info) if table_info else "  No tables found"
         
-        logger.info(f"Dynamic database connection successful: {database_url}")
+        logger.info(f"Dynamic database connection successful: {safe_url}")
         return response
         
     except Exception as e:
@@ -350,7 +369,7 @@ async def get_current_database_info() -> str:
             return "ERROR: Current database connection is not working"
         
         # Get database info
-        current_url = os.getenv('DATABASE_URL', 'Unknown')
+        current_url = redact_dsn(os.getenv('DATABASE_URL')) or 'Unknown'
         tables = await db_manager.list_tables()
         
         # Calculate some statistics
@@ -618,8 +637,8 @@ async def initialize_database(database_url: str = None, config_file: str = None)
         
         db_manager = DatabaseManager()  # No parameter needed
         if not await db_manager.test_connection():
-            raise ConnectionError(f"Database connection test failed for: {final_database_url}")
-        logger.info(f"Connected to database: {final_database_url}")
+            raise ConnectionError(f"Database connection test failed for: {redact_dsn(final_database_url)}")
+        logger.info(f"Connected to database: {redact_dsn(final_database_url)}")
         
         # Initialize NL to SQL converter
         nl_converter = NLToSQLConverter()

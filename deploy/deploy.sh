@@ -67,7 +67,7 @@ PSQL_IMAGE="${PSQL_IMAGE:-postgres:16}"
 SQL_INSTANCE="${SQL_INSTANCE:-openbench-postgres}"
 
 # db_server MCP forked image (Postgres + materialize): source dir + Cloud Build.
-MCP_IMAGE="${MCP_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/mcp-db-server:1.3.1-ob1}"
+MCP_IMAGE="${MCP_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/mcp-db-server:1.3.1-ob2}"
 MCP_CLOUDBUILD_CONFIG="${MCP_CLOUDBUILD_CONFIG:-cloudbuild.mcp-db-server.yaml}"
 MCP_IMAGE_DIR="${MCP_IMAGE_DIR:-examples/general-chat/mcp/db-server}"
 
