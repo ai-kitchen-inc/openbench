@@ -4,7 +4,7 @@ mcp:
     allowed_servers:
       - dashboard_generator
       - aggregate_data
-    max_timeout_seconds: 30
+    max_timeout_seconds: 120
 
   servers:
     aggregate_data:
@@ -22,7 +22,7 @@ mcp:
       namespace: aggregate_data
       allowed: true
       discovery_timeout_seconds: 20
-      timeout_seconds: 30
+      timeout_seconds: 120
       retries: 0
 
     dashboard_generator:
@@ -48,5 +48,5 @@ mcp:
       namespace: dashboard_generator
       allowed: true
       discovery_timeout_seconds: 20
-      timeout_seconds: 30
+      timeout_seconds: 120
       retries: 0
