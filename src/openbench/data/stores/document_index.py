@@ -301,8 +301,7 @@ class SQLiteDocumentBackend(DocumentIndexBackend):
 
     def ensure_schema(self, dimension: int) -> None:
         with self._connect() as conn:
-            conn.execute(
-                f"""
+            conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self.table_name} (
                     chunk_id TEXT PRIMARY KEY,
                     source_id TEXT NOT NULL,
@@ -319,8 +318,7 @@ class SQLiteDocumentBackend(DocumentIndexBackend):
                     embedding BLOB,
                     created_at TEXT NOT NULL
                 )
-                """
-            )
+                """)
             conn.execute(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.table_name}_source_chunk "
                 f"ON {self.table_name} (source_id, chunk_index)"
@@ -658,8 +656,7 @@ class PgVectorBackend(DocumentIndexBackend):
 
             embedding_type = f"vector({dimension})" if self._vector_native else "DOUBLE PRECISION[]"
             with conn.cursor() as cur:
-                cur.execute(
-                    f"""
+                cur.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.table_name} (
                         chunk_id TEXT PRIMARY KEY,
                         source_id TEXT NOT NULL,
@@ -676,8 +673,7 @@ class PgVectorBackend(DocumentIndexBackend):
                         embedding {embedding_type},
                         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
                     )
-                    """
-                )
+                    """)
                 cur.execute(
                     f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.table_name}_source_chunk "
                     f"ON {self.table_name} (source_id, chunk_index)"
@@ -697,6 +693,7 @@ class PgVectorBackend(DocumentIndexBackend):
             conn.commit()
 
             if self._vector_native:
+                self._migrate_dimension(conn, dimension)
                 # HNSW build can fail on very old pgvector; the table is
                 # still usable with a sequential scan, so do not abort.
                 try:
@@ -709,6 +706,49 @@ class PgVectorBackend(DocumentIndexBackend):
                 except Exception as exc:
                     conn.rollback()
                     logger.warning("Could not create HNSW index (%s); using sequential scan", exc)
+
+    def _migrate_dimension(self, conn: Any, dimension: int) -> None:
+        """Retype the embedding column when its dimension no longer matches.
+
+        pgvector fixes the dimension in the column type, so switching to
+        an embedding model of a different size makes every insert and
+        every query fail. The stored vectors are unusable either way — a
+        query vector of the new size cannot be compared against them — so
+        the table is emptied and the column retyped. The host re-indexes
+        its persistent sources afterwards; per-session uploads re-index on
+        their next upload. Never raises: a failure is logged and leaves
+        the schema untouched, matching the HNSW block.
+        """
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT atttypmod FROM pg_attribute "
+                    "WHERE attrelid = %s::regclass AND attname = 'embedding' "
+                    "AND NOT attisdropped",
+                    (self.table_name,),
+                )
+                row = cur.fetchone()
+            current = int(row[0]) if row and row[0] is not None else -1
+            if current <= 0 or current == dimension:
+                return
+            logger.warning(
+                "Embedding column of %s is vector(%d) but the index expects %d; "
+                "dropping every stored vector and retyping the column",
+                self.table_name,
+                current,
+                dimension,
+            )
+            with conn.cursor() as cur:
+                cur.execute(f"DELETE FROM {self.table_name}")
+                cur.execute(f"DROP INDEX IF EXISTS idx_{self.table_name}_vec")
+                cur.execute(
+                    f"ALTER TABLE {self.table_name} "
+                    f"ALTER COLUMN embedding TYPE vector({dimension})"
+                )
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            logger.warning("Could not migrate the embedding column dimension (%s)", exc)
 
     def _encode_vector(self, vector: list[float]) -> Any:
         if self._vector_native:

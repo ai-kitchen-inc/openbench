@@ -482,6 +482,98 @@ class TestBuildDocumentIndex(unittest.TestCase):
             SQLiteDocumentBackend(self.root / "x.sqlite3", table_name="chunks; DROP TABLE users")
 
 
+class _FakeCursor:
+    """Records SQL; answers the typmod probe with a configured value."""
+
+    def __init__(self, conn: _FakeConn):
+        self._conn = conn
+        self._last = ""
+        self.rowcount = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql: str, params=None) -> None:
+        text = " ".join(sql.split())
+        if self._conn.fail_on and self._conn.fail_on in text:
+            raise RuntimeError(f"boom: {self._conn.fail_on}")
+        self._last = text
+        self._conn.log.append(text)
+
+    def fetchone(self):
+        if "atttypmod" in self._last:
+            return (self._conn.typmod,)
+        return None
+
+
+class _FakeConn:
+    def __init__(self, typmod: int, fail_on: str = ""):
+        self.typmod = typmod
+        self.fail_on = fail_on
+        self.log: list[str] = []
+        self.commits = 0
+        self.rollbacks = 0
+
+    def cursor(self):
+        return _FakeCursor(self)
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+class TestPgVectorDimensionMigration(unittest.TestCase):
+    """ensure_schema retypes the embedding column on a dimension change.
+
+    Runs against a fake connection so the SQL sequence can be asserted
+    without a live Postgres.
+    """
+
+    def _schema(self, typmod: int, dimension: int, fail_on: str = "") -> _FakeConn:
+        conn = _FakeConn(typmod, fail_on=fail_on)
+        backend = PgVectorBackend(conn=conn, table_name="chunks_t")
+        backend.ensure_schema(dimension)
+        self.assertTrue(backend.vector_native)
+        return conn
+
+    @staticmethod
+    def _alters(conn: _FakeConn) -> list[str]:
+        return [sql for sql in conn.log if sql.startswith("ALTER TABLE")]
+
+    def test_matching_dimension_leaves_column_alone(self):
+        conn = self._schema(typmod=32, dimension=32)
+        self.assertEqual(self._alters(conn), [])
+        self.assertNotIn("DELETE FROM chunks_t", conn.log)
+
+    def test_unspecified_typmod_is_not_migrated(self):
+        conn = self._schema(typmod=-1, dimension=32)
+        self.assertEqual(self._alters(conn), [])
+
+    def test_dimension_change_wipes_rows_and_retypes_column(self):
+        conn = self._schema(typmod=1536, dimension=768)
+        delete = conn.log.index("DELETE FROM chunks_t")
+        drop = conn.log.index("DROP INDEX IF EXISTS idx_chunks_t_vec")
+        alter = conn.log.index("ALTER TABLE chunks_t ALTER COLUMN embedding TYPE vector(768)")
+        hnsw = next(i for i, sql in enumerate(conn.log) if "USING hnsw" in sql)
+        self.assertLess(delete, drop)
+        self.assertLess(drop, alter)
+        self.assertLess(alter, hnsw)
+        self.assertEqual(conn.rollbacks, 0)
+
+    def test_migration_failure_is_logged_not_raised(self):
+        with self.assertLogs("openbench.data.stores.document_index", level="WARNING") as logs:
+            conn = self._schema(typmod=1536, dimension=768, fail_on="ALTER TABLE")
+        self.assertGreaterEqual(conn.rollbacks, 1)
+        self.assertTrue(any("migrate the embedding column" in line for line in logs.output))
+        # Schema setup carries on: the HNSW index is still attempted.
+        self.assertTrue(any("USING hnsw" in sql for sql in conn.log))
+
+
 @unittest.skipUnless(
     os.getenv("OPENBENCH_TEST_PG_URL"),
     "set OPENBENCH_TEST_PG_URL to run Postgres document index tests",
