@@ -98,6 +98,7 @@ from general_chat.server.grafana_client import GrafanaDeployError, deploy_view_m
 from general_chat.server.handler import GeneralChatHandler, set_source_context_label_override
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.server.publish_store import PublishStore
+from general_chat.server.source_reindex import SourceReindexJob, run_source_reindex
 from general_chat.source_index import (
     check_embeddings,
     active_embedding_selection,
@@ -559,6 +560,9 @@ def create_app() -> FastAPI:
     source_index_semaphore = asyncio.Semaphore(
         max(1, _env_int("GENERAL_CHAT_SOURCE_INDEX_CONCURRENCY", 2))
     )
+    # One re-embedding job per process, started from the admin panel after
+    # an embedding model change; progress is polled, never awaited.
+    source_reindex_job = SourceReindexJob()
     user_store = build_user_store(storage_root)
     settings_store = build_settings_store(storage_root)
     capability_cache = CapabilityCache(settings_store)
@@ -897,6 +901,20 @@ def create_app() -> FastAPI:
             memory_store=_retention_memory_store(),
         )
 
+    def _start_source_reindex() -> bool:
+        """Kick off re-embedding of every shared, group, and agent source."""
+        targets = [(_shared_sources(), SHARED_SOURCES_THREAD)]
+        targets += [(_group_sources(g.id), GROUP_SOURCES_THREAD) for g in group_store.list()]
+        targets += [
+            (_agent_sources(a.id), AGENT_SOURCES_THREAD) for a in agent_profile_store.list()
+        ]
+        return source_reindex_job.start(
+            lambda: run_source_reindex(
+                source_reindex_job, targets=targets, semaphore=source_index_semaphore
+            ),
+            embedding_model=active_embedding_selection()["model"],
+        )
+
     def _cleanup_source_uploads_after_use(records: list, scoped_source_store) -> None:
         records_with_uploads = [
             record
@@ -1026,6 +1044,7 @@ def create_app() -> FastAPI:
     # Exposed for tests and diagnostics; route handlers use the closures.
     app.state.agent_registry = agent_registry
     app.state.agent_profile_store = agent_profile_store
+    app.state.source_reindex_job = source_reindex_job
 
     app.add_middleware(
         CORSMiddleware,
@@ -1227,6 +1246,7 @@ def create_app() -> FastAPI:
         task = getattr(app.state, "retention_task", None)
         if task is not None:
             task.cancel()
+        source_reindex_job.cancel()
 
     @app.get("/health")
     async def health() -> dict:
@@ -2839,6 +2859,8 @@ def create_app() -> FastAPI:
         usage_store=usage_store,
         group_store=group_store,
         model_catalog_cache=model_catalog_cache,
+        source_reindex=source_reindex_job,
+        start_source_reindex=_start_source_reindex,
     )
 
     @app.post("/awp")

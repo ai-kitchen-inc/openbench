@@ -86,6 +86,8 @@ def register_admin_routes(
     usage_store: Any,
     group_store: Any,
     model_catalog_cache: Any,
+    source_reindex: Any,
+    start_source_reindex: Any,
 ) -> None:
     """Register /account/* and /admin/* endpoints.
 
@@ -368,6 +370,26 @@ def register_admin_routes(
             "deletedSessions": summary["deleted_sessions"],
             "ownersScanned": summary["owners_scanned"],
         }
+
+    # ------------------------------------------------------------------
+    # Source re-embedding (after an embedding model change)
+    # ------------------------------------------------------------------
+
+    @app.get("/admin/sources/reindex")
+    async def get_source_reindex(request: Request) -> dict:
+        require_role(request, "admin")
+        return source_reindex.snapshot()
+
+    @app.post("/admin/sources/reindex", status_code=status.HTTP_202_ACCEPTED)
+    async def post_source_reindex(request: Request) -> dict:
+        require_role(request, "admin")
+        if not source_index_enabled():
+            raise HTTPException(status_code=400, detail="Indeks sumber dinonaktifkan.")
+        if not start_source_reindex():
+            raise HTTPException(status_code=409, detail="Indeks ulang sumber sedang berjalan.")
+        snapshot = source_reindex.snapshot()
+        audit(request, "sources.reindex", detail={"embeddingModel": snapshot["embeddingModel"]})
+        return snapshot
 
     # ------------------------------------------------------------------
     # Usage metering (user-facing summary + admin dashboard)

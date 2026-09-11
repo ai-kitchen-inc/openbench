@@ -393,6 +393,65 @@ def index_source_record(record: SourceRecord, *, stored_file: Any = None) -> Sou
     return record
 
 
+def reindex_source_record(record: SourceRecord) -> SourceRecord:
+    """Re-embed a stored source's text with the active embedding model.
+
+    Used after the admin switches embedding models: vectors made by the
+    previous model no longer match new query vectors. The source's chunks
+    are deleted first because :meth:`DocumentIndexStore.index_text` skips
+    chunks whose content hash is unchanged — with identical text that
+    would re-embed nothing. Text only: Parquet tables need the original
+    upload, which is gone after the turn, and they hold no embeddings, so
+    ``metadata["tables"]`` is left as is.
+
+    Mutates and returns ``record``; never raises. The outcome lands on
+    ``metadata["indexStatus"]`` exactly like :func:`index_source_record`.
+    """
+    metadata = dict(record.metadata or {})
+    if not source_index_enabled() or record.status != "ready":
+        metadata["indexStatus"] = "skipped"
+        record.metadata = metadata
+        return record
+
+    index = get_document_index()
+    if index is None:
+        metadata["indexStatus"] = "skipped"
+        record.metadata = metadata
+        return record
+
+    from datetime import datetime, timezone
+
+    try:
+        index.delete_source(record.id)
+        summary = _index_text(record)
+    except Exception as exc:
+        logger.warning("Re-indexing failed for source %s", record.id, exc_info=True)
+        metadata["indexStatus"] = "failed"
+        metadata["indexError"] = str(exc)
+        record.metadata = metadata
+        return record
+
+    if summary is None:
+        # Too short to index. A source that only carried tables stays ready.
+        metadata.pop("chunkCount", None)
+        if not metadata.get("tables"):
+            metadata["indexStatus"] = "skipped"
+        record.metadata = metadata
+        return record
+
+    metadata["indexStatus"] = "ready"
+    metadata.pop("indexError", None)
+    metadata["indexedAt"] = datetime.now(timezone.utc).isoformat()
+    metadata["chunkCount"] = summary["chunk_count"]
+    metadata["outline"] = (summary.get("outline") or [])[:40]
+    try:
+        metadata["summary"] = index.summarize_source(record.id)
+    except Exception:
+        metadata["summary"] = ""
+    record.metadata = metadata
+    return record
+
+
 def deindex_source(source_id: str, *, owner: str = "", session_id: str = "") -> None:
     """Delete every derived artifact belonging to a source.
 
@@ -453,6 +512,7 @@ __all__ = [
     "get_document_index",
     "get_table_catalog",
     "index_source_record",
+    "reindex_source_record",
     "reset_caches",
     "source_index_enabled",
     "table_parquet_enabled",
