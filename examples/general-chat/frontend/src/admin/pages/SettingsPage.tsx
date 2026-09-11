@@ -3,18 +3,35 @@ import {
   getModelCatalog,
   getPrivacySettings,
   getRuntimeSettings,
+  getSourceReindexStatus,
   putModelCatalog,
   putPrivacySettings,
   putRuntimeSettings,
   readErrorMessage,
   runPrivacySweep,
+  startSourceReindex,
   type ModelCatalogState,
   type PrivacySettings,
   type RuntimeSettingsState,
+  type SourceReindexState,
 } from "../../account/api";
 import { XIcon } from "../../brand/icons";
 import { useToast } from "../../Toast";
 import { COMMON } from "../../i18n/id";
+
+const REINDEX_POLL_MS = 2000;
+const REINDEX_DEFAULT_DESC =
+  "Bangun ulang vektor sumber bersama, grup, dan agen dengan model embedding aktif.";
+const REINDEX_CONFIRM =
+  "Indeks ulang semua sumber bersama, grup, dan agen dengan model embedding aktif? " +
+  "Proses ini memanggil API embedding untuk setiap potongan teks.";
+
+function reindexStatusText(state: SourceReindexState | null): string {
+  if (!state || state.status === "idle") return "";
+  if (state.status === "running") return `Memproses ${state.done}/${state.total} sumber...`;
+  if (state.status === "failed") return `Gagal: ${state.error || "alasan tidak diketahui"}`;
+  return `Selesai: ${state.ready} siap, ${state.skipped} dilewati, ${state.failed} gagal.`;
+}
 
 type FieldDefinition = {
   id: string;
@@ -94,19 +111,24 @@ export function SettingsPage() {
   const [loadError, setLoadError] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
   const [isSweeping, setIsSweeping] = useState(false);
+  const [embeddingWarning, setEmbeddingWarning] = useState("");
+  const [reindex, setReindex] = useState<SourceReindexState | null>(null);
+  const [isStartingReindex, setIsStartingReindex] = useState(false);
 
   const load = useCallback(async () => {
     setIsLoading(true);
     setLoadError("");
     try {
-      const [runtime, modelCatalog, privacySettings] = await Promise.all([
+      const [runtime, modelCatalog, privacySettings, reindexState] = await Promise.all([
         getRuntimeSettings(),
         getModelCatalog(),
         getPrivacySettings(),
+        getSourceReindexStatus(),
       ]);
       setState(runtime);
       setCatalog(modelCatalog);
       setPrivacy(privacySettings);
+      setReindex(reindexState);
       setRetentionDraft(String(privacySettings.retentionDays));
     } catch (error) {
       setLoadError(readErrorMessage(error));
@@ -128,6 +150,7 @@ export function SettingsPage() {
         showToast(`${field.label} disimpan: ${next}.`, "success");
         if (resolved.embedding?.warning) {
           showToast(resolved.embedding.warning, "info", 9000);
+          setEmbeddingWarning(resolved.embedding.warning);
         }
       } catch (error) {
         showToast(`Gagal menyimpan ${field.label}: ${readErrorMessage(error)}`, "error");
@@ -213,6 +236,41 @@ export function SettingsPage() {
     }
   }, [showToast]);
 
+  const handleReindex = useCallback(async () => {
+    if (!window.confirm(REINDEX_CONFIRM)) return;
+    setIsStartingReindex(true);
+    try {
+      setReindex(await startSourceReindex());
+      showToast("Indeks ulang sumber dimulai.", "info");
+    } catch (error) {
+      showToast(`Gagal memulai indeks ulang: ${readErrorMessage(error)}`, "error");
+    } finally {
+      setIsStartingReindex(false);
+    }
+  }, [showToast]);
+
+  // Poll while a reindex runs; every response is a new object, so the
+  // effect re-arms itself until the job leaves "running".
+  useEffect(() => {
+    if (reindex?.status !== "running") return;
+    const timer = window.setTimeout(async () => {
+      try {
+        const next = await getSourceReindexStatus();
+        setReindex(next);
+        if (next.status === "done") {
+          setEmbeddingWarning("");
+          showToast(`Indeks ulang selesai: ${next.ready} siap, ${next.failed} gagal.`, "success");
+        } else if (next.status === "failed") {
+          showToast(`Indeks ulang gagal: ${next.error}`, "error");
+        }
+      } catch {
+        // Transient poll failure: keep polling without a toast storm.
+        setReindex((current) => (current ? { ...current } : current));
+      }
+    }, REINDEX_POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [reindex, showToast]);
+
   if (isLoading) {
     return <div className="sources-list__empty">{COMMON.loading}</div>;
   }
@@ -227,6 +285,9 @@ export function SettingsPage() {
       </div>
     );
   }
+
+  const isReindexBusy = isStartingReindex || reindex?.status === "running";
+  const reindexStatus = reindexStatusText(reindex);
 
   return (
     <>
@@ -257,6 +318,21 @@ export function SettingsPage() {
                 onChange={(next) => void handleChange(field, next)}
               />
             ))}
+            <div className="cap-row settings-model-row">
+              <div className="cap-row__main">
+                <div className="cap-row__label">Indeks ulang sumber</div>
+                <div className="cap-row__desc">{embeddingWarning || REINDEX_DEFAULT_DESC}</div>
+                {reindexStatus ? <div className="cap-row__desc">{reindexStatus}</div> : null}
+              </div>
+              <button
+                type="button"
+                className="panel-button"
+                disabled={isReindexBusy || savingId !== null}
+                onClick={() => void handleReindex()}
+              >
+                {isReindexBusy ? "Mengindeks..." : "Indeks ulang sumber"}
+              </button>
+            </div>
           </div>
         </div>
       </section>

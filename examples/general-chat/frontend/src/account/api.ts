@@ -697,6 +697,31 @@ export async function runPrivacySweep(): Promise<PrivacySweepResult> {
   return parseJsonResponse<PrivacySweepResult>(response);
 }
 
+// ── /admin/sources/reindex ──
+
+export type SourceReindexState = {
+  status: "idle" | "running" | "done" | "failed";
+  total: number;
+  done: number;
+  ready: number;
+  failed: number;
+  skipped: number;
+  startedAt: string;
+  finishedAt: string;
+  error: string;
+  embeddingModel: string;
+};
+
+export async function getSourceReindexStatus(): Promise<SourceReindexState> {
+  const response = await apiFetch(apiPath("/admin/sources/reindex"));
+  return parseJsonResponse<SourceReindexState>(response);
+}
+
+export async function startSourceReindex(): Promise<SourceReindexState> {
+  const response = await apiFetch(apiPath("/admin/sources/reindex"), { method: "POST" });
+  return parseJsonResponse<SourceReindexState>(response);
+}
+
 // ── /admin/persona ──
 
 export type PersonaSettings = {
