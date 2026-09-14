@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "../Toast";
 import {
+  createCustomSkillPackage,
   createCustomSkillFromPrompt,
   deleteCustomSkill,
   listCustomSkills,
@@ -23,6 +24,50 @@ function toolingSummary(skill: CustomSkill): string {
   if (created > 0) parts.push(`${created} fungsi dibuat`);
   if (missing > 0) parts.push(`${missing} belum tersedia`);
   return parts.join(" | ");
+}
+
+function resourceSummary(skill: CustomSkill): string {
+  const resources = skill.resources;
+  if (!resources) return "Tanpa resource tambahan";
+  const parts = [
+    ["references", "reference"],
+    ["assets", "asset"],
+    ["examples", "example"],
+    ["scripts", "script"],
+  ] as const;
+  const counts = parts
+    .map(([key, label]) => {
+      const count = resources[key]?.length ?? 0;
+      return count > 0 ? `${count} ${label}` : "";
+    })
+    .filter(Boolean);
+  return counts.length > 0 ? counts.join(" | ") : "Tanpa resource tambahan";
+}
+
+function selectedFileSummary(files: File[]): string {
+  if (files.length === 0) return "Belum ada file dipilih";
+  return files.map((file) => `${file.name} (${Math.ceil(file.size / 1024)} KB)`).join(", ");
+}
+
+function fileExtension(file: File): string {
+  const extension = file.name.split(".").pop()?.trim();
+  return extension ? extension.slice(0, 4).toUpperCase() : "FILE";
+}
+
+function fileKey(file: File): string {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function mergeFiles(current: File[], incoming: File[]): File[] {
+  const seen = new Set(current.map(fileKey));
+  const merged = [...current];
+  for (const file of incoming) {
+    const key = fileKey(file);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(file);
+  }
+  return merged;
 }
 
 function markdownForSkill(skill: CustomSkill): string {
@@ -56,8 +101,11 @@ export function CustomSkillsPanel() {
   const [savingMarkdown, setSavingMarkdown] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
+  const [resourceFiles, setResourceFiles] = useState<File[]>([]);
+  const [isDraggingResource, setIsDraggingResource] = useState(false);
   const [editingSkill, setEditingSkill] = useState<CustomSkill | null>(null);
   const [markdownDraft, setMarkdownDraft] = useState("");
+  const resourceInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,6 +124,7 @@ export function CustomSkillsPanel() {
 
   function resetPrompt() {
     setPrompt("");
+    setResourceFiles([]);
     setFormError(null);
   }
 
@@ -91,13 +140,26 @@ export function CustomSkillsPanel() {
     setFormError(null);
   }
 
+  function addResourceFiles(files: FileList | File[]) {
+    setResourceFiles((current) => mergeFiles(current, Array.from(files)));
+  }
+
+  function removeResourceFile(target: File) {
+    const targetKey = fileKey(target);
+    setResourceFiles((current) => current.filter((file) => fileKey(file) !== targetKey));
+  }
+
   async function handleCreateFromPrompt() {
     setSavingPrompt(true);
     setFormError(null);
     try {
-      const saved = await createCustomSkillFromPrompt(prompt.trim());
+      const saved =
+        resourceFiles.length > 0
+          ? await createCustomSkillPackage(prompt.trim(), resourceFiles)
+          : await createCustomSkillFromPrompt(prompt.trim());
       toast.show(`Skill "${saved.name}" dibuat dan agent dimuat ulang`, "success");
       setPrompt("");
+      setResourceFiles([]);
       await load();
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Gagal membuat skill");
@@ -142,8 +204,9 @@ export function CustomSkillsPanel() {
             <h3>Buat skill dari prompt</h3>
             <p>
               Tulis kebutuhan skill dalam bahasa natural. Sistem akan menyusun ID unik, nama,
-              deskripsi, trigger, instruksi, dependency tool opsional, dan versi dalam format
-              SKILL.md. Script baru dibuat lewat Fungsi Kustom saat memang diperlukan.
+              deskripsi, trigger, instruksi, dependency tool opsional, references, assets,
+              examples, dan versi dalam paket Agent Skill. Script baru dibuat lewat Fungsi
+              Kustom saat memang diperlukan.
             </p>
           </div>
           <div className="mcp-section__actions">
@@ -162,6 +225,85 @@ export function CustomSkillsPanel() {
             onChange={(event) => setPrompt(event.target.value)}
           />
         </label>
+
+        <div className="custom-skills__upload">
+          <input
+            aria-label="Upload SOP, knowledge, contoh, atau template"
+            className="custom-skills__file-input"
+            ref={resourceInputRef}
+            type="file"
+            multiple
+            onChange={(event) => addResourceFiles(event.target.files ?? [])}
+          />
+          <div className="custom-skills__upload-shell">
+            <button
+              type="button"
+              className={`custom-skills__dropzone${isDraggingResource ? " custom-skills__dropzone--active" : ""}`}
+              onClick={() => resourceInputRef.current?.click()}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setIsDraggingResource(true);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setIsDraggingResource(true);
+              }}
+              onDragLeave={() => setIsDraggingResource(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setIsDraggingResource(false);
+                addResourceFiles(event.dataTransfer.files);
+              }}
+            >
+              <svg
+                className="custom-skills__drop-icon"
+                viewBox="0 0 48 48"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M24 30V8" />
+                <path d="M15 17l9-9 9 9" />
+                <path d="M15 24h-3a5 5 0 0 0-5 5v8a5 5 0 0 0 5 5h24a5 5 0 0 0 5-5v-8a5 5 0 0 0-5-5h-3" />
+              </svg>
+              <strong>Drag and drop file here</strong>
+              <span className="custom-skills__drop-separator">-OR-</span>
+              <span className="custom-skills__browse-button">Browse Files</span>
+              <small>{selectedFileSummary(resourceFiles)}</small>
+            </button>
+            <section className="custom-skills__upload-list" aria-label="File resource terpilih">
+              <div className="custom-skills__upload-list-header">
+                <strong>Upload Files</strong>
+                <span>{resourceFiles.length} file</span>
+              </div>
+              {resourceFiles.length > 0 ? (
+                <ul className="custom-skills__file-list">
+                  {resourceFiles.map((file) => (
+                    <li key={fileKey(file)}>
+                      <span className="custom-skills__file-badge">{fileExtension(file)}</span>
+                      <span className="custom-skills__file-main">
+                        <span className="custom-skills__file-name">{file.name}</span>
+                        <span className="custom-skills__file-bar" aria-hidden="true">
+                          <span />
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="custom-skills__file-remove"
+                        onClick={() => removeResourceFile(file)}
+                      >
+                        Hapus
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="custom-skills__upload-empty">
+                  File SOP, reference, contoh, atau template akan tampil di sini.
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
 
         {formError && !editingSkill && (
           <div className="mcp-state mcp-state--error" role="alert">
@@ -249,7 +391,8 @@ export function CustomSkillsPanel() {
                 <strong>{skill.name}</strong>
                 <span>
                   {skill.description || "Tanpa deskripsi"} | ID: {skill.id} |{" "}
-                  {skill.context_chars} karakter konteks | {toolingSummary(skill)}
+                  {skill.context_chars} karakter konteks | {toolingSummary(skill)} |{" "}
+                  {resourceSummary(skill)}
                 </span>
                 {(skill.tooling?.required?.length ?? 0) > 0 && (
                   <div className="custom-skills__tooling">
@@ -260,6 +403,18 @@ export function CustomSkillsPanel() {
                           : `${tool.label}: belum tersedia`}
                       </code>
                     ))}
+                  </div>
+                )}
+                {skill.resources && (
+                  <div className="custom-skills__resources">
+                    {skill.template_tool && <code>tool: {skill.template_tool}</code>}
+                    {(["references", "assets", "examples", "scripts"] as const).flatMap((bucket) =>
+                      (skill.resources?.[bucket] ?? []).map((resource) => (
+                        <code key={`${bucket}-${resource.path ?? resource.filename}`}>
+                          {bucket}: {resource.path ?? resource.filename}
+                        </code>
+                      )),
+                    )}
                   </div>
                 )}
               </div>

@@ -18,16 +18,38 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import tempfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree as ET
 
 from openbench.intelligence.skill import Skill
 
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){0,2}(?:[-+][a-zA-Z0-9.-]+)?$")
 MAX_TEXT_BYTES = 64 * 1024
+MAX_RESOURCE_FILE_BYTES = 10 * 1024 * 1024
+TEXT_RESOURCE_EXTENSIONS = {".md", ".txt", ".csv", ".json", ".yaml", ".yml"}
+BINARY_ASSET_EXTENSIONS = {
+    ".doc",
+    ".docx",
+    ".pdf",
+    ".ppt",
+    ".pptx",
+    ".xls",
+    ".xlsx",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".svg",
+    ".zip",
+}
+SPREADSHEET_TEMPLATE_EXTENSIONS = {".xlsx", ".xlsm"}
+DOCUMENT_TEMPLATE_EXTENSIONS = {".docx", ".pptx", ".pdf", ".txt", ".md"}
 TITLE_STOPWORDS = {
     "agar",
     "akan",
@@ -421,6 +443,14 @@ class CustomSkillError(ValueError):
     """Validation error surfaced to the UI as HTTP 400."""
 
 
+def _empty_tooling() -> dict[str, Any]:
+    return {"required": [], "created_functions": [], "reused_tools": []}
+
+
+def _empty_resources() -> dict[str, Any]:
+    return {"references": [], "assets": [], "examples": [], "scripts": []}
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -435,6 +465,591 @@ def _clean_multiline(value: Any) -> str:
     if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
         raise CustomSkillError(f"text exceeds {MAX_TEXT_BYTES // 1024}KB limit")
     return text
+
+
+def _safe_filename(value: str, *, fallback: str = "resource") -> str:
+    raw = Path(str(value or "")).name.strip()
+    stem = Path(raw).stem if raw else fallback
+    suffix = Path(raw).suffix.lower()
+    cleaned_stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-._")
+    if not cleaned_stem:
+        cleaned_stem = fallback
+    return f"{cleaned_stem[:80]}{suffix[:16]}"
+
+
+def _unique_child_path(directory: Path, filename: str) -> Path:
+    filename = _safe_filename(filename)
+    candidate = directory / filename
+    if not candidate.exists():
+        return candidate
+    stem = candidate.stem
+    suffix = candidate.suffix
+    counter = 2
+    while True:
+        next_candidate = directory / f"{stem[:70]}-{counter}{suffix}"
+        if not next_candidate.exists():
+            return next_candidate
+        counter += 1
+
+
+def _resource_bucket(filename: str, hint: str = "") -> str:
+    hint_text = _normalized_haystack(hint)
+    suffix = Path(filename).suffix.lower()
+    if suffix in {".py", ".js", ".ts", ".sh", ".ps1"}:
+        return "scripts"
+    if suffix in BINARY_ASSET_EXTENSIONS:
+        return "assets"
+    if suffix in TEXT_RESOURCE_EXTENSIONS:
+        return "references"
+    if any(
+        term in hint_text
+        for term in ("example", "contoh input", "contoh output", "sample")
+    ):
+        return "examples"
+    if any(term in hint_text for term in ("asset", "template", "aset")):
+        return "assets"
+    if any(
+        term in hint_text
+        for term in ("reference", "referensi", "sop", "knowledge", "aturan")
+    ):
+        return "references"
+    return "assets"
+
+
+def _summarize_uploaded_resource(filename: str, content: bytes, hint: str = "") -> dict[str, Any]:
+    safe_name = _safe_filename(filename)
+    suffix = Path(safe_name).suffix.lower()
+    bucket = _resource_bucket(safe_name, hint)
+    size = len(content)
+    text_preview = ""
+    if suffix in TEXT_RESOURCE_EXTENSIONS or bucket == "references":
+        try:
+            text_preview = content[:12000].decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                text_preview = content[:12000].decode("latin-1")
+            except UnicodeDecodeError:
+                text_preview = ""
+    return {
+        "source_name": safe_name,
+        "filename": safe_name,
+        "kind": bucket[:-1] if bucket.endswith("s") else bucket,
+        "bucket": bucket,
+        "size_bytes": size,
+        "hint": _clean_single_line(hint, max_len=160),
+        "text_preview": text_preview.strip(),
+    }
+
+
+def _prompt_resource_plan(prompt: str) -> dict[str, Any]:
+    haystack = _normalized_haystack(prompt)
+    resources = _empty_resources()
+    if any(
+        term in haystack
+        for term in ("sop", "aturan", "policy", "kebijakan", "knowledge")
+    ):
+        resources["references"].append(
+            {
+                "filename": "prompt-rules.md",
+                "description": "Aturan dan knowledge yang diekstrak dari prompt admin.",
+                "generated": True,
+                "content": (
+                    "# Prompt Rules\n\n"
+                    "Gunakan poin berikut sebagai referensi domain saat skill aktif:\n\n"
+                    + "\n".join(f"- {line}" for line in _prompt_detail_lines(prompt))
+                    + "\n"
+                ),
+            }
+        )
+    if any(
+        term in haystack
+        for term in ("template", "format laporan", "format output", "bab 1", "bab i")
+    ):
+        resources["references"].append(
+            {
+                "filename": "output-template.md",
+                "description": "Template output yang dijelaskan langsung di prompt admin.",
+                "generated": True,
+                "content": (
+                    "# Output Template\n\n"
+                    "Ikuti struktur/template berikut saat user meminta output final:\n\n"
+                    + "\n".join(f"- {line}" for line in _prompt_detail_lines(prompt))
+                    + "\n"
+                ),
+            }
+        )
+    return resources
+
+
+def _spreadsheet_template_reference(upload: dict[str, Any], filename: str) -> dict[str, Any] | None:
+    suffix = Path(filename).suffix.lower()
+    if suffix not in SPREADSHEET_TEMPLATE_EXTENSIONS:
+        return None
+    source_path = upload.get("source_path")
+    if not source_path:
+        return None
+    path = Path(str(source_path))
+    if not path.is_file():
+        return None
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return None
+
+    try:
+        workbook = load_workbook(path, read_only=True, data_only=True)
+    except Exception:
+        return None
+
+    lines = [
+        f"# Excel Template Schema: {filename}",
+        "",
+        f"Asset file: `assets/{filename}`.",
+        "",
+        "When creating an Excel output for this skill, follow this template schema exactly.",
+        "Use the same sheet intent, column names, and column order unless the user explicitly asks otherwise.",
+        "",
+    ]
+    try:
+        for sheet_name in workbook.sheetnames[:5]:
+            worksheet = workbook[sheet_name]
+            rows = list(worksheet.iter_rows(min_row=1, max_row=6, values_only=True))
+            non_empty_rows = [
+                [cell for cell in row]
+                for row in rows
+                if any(cell not in (None, "") for cell in row)
+            ]
+            if not non_empty_rows:
+                continue
+            header_row = non_empty_rows[0]
+            headers = [
+                str(cell).strip()
+                for cell in header_row
+                if cell not in (None, "") and str(cell).strip()
+            ]
+            lines.extend([f"## Sheet: {sheet_name}", ""])
+            if headers:
+                lines.append("Columns, in order:")
+                lines.extend(f"{index}. {header}" for index, header in enumerate(headers, start=1))
+                lines.append("")
+            sample_rows = non_empty_rows[1:3]
+            if sample_rows:
+                lines.append("Sample rows from the template:")
+                for row in sample_rows:
+                    values = [str(cell).strip() for cell in row[: len(headers)]]
+                    lines.append("- " + " | ".join(values))
+                lines.append("")
+    finally:
+        workbook.close()
+
+    if len(lines) <= 7:
+        return None
+    return {
+        "filename": f"excel-template-{Path(filename).stem}.md",
+        "description": f"Extracted Excel template schema for {filename}.",
+        "generated": True,
+        "content": "\n".join(lines).strip() + "\n",
+    }
+
+
+def _xml_text(element: ET.Element) -> str:
+    return "".join(element.itertext()).strip()
+
+
+def _docx_template_reference(path: Path, filename: str) -> dict[str, Any] | None:
+    try:
+        with zipfile.ZipFile(path, "r") as archive:
+            document_xml = archive.read("word/document.xml")
+    except Exception:
+        return None
+
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    try:
+        root = ET.fromstring(document_xml)
+    except ET.ParseError:
+        return None
+
+    lines = [
+        f"# Document Template Map: {filename}",
+        "",
+        f"Asset file: `assets/{filename}`.",
+        "",
+        "Use this map to decide which `fields` or `records` to send to the template asset tool.",
+        "The final output must still be produced from the original asset file, not rebuilt from this map.",
+        "",
+    ]
+
+    content_controls: list[str] = []
+    for sdt in root.findall(".//w:sdt", ns)[:40]:
+        props = sdt.find("w:sdtPr", ns)
+        if props is None:
+            continue
+        alias = props.find("w:alias", ns)
+        tag = props.find("w:tag", ns)
+        alias_value = alias.get(f"{{{ns['w']}}}val") if alias is not None else ""
+        tag_value = tag.get(f"{{{ns['w']}}}val") if tag is not None else ""
+        label = alias_value or tag_value
+        if label:
+            content_controls.append(label)
+
+    if content_controls:
+        lines.extend(["## Content Controls", ""])
+        lines.extend(f"- `{label}`" for label in content_controls)
+        lines.append("")
+
+    form_labels: list[str] = []
+    for table_index, table in enumerate(root.findall(".//w:tbl", ns)[:20], start=1):
+        rows = table.findall("w:tr", ns)
+        table_rows: list[list[str]] = []
+        for row in rows[:30]:
+            cells = [
+                _xml_text(cell)
+                for cell in row.findall("w:tc", ns)
+            ]
+            if any(cells):
+                table_rows.append(cells)
+                for cell_index, cell_text in enumerate(cells):
+                    cleaned = re.sub(r"[:：._-]+$", "", cell_text).strip()
+                    next_cells_empty = all(not value.strip() for value in cells[cell_index + 1:])
+                    if cleaned and (next_cells_empty or re.search(r"[:：]\\s*$|[_\\. ]{3,}", cell_text)):
+                        form_labels.append(cleaned)
+        if not table_rows:
+            continue
+        lines.extend([f"## Table {table_index}", ""])
+        for row in table_rows[:12]:
+            lines.append("- " + " | ".join(value or "[empty]" for value in row[:8]))
+        lines.append("")
+
+    paragraphs = []
+    for paragraph in root.findall(".//w:p", ns):
+        text = _xml_text(paragraph)
+        if text and len(text) <= 180:
+            paragraphs.append(text)
+        if len(paragraphs) >= 30:
+            break
+    if paragraphs:
+        lines.extend(["## Visible Text", ""])
+        lines.extend(f"- {text}" for text in paragraphs[:30])
+        lines.append("")
+        for text in paragraphs:
+            cleaned = re.sub(r"[:：._-]+$", "", text).strip()
+            if cleaned and re.search(r"[:：]\\s*$|[_\\. ]{3,}", text):
+                form_labels.append(cleaned)
+
+    unique_labels = []
+    seen: set[str] = set()
+    for label in content_controls + form_labels:
+        normalized = _normalized_haystack(label)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_labels.append(label)
+    if unique_labels:
+        lines.extend(["## Suggested Field Keys", ""])
+        lines.append("Send these as `fields` keys when calling the template tool:")
+        lines.extend(f"- `{label}`" for label in unique_labels[:40])
+        lines.append("")
+
+    if len(lines) <= 7:
+        return None
+    return {
+        "filename": f"document-template-{Path(filename).stem}.md",
+        "description": f"Extracted document template map for {filename}.",
+        "generated": True,
+        "content": "\n".join(lines).strip() + "\n",
+    }
+
+
+def _pptx_template_reference(path: Path, filename: str) -> dict[str, Any] | None:
+    try:
+        with zipfile.ZipFile(path, "r") as archive:
+            slide_names = sorted(
+                name for name in archive.namelist()
+                if re.match(r"ppt/slides/slide\\d+\\.xml$", name)
+            )
+            slide_xml = [(name, archive.read(name)) for name in slide_names[:20]]
+    except Exception:
+        return None
+    if not slide_xml:
+        return None
+
+    ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+    lines = [
+        f"# Presentation Template Map: {filename}",
+        "",
+        f"Asset file: `assets/{filename}`.",
+        "",
+        "Use this map to choose `fields` values for the template asset tool.",
+        "The final output must still be produced from the original PPTX asset.",
+        "",
+    ]
+    for index, (_, data) in enumerate(slide_xml, start=1):
+        try:
+            root = ET.fromstring(data)
+        except ET.ParseError:
+            continue
+        texts = [
+            _xml_text(node)
+            for node in root.findall(".//a:t", ns)
+            if _xml_text(node)
+        ]
+        if not texts:
+            continue
+        lines.extend([f"## Slide {index}", ""])
+        lines.extend(f"- {text}" for text in texts[:30])
+        placeholders = re.findall(r"\\{\\{\\s*([^{}]+?)\\s*\\}\\}", "\n".join(texts))
+        if placeholders:
+            lines.append("")
+            lines.append("Suggested field keys:")
+            lines.extend(f"- `{placeholder.strip()}`" for placeholder in placeholders[:20])
+        lines.append("")
+
+    if len(lines) <= 7:
+        return None
+    return {
+        "filename": f"presentation-template-{Path(filename).stem}.md",
+        "description": f"Extracted presentation template map for {filename}.",
+        "generated": True,
+        "content": "\n".join(lines).strip() + "\n",
+    }
+
+
+def _pdf_template_reference(path: Path, filename: str) -> dict[str, Any] | None:
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return None
+    try:
+        reader = PdfReader(str(path))
+    except Exception:
+        return None
+    lines = [
+        f"# PDF Template Map: {filename}",
+        "",
+        f"Asset file: `assets/{filename}`.",
+        "",
+        "Use this map to choose `fields` values for the template asset tool.",
+        "PDF filling is supported for fillable AcroForm fields. Flat/scanned PDFs need manual field mapping before they can be filled precisely.",
+        "",
+    ]
+    fields = reader.get_fields() or {}
+    if fields:
+        lines.extend(["## Fillable Form Fields", ""])
+        lines.extend(f"- `{name}`" for name in fields.keys())
+        lines.append("")
+    visible_text: list[str] = []
+    for page in reader.pages[:3]:
+        with contextlib.suppress(Exception):
+            text = (page.extract_text() or "").strip()
+            if text:
+                visible_text.extend(line.strip() for line in text.splitlines() if line.strip())
+    if visible_text:
+        lines.extend(["## Visible Text Preview", ""])
+        lines.extend(f"- {line}" for line in visible_text[:40])
+        lines.append("")
+    if len(lines) <= 7:
+        return None
+    return {
+        "filename": f"pdf-template-{Path(filename).stem}.md",
+        "description": f"Extracted PDF template map for {filename}.",
+        "generated": True,
+        "content": "\n".join(lines).strip() + "\n",
+    }
+
+
+def _document_template_reference(upload: dict[str, Any], filename: str) -> dict[str, Any] | None:
+    suffix = Path(filename).suffix.lower()
+    if suffix not in DOCUMENT_TEMPLATE_EXTENSIONS:
+        return None
+    source_path = upload.get("source_path")
+    if not source_path:
+        return None
+    path = Path(str(source_path))
+    if not path.is_file():
+        return None
+    if suffix == ".docx":
+        return _docx_template_reference(path, filename)
+    if suffix == ".pptx":
+        return _pptx_template_reference(path, filename)
+    if suffix == ".pdf":
+        return _pdf_template_reference(path, filename)
+    if suffix in {".txt", ".md"}:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return None
+        placeholders = re.findall(r"\\{\\{\\s*([^{}]+?)\\s*\\}\\}", text)
+        if not placeholders:
+            return None
+        lines = [
+            f"# Text Template Map: {filename}",
+            "",
+            f"Asset file: `assets/{filename}`.",
+            "",
+            "Suggested field keys:",
+            *[f"- `{placeholder.strip()}`" for placeholder in placeholders[:60]],
+            "",
+        ]
+        return {
+            "filename": f"text-template-{Path(filename).stem}.md",
+            "description": f"Extracted text template map for {filename}.",
+            "generated": True,
+            "content": "\n".join(lines),
+        }
+    return None
+
+
+def _resources_from_uploads(uploads: list[dict[str, Any]] | None) -> dict[str, Any]:
+    resources = _empty_resources()
+    for upload in uploads or []:
+        if not isinstance(upload, dict):
+            continue
+        filename = _safe_filename(
+            str(upload.get("filename") or upload.get("source_name") or "resource")
+        )
+        bucket = str(
+            upload.get("bucket") or _resource_bucket(filename, str(upload.get("hint") or ""))
+        )
+        if bucket not in resources:
+            bucket = "assets"
+        item = {
+            "filename": filename,
+            "description": _clean_single_line(
+                upload.get("description")
+                or upload.get("hint")
+                or f"Resource uploaded as {filename}.",
+                max_len=220,
+            ),
+            "source_name": str(upload.get("source_name") or filename),
+            "size_bytes": int(upload.get("size_bytes") or 0),
+            "generated": False,
+        }
+        if upload.get("source_path"):
+            item["source_path"] = str(upload.get("source_path"))
+        text_preview = str(upload.get("text_preview") or "").strip()
+        if bucket == "references" and text_preview:
+            item["content"] = (
+                f"# {Path(filename).stem.replace('-', ' ').title()}\n\n"
+                f"Source upload: `{filename}`.\n\n"
+                f"{text_preview}\n"
+            )
+            if Path(filename).suffix.lower() != ".md":
+                item["filename"] = f"{Path(filename).stem}.md"
+        resources[bucket].append(item)
+        template_reference = _spreadsheet_template_reference(upload, filename)
+        if template_reference is not None:
+            resources["references"].append(template_reference)
+        document_reference = _document_template_reference(upload, filename)
+        if document_reference is not None:
+            resources["references"].append(document_reference)
+    return resources
+
+
+def _merge_resources(*plans: dict[str, Any] | None) -> dict[str, Any]:
+    merged = _empty_resources()
+    seen: set[tuple[str, str]] = set()
+    for plan in plans:
+        if not isinstance(plan, dict):
+            continue
+        for bucket in merged:
+            for item in plan.get(bucket) or []:
+                if not isinstance(item, dict):
+                    continue
+                filename = _safe_filename(str(item.get("filename") or "resource"))
+                key = (bucket, filename)
+                if key in seen:
+                    continue
+                seen.add(key)
+                copy = dict(item)
+                copy["filename"] = filename
+                merged[bucket].append(copy)
+    return merged
+
+
+def _resource_section(resources: dict[str, Any] | None) -> str:
+    resources = resources or _empty_resources()
+    lines: list[str] = []
+    for title, bucket, guidance in (
+        (
+            "References",
+            "references",
+            "Read these files only when the task needs the detailed SOP, rules, examples, or template.",
+        ),
+        (
+            "Assets",
+            "assets",
+            "Use these static files as templates or supporting resources when producing artifacts. "
+            "If a matching Excel template schema reference exists, mirror its columns exactly.",
+        ),
+        (
+            "Examples",
+            "examples",
+            "Use these examples to match input/output shape and quality expectations.",
+        ),
+        (
+            "Scripts",
+            "scripts",
+            "Run these scripts only when deterministic execution is required and the runtime supports it.",
+        ),
+    ):
+        items = list(resources.get(bucket) or [])
+        if not items:
+            continue
+        if not lines:
+            lines.extend(["## Resources", ""])
+        lines.extend([f"### {title}", "", guidance, ""])
+        for item in items:
+            filename = _safe_filename(str(item.get("filename") or "resource"))
+            description = _clean_single_line(item.get("description") or "", max_len=220)
+            lines.append(f"- `{bucket}/{filename}`" + (f" - {description}" if description else ""))
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _template_tool_name(skill_id: str) -> str:
+    base = re.sub(r"[^a-z0-9_]+", "_", skill_id.lower()).strip("_")
+    if not base:
+        base = "custom_skill"
+    name = f"fill_{base[:42]}_template"
+    if not re.match(r"^[a-z_]", name):
+        name = f"fill_{name}"
+    return name[:64].rstrip("_")
+
+
+def _template_tool_section(tool_name: str | None, resources: dict[str, Any] | None) -> str:
+    if not tool_name:
+        return ""
+    assets = list((resources or {}).get("assets") or [])
+    if not assets:
+        return ""
+    lines = [
+        "## Template Asset Tool",
+        "",
+        (
+            f"Untuk output yang harus mengikuti template asset secara presisi, panggil "
+            f"`{tool_name}`. Jangan membuat ulang file dari nol jika template asset tersedia."
+        ),
+        "",
+        "Asset yang bisa dipakai:",
+    ]
+    for asset in assets:
+        path = str(asset.get("path") or f"assets/{_safe_filename(str(asset.get('filename') or 'template'))}")
+        lines.append(f"- `{path}`")
+    lines.extend(
+        [
+            "",
+            "Aturan:",
+            "0. Output harus memakai format yang sama dengan asset template: DOCX menghasilkan DOCX, PDF menghasilkan PDF, PPTX menghasilkan PPTX, XLSX menghasilkan XLSX.",
+            "1. Untuk Excel, tool akan menyalin workbook template asli dan mengisi data pada kolom/sheet template.",
+            "2. Untuk Word/PPT/TXT, kirim data lewat `fields` atau `records`; tool akan mengisi placeholder `{{nama_field}}` bila ada.",
+            "3. Untuk Word DOCX berbentuk tabel/form, tool juga akan mencocokkan label seperti Nama/Kelas/Fisika lalu mengisi cell kosong terdekat.",
+            "4. Untuk PDF, tool akan mencoba mengisi AcroForm field bila field tersedia.",
+            "5. Jika tool mengembalikan error, jelaskan error tersebut dan jangan mengklaim file selesai.",
+            "6. Jangan mengirim file output jika `filledFields`/`filledColumns` tidak ada atau bernilai 0.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _clean_triggers(value: Any) -> list[str]:
@@ -1084,6 +1699,8 @@ def _render_skill_md(
     instructions: str,
     version: str,
     tooling: dict[str, Any] | None = None,
+    resources: dict[str, Any] | None = None,
+    template_tool_name: str | None = None,
 ) -> str:
     trigger_block = "\n".join(f"- {trigger}" for trigger in triggers) or "- Use when relevant."
     tooling_block = ""
@@ -1129,10 +1746,621 @@ def _render_skill_md(
         f"{trigger_block}\n\n"
         "## Instructions\n\n"
         f"{instructions}\n\n"
+        f"{_resource_section(resources)}"
+        f"{_template_tool_section(template_tool_name, resources)}"
         f"{tooling_block}"
         "## Version\n\n"
         f"{version}\n"
     )
+
+
+def _write_resource_files(skill_dir: Path, resources: dict[str, Any] | None) -> dict[str, Any]:
+    resources = resources or _empty_resources()
+    persisted = _empty_resources()
+    for bucket, items in resources.items():
+        if bucket not in persisted:
+            continue
+        target_dir = skill_dir / bucket
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            filename = _safe_filename(str(item.get("filename") or "resource"))
+            if bucket == "references" and Path(filename).suffix.lower() != ".md":
+                filename = f"{Path(filename).stem}.md"
+            content = item.get("content")
+            source_path = item.get("source_path")
+            if content is None and not source_path:
+                continue
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_path = _unique_child_path(target_dir, filename)
+            if source_path:
+                src = Path(str(source_path))
+                if not src.is_file():
+                    continue
+                if src.stat().st_size > MAX_RESOURCE_FILE_BYTES:
+                    raise CustomSkillError(
+                        f"resource file exceeds {MAX_RESOURCE_FILE_BYTES // (1024 * 1024)}MB limit"
+                    )
+                shutil.copyfile(src, target_path)
+            else:
+                text = _clean_multiline(content)
+                target_path.write_text(text.strip() + "\n", encoding="utf-8")
+            persisted_item = {
+                key: value
+                for key, value in item.items()
+                if key not in {"content", "source_path", "text_preview"}
+            }
+            persisted_item["filename"] = target_path.name
+            persisted_item["path"] = f"{bucket}/{target_path.name}"
+            persisted_item["size_bytes"] = target_path.stat().st_size
+            persisted[bucket].append(persisted_item)
+    return persisted
+
+
+def _write_template_tools(
+    skill_dir: Path,
+    *,
+    skill_id: str,
+    resources: dict[str, Any],
+) -> str | None:
+    assets = list(resources.get("assets") or [])
+    if not assets:
+        tools_py = skill_dir / "tools.py"
+        if tools_py.is_file():
+            tools_py.unlink()
+        return None
+
+    tool_name = _template_tool_name(skill_id)
+    schema_name = f"{tool_name.upper()}_SCHEMA"
+    asset_paths = [
+        str(asset.get("path") or f"assets/{_safe_filename(str(asset.get('filename') or 'template'))}")
+        for asset in assets
+    ]
+    tools_code = f'''"""Template asset tools for the {skill_id} custom skill."""
+
+from __future__ import annotations
+
+import contextlib
+import copy
+import json
+import os
+import re
+import shutil
+import tempfile
+import uuid
+import zipfile
+from pathlib import Path
+from typing import Any
+from xml.sax.saxutils import escape
+
+_SKILL_DIR = Path(__file__).resolve().parent
+_ASSET_PATHS = {asset_paths!r}
+_OUTPUT_STORE = None
+_OUTPUT_URL_BASE = None
+
+
+def bind(output_store=None, output_url_base=None, **_: object) -> None:
+    global _OUTPUT_STORE, _OUTPUT_URL_BASE
+    _OUTPUT_STORE = output_store
+    _OUTPUT_URL_BASE = output_url_base
+
+
+def _error(message: str) -> dict[str, Any]:
+    return {{"error": message}}
+
+
+def _safe_name(filename: str, default_suffix: str, *, force_suffix: bool = False) -> str:
+    raw = Path(str(filename or "template-output")).name
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(raw).stem).strip("-._") or "template-output"
+    suffix = default_suffix if force_suffix else (Path(raw).suffix or default_suffix)
+    return f"{{stem[:72]}}-{{uuid.uuid4().hex[:8]}}{{suffix}}"
+
+
+def _mime_for(path: Path) -> str:
+    suffix = path.suffix.lower()
+    return {{
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".pdf": "application/pdf",
+        ".txt": "text/plain",
+        ".md": "text/markdown",
+    }}.get(suffix, "application/octet-stream")
+
+
+def _public_url(path: Path) -> str:
+    base = os.environ.get("OPENBENCH_EXPORT_URL_BASE", "").rstrip("/")
+    if not base:
+        return path.as_posix()
+    try:
+        from openbench.utils.download_tokens import sign_download_url
+        return sign_download_url(f"{{base}}/{{path.name}}")
+    except Exception:
+        return f"{{base}}/{{path.name}}"
+
+
+def _persist(path: Path) -> dict[str, Any]:
+    mime_type = _mime_for(path)
+    if _OUTPUT_STORE is not None:
+        content = path.read_bytes()
+        stored = _OUTPUT_STORE.store(path.name, content, mime_type)
+        if getattr(stored, "web_view_link", ""):
+            url = stored.web_view_link
+            external = True
+        elif _OUTPUT_URL_BASE:
+            url = f"{{_OUTPUT_URL_BASE.rstrip('/')}}/{{stored.id}}/{{stored.name}}"
+            external = False
+        else:
+            url = stored.path
+            external = False
+        item = {{
+            "name": stored.name,
+            "url": url,
+            "mimeType": stored.mime_type or mime_type,
+            "size": stored.size_bytes,
+        }}
+        if external:
+            item["external"] = True
+        return item
+
+    output_dir = Path(os.environ.get("OPENBENCH_EXPORT_DIR") or tempfile.gettempdir())
+    output_dir.mkdir(parents=True, exist_ok=True)
+    target = output_dir / path.name
+    if path.resolve() != target.resolve():
+        shutil.copyfile(path, target)
+    item = {{
+        "name": target.name,
+        "url": _public_url(target),
+        "mimeType": mime_type,
+        "size": target.stat().st_size,
+    }}
+    return item
+
+
+def _push_to_render_queue(item: dict[str, Any]) -> None:
+    try:
+        from openbench.chat.render_queue import push as _push
+    except Exception:
+        return
+    with contextlib.suppress(Exception):
+        _push(item)
+
+
+def _resolve_asset(asset_path: str | None) -> Path:
+    selected = str(asset_path or "").strip() or (_ASSET_PATHS[0] if _ASSET_PATHS else "")
+    if selected not in _ASSET_PATHS:
+        raise ValueError(f"unknown template asset: {{selected}}")
+    path = (_SKILL_DIR / selected).resolve()
+    assets_root = (_SKILL_DIR / "assets").resolve()
+    if not str(path).startswith(str(assets_root)) or not path.is_file():
+        raise ValueError(f"template asset not found: {{selected}}")
+    return path
+
+
+def _norm(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _lookup(record: dict[str, Any], header: str) -> Any:
+    if header in record:
+        return record[header]
+    normalized = _norm(header)
+    aliases = {{
+        "nama": ["nama", "namasiswa", "studentname"],
+        "namasiswa": ["nama", "namasiswa", "studentname"],
+        "nilai": ["nilai", "nilaiangka", "nilaidalamangka", "score"],
+        "nilaidalamangka": ["nilai", "nilaiangka", "nilaidalamangka", "score"],
+        "nilaidalamkata": ["nilaitulisan", "nilaidalamkata", "nilaidalam tulisan"],
+        "nilaidalamtulisan": ["nilaitulisan", "nilaidalamkata", "nilaidalamtulisan"],
+        "keterangan": ["keterangan", "kategori", "status"],
+        "kategori": ["keterangan", "kategori", "status"],
+    }}
+    candidates = [normalized] + aliases.get(normalized, [])
+    by_norm = {{_norm(key): value for key, value in record.items()}}
+    for candidate in candidates:
+        key = _norm(candidate)
+        if key in by_norm:
+            return by_norm[key]
+    return ""
+
+
+def _fill_xlsx(asset: Path, records: list[dict[str, Any]], output_filename: str | None, sheet_name: str | None) -> dict[str, Any]:
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return _error("openpyxl is required to fill Excel templates")
+    if not records:
+        return _error("records is required for Excel template filling")
+
+    suffix = asset.suffix if asset.suffix.lower() in {{".xlsx", ".xlsm"}} else ".xlsx"
+    output_name = _safe_name(output_filename or asset.name, suffix, force_suffix=True)
+    work_path = Path(tempfile.gettempdir()) / output_name
+    shutil.copyfile(asset, work_path)
+    workbook = load_workbook(work_path)
+    worksheet = workbook[sheet_name] if sheet_name and sheet_name in workbook.sheetnames else workbook.active
+
+    header_row = None
+    headers: list[tuple[int, str]] = []
+    for row in range(1, min(worksheet.max_row, 20) + 1):
+        current: list[tuple[int, str]] = []
+        for col in range(1, worksheet.max_column + 1):
+            value = worksheet.cell(row=row, column=col).value
+            if value not in (None, ""):
+                current.append((col, str(value).strip()))
+        if current:
+            header_row = row
+            headers = current
+            break
+    if header_row is None or not headers:
+        return _error("No header row found in Excel template")
+
+    start_row = header_row + 1
+    for offset, record in enumerate(records):
+        if not isinstance(record, dict):
+            return _error("every record must be an object")
+        row_index = start_row + offset
+        for col_index, header in headers:
+            worksheet.cell(row=row_index, column=col_index).value = _lookup(record, header)
+
+    workbook.save(work_path)
+    item = _persist(work_path)
+    item["templateAsset"] = f"assets/{{asset.name}}"
+    item["filledColumns"] = [header for _, header in headers]
+    item["sheet"] = worksheet.title
+    _push_to_render_queue(item)
+    return item
+
+
+def _flatten_fields(fields: dict[str, Any], records: list[dict[str, Any]]) -> dict[str, Any]:
+    flattened: dict[str, Any] = {{}}
+
+    def add(prefix: str, value: Any) -> None:
+        if isinstance(value, dict):
+            for child_key, child_value in value.items():
+                child_prefix = f"{{prefix}} {{child_key}}".strip()
+                add(child_prefix, child_value)
+                add(str(child_key), child_value)
+            return
+        if isinstance(value, list):
+            flattened[prefix] = ", ".join(str(item) for item in value)
+            return
+        flattened[prefix] = value
+
+    for key, value in (fields or {{}}).items():
+        add(str(key), value)
+    if len(records) == 1 and isinstance(records[0], dict):
+        for key, value in records[0].items():
+            add(str(key), value)
+    return {{key: value for key, value in flattened.items() if str(key).strip()}}
+
+
+def _clean_field_value(value: Any) -> str:
+    text = str(value)
+    text = text.replace("\\\\n", chr(10)).replace("/n", chr(10))
+    while chr(10) * 3 in text:
+        text = text.replace(chr(10) * 3, chr(10) * 2)
+    return text.strip()
+
+
+def _field_for_label(label: str, fields: dict[str, Any]) -> tuple[str, Any] | None:
+    label_norm = _norm(re.sub(r"[:：._-]+$", "", str(label or "").strip()))
+    if not label_norm:
+        return None
+    for key, value in fields.items():
+        key_norm = _norm(key)
+        if not key_norm:
+            continue
+        if label_norm == key_norm:
+            return key, value
+    label_tokens = set(re.findall(r"[a-z0-9]+", str(label or "").lower()))
+    for key, value in fields.items():
+        key_tokens = set(re.findall(r"[a-z0-9]+", str(key or "").lower()))
+        if key_tokens and key_tokens == label_tokens:
+            return key, value
+    return None
+
+
+def _replace_placeholders(text: str, fields: dict[str, Any]) -> tuple[str, int]:
+    replacements = 0
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal replacements
+        placeholder = match.group(1)
+        placeholder_norm = _norm(placeholder)
+        for key, value in fields.items():
+            if _norm(key) == placeholder_norm:
+                replacements += 1
+                return _clean_field_value(value)
+        return match.group(0)
+
+    return re.sub(r"\\{{\\{{\\s*([^{{}}]+?)\\s*\\}}\\}}", repl, text), replacements
+
+
+def _fill_text(asset: Path, fields: dict[str, Any], records: list[dict[str, Any]], output_filename: str | None) -> dict[str, Any]:
+    text = asset.read_text(encoding="utf-8", errors="replace")
+    merged_fields = _flatten_fields(fields, records)
+    text, replacements = _replace_placeholders(text, merged_fields)
+    if records and "{{{{records}}}}" in text:
+        text = text.replace("{{{{records}}}}", json.dumps(records, ensure_ascii=False, indent=2))
+        replacements += 1
+    if merged_fields and replacements == 0:
+        return _error("No matching placeholders were found in the text template; refusing to return an unchanged template")
+    output_name = _safe_name(output_filename or asset.name, asset.suffix or ".txt", force_suffix=True)
+    work_path = Path(tempfile.gettempdir()) / output_name
+    work_path.write_text(text, encoding="utf-8")
+    item = _persist(work_path)
+    item["templateAsset"] = f"assets/{{asset.name}}"
+    item["filledFields"] = replacements
+    _push_to_render_queue(item)
+    return item
+
+
+def _fill_docx_tables(asset: Path, fields: dict[str, Any], records: list[dict[str, Any]], output_filename: str | None) -> dict[str, Any] | None:
+    try:
+        from docx import Document
+    except Exception:
+        return None
+
+    output_name = _safe_name(output_filename or asset.name, ".docx", force_suffix=True)
+    work_path = Path(tempfile.gettempdir()) / output_name
+
+    def cell_text(cell: Any) -> str:
+        return chr(10).join(paragraph.text for paragraph in cell.paragraphs).strip()
+
+    def set_cell_text(cell: Any, value: Any) -> None:
+        cell.text = _clean_field_value(value)
+
+    def record_value(record: dict[str, Any], header: str) -> Any:
+        if header in record:
+            return record[header]
+        match = _field_for_label(header, record)
+        if match is not None:
+            return match[1]
+        return _lookup(record, header)
+
+    def record_has_header(record: dict[str, Any], header: str) -> bool:
+        if header in record:
+            return True
+        return _field_for_label(header, record) is not None
+
+    def table_headers(cells: list[Any]) -> list[str]:
+        return [cell_text(cell) for cell in cells]
+
+    def matching_header_count(headers: list[str], candidate_records: list[dict[str, Any]]) -> int:
+        if not candidate_records:
+            return 0
+        first_record = next((record for record in candidate_records if isinstance(record, dict)), None)
+        if not first_record:
+            return 0
+        return sum(1 for header in headers if header.strip() and record_has_header(first_record, header))
+
+    document = Document(str(asset))
+    filled = 0
+
+    for paragraph in document.paragraphs:
+        text_value = paragraph.text.strip()
+        if not text_value:
+            continue
+        match = _field_for_label(text_value, fields)
+        if match is None:
+            continue
+        _, value = match
+        cleaned_label = re.sub(r"[:：._-]+$", "", text_value).strip()
+        if _norm(cleaned_label) and _norm(cleaned_label) in _norm(text_value):
+            paragraph.add_run(" " + _clean_field_value(value))
+            filled += 1
+
+    for table in document.tables:
+        rows = table.rows
+        if not rows:
+            continue
+        headers = table_headers(rows[0].cells)
+        is_record_table = bool(records) and matching_header_count(headers, records) >= min(2, len([header for header in headers if header.strip()]))
+        if is_record_table:
+            while len(table.rows) - 1 < len(records):
+                table.add_row()
+            for record_index, record in enumerate(records):
+                if not isinstance(record, dict):
+                    continue
+                row = table.rows[record_index + 1]
+                for cell_index, header in enumerate(headers[:len(row.cells)]):
+                    set_cell_text(row.cells[cell_index], record_value(record, header))
+                    filled += 1
+            continue
+
+        for row in rows:
+            cells = row.cells
+            texts = [cell_text(cell) for cell in cells]
+            for index, text_value in enumerate(texts):
+                match = _field_for_label(text_value, fields)
+                if match is None:
+                    continue
+                _, value = match
+                target_cell = None
+                for candidate in cells[index + 1:]:
+                    if not cell_text(candidate):
+                        target_cell = candidate
+                        break
+                if target_cell is None and index + 1 < len(cells):
+                    next_text = cell_text(cells[index + 1])
+                    if _norm(next_text) in {{"", "nilai", "value", "isi"}}:
+                        target_cell = cells[index + 1]
+                if target_cell is None and ("___" in text_value or "....." in text_value):
+                    set_cell_text(cells[index], re.sub(r"[_\\. ]{{3,}}", _clean_field_value(value), text_value))
+                    filled += 1
+                    continue
+                if target_cell is not None:
+                    set_cell_text(target_cell, value)
+                    filled += 1
+
+    if filled == 0:
+        return None
+    document.save(work_path)
+    item = _persist(work_path)
+    item["templateAsset"] = f"assets/{{asset.name}}"
+    item["filledFields"] = filled
+    _push_to_render_queue(item)
+    return item
+
+
+def _fill_zipped_xml(asset: Path, fields: dict[str, Any], records: list[dict[str, Any]], output_filename: str | None) -> dict[str, Any]:
+    merged_fields = _flatten_fields(fields, records)
+    if not merged_fields:
+        return _error("fields or records are required to fill this template asset")
+    output_name = _safe_name(output_filename or asset.name, asset.suffix, force_suffix=True)
+    work_path = Path(tempfile.gettempdir()) / output_name
+    replacement_count = 0
+    with zipfile.ZipFile(asset, "r") as source, zipfile.ZipFile(work_path, "w", zipfile.ZIP_DEFLATED) as target:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename.endswith(".xml"):
+                text = data.decode("utf-8", errors="replace")
+                xml_fields = {{key: escape(_clean_field_value(value)) for key, value in merged_fields.items()}}
+                text, count = _replace_placeholders(text, xml_fields)
+                replacement_count += count
+                data = text.encode("utf-8")
+            target.writestr(info, data)
+    if replacement_count == 0 and asset.suffix.lower() == ".docx":
+        with contextlib.suppress(Exception):
+            work_path.unlink()
+        table_item = _fill_docx_tables(asset, merged_fields, records, output_filename)
+        if table_item is not None:
+            return table_item
+    if replacement_count == 0:
+        with contextlib.suppress(Exception):
+            work_path.unlink()
+        return _error(
+            "No template fields were filled. Add placeholders like {{{{nama}}}} to the template, "
+            "or use a table/form layout with labels next to empty cells for DOCX."
+        )
+    item = _persist(work_path)
+    item["templateAsset"] = f"assets/{{asset.name}}"
+    item["filledFields"] = replacement_count
+    _push_to_render_queue(item)
+    return item
+
+
+def _fill_pdf(asset: Path, fields: dict[str, Any], records: list[dict[str, Any]], output_filename: str | None) -> dict[str, Any]:
+    try:
+        from pypdf import PdfReader, PdfWriter
+        from pypdf.generic import NameObject
+    except ImportError:
+        return _error("pypdf is required to fill PDF form fields")
+    merged_fields = _flatten_fields(fields, records)
+    if not merged_fields:
+        return _error("fields or records are required to fill PDF templates")
+    output_name = _safe_name(output_filename or asset.name, ".pdf", force_suffix=True)
+    work_path = Path(tempfile.gettempdir()) / output_name
+    reader = PdfReader(str(asset))
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    form_fields = reader.get_fields() or {{}}
+    if not form_fields:
+        return _error("PDF template has no fillable AcroForm fields; refusing to return an unchanged template")
+    values = {{}}
+    for field_name in form_fields:
+        match = _field_for_label(str(field_name), merged_fields)
+        if match is not None:
+            values[str(field_name)] = _clean_field_value(match[1])
+    if not values:
+        return _error("No PDF form fields matched the provided fields; refusing to return an unchanged template")
+    for page in writer.pages:
+        writer.update_page_form_field_values(page, values)
+    with contextlib.suppress(Exception):
+        writer.set_need_appearances_writer(True)
+    if "/AcroForm" in reader.trailer.get("/Root", {{}}):
+        writer._root_object.update({{NameObject("/AcroForm"): reader.trailer["/Root"]["/AcroForm"]}})
+    with work_path.open("wb") as handle:
+        writer.write(handle)
+    item = _persist(work_path)
+    item["templateAsset"] = f"assets/{{asset.name}}"
+    item["filledFields"] = len(values)
+    _push_to_render_queue(item)
+    return item
+
+
+def {tool_name}(
+    asset_path: str = "",
+    records: list[dict[str, Any]] | None = None,
+    fields: dict[str, Any] | None = None,
+    output_filename: str = "",
+    sheet_name: str = "",
+) -> dict[str, Any]:
+    """Fill or copy a template asset while preserving the original file structure."""
+    records = records or []
+    fields = fields or {{}}
+    try:
+        asset = _resolve_asset(asset_path)
+    except ValueError as exc:
+        return _error(str(exc))
+    suffix = asset.suffix.lower()
+    if suffix in {{".xlsx", ".xlsm"}}:
+        return _fill_xlsx(asset, records, output_filename or None, sheet_name or None)
+    if suffix in {{".txt", ".md"}}:
+        return _fill_text(asset, fields, records, output_filename or None)
+    if suffix in {{".docx", ".pptx"}}:
+        return _fill_zipped_xml(asset, fields, records, output_filename or None)
+    if suffix == ".pdf":
+        return _fill_pdf(asset, fields, records, output_filename or None)
+    if fields or records:
+        return _error(f"Template asset type {{suffix or asset.name}} is not fillable by this tool; refusing to return an unchanged template")
+    output_name = _safe_name(output_filename or asset.name, asset.suffix or ".bin", force_suffix=True)
+    work_path = Path(tempfile.gettempdir()) / output_name
+    shutil.copyfile(asset, work_path)
+    item = _persist(work_path)
+    item["templateAsset"] = f"assets/{{asset.name}}"
+    _push_to_render_queue(item)
+    return item
+
+
+{schema_name} = {{
+    "type": "function",
+    "function": {{
+        "name": "{tool_name}",
+        "description": (
+            "Create a downloadable file by using one of this custom skill's uploaded template assets "
+            "as the source of truth. For Excel, copies the original workbook and fills rows under the "
+            "existing headers while preserving sheets, column order, names, formulas, widths, and styling. "
+            "For TXT/MD/DOCX/PPTX, fills from fields/records by replacing {{{{{{{{field}}}}}}}} placeholders. "
+            "For DOCX form tables, it also matches labels and fills nearby empty cells. "
+            "For PDF, fills AcroForm fields when available. The output extension always follows the template asset type. "
+            "If no field is filled, the tool returns an error instead of an unchanged template."
+        ),
+        "parameters": {{
+            "type": "object",
+            "properties": {{
+                "asset_path": {{
+                    "type": "string",
+                    "enum": _ASSET_PATHS,
+                    "description": "Template asset path from this skill. Use the uploaded template asset, not a regenerated file."
+                }},
+                "records": {{
+                    "type": "array",
+                    "items": {{"type": "object"}},
+                    "description": "Rows to insert into Excel templates or flatten into document form fields. Keys should match template headers or labels."
+                }},
+                "fields": {{
+                    "type": "object",
+                    "description": "Field values for form/template labels and placeholders. Use exact labels from the template map when possible, such as invoice number, customer, date, or {{{{{{{{field_name}}}}}}}} placeholders."
+                }},
+                "output_filename": {{
+                    "type": "string",
+                    "description": "Desired output filename. The tool adds a unique suffix."
+                }},
+                "sheet_name": {{
+                    "type": "string",
+                    "description": "Optional Excel sheet name. Defaults to the template's active sheet."
+                }}
+            }},
+            "required": ["asset_path"]
+        }}
+    }}
+}}
+'''
+    (skill_dir / "tools.py").write_text(tools_code, encoding="utf-8")
+    return tool_name
 
 
 class CustomSkillStore:
@@ -1190,6 +2418,7 @@ class CustomSkillStore:
         instructions: str = "",
         version: str = "0.1.0",
         tooling: dict[str, Any] | None = None,
+        resources: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         skill_id = self._validate_id(skill_id)
         name = _clean_single_line(name, max_len=80)
@@ -1206,6 +2435,15 @@ class CustomSkillStore:
         existing = self.get(skill_id, include_markdown=False)
         created_at = existing.get("created_at") if existing else _utc_now()
         updated_at = _utc_now()
+        resources = resources or _empty_resources()
+
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        persisted_resources = _write_resource_files(skill_dir, resources)
+        template_tool_name = _write_template_tools(
+            skill_dir,
+            skill_id=skill_id,
+            resources=persisted_resources,
+        )
         skill_md = _render_skill_md(
             name=name,
             description=description,
@@ -1213,9 +2451,10 @@ class CustomSkillStore:
             instructions=instructions,
             version=version,
             tooling=tooling,
+            resources=persisted_resources,
+            template_tool_name=template_tool_name,
         )
 
-        skill_dir.mkdir(parents=True, exist_ok=True)
         (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
         # Validate with the same loader the agent will use before persisting
         # metadata or returning success.
@@ -1226,7 +2465,9 @@ class CustomSkillStore:
             "description": loaded.description,
             "triggers": list(loaded.triggers),
             "instructions": instructions,
-            "tooling": tooling or {"required": [], "created_functions": [], "reused_tools": []},
+            "tooling": tooling or _empty_tooling(),
+            "resources": persisted_resources,
+            "template_tool": template_tool_name or "",
             "version": loaded.version,
             "created_at": created_at,
             "updated_at": updated_at,
@@ -1240,12 +2481,17 @@ class CustomSkillStore:
         *,
         custom_functions: Any | None = None,
         mcp_registry: Any | None = None,
+        uploads: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         spec = _skill_spec_from_prompt(prompt)
         tooling = _tooling_plan_from_prompt(
             prompt,
             custom_functions=custom_functions,
             mcp_registry=mcp_registry,
+        )
+        resources = _merge_resources(
+            _prompt_resource_plan(prompt),
+            _resources_from_uploads(uploads),
         )
         return self.save(
             self._unique_id(spec["name"]),
@@ -1255,6 +2501,7 @@ class CustomSkillStore:
             instructions=spec["instructions"],
             version=spec["version"],
             tooling=tooling,
+            resources=resources,
         )
 
     def save_markdown(self, skill_id: str, markdown: str) -> dict[str, Any]:
@@ -1274,6 +2521,8 @@ class CustomSkillStore:
         existing = self.get(skill_id, include_markdown=False)
         created_at = existing.get("created_at") if existing else _utc_now()
         existing_tooling = existing.get("tooling") if existing else None
+        existing_resources = existing.get("resources") if existing else None
+        existing_template_tool = existing.get("template_tool") if existing else None
         updated_at = _utc_now()
         skill_dir.mkdir(parents=True, exist_ok=True)
         (skill_dir / "SKILL.md").write_text(markdown.strip() + "\n", encoding="utf-8")
@@ -1286,7 +2535,11 @@ class CustomSkillStore:
             "instructions": _section_text(loaded.raw_skill_md, "Instructions"),
             "tooling": existing_tooling
             if isinstance(existing_tooling, dict)
-            else {"required": [], "created_functions": [], "reused_tools": []},
+            else _empty_tooling(),
+            "resources": existing_resources
+            if isinstance(existing_resources, dict)
+            else _empty_resources(),
+            "template_tool": str(existing_template_tool or ""),
             "version": version,
             "created_at": created_at,
             "updated_at": updated_at,
@@ -1313,7 +2566,11 @@ class CustomSkillStore:
             "instructions": str(metadata.get("instructions") or ""),
             "tooling": metadata.get("tooling")
             if isinstance(metadata.get("tooling"), dict)
-            else {"required": [], "created_functions": [], "reused_tools": []},
+            else _empty_tooling(),
+            "resources": metadata.get("resources")
+            if isinstance(metadata.get("resources"), dict)
+            else _empty_resources(),
+            "template_tool": str(metadata.get("template_tool") or ""),
             "version": skill.version,
             "created_at": str(metadata.get("created_at") or ""),
             "updated_at": str(metadata.get("updated_at") or ""),
@@ -1343,12 +2600,5 @@ class CustomSkillStore:
         skill_dir = self._path_for(skill_id)
         if not skill_dir.is_dir():
             return False
-        for filename in ("SKILL.md", "metadata.json"):
-            path = skill_dir / filename
-            if path.is_file():
-                path.unlink()
-        try:
-            skill_dir.rmdir()
-        except OSError:
-            pass
+        shutil.rmtree(skill_dir)
         return True

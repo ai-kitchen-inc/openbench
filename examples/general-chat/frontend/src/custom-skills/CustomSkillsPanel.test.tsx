@@ -22,6 +22,12 @@ const riskSkill: CustomSkill = {
   updated_at: "2026-08-05T00:00:00+00:00",
   source: "/tmp/risk-review",
   context_chars: 200,
+  resources: {
+    references: [],
+    assets: [],
+    examples: [],
+    scripts: [],
+  },
   skill_md: "# Risk Review",
 };
 
@@ -48,6 +54,24 @@ const budgetSkill: CustomSkill = {
     ],
     reused_tools: [],
   },
+  resources: {
+    references: [
+      {
+        filename: "accounting-rules.md",
+        path: "references/accounting-rules.md",
+        description: "Accounting rules.",
+      },
+    ],
+    assets: [
+      {
+        filename: "invoice-template.xlsx",
+        path: "assets/invoice-template.xlsx",
+        description: "Invoice report template.",
+      },
+    ],
+    examples: [],
+    scripts: [],
+  },
 };
 
 function renderPanel() {
@@ -70,7 +94,10 @@ describe("CustomSkillsPanel", () => {
     expect(screen.getByText(/Reviews decision risks/)).toBeInTheDocument();
     expect(screen.getByText(/1\/1 tool tersedia/)).toBeInTheDocument();
     expect(screen.getByText(/1 fungsi dibuat/)).toBeInTheDocument();
+    expect(screen.getByText(/1 reference/)).toBeInTheDocument();
+    expect(screen.getByText(/1 asset/)).toBeInTheDocument();
     expect(screen.getByText("Fungsi: custom_skill_estimate_budget")).toBeInTheDocument();
+    expect(screen.getByText("references: references/accounting-rules.md")).toBeInTheDocument();
   });
 
   it("saves a skill and reloads the list", async () => {
@@ -95,6 +122,33 @@ describe("CustomSkillsPanel", () => {
     expect(JSON.parse(String((saveCall[1] as RequestInit).body))).toEqual({
       prompt: "Buat skill untuk review risiko keputusan dan mitigasinya.",
     });
+  });
+
+  it("sends prompt uploads as a skill package", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ skills: [] }))
+      .mockResolvedValueOnce(jsonResponse(riskSkill))
+      .mockResolvedValueOnce(jsonResponse({ skills: [riskSkill] }));
+    renderPanel();
+    await screen.findByText("Belum ada skill. Tulis kebutuhan skill di prompt.");
+
+    await userEvent.type(
+      screen.getByLabelText("Prompt kebutuhan skill"),
+      "Buat skill invoice analyzer. File SOP yang saya upload adalah reference.",
+    );
+    const file = new File(["aturan invoice"], "invoice-sop.md", { type: "text/markdown" });
+    await userEvent.upload(screen.getByLabelText("Upload SOP, knowledge, contoh, atau template"), file);
+    await userEvent.click(screen.getByRole("button", { name: "Buat dan simpan skill" }));
+
+    const saveCall = fetchMock.mock.calls[1];
+    expect((saveCall[1] as RequestInit).body).toBeInstanceOf(FormData);
+    const form = (saveCall[1] as RequestInit).body as FormData;
+    expect(form.get("prompt")).toBe(
+      "Buat skill invoice analyzer. File SOP yang saya upload adalah reference.",
+    );
+    expect(form.get("resource_hint")).toBeNull();
+    expect(form.getAll("files")).toHaveLength(1);
   });
 
   it("opens generated markdown for manual editing", async () => {

@@ -558,3 +558,4 @@ prompt-debug/
 
 # MCP settings
 tools.yml
+.pnpm-store/

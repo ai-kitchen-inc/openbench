@@ -18,6 +18,22 @@ export interface CustomSkillTooling {
   reused_tools: CustomSkillToolDependency[];
 }
 
+export interface CustomSkillResource {
+  filename: string;
+  path?: string;
+  description?: string;
+  source_name?: string;
+  size_bytes?: number;
+  generated?: boolean;
+}
+
+export interface CustomSkillResources {
+  references: CustomSkillResource[];
+  assets: CustomSkillResource[];
+  examples: CustomSkillResource[];
+  scripts: CustomSkillResource[];
+}
+
 export interface CustomSkill {
   id: string;
   name: string;
@@ -30,5 +46,7 @@ export interface CustomSkill {
   source: string;
   context_chars: number;
   tooling?: CustomSkillTooling;
+  resources?: CustomSkillResources;
+  template_tool?: string;
   skill_md?: string;
 }

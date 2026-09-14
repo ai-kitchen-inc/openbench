@@ -191,6 +191,283 @@ class TestCustomSkillStore(unittest.TestCase):
         self.assertEqual(saved["tooling"]["required"], [])
         self.assertEqual(functions.names(), set())
 
+    def test_save_from_prompt_creates_prompt_references_when_template_is_described(self):
+        saved = self.store.save_from_prompt(
+            "Buat skill invoice analyzer dengan SOP validasi nomor invoice, pajak, dan total. "
+            "Output harus mengikuti template laporan: Bab 1 Ringkasan, Bab 2 Temuan, "
+            "Bab 3 Rekomendasi."
+        )
+
+        paths = self.store.paths()
+        self.assertEqual(len(paths), 1)
+        self.assertTrue((paths[0] / "references" / "prompt-rules.md").is_file())
+        self.assertTrue((paths[0] / "references" / "output-template.md").is_file())
+        self.assertIn("references/prompt-rules.md", saved["skill_md"])
+        self.assertEqual(len(saved["resources"]["references"]), 2)
+
+    def test_save_from_prompt_persists_uploaded_assets_and_text_references(self):
+        upload_dir = Path(self._tmp.name) / "uploads"
+        upload_dir.mkdir()
+        sop = upload_dir / "invoice-sop.txt"
+        sop.write_text("Validasi PPN dan nomor invoice.", encoding="utf-8")
+        template = upload_dir / "invoice-template.xlsx"
+        template.write_bytes(b"fake-xlsx")
+
+        saved = self.store.save_from_prompt(
+            "Buat skill invoice analyzer.",
+            uploads=[
+                {
+                    "filename": "invoice-sop.txt",
+                    "source_name": "invoice-sop.txt",
+                    "bucket": "references",
+                    "description": "SOP invoice.",
+                    "content": "# Invoice SOP\n\nValidasi PPN dan nomor invoice.",
+                },
+                {
+                    "filename": "invoice-template.xlsx",
+                    "source_name": "invoice-template.xlsx",
+                    "bucket": "assets",
+                    "description": "Template laporan invoice.",
+                    "source_path": str(template),
+                },
+            ],
+        )
+
+        skill_dir = self.store.paths()[0]
+        self.assertTrue((skill_dir / "references" / "invoice-sop.md").is_file())
+        self.assertTrue((skill_dir / "assets" / "invoice-template.xlsx").is_file())
+        self.assertEqual(len(saved["resources"]["references"]), 1)
+        self.assertEqual(len(saved["resources"]["assets"]), 1)
+
+    def test_upload_classification_handles_sop_text_and_excel_template_together(self):
+        upload_dir = Path(self._tmp.name) / "uploads"
+        upload_dir.mkdir()
+        sop = upload_dir / "sop-kategori-nilai.txt"
+        sop.write_text(
+            "Jika nilai >=75 maka Diatas KKM. Jika nilai <75 maka Dibawah KKM. "
+            "Jika nilai '-' maka Tidak mengikuti ujian.",
+            encoding="utf-8",
+        )
+        template = upload_dir / "template-nilai.xlsx"
+        try:
+            from openpyxl import Workbook
+        except ImportError:
+            self.skipTest("openpyxl is required for Excel template extraction")
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Nilai Siswa"
+        worksheet.append(["Nama", "Nilai (dalam angka)", "Nilai (dalam tulisan)", "Keterangan"])
+        workbook.save(template)
+        prompt = (
+            "Saya ingin membuat skill untuk menginput data nilai siswa kedalam template "
+            "file excel yang sudah saya berikan. Pemberian kategori nilai mengikuti SOP "
+            "file yang sudah saya berikan juga."
+        )
+
+        saved = self.store.save_from_prompt(
+            prompt,
+            uploads=[
+                {
+                    "filename": "sop-kategori-nilai.txt",
+                    "source_name": "sop-kategori-nilai.txt",
+                    "bucket": "references",
+                    "text_preview": sop.read_text(encoding="utf-8"),
+                    "source_path": str(sop),
+                },
+                {
+                    "filename": "template-nilai.xlsx",
+                    "source_name": "template-nilai.xlsx",
+                    "bucket": "assets",
+                    "source_path": str(template),
+                },
+            ],
+        )
+
+        skill_dir = self.store.paths()[0]
+        self.assertTrue((skill_dir / "references" / "sop-kategori-nilai.md").is_file())
+        self.assertTrue((skill_dir / "assets" / "template-nilai.xlsx").is_file())
+        sop_reference = (skill_dir / "references" / "sop-kategori-nilai.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Tidak mengikuti ujian", sop_reference)
+        self.assertIn("assets/template-nilai.xlsx", saved["skill_md"])
+        template_reference = skill_dir / "references" / "excel-template-template-nilai.md"
+        self.assertTrue(template_reference.is_file())
+        template_reference_text = template_reference.read_text(encoding="utf-8")
+        self.assertIn("Nama", template_reference_text)
+        self.assertIn("Nilai (dalam angka)", template_reference_text)
+        self.assertIn("Nilai (dalam tulisan)", template_reference_text)
+        self.assertIn("Keterangan", template_reference_text)
+        self.assertTrue(saved["template_tool"].startswith("fill_"))
+
+        from openbench.intelligence.skill import Skill
+
+        loaded_skill = Skill.from_dir(skill_dir)
+        tools = {name: fn for name, fn, _ in loaded_skill.tools}
+        self.assertIn(saved["template_tool"], tools)
+        result = tools[saved["template_tool"]](
+            asset_path="assets/template-nilai.xlsx",
+            records=[
+                {
+                    "Nama": "Andi",
+                    "Nilai (dalam angka)": 60,
+                    "Nilai (dalam tulisan)": "enam puluh",
+                    "Keterangan": "Dibawah KKM",
+                }
+            ],
+            output_filename="hasil-nilai.xlsx",
+        )
+        self.assertNotIn("error", result)
+        self.assertEqual(
+            result["filledColumns"],
+            ["Nama", "Nilai (dalam angka)", "Nilai (dalam tulisan)", "Keterangan"],
+        )
+
+    def test_docx_template_tool_fills_form_table_and_refuses_blank_output(self):
+        try:
+            from docx import Document
+        except ImportError:
+            self.skipTest("python-docx is required for DOCX template verification")
+
+        upload_dir = Path(self._tmp.name) / "uploads"
+        upload_dir.mkdir()
+        template = upload_dir / "form-penilaian-siswa.docx"
+        document = Document()
+        document.add_heading("Form Penilaian Siswa", level=1)
+        table = document.add_table(rows=6, cols=2)
+        rows = [
+            ("Nama", ""),
+            ("Kelas", ""),
+            ("Fisika", ""),
+            ("Kimia", ""),
+            ("Matematika", ""),
+            ("Biologi", ""),
+        ]
+        for row_index, (label, value) in enumerate(rows):
+            table.cell(row_index, 0).text = label
+            table.cell(row_index, 1).text = value
+        document.save(template)
+
+        saved = self.store.save_from_prompt(
+            "Saya ingin membuat skill untuk menginput form penilaian siswa kedalam template "
+            "file docs yang sudah saya berikan. Keluarkan output yang sesuai dengan template "
+            "jangan ubah template sedikitpun.",
+            uploads=[
+                {
+                    "filename": "form-penilaian-siswa.docx",
+                    "source_name": "form-penilaian-siswa.docx",
+                    "bucket": "assets",
+                    "source_path": str(template),
+                }
+            ],
+        )
+
+        from openbench.intelligence.skill import Skill
+
+        skill_dir = self.store.paths()[0]
+        template_map = skill_dir / "references" / "document-template-form-penilaian-siswa.md"
+        self.assertTrue(template_map.is_file())
+        template_map_text = template_map.read_text(encoding="utf-8")
+        self.assertIn("Suggested Field Keys", template_map_text)
+        self.assertIn("Nama", template_map_text)
+        self.assertIn("Kelas", template_map_text)
+        self.assertIn("Fisika", template_map_text)
+
+        loaded_skill = Skill.from_dir(skill_dir)
+        tools = {name: fn for name, fn, _ in loaded_skill.tools}
+        result = tools[saved["template_tool"]](
+            asset_path="assets/form-penilaian-siswa.docx",
+            fields={
+                "nama": "Budi",
+                "kelas": "12A",
+                "fisika": 80,
+                "kimia": 100,
+                "matematika": 90,
+                "biologi": 68,
+            },
+            output_filename="penilaian-budi.pdf",
+        )
+        self.assertNotIn("error", result)
+        self.assertGreaterEqual(result["filledFields"], 6)
+        self.assertTrue(result["name"].endswith(".docx"))
+
+        output_doc = Document(Path(result["url"]))
+        text = "\n".join(
+            cell.text
+            for table in output_doc.tables
+            for row in table.rows
+            for cell in row.cells
+        )
+        self.assertIn("Budi", text)
+        self.assertIn("12A", text)
+        self.assertIn("80", text)
+        self.assertIn("100", text)
+        self.assertIn("90", text)
+        self.assertIn("68", text)
+
+    def test_docx_template_tool_fills_generic_table_headers(self):
+        try:
+            from docx import Document
+        except ImportError:
+            self.skipTest("python-docx is required for DOCX template verification")
+
+        upload_dir = Path(self._tmp.name) / "uploads"
+        upload_dir.mkdir()
+        template = upload_dir / "invoice-template.docx"
+        document = Document()
+        document.add_heading("INVOICE", level=1)
+        document.add_paragraph("Nomor Invoice:")
+        document.add_paragraph("Pelanggan:")
+        table = document.add_table(rows=3, cols=3)
+        for index, header in enumerate(["Produk", "Jumlah", "Harga"]):
+            table.cell(0, index).text = header
+        document.save(template)
+
+        saved = self.store.save_from_prompt(
+            "Buat skill untuk mengisi invoice dari template Word.",
+            uploads=[
+                {
+                    "filename": "invoice-template.docx",
+                    "source_name": "invoice-template.docx",
+                    "bucket": "assets",
+                    "source_path": str(template),
+                }
+            ],
+        )
+
+        from openbench.intelligence.skill import Skill
+
+        skill_dir = self.store.paths()[0]
+        loaded_skill = Skill.from_dir(skill_dir)
+        tools = {name: fn for name, fn, _ in loaded_skill.tools}
+        result = tools[saved["template_tool"]](
+            asset_path="assets/invoice-template.docx",
+            fields={"Nomor Invoice": "INV-001", "Pelanggan": "PT Contoh"},
+            records=[
+                {"Produk": "Laptop", "Jumlah": 2, "Harga": "12000000"},
+                {"Produk": "Mouse", "Jumlah": 5, "Harga": "150000"},
+            ],
+            output_filename="invoice-output.docx",
+        )
+        self.assertNotIn("error", result)
+
+        output_doc = Document(Path(result["url"]))
+        text = "\n".join(
+            [paragraph.text for paragraph in output_doc.paragraphs]
+            + [
+                cell.text
+                for table in output_doc.tables
+                for row in table.rows
+                for cell in row.cells
+            ]
+        )
+        self.assertIn("Nomor Invoice: INV-001", text)
+        self.assertIn("Pelanggan: PT Contoh", text)
+        self.assertIn("Laptop", text)
+        self.assertIn("Mouse", text)
+        self.assertIn("12000000", text)
+        self.assertIn("150000", text)
+
     def test_save_from_prompt_reuses_matching_mcp_tool_before_creating_function(self):
         class FakeMCPRegistry:
             def list_payload(self):
@@ -401,6 +678,24 @@ class TestCustomSkillRoutes(unittest.TestCase):
             "hitung_luas_bangunan",
         )
         self.assertIn('name="hitung_luas_bangunan"', payload["skill_md"])
+
+    def test_prompt_route_accepts_uploaded_skill_resources(self):
+        client = self._client()
+        response = client.post(
+            "/admin/custom-skills",
+            headers=ADMIN_H,
+            data={
+                "prompt": "Buat skill invoice analyzer dengan SOP validasi invoice.",
+                "resource_hint": "SOP sebagai reference.",
+            },
+            files={"files": ("invoice-sop.md", b"# SOP\n\nCek total invoice.", "text/markdown")},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertGreaterEqual(len(payload["resources"]["references"]), 1)
+        skill_path = Path(payload["source"])
+        self.assertTrue((skill_path / "references" / "invoice-sop.md").is_file())
+        self.assertIn("references/invoice-sop.md", payload["skill_md"])
 
 
 if __name__ == "__main__":
