@@ -107,6 +107,19 @@ export function CodeIcon({ size = 16 }: IconProps) {
   );
 }
 
+export function BotIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...iconAttrs(size)}>
+      <path d="M12 8V4H8" />
+      <rect width="16" height="12" x="4" y="8" rx="2" />
+      <path d="M2 14h2" />
+      <path d="M20 14h2" />
+      <path d="M15 13v2" />
+      <path d="M9 13v2" />
+    </svg>
+  );
+}
+
 export function PersonaIcon({ size = 16 }: IconProps) {
   return (
     <svg {...iconAttrs(size)}>
@@ -133,6 +146,39 @@ export function AlertIcon({ size = 16 }: IconProps) {
       <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
       <line x1="12" y1="9" x2="12" y2="13" />
       <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+export function ClipboardIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...iconAttrs(size)}>
+      <rect x="8" y="2" width="8" height="4" rx="1" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <line x1="8" y1="11" x2="16" y2="11" />
+      <line x1="8" y1="15" x2="13" y2="15" />
+    </svg>
+  );
+}
+
+export function ChartIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...iconAttrs(size)}>
+      <line x1="12" y1="20" x2="12" y2="10" />
+      <line x1="18" y1="20" x2="18" y2="4" />
+      <line x1="6" y1="20" x2="6" y2="14" />
+      <line x1="3" y1="20" x2="21" y2="20" />
+    </svg>
+  );
+}
+
+export function UsersGroupIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...iconAttrs(size)}>
+      <circle cx="9" cy="7" r="3" />
+      <path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2" />
+      <circle cx="17" cy="8" r="2.5" />
+      <path d="M22 20v-1.5a4 4 0 0 0-3-3.87" />
     </svg>
   );
 }

@@ -4,12 +4,16 @@ export type AdminPage =
   | "ringkasan"
   | "sumber"
   | "persona"
+  | "agen"
   | "kemampuan"
   | "pengaturan"
   | "pengguna"
+  | "grup"
   | "mcp"
   | "fungsi"
   | "skill"
+  | "audit"
+  | "penggunaan"
   | "chat";
 
 const DEFAULT_PAGE: AdminPage = "ringkasan";
@@ -17,12 +21,16 @@ const VALID_PAGES: readonly AdminPage[] = [
   "ringkasan",
   "sumber",
   "persona",
+  "agen",
   "kemampuan",
   "pengaturan",
   "pengguna",
+  "grup",
   "mcp",
   "fungsi",
   "skill",
+  "audit",
+  "penggunaan",
   "chat",
 ];
 

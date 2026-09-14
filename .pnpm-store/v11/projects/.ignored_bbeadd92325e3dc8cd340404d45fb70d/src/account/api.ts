@@ -1,0 +1,342 @@
+/** Typed clients for the account + admin REST API (Firebase-token auth via
+ * src/api.ts). All error `detail` strings coming from the backend are already
+ * in Bahasa Indonesia and are surfaced verbatim. */
+import { apiFetch, apiPath, authHeaders } from "../api";
+
+// ── Shared helpers ──
+
+export function readErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+export async function parseJsonResponse<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  let payload: Record<string, unknown> = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      const compact = text.replace(/\s+/g, " ").trim();
+      if (!response.ok) {
+        throw new Error(compact || `${response.status} ${response.statusText}`);
+      }
+      throw new Error("Server mengembalikan respons JSON yang tidak valid.");
+    }
+  }
+  if (!response.ok) {
+    const detail =
+      typeof payload?.detail === "string"
+        ? payload.detail
+        : typeof payload?.error === "string"
+          ? payload.error
+          : `${response.status} ${response.statusText}`;
+    throw new Error(detail);
+  }
+  return payload as T;
+}
+
+// ── /account/me ──
+
+export type Role = "admin" | "user";
+
+export type Capabilities = {
+  attachments: boolean;
+  session_sources: boolean;
+  mcp_management: boolean;
+  custom_functions: boolean;
+  dashboards: boolean;
+  image_search: boolean;
+};
+
+export type Me = {
+  email: string;
+  role: Role;
+  displayName: string;
+  capabilities: Capabilities;
+  global: { file_generation: boolean };
+  /** True when the backend runs with auth disabled (local dev) — the UI
+   * may then offer the local "view as user" role toggle. */
+  authDisabled?: boolean;
+};
+
+/** Thrown when the signed-in Google account has not been granted access
+ * (backend responds 403 on /account/me). */
+export class AccessDeniedError extends Error {
+  constructor(message = "Akun ini belum diberi akses.") {
+    super(message);
+    this.name = "AccessDeniedError";
+  }
+}
+
+/** Resolve the signed-in account's profile. 403 → AccessDeniedError,
+ * 401 → null (not authenticated), network/5xx → rethrown Error. */
+export async function fetchMe(): Promise<Me | null> {
+  const response = await apiFetch(apiPath("/account/me"));
+  if (response.status === 401) return null;
+  if (response.status === 403) {
+    let detail = "";
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      detail = typeof payload.detail === "string" ? payload.detail : "";
+    } catch {
+      // Non-JSON body — fall through to the default message.
+    }
+    throw new AccessDeniedError(detail || undefined);
+  }
+  return parseJsonResponse<Me>(response);
+}
+
+// ── /account/shared-sources (any authenticated user) ──
+
+export type SharedSource = {
+  id: string;
+  sessionId: string;
+  name: string;
+  kind: string;
+  mimeType: string;
+  status: "ready" | "failed" | "processing";
+  error: string | null;
+  sizeBytes: number;
+  createdAt: string;
+  url: string | null;
+  textPreview?: string;
+  textTruncated?: boolean;
+};
+
+export async function listAccountSharedSources(): Promise<SharedSource[]> {
+  const response = await apiFetch(apiPath("/account/shared-sources"));
+  const payload = await parseJsonResponse<{ sources: SharedSource[] }>(response);
+  return payload.sources ?? [];
+}
+
+// ── /admin/users ──
+
+export type UserItem = {
+  email: string;
+  role: Role;
+  displayName: string;
+  createdAt: string | null;
+  addedBy: string | null;
+};
+
+export async function listUsers(): Promise<UserItem[]> {
+  const response = await apiFetch(apiPath("/admin/users"));
+  const payload = await parseJsonResponse<{ users: UserItem[] }>(response);
+  return payload.users ?? [];
+}
+
+export async function addUser(
+  email: string,
+  role: Role,
+  displayName?: string,
+): Promise<UserItem> {
+  const response = await apiFetch(apiPath("/admin/users"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(displayName ? { email, role, displayName } : { email, role }),
+  });
+  return parseJsonResponse<UserItem>(response);
+}
+
+export async function updateUser(
+  email: string,
+  patch: { role?: Role; displayName?: string },
+): Promise<UserItem> {
+  const response = await apiFetch(apiPath(`/admin/users/${encodeURIComponent(email)}`), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return parseJsonResponse<UserItem>(response);
+}
+
+export async function deleteUser(email: string): Promise<void> {
+  const response = await apiFetch(apiPath(`/admin/users/${encodeURIComponent(email)}`), {
+    method: "DELETE",
+  });
+  await parseJsonResponse<{ ok: boolean; email: string }>(response);
+}
+
+// ── /admin/capabilities ──
+
+export type CapabilityDefinition = {
+  id: string;
+  kind: "route" | "global";
+  label: string;
+  description: string;
+  default: boolean;
+};
+
+export type CapabilitiesState = {
+  definitions: CapabilityDefinition[];
+  roles: { user: Record<string, boolean> };
+  global: Record<string, boolean>;
+};
+
+export async function getCapabilities(): Promise<CapabilitiesState> {
+  const response = await apiFetch(apiPath("/admin/capabilities"));
+  return parseJsonResponse<CapabilitiesState>(response);
+}
+
+/** Partial update; the backend returns the full resolved state. */
+export async function putCapabilities(patch: {
+  roles?: { user: Record<string, boolean> };
+  global?: Record<string, boolean>;
+}): Promise<CapabilitiesState> {
+  const response = await apiFetch(apiPath("/admin/capabilities"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return parseJsonResponse<CapabilitiesState>(response);
+}
+
+// ── /admin/runtime-settings ──
+
+export type RuntimeSettingsState = {
+  values: Record<string, string>;
+  options: Record<string, string[]>;
+};
+
+export async function getRuntimeSettings(): Promise<RuntimeSettingsState> {
+  const response = await apiFetch(apiPath("/admin/runtime-settings"));
+  return parseJsonResponse<RuntimeSettingsState>(response);
+}
+
+/** Partial update; the backend returns the full resolved state. */
+export async function putRuntimeSettings(
+  patch: Record<string, string>,
+): Promise<RuntimeSettingsState> {
+  const response = await apiFetch(apiPath("/admin/runtime-settings"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return parseJsonResponse<RuntimeSettingsState>(response);
+}
+
+// ── /admin/persona ──
+
+export type PersonaSettings = {
+  template: string | null;
+  soul: string;
+  style: string;
+  agents: string;
+  goal: string;
+  source_context_label: string;
+};
+
+export type PersonaActive = {
+  source?: string;
+  soul_chars?: number;
+  style_chars?: number;
+  agents_chars?: number;
+  total_chars?: number;
+};
+
+export type PersonaState = {
+  settings: PersonaSettings | null;
+  source: "db" | "env" | "files";
+  active: PersonaActive;
+};
+
+export type PersonaTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  soul: string;
+  style: string;
+  agents: string;
+  goal: string;
+  sourceContextLabel: string;
+};
+
+export async function getPersona(): Promise<PersonaState> {
+  const response = await apiFetch(apiPath("/admin/persona"));
+  return parseJsonResponse<PersonaState>(response);
+}
+
+export async function listPersonaTemplates(): Promise<PersonaTemplate[]> {
+  const response = await apiFetch(apiPath("/admin/persona/templates"));
+  const payload = await parseJsonResponse<{ templates: PersonaTemplate[] }>(response);
+  return payload.templates ?? [];
+}
+
+export type PersonaPutResult = {
+  ok: boolean;
+  settings: PersonaSettings;
+  source: PersonaState["source"];
+  active: PersonaActive;
+};
+
+export async function applyPersonaTemplate(templateId: string): Promise<PersonaPutResult> {
+  const response = await apiFetch(apiPath("/admin/persona"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ template: templateId }),
+  });
+  return parseJsonResponse<PersonaPutResult>(response);
+}
+
+export async function savePersona(settings: {
+  soul: string;
+  style: string;
+  agents: string;
+  goal: string;
+  source_context_label?: string;
+}): Promise<PersonaPutResult> {
+  const response = await apiFetch(apiPath("/admin/persona"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  return parseJsonResponse<PersonaPutResult>(response);
+}
+
+// ── /admin/shared-sources ──
+
+export async function listSharedSources(): Promise<SharedSource[]> {
+  const response = await apiFetch(apiPath("/admin/shared-sources"));
+  const payload = await parseJsonResponse<{ sources: SharedSource[] }>(response);
+  return payload.sources ?? [];
+}
+
+export async function addSharedTextSource(name: string, text: string): Promise<SharedSource> {
+  const response = await apiFetch(apiPath("/admin/shared-sources/text"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, text }),
+  });
+  return parseJsonResponse<SharedSource>(response);
+}
+
+export async function addSharedUrlSource(url: string): Promise<SharedSource> {
+  const response = await apiFetch(apiPath("/admin/shared-sources/url"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  return parseJsonResponse<SharedSource>(response);
+}
+
+export async function deleteSharedSource(sourceId: string): Promise<void> {
+  const response = await apiFetch(
+    apiPath(`/admin/shared-sources/${encodeURIComponent(sourceId)}`),
+    { method: "DELETE" },
+  );
+  await parseJsonResponse<{ ok: boolean; sourceId: string }>(response);
+}
+
+/** Multipart upload of a global shared source. Plain fetch (no progress
+ * callback) is enough for admin uploads. */
+export async function uploadSharedSourceFile(file: File): Promise<SharedSource> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await apiFetch(apiPath("/admin/shared-sources/upload"), {
+    method: "POST",
+    headers: await authHeaders(),
+    body: form,
+  });
+  return parseJsonResponse<SharedSource>(response);
+}

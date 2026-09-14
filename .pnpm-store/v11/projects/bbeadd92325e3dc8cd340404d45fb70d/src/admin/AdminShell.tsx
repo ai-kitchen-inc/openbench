@@ -5,6 +5,9 @@ import { setLocalRole } from "../api";
 import { BrandMark } from "../brand/BrandMark";
 import {
   BookIcon,
+  BotIcon,
+  ChartIcon,
+  ClipboardIcon,
   CodeIcon,
   LayoutIcon,
   MessageIcon,
@@ -12,19 +15,24 @@ import {
   ServerIcon,
   SettingsIcon,
   SlidersIcon,
+  UsersGroupIcon,
   UsersIcon,
 } from "../brand/icons";
 import { UserChat } from "../chat/UserChat";
 import { APP_NAME, APP_TAGLINE, COMMON, LOCAL_ROLE } from "../i18n/id";
 import { ThemeIcon, useDarkMode } from "../theme";
+import { AgentsPage } from "./pages/AgentsPage";
+import { AuditPage } from "./pages/AuditPage";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FunctionsPage } from "./pages/FunctionsPage";
+import { GroupsPage } from "./pages/GroupsPage";
 import { CustomSkillsPage } from "./pages/CustomSkillsPage";
 import { McpServersPage } from "./pages/McpServersPage";
 import { PersonaPage } from "./pages/PersonaPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
+import { UsagePage } from "./pages/UsagePage";
 import { UsersPage } from "./pages/UsersPage";
 import { useHashPage, type AdminPage } from "./useHashPage";
 
@@ -32,12 +40,16 @@ const NAV_ITEMS: { page: AdminPage; label: string; icon: ReactNode }[] = [
   { page: "ringkasan", label: "Ringkasan", icon: <LayoutIcon /> },
   { page: "sumber", label: "Sumber Global", icon: <BookIcon /> },
   { page: "persona", label: "Persona", icon: <PersonaIcon /> },
+  { page: "agen", label: "Agen", icon: <BotIcon /> },
   { page: "kemampuan", label: "Kemampuan", icon: <SlidersIcon /> },
   { page: "pengaturan", label: "Pengaturan", icon: <SettingsIcon /> },
   { page: "pengguna", label: "Pengguna", icon: <UsersIcon /> },
+  { page: "grup", label: "Grup", icon: <UsersGroupIcon /> },
   { page: "mcp", label: "Server MCP", icon: <ServerIcon /> },
   { page: "fungsi", label: "Fungsi Kustom", icon: <CodeIcon /> },
   { page: "skill", label: "Skill Kustom", icon: <BookIcon /> },
+  { page: "audit", label: "Audit", icon: <ClipboardIcon /> },
+  { page: "penggunaan", label: "Penggunaan", icon: <ChartIcon /> },
   { page: "chat", label: "Buka Chat", icon: <MessageIcon /> },
 ];
 
@@ -45,12 +57,16 @@ const PAGE_TITLES: Record<AdminPage, string> = {
   ringkasan: "Ringkasan",
   sumber: "Sumber Global",
   persona: "Persona",
+  agen: "Agen",
   kemampuan: "Kemampuan",
   pengaturan: "Pengaturan",
   pengguna: "Pengguna",
+  grup: "Grup",
   mcp: "Server MCP",
   fungsi: "Fungsi Kustom",
   skill: "Skill Kustom",
+  audit: "Jejak Audit",
+  penggunaan: "Penggunaan",
   chat: "Buka Chat",
 };
 
@@ -149,12 +165,16 @@ export function AdminShell({
                 {page === "ringkasan" && <DashboardPage onNavigate={setPage} />}
                 {page === "sumber" && <SourcesPage />}
                 {page === "persona" && <PersonaPage />}
+                {page === "agen" && <AgentsPage />}
                 {page === "kemampuan" && <CapabilitiesPage />}
                 {page === "pengaturan" && <SettingsPage />}
                 {page === "pengguna" && <UsersPage currentEmail={me.email} />}
+                {page === "grup" && <GroupsPage />}
                 {page === "mcp" && <McpServersPage />}
                 {page === "fungsi" && <FunctionsPage />}
                 {page === "skill" && <CustomSkillsPage />}
+                {page === "audit" && <AuditPage />}
+                {page === "penggunaan" && <UsagePage />}
               </div>
             </main>
           </div>

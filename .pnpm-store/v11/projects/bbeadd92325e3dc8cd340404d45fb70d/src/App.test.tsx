@@ -41,6 +41,7 @@ function meResponse(role: "admin" | "user") {
     email: fakeUser.email,
     role,
     displayName: fakeUser.displayName,
+    group: "",
     capabilities: {
       attachments: all,
       session_sources: all,
@@ -59,9 +60,12 @@ function stubFetch(role: "admin" | "user") {
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.startsWith("/account/me")) return jsonResponse(meResponse(role));
-      if (url.startsWith("/account/shared-sources")) return jsonResponse({ sources: [] });
+      if (url.startsWith("/account/shared-sources")) {
+        return jsonResponse({ sources: [], groupSources: [] });
+      }
       if (url.startsWith("/admin/shared-sources")) return jsonResponse({ sources: [] });
       if (url.startsWith("/admin/users")) return jsonResponse({ users: [] });
+      if (url.startsWith("/admin/groups")) return jsonResponse({ groups: [] });
       if (url.startsWith("/admin/capabilities")) {
         return jsonResponse({ definitions: [], roles: { user: {} }, global: {} });
       }

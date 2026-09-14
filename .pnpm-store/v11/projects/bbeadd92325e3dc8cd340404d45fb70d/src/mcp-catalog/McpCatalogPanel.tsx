@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { useToast } from "../Toast";
+import { readErrorMessage } from "../shared/apiHelpers";
 import {
   discoverServer,
   deleteToolHiveWorkload,
@@ -57,11 +58,6 @@ const DEFAULT_FILTERS: RegistryFilters = {
 };
 
 const TOOLHIVE_DOC_SERVER = "toolhive-doc-mcp";
-
-function readErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
 
 type SecretRow = {
   id: string;

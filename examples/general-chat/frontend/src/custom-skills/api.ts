@@ -21,6 +21,25 @@ export async function createCustomSkillFromPrompt(prompt: string): Promise<Custo
   return postCustomSkill({ prompt });
 }
 
+export async function createCustomSkillPackage(
+  prompt: string,
+  files: File[],
+): Promise<CustomSkill> {
+  if (files.length === 0) {
+    return createCustomSkillFromPrompt(prompt);
+  }
+  const form = new FormData();
+  form.append("prompt", prompt);
+  for (const file of files) {
+    form.append("files", file, file.name);
+  }
+  const response = await apiFetch(apiPath("/admin/custom-skills"), {
+    method: "POST",
+    body: form,
+  });
+  return parseJsonResponse<CustomSkill>(response);
+}
+
 export async function saveCustomSkillMarkdown(id: string, skillMd: string): Promise<CustomSkill> {
   return postCustomSkill({ id, skill_md: skillMd });
 }

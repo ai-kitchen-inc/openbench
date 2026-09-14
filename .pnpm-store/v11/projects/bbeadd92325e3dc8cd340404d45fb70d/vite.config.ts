@@ -31,6 +31,8 @@ export default defineConfig({
       "/chat/uploads": { target: backendUrl, changeOrigin: true },
       "/chat/transcribe": { target: backendUrl, changeOrigin: true },
       "/chat/sources": { target: backendUrl, changeOrigin: true },
+      "/chat/agents": { target: backendUrl, changeOrigin: true },
+      "/chat/agent-selection": { target: backendUrl, changeOrigin: true },
       "/account": { target: backendUrl, changeOrigin: true },
       "/auth/drive": { target: backendUrl, changeOrigin: true },
       "/admin": { target: backendUrl, changeOrigin: true },

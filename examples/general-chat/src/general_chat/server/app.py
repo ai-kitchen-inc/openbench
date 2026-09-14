@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -90,7 +91,12 @@ from general_chat.server.auth import (
     require_firebase_user,
 )
 from general_chat.server.custom_functions import CustomFunctionError, CustomFunctionStore
-from general_chat.server.custom_skills import CustomSkillError, CustomSkillStore
+from general_chat.server.custom_skills import (
+    MAX_RESOURCE_FILE_BYTES,
+    CustomSkillError,
+    CustomSkillStore,
+    _summarize_uploaded_resource,
+)
 from general_chat.server.dashboard_pdf import render_dashboard_pdf
 from general_chat.server.drive_auth import DriveOAuthManager
 from general_chat.server.grafana import view_model_to_grafana
@@ -1279,31 +1285,59 @@ def create_app() -> FastAPI:
     @app.post("/admin/custom-skills")
     async def save_custom_skill(request: Request) -> dict:
         require_role(request, "admin")
-        body = await request.json()
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail="Expected a JSON object")
+        content_type = request.headers.get("content-type", "")
         try:
-            if "skill_md" in body:
-                meta = custom_skills.save_markdown(
-                    str(body.get("id") or ""),
-                    str(body.get("skill_md") or ""),
-                )
-            elif "prompt" in body:
-                meta = custom_skills.save_from_prompt(
-                    str(body.get("prompt") or ""),
-                    custom_functions=custom_functions,
-                    mcp_registry=mcp_registry_store,
-                )
+            if content_type.lower().startswith("multipart/form-data"):
+                with tempfile.TemporaryDirectory() as tmp:
+                    form = await request.form()
+                    prompt = str(form.get("prompt") or "")
+                    resource_hint = str(form.get("resource_hint") or prompt)
+                    uploads: list[dict[str, Any]] = []
+                    for key, value in form.multi_items():
+                        if key != "files" or not hasattr(value, "read"):
+                            continue
+                        filename = getattr(value, "filename", "") or "resource"
+                        content = await _read_upload_limited(value, MAX_RESOURCE_FILE_BYTES)
+                        summary = _summarize_uploaded_resource(filename, content, resource_hint)
+                        target = Path(tmp) / str(summary["source_name"])
+                        target.write_bytes(content)
+                        summary["source_path"] = str(target)
+                        uploads.append(summary)
+                    meta = custom_skills.save_from_prompt(
+                        prompt,
+                        custom_functions=custom_functions,
+                        mcp_registry=mcp_registry_store,
+                        uploads=uploads,
+                    )
             else:
-                meta = custom_skills.save(
-                    str(body.get("id") or ""),
-                    name=str(body.get("name") or ""),
-                    description=str(body.get("description") or ""),
-                    triggers=body.get("triggers"),
-                    instructions=str(body.get("instructions") or ""),
-                    version=str(body.get("version") or "0.1.0"),
-                )
+                body = await request.json()
+                if not isinstance(body, dict):
+                    raise HTTPException(status_code=400, detail="Expected a JSON object")
+                if "skill_md" in body:
+                    meta = custom_skills.save_markdown(
+                        str(body.get("id") or ""),
+                        str(body.get("skill_md") or ""),
+                    )
+                elif "prompt" in body:
+                    meta = custom_skills.save_from_prompt(
+                        str(body.get("prompt") or ""),
+                        custom_functions=custom_functions,
+                        mcp_registry=mcp_registry_store,
+                    )
+                else:
+                    meta = custom_skills.save(
+                        str(body.get("id") or ""),
+                        name=str(body.get("name") or ""),
+                        description=str(body.get("description") or ""),
+                        triggers=body.get("triggers"),
+                        instructions=str(body.get("instructions") or ""),
+                        version=str(body.get("version") or "0.1.0"),
+                    )
         except CustomSkillError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            # Starlette raises ValueError when multipart parsing is unavailable
+            # or malformed.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             agent_holder.rebuild()
