@@ -53,7 +53,7 @@ describe("AdminShell navigation", () => {
     vi.unstubAllGlobals();
   });
 
-  it("puts Buka Chat first in the sidebar", () => {
+  it("keeps Ringkasan first and Buka Chat last in the sidebar", () => {
     render(
       <ToastProvider>
         <AdminShell me={ME} user={null} onSignOut={vi.fn()} />
@@ -61,7 +61,7 @@ describe("AdminShell navigation", () => {
     );
     const nav = screen.getByRole("navigation", { name: "Navigasi admin" });
     const buttons = within(nav).getAllByRole("button");
-    expect(buttons[0]).toHaveTextContent("Buka Chat");
-    expect(buttons[1]).toHaveTextContent("Ringkasan");
+    expect(buttons[0]).toHaveTextContent("Ringkasan");
+    expect(buttons[buttons.length - 1]).toHaveTextContent("Buka Chat");
   });
 });

@@ -37,9 +37,6 @@ import { UsersPage } from "./pages/UsersPage";
 import { useHashPage, type AdminPage } from "./useHashPage";
 
 const NAV_ITEMS: { page: AdminPage; label: string; icon: ReactNode }[] = [
-  // "Buka Chat" stays first: the most-used action should not hide below
-  // thirteen control-panel entries.
-  { page: "chat", label: "Buka Chat", icon: <MessageIcon /> },
   { page: "ringkasan", label: "Ringkasan", icon: <LayoutIcon /> },
   { page: "sumber", label: "Sumber Global", icon: <BookIcon /> },
   { page: "persona", label: "Persona", icon: <PersonaIcon /> },
@@ -53,6 +50,7 @@ const NAV_ITEMS: { page: AdminPage; label: string; icon: ReactNode }[] = [
   { page: "skill", label: "Skill Kustom", icon: <BookIcon /> },
   { page: "audit", label: "Audit", icon: <ClipboardIcon /> },
   { page: "penggunaan", label: "Penggunaan", icon: <ChartIcon /> },
+  { page: "chat", label: "Buka Chat", icon: <MessageIcon /> },
 ];
 
 const PAGE_TITLES: Record<AdminPage, string> = {
