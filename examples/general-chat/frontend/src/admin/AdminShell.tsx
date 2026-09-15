@@ -165,7 +165,7 @@ export function AdminShell({
                 {page === "ringkasan" && <DashboardPage onNavigate={setPage} />}
                 {page === "sumber" && <SourcesPage />}
                 {page === "persona" && <PersonaPage />}
-                {page === "agen" && <AgentsPage />}
+                {page === "agen" && <AgentsPage onNavigate={setPage} />}
                 {page === "kemampuan" && <CapabilitiesPage />}
                 {page === "pengaturan" && <SettingsPage />}
                 {page === "pengguna" && <UsersPage currentEmail={me.email} />}

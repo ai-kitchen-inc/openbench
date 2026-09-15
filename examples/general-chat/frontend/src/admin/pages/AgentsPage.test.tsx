@@ -114,6 +114,51 @@ describe("AgentsPage", () => {
     });
   });
 
+  it("routes to Skill Kustom and the MCP import dialog from the agent detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") return jsonResponse({ sources: [] });
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    const onNavigate = vi.fn();
+    render(
+      <ToastProvider>
+        <AgentsPage onNavigate={onNavigate} />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    await userEvent.click(screen.getByRole("button", { name: "Buat skill kustom" }));
+    expect(onNavigate).toHaveBeenCalledWith("skill");
+    await userEvent.click(screen.getByRole("button", { name: "Tambah server MCP" }));
+    expect(onNavigate).toHaveBeenCalledWith("mcp", { tambah: "1" });
+  });
+
+  it("hides the shortcut buttons when no navigation callback is given", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") return jsonResponse({ sources: [] });
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    expect(screen.queryByRole("button", { name: "Buat skill kustom" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Tambah server MCP" })).toBeNull();
+  });
+
   it("shows the full source manager (incl. upload) in the agent detail", async () => {
     vi.stubGlobal(
       "fetch",

@@ -19,6 +19,11 @@ import { XIcon } from "../../brand/icons";
 import { COMMON } from "../../i18n/id";
 import { SourceManager, type SourceManagerApi } from "../../sources/SourceManager";
 import { useToast } from "../../Toast";
+import type { AdminPage, HashParams } from "../useHashPage";
+
+/** Cross-page navigation callback (AdminShell's setPage). Optional so the
+ * page still renders standalone in tests. */
+export type AgentsNavigate = (page: AdminPage, params?: HashParams) => void;
 
 const PERSONA_FIELDS: { key: string; label: string; rows: number }[] = [
   { key: "soul", label: "SOUL — identitas agen", rows: 4 },
@@ -32,11 +37,13 @@ function AgentDetail({
   agents,
   options,
   onSaved,
+  onNavigate,
 }: {
   agent: AgentProfileItem;
   agents: AgentProfileItem[];
   options: AgentProfileOptions;
   onSaved: () => void;
+  onNavigate?: AgentsNavigate;
 }) {
   const { show: showToast } = useToast();
   const [draft, setDraft] = useState<AgentProfilePatch>({});
@@ -245,9 +252,19 @@ function AgentDetail({
           <div className="cap-row__main">
             <div className="cap-row__label">Skill</div>
             <div className="cap-row__desc">
-              Skill SDK dan skill kustom yang dimuat khusus untuk agen ini.
+              Skill SDK dan skill kustom yang dimuat khusus untuk agen ini. Centang skill
+              kustom yang sudah ada, atau buat yang baru di halaman Skill Kustom.
             </div>
           </div>
+          {onNavigate && (
+            <button
+              type="button"
+              className="panel-button"
+              onClick={() => onNavigate("skill")}
+            >
+              Buat skill kustom
+            </button>
+          )}
         </div>
       </div>
       <div className="agents-skill-grid">
@@ -283,7 +300,21 @@ function AgentDetail({
           </label>
         ))}
         {options.sdkSkills.length === 0 && options.customSkills.length === 0 && (
-          <div className="sources-list__empty">Tidak ada skill tersedia.</div>
+          <div className="sources-list__empty">
+            Tidak ada skill tersedia.
+            {onNavigate && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="panel-button"
+                  onClick={() => onNavigate("skill")}
+                >
+                  Buat skill kustom
+                </button>
+              </>
+            )}
+          </div>
         )}
       </div>
 
@@ -295,6 +326,15 @@ function AgentDetail({
               Perangkat dari server MCP terpilih ikut dimuat untuk agen ini.
             </div>
           </div>
+          {onNavigate && (
+            <button
+              type="button"
+              className="panel-button"
+              onClick={() => onNavigate("mcp", { tambah: "1" })}
+            >
+              Tambah server MCP
+            </button>
+          )}
         </div>
       </div>
       <div className="agents-skill-grid">
@@ -309,7 +349,21 @@ function AgentDetail({
           </label>
         ))}
         {options.mcpServers.length === 0 && (
-          <div className="sources-list__empty">Belum ada server MCP terdaftar.</div>
+          <div className="sources-list__empty">
+            Belum ada server MCP terdaftar.
+            {onNavigate && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="panel-button"
+                  onClick={() => onNavigate("mcp", { tambah: "1" })}
+                >
+                  Tambah server MCP
+                </button>
+              </>
+            )}
+          </div>
         )}
       </div>
 
@@ -357,7 +411,7 @@ function AgentDetail({
   );
 }
 
-export function AgentsPage() {
+export function AgentsPage({ onNavigate }: { onNavigate?: AgentsNavigate } = {}) {
   const { show: showToast } = useToast();
   const [agents, setAgents] = useState<AgentProfileItem[] | null>(null);
   const [options, setOptions] = useState<AgentProfileOptions | null>(null);
@@ -535,6 +589,7 @@ export function AgentsPage() {
                       agents={agents ?? []}
                       options={options}
                       onSaved={() => void load()}
+                      onNavigate={onNavigate}
                     />
                   )}
                 </div>
