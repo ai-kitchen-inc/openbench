@@ -807,17 +807,21 @@ export function McpCatalogPanel({
   open,
   onClose,
   embedded = false,
+  initialImportOpen = false,
 }: {
   open: boolean;
   onClose: () => void;
   embedded?: boolean;
+  /** Start with the "Add MCP servers" dialog open (deep link from other
+   * admin pages, e.g. the Agen panel). */
+  initialImportOpen?: boolean;
 }) {
   const toast = useToast();
   const [data, setData] = useState<MCPRegistryPayload>({ servers: [] });
   const [filters, setFilters] = useState<RegistryFilters>(DEFAULT_FILTERS);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [importOpen, setImportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(initialImportOpen);
   const [details, setDetails] = useState<RegisteredMCPServer | null>(null);
 
   const load = useCallback(async () => {

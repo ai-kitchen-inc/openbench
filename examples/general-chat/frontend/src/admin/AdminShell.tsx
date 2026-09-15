@@ -80,7 +80,7 @@ export function AdminShell({
   onSignOut: () => void;
 }) {
   const [dark, toggleDark] = useDarkMode();
-  const [page, setPage] = useHashPage();
+  const [page, setPage, params] = useHashPage();
   const email = me.email || user?.email || "";
 
   return (
@@ -170,7 +170,7 @@ export function AdminShell({
                 {page === "pengaturan" && <SettingsPage />}
                 {page === "pengguna" && <UsersPage currentEmail={me.email} />}
                 {page === "grup" && <GroupsPage />}
-                {page === "mcp" && <McpServersPage />}
+                {page === "mcp" && <McpServersPage initialImportOpen={params.tambah === "1"} />}
                 {page === "fungsi" && <FunctionsPage />}
                 {page === "skill" && <CustomSkillsPage />}
                 {page === "audit" && <AuditPage />}

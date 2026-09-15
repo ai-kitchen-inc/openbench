@@ -4,7 +4,7 @@ import { McpCatalogPanel } from "../../mcp-catalog/McpCatalogPanel";
 /** Hosts the existing general-chat MCP catalog manager. The manager is a
  * self-contained dialog, so the page keeps an open/close state instead of
  * embedding it inline. */
-export function McpServersPage() {
+export function McpServersPage({ initialImportOpen = false }: { initialImportOpen?: boolean }) {
   const [open, setOpen] = useState(true);
 
   return (
@@ -28,7 +28,7 @@ export function McpServersPage() {
           </button>
         </div>
       </section>
-      <McpCatalogPanel open={open} onClose={() => setOpen(false)} />
+      <McpCatalogPanel open={open} onClose={() => setOpen(false)} initialImportOpen={initialImportOpen} />
     </>
   );
 }
