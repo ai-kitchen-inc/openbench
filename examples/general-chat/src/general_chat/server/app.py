@@ -84,6 +84,7 @@ from general_chat.group_store import (
 )
 from general_chat.server.auth import (
     LOCAL_OWNER,
+    _extract_bearer_token,
     auth_enabled,
     current_group,
     current_owner,
@@ -229,6 +230,9 @@ _EXT_MIME_MAP = {
 _AUTH_PROTECTED_PREFIXES = (
     "/account",
     "/admin",
+    # Per-agent SSE/embed surface. Accepts the agent's embed key as bearer
+    # (see _embed_principal) in addition to a Firebase user.
+    "/agents",
     # /auth/drive/callback is deliberately absent: Google's browser
     # redirect carries no Bearer header — identity comes from the signed
     # state cookie instead (see general_chat.server.drive_auth).
@@ -274,6 +278,18 @@ AGENT_OWNER_PREFIX = "agent:"
 
 def agent_owner(agent_id: str) -> str:
     return f"{AGENT_OWNER_PREFIX}{agent_id}"
+
+
+# Anonymous embed visitors of one agent share a per-agent sentinel owner.
+# Their sessions are unguessable ids under that owner, never listed, and
+# disjoint from every email / "local" / "shared" / "group:" / "agent:"
+# owner — so an embed of agent A can never touch agent B's data.
+EMBED_OWNER_PREFIX = "embed:"
+_AGENT_ROUTE_RE = re.compile(r"^/agents/([a-z0-9][a-z0-9-]*)(?:/|$)")
+
+
+def embed_owner(agent_id: str) -> str:
+    return f"{EMBED_OWNER_PREFIX}{agent_id}"
 
 # Cap on Google Drive links auto-ingested from a single chat message —
 # each is a synchronous download before the turn starts streaming.
@@ -1073,7 +1089,9 @@ def create_app() -> FastAPI:
         role = ""
         if request is not None:
             try:
-                actor = LOCAL_OWNER if not auth_enabled() else current_owner(request)
+                # current_owner honors owner_override (embed callers) and
+                # already yields LOCAL_OWNER when auth is disabled.
+                actor = current_owner(request)
                 role = current_role(request)
             except Exception:
                 # Identity resolution can fail on unauthenticated requests;
@@ -1117,10 +1135,39 @@ def create_app() -> FastAPI:
             )
         return None
 
+    def _embed_principal(request: Request) -> str | None:
+        """Return the agent id when the bearer token is that agent's embed key.
+
+        Only ever matches ``/agents/<id>/...`` paths, so an embed key can
+        never authorize any other prefix. The compare is constant-time and
+        the token is never logged.
+        """
+        match = _AGENT_ROUTE_RE.match(request.url.path)
+        if match is None:
+            return None
+        try:
+            token = _extract_bearer_token(request)
+        except HTTPException:
+            return None
+        profile = agent_profile_store.get(match.group(1).lower())
+        if profile is None or not profile.enabled or not profile.embed_key:
+            return None
+        if not hmac.compare_digest(profile.embed_key.encode("utf-8"), token.encode("utf-8")):
+            return None
+        return profile.id
+
     @app.middleware("http")
     async def firebase_auth_middleware(request: Request, call_next):
         path = request.url.path
         if request.method.upper() != "OPTIONS" and _requires_auth_path(path):
+            embed_agent = _embed_principal(request)
+            if embed_agent is not None:
+                # Anonymous embed caller: least-privileged role, data owner
+                # scoped to this agent. Skips Firebase and local-dev roles.
+                request.state.owner_override = embed_owner(embed_agent)
+                request.state.user_role = "user"
+                request.state.embed_agent_id = embed_agent
+                return await call_next(request)
             if auth_enabled():
                 try:
                     await require_firebase_user(request, user_store)
@@ -2921,12 +2968,17 @@ def create_app() -> FastAPI:
         start_source_reindex=_start_source_reindex,
     )
 
-    @app.post("/awp")
-    async def agent_endpoint(request: Request):
-        """AG-UI endpoint — streams assistant responses via SSE."""
+    async def _chat_turn(
+        request: Request, body: dict, *, forced_profile: AgentProfileRecord | None = None
+    ):
+        """Run one chat turn and stream it over SSE.
+
+        ``forced_profile`` pins the specialist (per-agent ``/agents/<id>/awp``
+        endpoint) and bypasses the session selection / auto-router. Without
+        it the session's stored selection decides, exactly as ``/awp`` did.
+        """
         owner = current_owner(request)
         srcs = _sources_for(owner)
-        body = await request.json()
         session_id = _resolve_request_session_id(body)
         # Shared-sources mode: every chat turn is grounded on one curated
         # owner/thread instead of the request session's own sources. Curated
@@ -2970,7 +3022,18 @@ def create_app() -> FastAPI:
             session = _resolve_session(session_id, owner)
         except SessionOwnershipError:
             raise HTTPException(status_code=404, detail="Session not found") from None
-        active_agent, active_profile, routed = _resolve_active_agent(session, body)
+        if forced_profile is not None:
+            try:
+                active_agent = agent_registry.get(forced_profile.id)
+            except Exception:
+                # Never fall back to the shared agent here: the caller
+                # addressed this agent explicitly, so serving another one
+                # would silently break isolation.
+                logger.exception("Building agent %r failed", forced_profile.id)
+                raise HTTPException(status_code=503, detail="Agen gagal dimuat.") from None
+            active_profile, routed = forced_profile, False
+        else:
+            active_agent, active_profile, routed = _resolve_active_agent(session, body)
         if active_profile is not None and active_profile.use_sources:
             # The specialist's curated sources ground the turn alongside
             # the global/group/session records. Persistent — the one-shot
@@ -2987,6 +3050,7 @@ def create_app() -> FastAPI:
                 "model": getattr(engine.agent, "model", ""),
                 "agent": active_profile.id if active_profile else "",
                 "routed": routed,
+                "embed": bool(getattr(request.state, "embed_agent_id", "")),
             },
         )
         protocol_kwargs: dict[str, Any] = {}
@@ -3032,8 +3096,13 @@ def create_app() -> FastAPI:
         )
         return await handler.handle(request)
 
-    @app.post("/chat/action")
-    async def chat_action(request: Request):
+    @app.post("/awp")
+    async def agent_endpoint(request: Request):
+        """AG-UI endpoint — streams assistant responses via SSE."""
+        body = await request.json()
+        return await _chat_turn(request, body)
+
+    async def _chat_action(request: Request):
         owner = current_owner(request)
         body = await request.json()
         session_id = _resolve_request_session_id(body)
@@ -3049,6 +3118,61 @@ def create_app() -> FastAPI:
             return mcp_permission_coordinator.resolve_action(action)
 
         return await handler.handle(request)
+
+    @app.post("/chat/action")
+    async def chat_action(request: Request):
+        return await _chat_action(request)
+
+    # ── Per-agent surface: /agents/<id>/… ─────────────────────────────
+    # Same AG-UI protocol as /awp, but the agent is fixed by the path, so
+    # external callers (iframe embeds, curl -N, other services) address one
+    # specialist directly. Auth: Firebase bearer OR that agent's embed key.
+
+    def _require_enabled_agent(agent_id: str) -> AgentProfileRecord:
+        profile = agent_registry.profile(agent_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Agen tidak ditemukan atau nonaktif.")
+        return profile
+
+    @app.get("/agents/{agent_id}")
+    async def get_public_agent(agent_id: str) -> dict:
+        """Public card for the embed header — never includes the key."""
+        profile = _require_enabled_agent(agent_id)
+        return {"id": profile.id, "name": profile.name, "description": profile.description}
+
+    @app.post("/agents/{agent_id}/awp")
+    async def agent_scoped_endpoint(agent_id: str, request: Request):
+        """AG-UI SSE endpoint pinned to one agent."""
+        profile = _require_enabled_agent(agent_id)
+        body = await request.json()
+        owner = current_owner(request)
+        session_id = _resolve_request_session_id(body)
+        try:
+            session = _resolve_session(session_id, owner)
+        except SessionOwnershipError:
+            raise HTTPException(status_code=404, detail="Session not found") from None
+        pinned = str(session.metadata.get("agentId") or "")
+        if pinned and pinned != profile.id:
+            raise HTTPException(status_code=409, detail="Sesi ini terikat ke agen lain.")
+        if pinned != profile.id:
+            # Persist the pin so /awp and the picker honor it too. The
+            # handler reloads the session from the store, so an in-memory
+            # mutation alone would be lost.
+            session.metadata["agentId"] = profile.id
+            _session_store_for(owner).save(session)
+        return await _chat_turn(request, body, forced_profile=profile)
+
+    @app.post("/agents/{agent_id}/chat/action")
+    async def agent_scoped_action(agent_id: str, request: Request):
+        _require_enabled_agent(agent_id)
+        return await _chat_action(request)
+
+    @app.get("/agents/{agent_id}/sessions")
+    async def agent_scoped_sessions(agent_id: str) -> JSONResponse:
+        """Embeds keep no session history; 501 makes the SDK sidebar degrade
+        cleanly instead of receiving the SPA's index.html."""
+        _require_enabled_agent(agent_id)
+        return JSONResponse({"detail": "Riwayat sesi tidak tersedia."}, status_code=501)
 
     @app.get("/chat/actions")
     async def list_actions() -> dict:

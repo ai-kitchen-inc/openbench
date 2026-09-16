@@ -481,6 +481,12 @@ HTML.
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
 | `POST` | `/awp` | AG-UI SSE chat endpoint |
+| `GET` | `/agents/{agent_id}` | Public card (id/name/description) of an enabled agent |
+| `POST` | `/agents/{agent_id}/awp` | AG-UI SSE chat pinned to one agent (Firebase bearer or the agent's embed key) |
+| `POST` | `/agents/{agent_id}/chat/action` | A2UI action callback for the pinned agent |
+| `GET` | `/agents/{agent_id}/sessions` | Always 501 — embeds keep no session history |
+| `POST` | `/admin/agents/{agent_id}/embed-key` | Generate / rotate the agent's embed key |
+| `DELETE` | `/admin/agents/{agent_id}/embed-key` | Revoke the embed key (disables embed + direct SSE) |
 | `POST` | `/chat/upload` | Upload a source file |
 | `GET` | `/chat/sources/discover?q=...` | Search the internet for candidate sources |
 | `GET` | `/chat/sources/{thread_id}` | List sources for a session |

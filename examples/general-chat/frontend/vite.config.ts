@@ -26,6 +26,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/awp": { target: backendUrl, changeOrigin: true },
+      "/agents": { target: backendUrl, changeOrigin: true },
       "/chat/action": { target: backendUrl, changeOrigin: true },
       "/chat/upload": { target: backendUrl, changeOrigin: true },
       "/chat/uploads": { target: backendUrl, changeOrigin: true },
