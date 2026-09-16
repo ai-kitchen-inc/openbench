@@ -94,6 +94,10 @@ class AgentProfileRecord:
     guardrails: str = ""
     escalation_agent_id: str = ""  # another profile id, "" = none
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
+    #: Bearer secret that lets anonymous callers reach this agent through
+    #: ``/agents/<id>/...`` (iframe embed + direct SSE). "" = embed off.
+    #: Only ever set by the admin rotate/revoke endpoints, never by PUT.
+    embed_key: str = ""
     created_at: str = field(default_factory=_utcnow_iso)
     created_by: str = ""
     updated_at: str = field(default_factory=_utcnow_iso)
@@ -114,6 +118,7 @@ class AgentProfileRecord:
             "guardrails": self.guardrails,
             "escalationAgentId": self.escalation_agent_id,
             "confidenceThreshold": self.confidence_threshold,
+            "embedKey": self.embed_key,
             "createdAt": self.created_at,
             "createdBy": self.created_by,
             "updatedAt": self.updated_at,
@@ -145,6 +150,7 @@ class AgentProfileRecord:
             confidence_threshold=_clamp_threshold(
                 data.get("confidenceThreshold", DEFAULT_CONFIDENCE_THRESHOLD)
             ),
+            embed_key=str(data.get("embedKey", "") or "").strip(),
             created_at=str(data.get("createdAt", "") or now),
             created_by=str(data.get("createdBy", "") or ""),
             updated_at=str(data.get("updatedAt", "") or now),
@@ -181,6 +187,8 @@ class AgentProfileRecord:
             self.escalation_agent_id = str(changes["escalation_agent_id"] or "").strip().lower()
         if "confidence_threshold" in changes:
             self.confidence_threshold = _clamp_threshold(changes["confidence_threshold"])
+        if "embed_key" in changes:
+            self.embed_key = str(changes["embed_key"] or "").strip()
         self.updated_at = _utcnow_iso()
 
 

@@ -8,10 +8,12 @@ when GENERAL_CHAT_FIREBASE_PROJECT_ID is configured.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import tempfile
 from pathlib import Path
@@ -2644,6 +2646,28 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         agent_registry.invalidate(record.id)
         _audit(request, "agent.update", target=record.id)
+        return record.to_dict()
+
+    @app.post("/admin/agents/{agent_id}/embed-key")
+    async def rotate_agent_embed_key(agent_id: str, request: Request) -> dict:
+        """Generate (or replace) the agent's embed key.
+
+        The key is the only credential anonymous iframe/SSE callers hold,
+        so rotation immediately locks out every existing embed of this
+        agent. Not a build input — no registry invalidation.
+        """
+        require_role(request, "admin")
+        existing = _require_agent_profile(agent_id)
+        record = agent_profile_store.update(existing.id, {"embed_key": secrets.token_urlsafe(32)})
+        _audit(request, "agent.embed_key.rotate", target=record.id)
+        return record.to_dict()
+
+    @app.delete("/admin/agents/{agent_id}/embed-key")
+    async def revoke_agent_embed_key(agent_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        existing = _require_agent_profile(agent_id)
+        record = agent_profile_store.update(existing.id, {"embed_key": ""})
+        _audit(request, "agent.embed_key.revoke", target=record.id)
         return record.to_dict()
 
     def _agent_sources(agent_id: str):

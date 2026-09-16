@@ -160,6 +160,38 @@ class TestAgentAdminCrud(_AppHarness):
         disabled = client.put("/admin/agents/analis", json={"description": "", "enabled": False})
         self.assertEqual(disabled.status_code, 200)
 
+    def test_embed_key_rotate_and_revoke(self):
+        client = self._client()
+        client.post("/admin/agents", json={"name": "Analis", "description": "Keuangan."})
+        self.assertEqual(client.get("/admin/agents/analis").json()["embedKey"], "")
+
+        first = client.post("/admin/agents/analis/embed-key")
+        self.assertEqual(first.status_code, 200)
+        key = first.json()["embedKey"]
+        self.assertGreaterEqual(len(key), 32)
+        self.assertEqual(client.get("/admin/agents/analis").json()["embedKey"], key)
+
+        second = client.post("/admin/agents/analis/embed-key").json()["embedKey"]
+        self.assertNotEqual(second, key)
+
+        # PUT never sets the key — only the dedicated endpoints do.
+        ignored = client.put("/admin/agents/analis", json={"embedKey": "attacker"})
+        self.assertEqual(ignored.status_code, 200)
+        self.assertEqual(ignored.json()["embedKey"], second)
+
+        # The public picker payload never leaks the key.
+        for agent in client.get("/chat/agents").json()["agents"]:
+            self.assertNotIn("embedKey", agent)
+
+        revoked = client.delete("/admin/agents/analis/embed-key")
+        self.assertEqual(revoked.status_code, 200)
+        self.assertEqual(revoked.json()["embedKey"], "")
+        self.assertEqual(client.post("/admin/agents/ghost/embed-key").status_code, 404)
+        self.assertEqual(
+            client.post("/admin/agents/analis/embed-key", headers={"X-Local-Role": "user"}).status_code,
+            403,
+        )
+
     def test_escalation_wiring_and_delete_cascade(self):
         client = self._client()
         client.post("/admin/agents", json={"name": "Senior", "description": "Konsultan."})
