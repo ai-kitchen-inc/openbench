@@ -280,10 +280,16 @@ export type AgentProfileItem = {
   guardrails: string;
   escalationAgentId: string;
   confidenceThreshold: number;
+  /** Bearer secret for anonymous iframe/SSE access via /agents/<id>/...;
+   * "" = embed disabled. Set only through rotate/revoke, never PUT. */
+  embedKey: string;
   createdAt: string;
   createdBy: string;
   updatedAt: string;
 };
+
+/** Public card served by GET /agents/{id} (never includes the key). */
+export type PublicAgentInfo = { id: string; name: string; description: string };
 
 export type AgentProfilePatch = Partial<
   Pick<
@@ -349,6 +355,22 @@ export async function updateAgent(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
+  return parseJsonResponse<AgentProfileItem>(response);
+}
+
+export async function rotateAgentEmbedKey(agentId: string): Promise<AgentProfileItem> {
+  const response = await apiFetch(
+    apiPath(`/admin/agents/${encodeURIComponent(agentId)}/embed-key`),
+    { method: "POST" },
+  );
+  return parseJsonResponse<AgentProfileItem>(response);
+}
+
+export async function revokeAgentEmbedKey(agentId: string): Promise<AgentProfileItem> {
+  const response = await apiFetch(
+    apiPath(`/admin/agents/${encodeURIComponent(agentId)}/embed-key`),
+    { method: "DELETE" },
+  );
   return parseJsonResponse<AgentProfileItem>(response);
 }
 

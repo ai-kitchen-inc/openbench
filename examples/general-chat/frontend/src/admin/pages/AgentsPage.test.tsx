@@ -25,6 +25,7 @@ const AGENT = {
   guardrails: "",
   escalationAgentId: "",
   confidenceThreshold: 0.5,
+  embedKey: "",
   createdAt: "2026-08-24T00:00:00Z",
   createdBy: "admin@x.co",
   updatedAt: "2026-08-24T00:00:00Z",

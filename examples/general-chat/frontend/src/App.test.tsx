@@ -106,6 +106,27 @@ describe("App role branching", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    window.history.pushState({}, "", "/");
+  });
+
+  it("renders the embed chat without the auth gate on /embed/:id", async () => {
+    window.history.pushState({}, "", "/embed/analis-keuangan?key=k-1");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/agents/analis-keuangan") {
+        return jsonResponse({ id: "analis-keuangan", name: "Analis Keuangan", description: "" });
+      }
+      if (url.startsWith("/agents/analis-keuangan/sessions")) return jsonResponse({}, 501);
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect((await screen.findAllByText("Analis Keuangan")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Panel Kendali")).toBeNull();
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.startsWith("/account/me"))).toBe(false);
   });
 
   it("renders the admin control panel for role=admin", async () => {

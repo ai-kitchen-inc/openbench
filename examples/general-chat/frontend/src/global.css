@@ -5380,6 +5380,39 @@ body {
   height: 100%;
 }
 
+/* ============================================================
+   Embed: standalone single-agent chat at /embed/<agentId>
+   ============================================================ */
+
+.embed-root {
+  margin: 0;
+  background: var(--sss-bg);
+}
+
+.embed-chat {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  background: var(--sss-chat-window-bg, var(--sss-bg));
+}
+
+.embed-chat .chat-panel {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+}
+
+.embed-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  padding: 24px;
+  font-size: 14px;
+  color: var(--sss-text);
+  text-align: center;
+}
+
 /* --- Usage badge (Pengaturan → Penggunaan) --------------------------- */
 
 .usage-badge__bar {
