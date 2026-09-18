@@ -160,6 +160,69 @@ describe("AgentsPage", () => {
     expect(screen.queryByRole("button", { name: "Tambah server MCP" })).toBeNull();
   });
 
+  it("generates an embed key and shows iframe + curl snippets", async () => {
+    let embedKey = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan/embed-key" && init?.method === "POST") {
+          embedKey = "k-123456789";
+          return jsonResponse({ ...AGENT, embedKey });
+        }
+        if (url === "/admin/agents") return jsonResponse({ agents: [{ ...AGENT, embedKey }] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") return jsonResponse({ sources: [] });
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    await userEvent.click(screen.getByRole("button", { name: "Buat kunci embed" }));
+    expect(await screen.findByText("k-12…6789")).toBeInTheDocument();
+    expect(
+      screen.getByText(`${window.location.origin}/embed/analis-keuangan?key=k-123456789`),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/curl -N -X POST .*\/agents\/analis-keuangan\/awp/)).toBeInTheDocument();
+    expect(screen.getByText(/<iframe/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Putar ulang kunci" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Nonaktifkan" })).toBeInTheDocument();
+  });
+
+  it("revokes the embed key after confirmation", async () => {
+    const deletes: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan/embed-key" && init?.method === "DELETE") {
+          deletes.push(url);
+          return jsonResponse({ ...AGENT, embedKey: "" });
+        }
+        if (url === "/admin/agents") {
+          return jsonResponse({ agents: [{ ...AGENT, embedKey: deletes.length ? "" : "k-1" }] });
+        }
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") return jsonResponse({ sources: [] });
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    await userEvent.click(screen.getByRole("button", { name: "Nonaktifkan" }));
+    await waitFor(() => expect(deletes).toHaveLength(1));
+    expect(await screen.findByRole("button", { name: "Buat kunci embed" })).toBeInTheDocument();
+  });
+
   it("shows the full source manager (incl. upload) in the agent detail", async () => {
     vi.stubGlobal(
       "fetch",

@@ -5380,6 +5380,71 @@ body {
   height: 100%;
 }
 
+/* --- Agen: akses eksternal (embed key + snippets) ---------------------- */
+
+.agents-embed__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.agents-embed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--sss-border);
+  border-radius: var(--sss-radius-sm);
+  background: var(--sss-surface);
+}
+
+.agents-embed__row,
+.agents-embed__block-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.agents-embed__label {
+  flex-shrink: 0;
+  min-width: 112px;
+  font-size: 12px;
+  color: var(--sss-text-muted, var(--sss-text));
+}
+
+.agents-embed__key {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--ob-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+
+.agents-embed__block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agents-embed__block-head {
+  justify-content: space-between;
+}
+
+.agents-embed__pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--sss-border);
+  border-radius: var(--sss-radius-sm);
+  background: var(--sss-bg);
+  font-family: var(--ob-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
 /* ============================================================
    Embed: standalone single-agent chat at /embed/<agentId>
    ============================================================ */

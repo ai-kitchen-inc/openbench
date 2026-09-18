@@ -9,6 +9,8 @@ import {
   listAgents,
   listAgentSources,
   readErrorMessage,
+  revokeAgentEmbedKey,
+  rotateAgentEmbedKey,
   updateAgent,
   uploadAgentSourceFile,
   type AgentProfileItem,
@@ -16,6 +18,13 @@ import {
   type AgentProfilePatch,
 } from "../../account/api";
 import { XIcon } from "../../brand/icons";
+import {
+  curlSnippet,
+  embedOrigin,
+  embedPageUrl,
+  iframeSnippet,
+  maskKey,
+} from "../../embed/embedSnippets";
 import { COMMON } from "../../i18n/id";
 import { SourceManager, type SourceManagerApi } from "../../sources/SourceManager";
 import { useToast } from "../../Toast";
@@ -31,6 +40,117 @@ const PERSONA_FIELDS: { key: string; label: string; rows: number }[] = [
   { key: "agents", label: "AGENTS — aturan kerja", rows: 4 },
   { key: "goal", label: "Goal (opsional)", rows: 2 },
 ];
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const { show: showToast } = useToast();
+  return (
+    <button
+      type="button"
+      className="panel-button"
+      onClick={() =>
+        void navigator.clipboard
+          .writeText(text)
+          .then(() => showToast(`${label} disalin.`, "success"))
+          .catch(() => showToast("Gagal menyalin ke papan klip.", "error"))
+      }
+    >
+      Salin
+    </button>
+  );
+}
+
+function EmbedAccessSection({
+  agent,
+  isBusy,
+  onRotate,
+  onRevoke,
+}: {
+  agent: AgentProfileItem;
+  isBusy: boolean;
+  onRotate: () => void;
+  onRevoke: () => void;
+}) {
+  const origin = embedOrigin();
+  const key = agent.embedKey;
+  return (
+    <>
+      <div className="cap-group">
+        <div className="cap-row">
+          <div className="cap-row__main">
+            <div className="cap-row__label">Akses eksternal</div>
+            <div className="cap-row__desc">
+              Kunci embed mengizinkan situs lain menyematkan agen ini lewat iframe dan memanggil
+              endpoint SSE <code>/agents/{agent.id}/awp</code> tanpa login. Pengunjung embed
+              memakai sesi terpisah yang tidak bisa menjangkau agen lain.
+            </div>
+          </div>
+          {key ? (
+            <div className="agents-embed__actions">
+              <button type="button" className="panel-button" disabled={isBusy} onClick={onRotate}>
+                Putar ulang kunci
+              </button>
+              <button
+                type="button"
+                className="panel-button"
+                disabled={isBusy}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "Nonaktifkan akses embed? Semua iframe dan pemanggil SSE yang memakai kunci ini akan berhenti bekerja.",
+                    )
+                  ) {
+                    onRevoke();
+                  }
+                }}
+              >
+                Nonaktifkan
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="panel-button panel-button--primary"
+              disabled={isBusy}
+              onClick={onRotate}
+            >
+              Buat kunci embed
+            </button>
+          )}
+        </div>
+      </div>
+      {key && (
+        <div className="agents-embed">
+          <div className="agents-embed__row">
+            <span className="agents-embed__label">Kunci</span>
+            <code className="agents-embed__key" title="Kunci disamarkan; gunakan Salin.">
+              {maskKey(key)}
+            </code>
+            <CopyButton text={key} label="Kunci embed" />
+          </div>
+          <div className="agents-embed__row">
+            <span className="agents-embed__label">URL embed</span>
+            <code className="agents-embed__key">{embedPageUrl(origin, agent.id, key)}</code>
+            <CopyButton text={embedPageUrl(origin, agent.id, key)} label="URL embed" />
+          </div>
+          <div className="agents-embed__block">
+            <div className="agents-embed__block-head">
+              <span className="agents-embed__label">Sematkan (iframe)</span>
+              <CopyButton text={iframeSnippet(origin, agent.id, key)} label="Kode iframe" />
+            </div>
+            <pre className="agents-embed__pre">{iframeSnippet(origin, agent.id, key)}</pre>
+          </div>
+          <div className="agents-embed__block">
+            <div className="agents-embed__block-head">
+              <span className="agents-embed__label">Panggil lewat SSE (curl)</span>
+              <CopyButton text={curlSnippet(origin, agent.id, key)} label="Perintah curl" />
+            </div>
+            <pre className="agents-embed__pre">{curlSnippet(origin, agent.id, key)}</pre>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 function AgentDetail({
   agent,
@@ -389,6 +509,23 @@ function AgentDetail({
         api={sourcesApi}
         emptyState={<div className="sources-list__empty">Belum ada sumber agen.</div>}
         urlPlaceholder="https://..."
+      />
+
+      <EmbedAccessSection
+        agent={agent}
+        isBusy={isBusy}
+        onRotate={() =>
+          void run(async () => {
+            await rotateAgentEmbedKey(agent.id);
+            onSaved();
+          }, "Kunci embed dibuat.")
+        }
+        onRevoke={() =>
+          void run(async () => {
+            await revokeAgentEmbedKey(agent.id);
+            onSaved();
+          }, "Akses embed dinonaktifkan.")
+        }
       />
 
       <div className="sources-form__row">
