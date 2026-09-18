@@ -306,10 +306,14 @@ class TestAgentEndpointIsolation(_LocalHarness):
         # The local admin's session list never shows embed sessions.
         listed = client.get("/sessions").json()
         self.assertNotIn("shared-id", str(listed))
-        # Embeds keep no history at all.
+        # Embeds keep no history at all, and unknown per-agent paths are a
+        # JSON 404 (never the SPA's index.html).
         self.assertEqual(
             client.get(f"/agents/{a}/sessions", headers=self._bearer(key_a)).status_code, 501
         )
+        probe = client.get(f"/agents/{a}/sessions/shared-id", headers=self._bearer(key_a))
+        self.assertEqual(probe.status_code, 404)
+        self.assertEqual(probe.json(), {"detail": "Not found"})
 
     def test_disabled_or_missing_agent_is_unreachable(self):
         client = self._client()

@@ -3174,6 +3174,13 @@ def create_app() -> FastAPI:
         _require_enabled_agent(agent_id)
         return JSONResponse({"detail": "Riwayat sesi tidak tersedia."}, status_code=501)
 
+    @app.api_route("/agents/{agent_id}/{rest:path}", methods=["GET", "POST", "PUT", "DELETE"])
+    async def agent_scoped_unknown(agent_id: str, rest: str) -> JSONResponse:
+        """Keep the per-agent API namespace out of the SPA catch-all: an
+        embed-authenticated probe (e.g. the SDK's GET .../sessions/<id>)
+        must get JSON 404, never index.html with 200."""
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+
     @app.get("/chat/actions")
     async def list_actions() -> dict:
         handler = AGUIActionHandler(engine=None)
