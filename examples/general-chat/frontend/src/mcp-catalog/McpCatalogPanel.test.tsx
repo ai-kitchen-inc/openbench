@@ -250,6 +250,12 @@ describe("McpCatalogPanel", () => {
     const valueInputs = within(dialog).getAllByLabelText("Value");
     await userEvent.type(keyInputs[1], "PLAYWRIGHT_TOKEN");
     await userEvent.type(valueInputs[1], "typed-token");
+    // Secret values are password inputs until the eye reveals them.
+    expect(valueInputs[1]).toHaveAttribute("type", "password");
+    await userEvent.click(within(dialog).getAllByRole("button", { name: "Show value" })[1]);
+    expect(valueInputs[1]).toHaveAttribute("type", "text");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Hide value" }));
+    expect(valueInputs[1]).toHaveAttribute("type", "password");
     await userEvent.click(within(dialog).getAllByRole("button", { name: "Remove" })[0]);
     await userEvent.click(within(dialog).getByRole("button", { name: "Register servers" }));
 

@@ -183,12 +183,33 @@ describe("AgentsPage", () => {
     );
     await userEvent.click(await screen.findByText("Kelola"));
     await userEvent.click(screen.getByRole("button", { name: "Buat kunci embed" }));
-    expect(await screen.findByText("k-12…6789")).toBeInTheDocument();
+    // Hidden by default: the key never appears in any field or snippet.
+    const mask = "•".repeat("k-123456789".length);
+    expect(await screen.findByText(mask)).toBeInTheDocument();
     expect(
-      screen.getByText(`${window.location.origin}/embed/analis-keuangan?key=k-123456789`),
+      screen.getByText(`${window.location.origin}/embed/analis-keuangan?key=${mask}`),
     ).toBeInTheDocument();
     expect(screen.getByText(/curl -N -X POST .*\/agents\/analis-keuangan\/awp/)).toBeInTheDocument();
     expect(screen.getByText(/<iframe/)).toBeInTheDocument();
+    expect(screen.queryByText(/k-123456789/)).not.toBeInTheDocument();
+    // Each field has its own eye; revealing one leaves the others masked.
+    await userEvent.click(screen.getByRole("button", { name: "Tampilkan kunci" }));
+    expect(screen.getByText("k-123456789")).toBeInTheDocument();
+    expect(
+      screen.getByText(`${window.location.origin}/embed/analis-keuangan?key=${mask}`),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Bearer k-123456789/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Tampilkan perintah curl" }));
+    expect(screen.getByText(/Bearer k-123456789/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Sembunyikan kunci" }));
+    expect(screen.getByText(mask)).toBeInTheDocument();
+    expect(screen.getByText(/Bearer k-123456789/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Tampilkan URL embed" }));
+    expect(
+      screen.getByText(`${window.location.origin}/embed/analis-keuangan?key=k-123456789`),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Tampilkan kode iframe" }));
+    expect(screen.getByText(/src="[^"]*key=k-123456789"/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Putar ulang kunci" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Nonaktifkan" })).toBeInTheDocument();
   });

@@ -1,4 +1,4 @@
-import { curlSnippet, embedPageUrl, iframeSnippet, maskKey } from "./embedSnippets";
+import { curlSnippet, embedPageUrl, iframeSnippet, maskSecret, redactSecret } from "./embedSnippets";
 
 describe("embedSnippets", () => {
   it("builds the embed page url with encoded key", () => {
@@ -23,7 +23,14 @@ describe("embedSnippets", () => {
   });
 
   it("masks keys keeping only the edges", () => {
-    expect(maskKey("abcdefghijkl")).toBe("abcd…ijkl");
-    expect(maskKey("short")).toBe("•••••");
+    expect(maskSecret("abcdefghijkl")).toBe("••••••••••••");
+    expect(maskSecret("")).toBe("");
+  });
+
+  it("redacts raw and url-encoded occurrences of the secret", () => {
+    const key = "a b";
+    const text = `${embedPageUrl("https://x", "agen", key)} Bearer ${key}`;
+    expect(redactSecret(text, key)).toBe("https://x/embed/agen?key=••• Bearer •••");
+    expect(redactSecret("no key here", "")).toBe("no key here");
   });
 });

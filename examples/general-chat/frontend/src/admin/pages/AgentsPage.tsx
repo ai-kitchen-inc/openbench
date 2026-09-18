@@ -23,9 +23,11 @@ import {
   embedOrigin,
   embedPageUrl,
   iframeSnippet,
-  maskKey,
+  maskSecret,
+  redactSecret,
 } from "../../embed/embedSnippets";
 import { COMMON } from "../../i18n/id";
+import { RevealToggle } from "../../shared/RevealToggle";
 import { SourceManager, type SourceManagerApi } from "../../sources/SourceManager";
 import { useToast } from "../../Toast";
 import type { AdminPage, HashParams } from "../useHashPage";
@@ -59,6 +61,9 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
+type EmbedField = "key" | "url" | "iframe" | "curl";
+const HIDDEN: Record<EmbedField, boolean> = { key: false, url: false, iframe: false, curl: false };
+
 function EmbedAccessSection({
   agent,
   isBusy,
@@ -72,6 +77,25 @@ function EmbedAccessSection({
 }) {
   const origin = embedOrigin();
   const key = agent.embedKey;
+  // Each field hides the key independently, like a password input; a
+  // fresh/rotated key always starts hidden again everywhere.
+  const [revealed, setRevealed] = useState<Record<EmbedField, boolean>>(HIDDEN);
+  useEffect(() => setRevealed(HIDDEN), [key]);
+  const toggle = (field: EmbedField) =>
+    setRevealed((current) => ({ ...current, [field]: !current[field] }));
+  const show = (field: EmbedField, text: string) =>
+    revealed[field] ? text : redactSecret(text, key);
+  const eye = (field: EmbedField, what: string) => (
+    <RevealToggle
+      revealed={revealed[field]}
+      onToggle={() => toggle(field)}
+      showLabel={`Tampilkan ${what}`}
+      hideLabel={`Sembunyikan ${what}`}
+    />
+  );
+  const pageUrl = embedPageUrl(origin, agent.id, key);
+  const iframeCode = iframeSnippet(origin, agent.id, key);
+  const curlCode = curlSnippet(origin, agent.id, key);
   return (
     <>
       <div className="cap-group">
@@ -122,29 +146,35 @@ function EmbedAccessSection({
         <div className="agents-embed">
           <div className="agents-embed__row">
             <span className="agents-embed__label">Kunci</span>
-            <code className="agents-embed__key" title="Kunci disamarkan; gunakan Salin.">
-              {maskKey(key)}
-            </code>
+            <code className="agents-embed__key">{revealed.key ? key : maskSecret(key)}</code>
+            {eye("key", "kunci")}
             <CopyButton text={key} label="Kunci embed" />
           </div>
           <div className="agents-embed__row">
             <span className="agents-embed__label">URL embed</span>
-            <code className="agents-embed__key">{embedPageUrl(origin, agent.id, key)}</code>
-            <CopyButton text={embedPageUrl(origin, agent.id, key)} label="URL embed" />
+            <code className="agents-embed__key">{show("url", pageUrl)}</code>
+            {eye("url", "URL embed")}
+            <CopyButton text={pageUrl} label="URL embed" />
           </div>
           <div className="agents-embed__block">
             <div className="agents-embed__block-head">
               <span className="agents-embed__label">Sematkan (iframe)</span>
-              <CopyButton text={iframeSnippet(origin, agent.id, key)} label="Kode iframe" />
+              <div className="agents-embed__actions">
+                {eye("iframe", "kode iframe")}
+                <CopyButton text={iframeCode} label="Kode iframe" />
+              </div>
             </div>
-            <pre className="agents-embed__pre">{iframeSnippet(origin, agent.id, key)}</pre>
+            <pre className="agents-embed__pre">{show("iframe", iframeCode)}</pre>
           </div>
           <div className="agents-embed__block">
             <div className="agents-embed__block-head">
               <span className="agents-embed__label">Panggil lewat SSE (curl)</span>
-              <CopyButton text={curlSnippet(origin, agent.id, key)} label="Perintah curl" />
+              <div className="agents-embed__actions">
+                {eye("curl", "perintah curl")}
+                <CopyButton text={curlCode} label="Perintah curl" />
+              </div>
             </div>
-            <pre className="agents-embed__pre">{curlSnippet(origin, agent.id, key)}</pre>
+            <pre className="agents-embed__pre">{show("curl", curlCode)}</pre>
           </div>
         </div>
       )}

@@ -5428,6 +5428,32 @@ body {
   gap: 6px;
 }
 
+/* Icon-only square button (eye toggle for secrets) */
+.panel-button--icon {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.panel-button--icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Secret input + eye toggle side by side */
+.secret-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.secret-field input {
+  flex: 1;
+  min-width: 0;
+}
+
 .agents-embed__block-head {
   justify-content: space-between;
 }

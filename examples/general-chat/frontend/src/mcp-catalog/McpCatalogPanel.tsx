@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useToast } from "../Toast";
 import { readErrorMessage } from "../shared/apiHelpers";
+import { RevealToggle } from "../shared/RevealToggle";
 import {
   discoverServer,
   deleteToolHiveWorkload,
@@ -63,6 +64,8 @@ type SecretRow = {
   id: string;
   key: string;
   value: string;
+  /** Eye toggle: show the value as plain text instead of bullets. */
+  revealed?: boolean;
 };
 
 function buildSecretPayload(rows: SecretRow[]): Record<string, string> | undefined {
@@ -206,22 +209,40 @@ function ImportDialog({
                     }
                   />
                 </label>
-                <label className="mcp-field">
-                  <span>Value</span>
-                  <input
-                    type="password"
-                    value={row.value}
-                    autoComplete="off"
-                    placeholder="Docker env value"
-                    onChange={(event) =>
-                      setSecretRows((current) =>
-                        current.map((item) =>
-                          item.id === row.id ? { ...item, value: event.target.value } : item,
-                        ),
-                      )
-                    }
-                  />
-                </label>
+                <div className="mcp-field">
+                  <label htmlFor={`${row.id}-value`}>
+                    <span>Value</span>
+                  </label>
+                  <div className="secret-field">
+                    <input
+                      id={`${row.id}-value`}
+                      type={row.revealed ? "text" : "password"}
+                      value={row.value}
+                      autoComplete="off"
+                      placeholder="Docker env value"
+                      onChange={(event) =>
+                        setSecretRows((current) =>
+                          current.map((item) =>
+                            item.id === row.id ? { ...item, value: event.target.value } : item,
+                          ),
+                        )
+                      }
+                    />
+                    <RevealToggle
+                      revealed={Boolean(row.revealed)}
+                      onToggle={() =>
+                        setSecretRows((current) =>
+                          current.map((item) =>
+                            item.id === row.id ? { ...item, revealed: !item.revealed } : item,
+                          ),
+                        )
+                      }
+                      showLabel="Show value"
+                      hideLabel="Hide value"
+                      className="mcp-btn"
+                    />
+                  </div>
+                </div>
                 <button
                   type="button"
                   className="mcp-btn"

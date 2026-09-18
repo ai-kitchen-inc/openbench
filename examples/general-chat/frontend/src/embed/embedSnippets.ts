@@ -37,8 +37,15 @@ export function curlSnippet(origin: string, agentId: string, key: string): strin
   ].join("\n");
 }
 
-/** Show only the edges of a secret so it can be recognised, not copied. */
-export function maskKey(key: string): string {
-  if (key.length <= 8) return "•".repeat(key.length);
-  return `${key.slice(0, 4)}…${key.slice(-4)}`;
+/** Password-style mask: one bullet per character, nothing recognisable. */
+export function maskSecret(secret: string): string {
+  return "•".repeat(secret.length);
+}
+
+/** Replace every occurrence of the secret (raw or URL-encoded) in a
+ * snippet with its mask, so hidden mode never shows it anywhere. */
+export function redactSecret(text: string, secret: string): string {
+  if (!secret) return text;
+  const mask = maskSecret(secret);
+  return text.split(encodeURIComponent(secret)).join(mask).split(secret).join(mask);
 }
