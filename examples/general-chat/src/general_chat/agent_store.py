@@ -33,6 +33,10 @@ _SLUG_RE = re.compile(r"^[a-z0-9-]{1,64}$")
 
 DEFAULT_CONFIDENCE_THRESHOLD = 0.5
 
+RUNTIME_OPENBENCH = ""
+RUNTIME_HERMES = "hermes"
+AGENT_RUNTIMES = (RUNTIME_OPENBENCH, RUNTIME_HERMES)
+
 
 class DuplicateAgentProfileError(ValueError):
     """Raised when adding a profile whose id already exists."""
@@ -64,6 +68,11 @@ def _clamp_threshold(value: Any) -> float:
     except (TypeError, ValueError):
         return DEFAULT_CONFIDENCE_THRESHOLD
     return min(max(threshold, 0.0), 1.0)
+
+
+def _normalize_runtime(value: Any) -> str:
+    runtime = str(value or "").strip().lower()
+    return runtime if runtime in AGENT_RUNTIMES else RUNTIME_OPENBENCH
 
 
 def _str_list(value: Any) -> list[str]:
@@ -98,6 +107,11 @@ class AgentProfileRecord:
     #: ``/agents/<id>/...`` (iframe embed + direct SSE). "" = embed off.
     #: Only ever set by the admin rotate/revoke endpoints, never by PUT.
     embed_key: str = ""
+    #: Which runtime answers for this agent. "" = built-in OpenBench
+    #: BaseAgent; "hermes" = the agent's own Hermes Agent profile reached
+    #: at ``hermes_url`` (the key stays in the server env, never here).
+    runtime: str = RUNTIME_OPENBENCH
+    hermes_url: str = ""
     created_at: str = field(default_factory=_utcnow_iso)
     created_by: str = ""
     updated_at: str = field(default_factory=_utcnow_iso)
@@ -119,6 +133,8 @@ class AgentProfileRecord:
             "escalationAgentId": self.escalation_agent_id,
             "confidenceThreshold": self.confidence_threshold,
             "embedKey": self.embed_key,
+            "runtime": self.runtime,
+            "hermesUrl": self.hermes_url,
             "createdAt": self.created_at,
             "createdBy": self.created_by,
             "updatedAt": self.updated_at,
@@ -151,6 +167,8 @@ class AgentProfileRecord:
                 data.get("confidenceThreshold", DEFAULT_CONFIDENCE_THRESHOLD)
             ),
             embed_key=str(data.get("embedKey", "") or "").strip(),
+            runtime=_normalize_runtime(data.get("runtime")),
+            hermes_url=str(data.get("hermesUrl", "") or "").strip(),
             created_at=str(data.get("createdAt", "") or now),
             created_by=str(data.get("createdBy", "") or ""),
             updated_at=str(data.get("updatedAt", "") or now),
@@ -189,6 +207,10 @@ class AgentProfileRecord:
             self.confidence_threshold = _clamp_threshold(changes["confidence_threshold"])
         if "embed_key" in changes:
             self.embed_key = str(changes["embed_key"] or "").strip()
+        if "runtime" in changes:
+            self.runtime = _normalize_runtime(changes["runtime"])
+        if "hermes_url" in changes:
+            self.hermes_url = str(changes["hermes_url"] or "").strip()
         self.updated_at = _utcnow_iso()
 
 

@@ -71,6 +71,8 @@ from general_chat.server.admin_routes import register_admin_routes, require_role
 from general_chat.server.agent_holder import AgentHolder
 from general_chat.server.agent_registry import AgentProfileRegistry, descriptor_from_profile
 from general_chat.agent_store import (
+    AGENT_RUNTIMES,
+    RUNTIME_HERMES,
     AgentProfileRecord,
     DuplicateAgentProfileError,
     UnknownAgentProfileError,
@@ -82,6 +84,7 @@ from general_chat.group_store import (
     UnknownGroupError,
     build_group_store,
 )
+from general_chat.hermes_runtime import build_hermes_agent, validate_hermes_url
 from general_chat.server.auth import (
     LOCAL_OWNER,
     _extract_bearer_token,
@@ -710,7 +713,13 @@ def create_app() -> FastAPI:
         value ``_agent_factory`` uses). Kept as a closure over the
         module-level ``create_agent`` name so tests patching
         ``general_chat.server.app.create_agent`` cover profile builds too.
+
+        A ``runtime == "hermes"`` profile is answered by its own Hermes
+        Agent profile: persona, skills, MCP and memory all live on the
+        Hermes side, so none of the OpenBench build inputs apply.
         """
+        if profile.runtime == RUNTIME_HERMES:
+            return build_hermes_agent(profile)
         persona_value = profile.persona or settings_store.get(PERSONA_SETTINGS_KEY)
         if profile.guardrails.strip():
             persona_value = _with_guardrails(persona_value, profile.guardrails)
@@ -2544,9 +2553,23 @@ def create_app() -> FastAPI:
             ("guardrails", "guardrails"),
             ("escalationAgentId", "escalation_agent_id"),
             ("confidenceThreshold", "confidence_threshold"),
+            ("runtime", "runtime"),
+            ("hermesUrl", "hermes_url"),
         ):
             if wire_key in body:
                 changes[field_name] = body[wire_key]
+        if "runtime" in changes:
+            runtime_value = str(changes["runtime"] or "").strip().lower()
+            if runtime_value not in AGENT_RUNTIMES:
+                raise HTTPException(
+                    status_code=400, detail=f"Runtime agen tidak dikenal: {runtime_value}"
+                )
+            changes["runtime"] = runtime_value
+        if str(changes.get("hermes_url") or "").strip():
+            try:
+                changes["hermes_url"] = validate_hermes_url(str(changes["hermes_url"]))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
         guardrails_value = changes.get("guardrails")
         if guardrails_value is not None:
             if not isinstance(guardrails_value, str):
@@ -2607,6 +2630,10 @@ def create_app() -> FastAPI:
             raise HTTPException(
                 status_code=400,
                 detail="Deskripsi wajib diisi untuk agen aktif (dipakai perutean).",
+            )
+        if record.runtime == RUNTIME_HERMES and not record.hermes_url:
+            raise HTTPException(
+                status_code=400, detail="URL Hermes wajib diisi untuk runtime Hermes."
             )
 
     @app.get("/admin/agents")
