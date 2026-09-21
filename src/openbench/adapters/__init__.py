@@ -9,6 +9,7 @@ Available Adapters:
 - CrewAIAdapter: Wrap CrewAI crews
 - E2BAdapter: Run custom code in sandboxed environments
 - GoogleADKAdapter: Wrap Google ADK agents
+- HermesAdapter / HermesAgent: Reach a Hermes Agent profile over its API server
 
 Example:
     ```python
@@ -39,6 +40,7 @@ from openbench.adapters.ag2 import AG2Adapter
 from openbench.adapters.crewai import CrewAIAdapter
 from openbench.adapters.e2b import E2BAdapter
 from openbench.adapters.google_adk import GoogleADKAdapter
+from openbench.adapters.hermes import HermesAdapter, HermesAgent
 from openbench.adapters.langchain import LangChainAdapter
 
 __all__ = [
@@ -47,4 +49,6 @@ __all__ = [
     "CrewAIAdapter",
     "E2BAdapter",
     "GoogleADKAdapter",
+    "HermesAdapter",
+    "HermesAgent",
 ]
