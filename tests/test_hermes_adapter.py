@@ -151,7 +151,11 @@ class TestHermesAdapterStream(unittest.TestCase):
         http.post.return_value = _sse_response(
             [
                 "event: hermes.tool.progress",
-                "data: " + json.dumps({"tool": "mcp_db_query", "label": "Query DB"}),
+                "data: "
+                + json.dumps({"tool": "mcp_db_query", "label": "Query DB", "status": "running"}),
+                "",
+                "event: hermes.tool.progress",
+                "data: " + json.dumps({"tool": "mcp_db_query", "status": "completed"}),
                 "",
                 _chunk("done"),
                 "data: " + json.dumps({"choices": [], "usage": {"total_tokens": 7}}),

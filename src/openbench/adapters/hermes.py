@@ -105,6 +105,8 @@ class HermesAdapter(FrameworkAdapter):
             input: User message (str), or a dict with ``input``/``goal``.
             config: Optional dict with ``session_id`` (Hermes transcript
                 scope) and ``messages`` (prior ``{"role", "content"}`` turns).
+                When ``session_id`` is set Hermes replays its own stored
+                transcript for that id and ignores ``messages``.
 
         Returns:
             ``{"output": str, "metadata": {...}}`` — the shape ChatEngine's
@@ -166,7 +168,8 @@ class HermesAdapter(FrameworkAdapter):
                 if not isinstance(chunk, dict):
                     continue
                 if event_name == TOOL_PROGRESS_EVENT:
-                    if on_progress:
+                    # Hermes emits running + completed per tool call; one step each.
+                    if on_progress and chunk.get("status") != "completed":
                         on_progress(_progress_label(chunk))
                     continue
                 if usage_sink is not None and isinstance(chunk.get("usage"), dict):
