@@ -283,6 +283,10 @@ export type AgentProfileItem = {
   /** Bearer secret for anonymous iframe/SSE access via /agents/<id>/...;
    * "" = embed disabled. Set only through rotate/revoke, never PUT. */
   embedKey: string;
+  /** "" = built-in OpenBench agent; "hermes" = this agent's own Hermes
+   * profile at hermesUrl (its key lives in the server env, never here). */
+  runtime: "" | "hermes";
+  hermesUrl: string;
   createdAt: string;
   createdBy: string;
   updatedAt: string;
@@ -307,6 +311,8 @@ export type AgentProfilePatch = Partial<
     | "guardrails"
     | "escalationAgentId"
     | "confidenceThreshold"
+    | "runtime"
+    | "hermesUrl"
   >
 >;
 

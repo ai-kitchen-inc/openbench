@@ -395,6 +395,35 @@ function AgentDetail({
             }
           />
         </div>
+        <div className="sources-form__row">
+          <select
+            aria-label="Runtime agen"
+            value={value.runtime ?? ""}
+            onChange={(event) =>
+              set({ runtime: event.target.value === "hermes" ? "hermes" : "" })
+            }
+          >
+            <option value="">Runtime: OpenBench (bawaan)</option>
+            <option value="hermes">Runtime: Hermes (profil terpisah)</option>
+          </select>
+          {value.runtime === "hermes" && (
+            <input
+              type="url"
+              aria-label="URL Hermes"
+              placeholder="http://hermes-agen:8642"
+              value={value.hermesUrl ?? ""}
+              onChange={(event) => set({ hermesUrl: event.target.value })}
+            />
+          )}
+        </div>
+        {value.runtime === "hermes" && (
+          <div className="cap-row__desc">
+            Agen ini dijawab oleh profil Hermes miliknya sendiri: persona, skill, MCP, dan
+            memori diatur di sisi Hermes, sehingga pilihan model, skill, MCP, dan sumber di
+            halaman ini tidak dipakai. Kunci API Hermes dibaca dari environment server
+            (GENERAL_CHAT_HERMES_KEY_{value.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}).
+          </div>
+        )}
       </div>
 
       <div className="cap-group">

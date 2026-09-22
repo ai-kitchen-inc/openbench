@@ -341,6 +341,40 @@ describe("AgentsPage", () => {
     );
   });
 
+  it("switches an agent to the Hermes runtime with its own URL", async () => {
+    const putBodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan" && init?.method === "PUT") {
+          putBodies.push(JSON.parse(String(init.body)));
+          return jsonResponse({ ...AGENT, runtime: "hermes" });
+        }
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") {
+          return jsonResponse({ sources: [] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    expect(screen.queryByLabelText("URL Hermes")).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Runtime agen"), "hermes");
+    await userEvent.type(screen.getByLabelText("URL Hermes"), "http://hermes-a:8642");
+    expect(screen.getByText(/GENERAL_CHAT_HERMES_KEY_ANALIS_KEUANGAN/)).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Simpan agen"));
+    await waitFor(() =>
+      expect(putBodies).toEqual([{ runtime: "hermes", hermesUrl: "http://hermes-a:8642" }]),
+    );
+  });
+
   it("requires a description before enabling create", async () => {
     vi.stubGlobal(
       "fetch",
