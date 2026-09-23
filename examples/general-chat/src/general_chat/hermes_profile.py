@@ -46,6 +46,9 @@ NO_MCP_SENTINEL = "no_mcp"
 LLM_KEY_ENV = "GOOGLE_API_KEY"
 DEFAULT_PROVIDER = "gemini"
 DEFAULT_MODEL = "gemini-3.5-flash"
+HERMES_IMAGE_CONTEXT = f"https://github.com/NousResearch/hermes-agent.git#{HERMES_VERSION_VERIFIED}"
+# Inside the container only; the published port is scoped by --bind-ip.
+CONTAINER_API_HOST = "0.0.0.0"
 
 #: Every configurable built-in Hermes toolset. Anything not explicitly
 #: selected for an agent lands in ``agent.disabled_toolsets``.
@@ -225,15 +228,19 @@ def render_config(spec: HermesProfileSpec) -> tuple[dict[str, Any], list[str]]:
     return config, sorted(secret_envs)
 
 
-def _merge_env(existing: str, wanted: dict[str, str]) -> str:
-    """Keep every value already in ``.env``; append only missing keys."""
-    present = {
-        line.split("=", 1)[0].strip()
-        for line in existing.splitlines()
-        if "=" in line and not line.lstrip().startswith("#")
-    }
-    lines = existing.rstrip("\n").splitlines() if existing.strip() else []
-    lines += [f"{key}={value}" for key, value in wanted.items() if key not in present]
+def _merge_env(existing: str, settings: dict[str, str], credentials: dict[str, str]) -> str:
+    """``settings`` always follow the spec; ``credentials`` already in ``.env`` are kept."""
+    kept: list[str] = []
+    present: set[str] = set()
+    for line in existing.splitlines():
+        key = line.split("=", 1)[0].strip()
+        if "=" in line and not line.lstrip().startswith("#"):
+            if key in settings:
+                continue
+            present.add(key)
+        kept.append(line)
+    lines = [f"{key}={value}" for key, value in settings.items()] + kept
+    lines += [f"{key}={value}" for key, value in credentials.items() if key not in present]
     return "\n".join(lines) + "\n"
 
 
@@ -275,16 +282,18 @@ def write_profile(root: str | Path, spec: HermesProfileSpec) -> Path:
 
     env_path = profile_dir / ".env"
     existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
-    wanted_env = {
+    settings = {
         "API_SERVER_ENABLED": "true",
         "API_SERVER_HOST": spec.host,
         "API_SERVER_PORT": str(spec.port),
         "API_SERVER_MODEL_NAME": spec.agent_id,
+    }
+    credentials = {
         "API_SERVER_KEY": secrets.token_urlsafe(32),
         LLM_KEY_ENV: "",
         **dict.fromkeys(secret_envs, ""),
     }
-    env_path.write_text(_merge_env(existing, wanted_env), encoding="utf-8")
+    env_path.write_text(_merge_env(existing, settings, credentials), encoding="utf-8")
     return profile_dir
 
 
@@ -303,6 +312,36 @@ def _ensure_frontmatter(skill_md: Path, fallback_name: str) -> None:
         allow_unicode=True,
     )
     skill_md.write_text(f"---\n{front}---\n\n{text}", encoding="utf-8")
+
+
+def render_compose(specs: list[HermesProfileSpec], *, bind_ip: str = "127.0.0.1") -> dict[str, Any]:
+    """One hardened container per agent; each mounts only its own profile dir.
+
+    No docker socket, no shared volume, no ``env_file`` beyond the profile's
+    own ``.env`` (Hermes reads it from the mounted ``HERMES_HOME``), so a
+    compromised agent cannot reach another agent's state or credentials.
+    """
+    services: dict[str, Any] = {}
+    for spec in specs:
+        validate_spec(spec)
+        services[f"hermes-{spec.agent_id}"] = {
+            "build": {"context": HERMES_IMAGE_CONTEXT},
+            "image": f"hermes-agent:{HERMES_VERSION_VERIFIED}",
+            "restart": "unless-stopped",
+            "command": ["gateway", "run"],
+            "volumes": [f"./profiles/{spec.agent_id}:/opt/data"],
+            "ports": [f"{bind_ip}:{spec.port}:{spec.port}"],
+            "networks": [f"hermes-{spec.agent_id}"],
+            "mem_limit": "1g",
+            "cpus": 1.0,
+            "pids_limit": 256,
+            "security_opt": ["no-new-privileges:true"],
+        }
+    return {
+        "services": services,
+        # One network per agent: containers cannot reach each other.
+        "networks": {f"hermes-{spec.agent_id}": {} for spec in specs},
+    }
 
 
 def unfilled_env_keys(profile_dir: str | Path) -> list[str]:
@@ -360,8 +399,23 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Render minimal per-agent Hermes profiles.")
     parser.add_argument("spec", type=Path, help="YAML spec file with an 'agents' list")
     parser.add_argument("--out", type=Path, required=True, help="profiles root directory")
+    parser.add_argument(
+        "--compose",
+        type=Path,
+        help="also write a docker-compose file (one container per agent; profiles bind 0.0.0.0 "
+        "inside their container)",
+    )
+    parser.add_argument("--bind-ip", default="127.0.0.1", help="host IP the API ports publish on")
     args = parser.parse_args(argv)
-    for spec in _load_spec_file(args.spec):
+    specs = _load_spec_file(args.spec)
+    if args.compose:
+        for spec in specs:
+            spec.host = CONTAINER_API_HOST
+        args.compose.write_text(
+            yaml.safe_dump(render_compose(specs, bind_ip=args.bind_ip), sort_keys=False),
+            encoding="utf-8",
+        )
+    for spec in specs:
         profile_dir = write_profile(args.out, spec)
         missing = ", ".join(unfilled_env_keys(profile_dir)) or "none"
         print(f"{spec.agent_id}: {profile_dir} (port {spec.port}; empty .env keys: {missing})")

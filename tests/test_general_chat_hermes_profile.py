@@ -184,11 +184,13 @@ class TestWriteProfile(_TmpCase):
         (profile_dir / "memories" / "MEMORY.md").write_text("ingat", encoding="utf-8")
 
         spec.soul = "v2"
+        spec.port = 8700
         write_profile(self.root, spec)
 
         env = _env(profile_dir)
         self.assertEqual(env["API_SERVER_KEY"], first_key)
         self.assertEqual(env["GOOGLE_API_KEY"], "filled")
+        self.assertEqual(env["API_SERVER_PORT"], "8700")
         self.assertEqual((profile_dir / "SOUL.md").read_text(encoding="utf-8"), "v2\n")
         self.assertEqual((profile_dir / "memories" / "MEMORY.md").read_text("utf-8"), "ingat")
         self.assertEqual(unfilled_env_keys(profile_dir), [])
@@ -319,6 +321,46 @@ class TestSpecFileCli(_TmpCase):
         )
         with self.assertRaises(HermesProfileError):
             main([str(spec_path), "--out", str(out)])
+
+    def test_compose_gives_each_agent_its_own_container_volume_and_network(self):
+        spec_path = self.root / "agents.yaml"
+        spec_path.write_text(
+            yaml.safe_dump(
+                {
+                    "agents": [
+                        {"id": "agen-a", "soul": "A", "port": 8661},
+                        {"id": "agen-b", "soul": "B", "port": 8662},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        compose_path = self.root / "docker-compose.hermes.yml"
+        main(
+            [
+                str(spec_path),
+                "--out",
+                str(self.root / "profiles"),
+                "--compose",
+                str(compose_path),
+                "--bind-ip",
+                "10.0.0.9",
+            ]
+        )
+        compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+        a, b = compose["services"]["hermes-agen-a"], compose["services"]["hermes-agen-b"]
+
+        self.assertEqual(a["volumes"], ["./profiles/agen-a:/opt/data"])
+        self.assertEqual(b["volumes"], ["./profiles/agen-b:/opt/data"])
+        self.assertEqual(a["ports"], ["10.0.0.9:8661:8661"])
+        self.assertEqual(a["networks"], ["hermes-agen-a"])
+        self.assertEqual(b["networks"], ["hermes-agen-b"])
+        self.assertEqual(sorted(compose["networks"]), ["hermes-agen-a", "hermes-agen-b"])
+        for service in (a, b):
+            self.assertNotIn("env_file", service)
+            self.assertNotIn("docker.sock", str(service))
+            self.assertIn("v2026.9.14", service["build"]["context"])
+        self.assertEqual(_env(self.root / "profiles" / "agen-a")["API_SERVER_HOST"], "0.0.0.0")
 
 
 if __name__ == "__main__":
