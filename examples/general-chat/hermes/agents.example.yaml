@@ -1,0 +1,29 @@
+# One entry per general-chat agent that runs on Hermes. Render with:
+#   python -m general_chat.hermes_profile hermes/agents.yaml --out hermes/profiles
+# Copy to agents.yaml (git-ignored) and edit. Everything not listed is OFF.
+agents:
+  - id: analis-keuangan            # must equal the agent id in the Agen panel
+    port: 8651                     # unique per agent
+    model: gemini-3.5-flash
+    soul_file: souls/analis-keuangan.md   # or inline: soul: "..."
+    # Built-in Hermes toolsets. Default: none. Host-reaching ones (terminal,
+    # file, browser, code_execution, delegation, cronjob, computer_use) are
+    # refused unless allow_host_access: true.
+    toolsets: []
+    memory: false                  # Hermes long-term memory tool + MEMORY.md
+    skills:                        # knowledge-only skill dirs (SKILL.md, no tools.py)
+      - skills/aturan-pajak
+    mcp_servers:
+      - name: db
+        include_tools: [list_tables, query]   # allow-list; empty = no tools
+        config:
+          url: http://mcp-db:9000/mcp
+          headers:
+            Authorization: "Bearer ${secret:db.token}"   # -> ${DB_TOKEN} in this agent's .env
+
+  - id: riset-pasar
+    port: 8652
+    soul: |
+      Saya analis riset pasar. Jawab ringkas dalam Bahasa Indonesia dan
+      selalu sebutkan sumber.
+    toolsets: [web]
