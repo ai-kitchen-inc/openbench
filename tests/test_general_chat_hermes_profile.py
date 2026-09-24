@@ -197,7 +197,9 @@ class TestWriteProfile(_TmpCase):
 
     def test_skills_are_copied_with_frontmatter_and_stale_ones_removed(self):
         rules = self._skill("aturan-pajak")
-        spec = HermesProfileSpec(agent_id="pajak", soul="s", skill_dirs=[rules])
+        spec = HermesProfileSpec(
+            agent_id="pajak", soul="s", skill_dirs=[rules], inline_skills=False
+        )
         profile_dir = write_profile(self.root / "p", spec)
 
         skill_md = (profile_dir / "skills" / "aturan-pajak" / "SKILL.md").read_text("utf-8")
@@ -211,6 +213,22 @@ class TestWriteProfile(_TmpCase):
         spec.skill_dirs = []
         write_profile(self.root / "p", spec)
         self.assertEqual(list((profile_dir / "skills").iterdir()), [])
+
+    def test_skills_inline_into_soul_by_default_without_skills_toolset(self):
+        rules = self._skill("aturan-pajak")
+        (rules / "references").mkdir()
+        (rules / "references" / "tarif.md").write_text("Tarif PPN 11%.", encoding="utf-8")
+        spec = HermesProfileSpec(agent_id="pajak", soul="Saya analis.", skill_dirs=[rules])
+        profile_dir = write_profile(self.root / "p", spec)
+
+        soul = (profile_dir / "SOUL.md").read_text(encoding="utf-8")
+        self.assertTrue(soul.startswith("Saya analis."))
+        self.assertIn("Aturan domain aturan-pajak.", soul)
+        self.assertIn("Tarif PPN 11%.", soul)
+        self.assertEqual(list((profile_dir / "skills").iterdir()), [])
+        parsed = yaml.safe_load((profile_dir / "config.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(parsed["platform_toolsets"]["api_server"], ["no_mcp"])
+        self.assertIn("skills", parsed["agent"]["disabled_toolsets"])
 
     def test_tool_bearing_skill_is_refused(self):
         spec = HermesProfileSpec(
@@ -252,6 +270,7 @@ class TestCrossAgentIsolation(_TmpCase):
             soul="Saya agen B.",
             port=8652,
             skill_dirs=[self._skill("skill-b")],
+            inline_skills=False,
             mcp_servers=[
                 HermesMCPServer("mcp-b", {"command": "uvx", "args": ["srv-b"]}, ["tool_b"])
             ],

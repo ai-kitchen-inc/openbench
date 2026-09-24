@@ -13,8 +13,12 @@ agent was given:
   a saved list as authoritative), and ``agent.disabled_toolsets`` — which
   Hermes applies last — additionally suppresses every built-in toolset that
   was not selected, so a Hermes default change can never re-enable one.
-- ``.no-bundled-skills`` stops Hermes seeding/re-syncing bundled skills;
-  only the agent's own knowledge skills are copied into ``skills/``.
+- ``.no-bundled-skills`` stops Hermes seeding/re-syncing bundled skills.
+  The agent's own knowledge skills are inlined into ``SOUL.md`` by default:
+  measured on v2026.9.14 with gemini-3.5-flash, Hermes' ``skills`` toolset
+  alone adds ~5.7k prompt tokens per request (bare profile 926, skills-only
+  6.6k, skills+memory 8.8k, stock defaults 12.4k), so it is only enabled
+  when an agent sets ``inline_skills: false`` (many/large skills).
 - ``mcp_servers`` holds only this agent's servers, each with a
   ``tools.include`` allow-list and resources/prompts wrappers off.
 - ``.env`` holds only this agent's credentials: a freshly generated
@@ -122,6 +126,9 @@ class HermesProfileSpec:
     allow_host_access: bool = False
     #: Knowledge-only skill directories (each holds a SKILL.md) to copy in.
     skill_dirs: list[Path] = field(default_factory=list)
+    #: True: append each SKILL.md (+ references) to SOUL.md, no ``skills``
+    #: toolset. False: copy into ``skills/`` and enable Hermes' skills toolset.
+    inline_skills: bool = True
     mcp_servers: list[HermesMCPServer] = field(default_factory=list)
     memory_enabled: bool = False
     max_turns: int = 30
@@ -182,7 +189,7 @@ def render_config(spec: HermesProfileSpec) -> tuple[dict[str, Any], list[str]]:
     validate_spec(spec)
     secret_envs: set[str] = set()
     toolsets = sorted(set(spec.toolsets))
-    if spec.skill_dirs and "skills" not in toolsets:
+    if spec.skill_dirs and not spec.inline_skills and "skills" not in toolsets:
         toolsets.append("skills")
     if spec.memory_enabled and "memory" not in toolsets:
         toolsets.append("memory")
@@ -266,14 +273,18 @@ def write_profile(root: str | Path, spec: HermesProfileSpec) -> Path:
     (profile_dir / "config.yaml").write_text(
         header + yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
     )
-    (profile_dir / "SOUL.md").write_text(spec.soul.strip() + "\n", encoding="utf-8")
+    soul = spec.soul.strip()
+    if spec.inline_skills:
+        soul = "\n\n".join([soul, *(_inline_skill(skill_dir) for skill_dir in spec.skill_dirs)])
+    (profile_dir / "SOUL.md").write_text(soul + "\n", encoding="utf-8")
 
     skills_root = profile_dir / "skills"
-    wanted = {skill_dir.name for skill_dir in spec.skill_dirs}
+    copied = [] if spec.inline_skills else spec.skill_dirs
+    wanted = {skill_dir.name for skill_dir in copied}
     for stale in skills_root.iterdir():
         if stale.is_dir() and stale.name not in wanted:
             shutil.rmtree(stale)
-    for skill_dir in spec.skill_dirs:
+    for skill_dir in copied:
         target = skills_root / skill_dir.name
         if target.exists():
             shutil.rmtree(target)
@@ -295,6 +306,17 @@ def write_profile(root: str | Path, spec: HermesProfileSpec) -> Path:
     }
     env_path.write_text(_merge_env(existing, settings, credentials), encoding="utf-8")
     return profile_dir
+
+
+def _inline_skill(skill_dir: Path) -> str:
+    """SKILL.md plus its references as one SOUL.md section."""
+    parts = [(skill_dir / "SKILL.md").read_text(encoding="utf-8").strip()]
+    references = skill_dir / "references"
+    if references.is_dir():
+        parts += [
+            ref.read_text(encoding="utf-8").strip() for ref in sorted(references.glob("*.md"))
+        ]
+    return f"<!-- skill: {skill_dir.name} -->\n" + "\n\n".join(parts)
 
 
 def _ensure_frontmatter(skill_md: Path, fallback_name: str) -> None:
@@ -377,6 +399,7 @@ def _load_spec_file(path: Path) -> list[HermesProfileSpec]:
                 toolsets=[str(name) for name in item.get("toolsets") or []],
                 allow_host_access=bool(item.get("allow_host_access", False)),
                 skill_dirs=[path.parent / str(p) for p in item.get("skills") or []],
+                inline_skills=bool(item.get("inline_skills", True)),
                 mcp_servers=[
                     HermesMCPServer(
                         name=str(server.get("name") or ""),

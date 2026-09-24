@@ -10,9 +10,11 @@ agents:
     # file, browser, code_execution, delegation, cronjob, computer_use) are
     # refused unless allow_host_access: true.
     toolsets: []
-    memory: false                  # Hermes long-term memory tool + MEMORY.md
+    memory: false                  # Hermes memory tool + MEMORY.md; +~2.2k tokens/request when true
     skills:                        # knowledge-only skill dirs (SKILL.md, no tools.py)
       - skills/aturan-pajak
+    inline_skills: true            # default: SKILL.md text goes into SOUL.md;
+                                   # false = Hermes skills toolset (+~5.7k tokens/request)
     mcp_servers:
       - name: db
         include_tools: [list_tables, query]   # allow-list; empty = no tools

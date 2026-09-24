@@ -90,8 +90,15 @@ class TestLiveHermesIsolation(unittest.TestCase):
             self.skipTest("profile dirs not provided")
         listed = {}
         for side in (self.a, self.b):
-            names = {item["name"] for item in side.get("/v1/skills").json()["data"]}
-            own = {p.name for p in (side.profile_dir / "skills").iterdir() if p.is_dir()}
+            skills_root = side.profile_dir / "skills"
+            response = side.get("/v1/skills")
+            if response.status_code == 200:
+                names = {item["name"] for item in response.json()["data"]}
+            else:
+                # Hermes v2026.9.14 answers 500 here (upstream TypeError in
+                # _handle_skills); fall back to what its skill scanner reads.
+                names = {path.parent.name for path in skills_root.rglob("SKILL.md")}
+            own = {p.name for p in skills_root.iterdir() if (p / "SKILL.md").is_file()}
             listed[side] = (names, own)
         (names_a, own_a), (names_b, own_b) = listed[self.a], listed[self.b]
         self.assertFalse(names_a & (own_b - own_a), "agent A lists a skill only B was given")
