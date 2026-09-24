@@ -134,7 +134,8 @@ class HermesProfileSpec:
     max_turns: int = 30
 
 
-def _env_name(secret_name: str) -> str:
+def secret_env_name(secret_name: str) -> str:
+    """Env var a ``${secret:NAME}`` placeholder is resolved from inside Hermes."""
     return re.sub(r"[^A-Z0-9]", "_", secret_name.upper())
 
 
@@ -143,7 +144,7 @@ def _translate_secrets(value: Any, found: set[str]) -> Any:
     if isinstance(value, str):
 
         def _sub(match: re.Match[str]) -> str:
-            name = _env_name(match.group(1))
+            name = secret_env_name(match.group(1))
             found.add(name)
             return "${" + name + "}"
 
@@ -251,12 +252,16 @@ def _merge_env(existing: str, settings: dict[str, str], credentials: dict[str, s
     return "\n".join(lines) + "\n"
 
 
-def write_profile(root: str | Path, spec: HermesProfileSpec) -> Path:
+def write_profile(root: str | Path, spec: HermesProfileSpec, *, llm_key_slot: bool = True) -> Path:
     """Create or refresh ``<root>/<agent_id>/``; returns the profile dir.
 
     Re-running is safe: ``config.yaml``, ``SOUL.md`` and ``skills/`` are
     rewritten from the spec, while ``.env`` values, memories, sessions and
     ``state.db`` are never touched.
+
+    ``llm_key_slot=False`` (supervisor-managed profiles) writes no empty
+    LLM-key / MCP-secret slots: those reach the gateway as environment, and
+    an empty ``.env`` entry would shadow them.
     """
     config, secret_envs = render_config(spec)
     profile_dir = Path(root) / spec.agent_id
@@ -299,11 +304,9 @@ def write_profile(root: str | Path, spec: HermesProfileSpec) -> Path:
         "API_SERVER_PORT": str(spec.port),
         "API_SERVER_MODEL_NAME": spec.agent_id,
     }
-    credentials = {
-        "API_SERVER_KEY": secrets.token_urlsafe(32),
-        LLM_KEY_ENV: "",
-        **dict.fromkeys(secret_envs, ""),
-    }
+    credentials = {"API_SERVER_KEY": secrets.token_urlsafe(32)}
+    if llm_key_slot:
+        credentials.update({LLM_KEY_ENV: "", **dict.fromkeys(secret_envs, "")})
     env_path.write_text(_merge_env(existing, settings, credentials), encoding="utf-8")
     return profile_dir
 

@@ -108,10 +108,14 @@ class AgentProfileRecord:
     #: Only ever set by the admin rotate/revoke endpoints, never by PUT.
     embed_key: str = ""
     #: Which runtime answers for this agent. "" = built-in OpenBench
-    #: BaseAgent; "hermes" = the agent's own Hermes Agent profile reached
-    #: at ``hermes_url`` (the key stays in the server env, never here).
+    #: BaseAgent; "hermes" = the agent's own Hermes Agent profile.
     runtime: str = RUNTIME_OPENBENCH
+    #: "" = managed: this server renders and runs the Hermes profile itself.
+    #: A URL = an externally run profile (its key stays in the server env).
     hermes_url: str = ""
+    #: Hermes long-term memory tool for this agent (managed mode; costs
+    #: ~2.2k prompt tokens per request, so off by default).
+    hermes_memory: bool = False
     created_at: str = field(default_factory=_utcnow_iso)
     created_by: str = ""
     updated_at: str = field(default_factory=_utcnow_iso)
@@ -135,6 +139,7 @@ class AgentProfileRecord:
             "embedKey": self.embed_key,
             "runtime": self.runtime,
             "hermesUrl": self.hermes_url,
+            "hermesMemory": self.hermes_memory,
             "createdAt": self.created_at,
             "createdBy": self.created_by,
             "updatedAt": self.updated_at,
@@ -169,6 +174,7 @@ class AgentProfileRecord:
             embed_key=str(data.get("embedKey", "") or "").strip(),
             runtime=_normalize_runtime(data.get("runtime")),
             hermes_url=str(data.get("hermesUrl", "") or "").strip(),
+            hermes_memory=bool(data.get("hermesMemory", False)),
             created_at=str(data.get("createdAt", "") or now),
             created_by=str(data.get("createdBy", "") or ""),
             updated_at=str(data.get("updatedAt", "") or now),
@@ -211,6 +217,8 @@ class AgentProfileRecord:
             self.runtime = _normalize_runtime(changes["runtime"])
         if "hermes_url" in changes:
             self.hermes_url = str(changes["hermes_url"] or "").strip()
+        if "hermes_memory" in changes:
+            self.hermes_memory = bool(changes["hermes_memory"])
         self.updated_at = _utcnow_iso()
 
 

@@ -84,7 +84,13 @@ from general_chat.group_store import (
     UnknownGroupError,
     build_group_store,
 )
-from general_chat.hermes_runtime import build_hermes_agent, validate_hermes_url
+from general_chat.hermes_runtime import (
+    ManagedHermesPlan,
+    build_hermes_agent,
+    plan_managed_profile,
+    validate_hermes_url,
+)
+from general_chat.hermes_supervisor import HermesSupervisor
 from general_chat.server.auth import (
     LOCAL_OWNER,
     _extract_bearer_token,
@@ -566,6 +572,8 @@ def create_app() -> FastAPI:
     source_parser = SourceParserRegistry(document_extractor=extractor)
     source_store = build_source_store(storage_root)
     mcp_registry_store = MCPServerRegistryStore(storage_root)
+    # None unless GENERAL_CHAT_HERMES_BACKEND is set: managed Hermes agents are opt-in.
+    hermes_supervisor = HermesSupervisor.from_env(storage_root)
     toolhive_service = ToolHiveService()
     mcp_permission_coordinator = GeneralChatMCPPermissionCoordinator()
     discovery_adapter = SearchDiscoveryAdapter()
@@ -706,6 +714,34 @@ def create_app() -> FastAPI:
         value["agents"] = f"{agents_text}\n\n{block}" if agents_text else block
         return value
 
+    def _hermes_plan(profile: AgentProfileRecord) -> ManagedHermesPlan:
+        """Managed-Hermes launch plan from the same panel fields a BaseAgent build uses."""
+        persona_value = profile.persona or settings_store.get(PERSONA_SETTINGS_KEY)
+        if profile.guardrails.strip():
+            persona_value = _with_guardrails(persona_value, profile.guardrails)
+        persona, goal, _source_label = persona_from_settings(persona_value)
+        soul = "\n\n".join(
+            part for part in ((persona.compose() if persona else ""), goal.strip()) if part
+        ) or f"Anda adalah {profile.name}. {profile.description}".strip()
+        custom_ids = set(profile.custom_skill_ids)
+        skill_dirs = [_sdk_skill_dir(name) for name in profile.skills]
+        skill_dirs += [path for path in custom_skills.paths() if path.name in custom_ids]
+        servers = []
+        for server_id in profile.mcp_server_ids:
+            try:
+                servers.append(mcp_registry_store.get_server(server_id))
+            except KeyError:
+                logger.warning("hermes.plan unknown mcp server %s agent=%s", server_id, profile.id)
+        return plan_managed_profile(
+            profile,
+            soul=soul,
+            skill_dirs=skill_dirs,
+            mcp_servers=servers,
+            secret_lookup=mcp_registry_store.secret_store.get,
+            backend=hermes_supervisor.backend if hermes_supervisor else "",
+            default_model=str(runtime_settings_cache.value.get("llm_model") or ""),
+        )
+
     def _profile_agent_factory(profile: AgentProfileRecord):
         """Build one specialist agent from its admin-managed profile.
 
@@ -715,11 +751,17 @@ def create_app() -> FastAPI:
         ``general_chat.server.app.create_agent`` cover profile builds too.
 
         A ``runtime == "hermes"`` profile is answered by its own Hermes
-        Agent profile: persona, skills, MCP and memory all live on the
-        Hermes side, so none of the OpenBench build inputs apply.
+        Agent profile. Managed (no URL): this server renders that profile
+        from the panel fields and runs its gateway; remote (URL): the
+        profile is run elsewhere and none of the build inputs apply.
         """
         if profile.runtime == RUNTIME_HERMES:
-            return build_hermes_agent(profile)
+            managed = not profile.hermes_url and hermes_supervisor is not None
+            return build_hermes_agent(
+                profile,
+                supervisor=hermes_supervisor,
+                plan=_hermes_plan(profile) if managed else None,
+            )
         persona_value = profile.persona or settings_store.get(PERSONA_SETTINGS_KEY)
         if profile.guardrails.strip():
             persona_value = _with_guardrails(persona_value, profile.guardrails)
@@ -1076,6 +1118,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="General Chat", docs_url=None, redoc_url=None, openapi_url=None)
     # Exposed for tests and diagnostics; route handlers use the closures.
     app.state.agent_registry = agent_registry
+    app.state.hermes_supervisor = hermes_supervisor
     app.state.agent_profile_store = agent_profile_store
     app.state.source_reindex_job = source_reindex_job
 
@@ -1311,6 +1354,8 @@ def create_app() -> FastAPI:
         if task is not None:
             task.cancel()
         source_reindex_job.cancel()
+        if hermes_supervisor is not None:
+            await asyncio.to_thread(hermes_supervisor.shutdown)
 
     @app.get("/health")
     async def health() -> dict:
@@ -2555,6 +2600,7 @@ def create_app() -> FastAPI:
             ("confidenceThreshold", "confidence_threshold"),
             ("runtime", "runtime"),
             ("hermesUrl", "hermes_url"),
+            ("hermesMemory", "hermes_memory"),
         ):
             if wire_key in body:
                 changes[field_name] = body[wire_key]
@@ -2631,9 +2677,14 @@ def create_app() -> FastAPI:
                 status_code=400,
                 detail="Deskripsi wajib diisi untuk agen aktif (dipakai perutean).",
             )
-        if record.runtime == RUNTIME_HERMES and not record.hermes_url:
+        if (
+            record.runtime == RUNTIME_HERMES
+            and not record.hermes_url
+            and hermes_supervisor is None
+        ):
             raise HTTPException(
-                status_code=400, detail="URL Hermes wajib diisi untuk runtime Hermes."
+                status_code=400,
+                detail="Hermes terkelola belum aktif di server ini; isi URL Hermes.",
             )
 
     @app.get("/admin/agents")
@@ -2719,8 +2770,55 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         agent_registry.invalidate(record.id)
+        if hermes_supervisor is not None and not _is_managed_hermes(record):
+            # Left the managed Hermes runtime (or got disabled): stop its gateway.
+            await asyncio.to_thread(hermes_supervisor.stop, record.id)
         _audit(request, "agent.update", target=record.id)
         return record.to_dict()
+
+    def _is_managed_hermes(record: AgentProfileRecord) -> bool:
+        return record.enabled and record.runtime == RUNTIME_HERMES and not record.hermes_url
+
+    def _hermes_status(record: AgentProfileRecord) -> dict:
+        managed = _is_managed_hermes(record) and hermes_supervisor is not None
+        payload: dict[str, Any] = {
+            "runtime": record.runtime,
+            "managed": managed,
+            "available": hermes_supervisor is not None,
+            "warnings": [],
+        }
+        if managed:
+            payload.update(hermes_supervisor.status(record.id))
+            payload["warnings"] = _hermes_plan(record).warnings
+        return payload
+
+    @app.get("/admin/agents/{agent_id}/hermes")
+    async def agent_hermes_status(agent_id: str, request: Request) -> dict:
+        require_role(request, "admin")
+        record = _require_agent_profile(agent_id)
+        return await asyncio.to_thread(_hermes_status, record)
+
+    @app.post("/admin/agents/{agent_id}/hermes/start")
+    async def agent_hermes_start(agent_id: str, request: Request) -> dict:
+        """Render the agent's Hermes profile and (re)start its gateway now.
+
+        Turns also start it lazily; this lets an admin warm it up and see
+        start-up errors in the panel instead of in a user's first chat.
+        """
+        require_role(request, "admin")
+        record = _require_agent_profile(agent_id)
+        if not _is_managed_hermes(record) or hermes_supervisor is None:
+            raise HTTPException(
+                status_code=400, detail="Agen ini tidak memakai Hermes terkelola."
+            )
+        agent_registry.invalidate(record.id)
+        try:
+            await asyncio.to_thread(agent_registry.get, record.id)
+        except Exception as exc:
+            logger.exception("Starting managed Hermes for %r failed", record.id)
+            raise HTTPException(status_code=502, detail=str(exc)[:300]) from None
+        _audit(request, "agent.hermes.start", target=record.id)
+        return await asyncio.to_thread(_hermes_status, record)
 
     @app.post("/admin/agents/{agent_id}/embed-key")
     async def rotate_agent_embed_key(agent_id: str, request: Request) -> dict:
@@ -2763,6 +2861,9 @@ def create_app() -> FastAPI:
                 agent_registry.invalidate(other.id)
         agent_profile_store.remove(record.id)
         agent_registry.invalidate(record.id)
+        if hermes_supervisor is not None:
+            # The agent's Hermes memories/sessions/keys go with it.
+            await asyncio.to_thread(hermes_supervisor.remove, record.id)
         _audit(request, "agent.delete", target=record.id)
         return {"ok": True, "id": record.id}
 
