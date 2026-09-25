@@ -5,14 +5,17 @@ import {
   addAgentUrlSource,
   deleteAgent,
   deleteAgentSource,
+  getAgentHermesStatus,
   getAgentOptions,
   listAgents,
   listAgentSources,
   readErrorMessage,
   revokeAgentEmbedKey,
   rotateAgentEmbedKey,
+  startAgentHermes,
   updateAgent,
   uploadAgentSourceFile,
+  type AgentHermesStatus,
   type AgentProfileItem,
   type AgentProfileOptions,
   type AgentProfilePatch,
@@ -179,6 +182,74 @@ function EmbedAccessSection({
         </div>
       )}
     </>
+  );
+}
+
+/** Live state of a server-managed Hermes profile (saved agent state, not the draft). */
+function HermesStatusSection({ agent }: { agent: AgentProfileItem }) {
+  const { show: showToast } = useToast();
+  const [status, setStatus] = useState<AgentHermesStatus | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAgentHermesStatus(agent.id)
+      .then((value) => {
+        if (!cancelled) setStatus(value);
+      })
+      .catch(() => {
+        if (!cancelled) setStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, agent.updatedAt]);
+
+  const start = async () => {
+    setIsStarting(true);
+    try {
+      setStatus(await startAgentHermes(agent.id));
+      showToast("Hermes berjalan.", "success");
+    } catch (error) {
+      showToast(readErrorMessage(error), "error");
+      getAgentHermesStatus(agent.id).then(setStatus).catch(() => undefined);
+    } finally {
+      setIsStarting(false);
+    }
+  };
+
+  if (!status) return null;
+  if (!status.available) {
+    return (
+      <div className="cap-row__desc" role="status">
+        Hermes terkelola belum diaktifkan di server ini (GENERAL_CHAT_HERMES_BACKEND).
+      </div>
+    );
+  }
+  if (!status.managed) return null;
+  const toolsets = status.enabledToolsets ?? [];
+  return (
+    <div className="cap-row" aria-label="Status Hermes">
+      <div className="cap-row__main">
+        <div className="cap-row__label">
+          Hermes: {status.running ? "berjalan" : "belum berjalan"}
+        </div>
+        <div className="cap-row__desc">
+          {status.running
+            ? `Toolset aktif: ${toolsets.length ? toolsets.join(", ") : "tidak ada (paling hemat token)"}.`
+            : "Dimulai otomatis saat percakapan pertama, atau mulai sekarang."}
+        </div>
+        {status.error && <div className="cap-row__desc">Galat terakhir: {status.error}</div>}
+        {status.warnings.map((warning) => (
+          <div key={warning} className="cap-row__desc">
+            {warning}
+          </div>
+        ))}
+      </div>
+      <button type="button" className="panel-button" disabled={isStarting} onClick={start}>
+        {isStarting ? "Memulai..." : status.running ? "Muat ulang Hermes" : "Mulai Hermes"}
+      </button>
+    </div>
   );
 }
 
@@ -410,20 +481,48 @@ function AgentDetail({
             <input
               type="url"
               aria-label="URL Hermes"
-              placeholder="http://hermes-agen:8642"
+              placeholder="Kosong = dikelola SSS"
               value={value.hermesUrl ?? ""}
               onChange={(event) => set({ hermesUrl: event.target.value })}
             />
           )}
         </div>
-        {value.runtime === "hermes" && (
+        {value.runtime === "hermes" && !value.hermesUrl && (
+          <>
+            <div className="cap-row__desc">
+              Hermes dikelola SSS: persona, guardrails, model, skill pengetahuan, dan server
+              MCP di halaman ini dipakai untuk membuat profil Hermes khusus agen ini, lalu
+              dijalankan otomatis. Skill ber-tool, sumber agen, dan keluaran kaya (grafik,
+              tabel, berkas) tidak tersedia di Hermes.
+            </div>
+            <div className="cap-row">
+              <div className="cap-row__main">
+                <div className="cap-row__label">Memori Hermes</div>
+                <div className="cap-row__desc">
+                  Ingatan jangka panjang khusus agen ini (menambah sekitar 2 ribu token per
+                  permintaan).
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                className="switch"
+                aria-checked={Boolean(value.hermesMemory)}
+                aria-label="Memori Hermes"
+                onClick={() => set({ hermesMemory: !value.hermesMemory })}
+              />
+            </div>
+          </>
+        )}
+        {value.runtime === "hermes" && value.hermesUrl && (
           <div className="cap-row__desc">
-            Agen ini dijawab oleh profil Hermes miliknya sendiri: persona, skill, MCP, dan
-            memori diatur di sisi Hermes, sehingga pilihan model, skill, MCP, dan sumber di
-            halaman ini tidak dipakai. Kunci API Hermes dibaca dari environment server
-            (GENERAL_CHAT_HERMES_KEY_{value.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}).
+            Hermes eksternal: profil dijalankan di luar SSS, sehingga pilihan model, skill,
+            MCP, dan sumber di halaman ini tidak dipakai. Kunci API Hermes dibaca dari
+            environment server (GENERAL_CHAT_HERMES_KEY_
+            {value.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}).
           </div>
         )}
+        {agent.runtime === "hermes" && !agent.hermesUrl && <HermesStatusSection agent={agent} />}
       </div>
 
       <div className="cap-group">

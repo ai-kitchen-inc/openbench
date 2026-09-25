@@ -283,10 +283,13 @@ export type AgentProfileItem = {
   /** Bearer secret for anonymous iframe/SSE access via /agents/<id>/...;
    * "" = embed disabled. Set only through rotate/revoke, never PUT. */
   embedKey: string;
-  /** "" = built-in OpenBench agent; "hermes" = this agent's own Hermes
-   * profile at hermesUrl (its key lives in the server env, never here). */
+  /** "" = built-in OpenBench agent; "hermes" = this agent's own Hermes profile. */
   runtime: "" | "hermes";
+  /** "" = managed: the server renders and runs the Hermes profile itself.
+   * A URL = an externally run profile (its key lives in the server env). */
   hermesUrl: string;
+  /** Hermes long-term memory for this agent (managed mode). */
+  hermesMemory: boolean;
   createdAt: string;
   createdBy: string;
   updatedAt: string;
@@ -313,8 +316,26 @@ export type AgentProfilePatch = Partial<
     | "confidenceThreshold"
     | "runtime"
     | "hermesUrl"
+    | "hermesMemory"
   >
 >;
+
+/** GET /admin/agents/{id}/hermes — never carries a key. */
+export type AgentHermesStatus = {
+  runtime: string;
+  /** True when this server renders and runs the agent's Hermes profile. */
+  managed: boolean;
+  /** False when managed Hermes is not enabled on this server. */
+  available: boolean;
+  /** What could not be carried over to Hermes (skipped skills / MCP servers). */
+  warnings: string[];
+  backend?: string;
+  rendered?: boolean;
+  running?: boolean;
+  url?: string;
+  enabledToolsets?: string[];
+  error?: string;
+};
 
 export type AgentProfileOptions = {
   models: string[];
@@ -362,6 +383,19 @@ export async function updateAgent(
     body: JSON.stringify(patch),
   });
   return parseJsonResponse<AgentProfileItem>(response);
+}
+
+export async function getAgentHermesStatus(agentId: string): Promise<AgentHermesStatus> {
+  const response = await apiFetch(apiPath(`/admin/agents/${encodeURIComponent(agentId)}/hermes`));
+  return parseJsonResponse<AgentHermesStatus>(response);
+}
+
+export async function startAgentHermes(agentId: string): Promise<AgentHermesStatus> {
+  const response = await apiFetch(
+    apiPath(`/admin/agents/${encodeURIComponent(agentId)}/hermes/start`),
+    { method: "POST" },
+  );
+  return parseJsonResponse<AgentHermesStatus>(response);
 }
 
 export async function rotateAgentEmbedKey(agentId: string): Promise<AgentProfileItem> {

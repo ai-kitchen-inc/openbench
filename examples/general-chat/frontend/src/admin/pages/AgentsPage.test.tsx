@@ -368,11 +368,74 @@ describe("AgentsPage", () => {
     expect(screen.queryByLabelText("URL Hermes")).not.toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText("Runtime agen"), "hermes");
     await userEvent.type(screen.getByLabelText("URL Hermes"), "http://hermes-a:8642");
-    expect(screen.getByText(/GENERAL_CHAT_HERMES_KEY_ANALIS_KEUANGAN/)).toBeInTheDocument();
+    expect(screen.getByText(/GENERAL_CHAT_HERMES_KEY_/)).toBeInTheDocument();
     await userEvent.click(screen.getByText("Simpan agen"));
     await waitFor(() =>
       expect(putBodies).toEqual([{ runtime: "hermes", hermesUrl: "http://hermes-a:8642" }]),
     );
+  });
+
+  it("manages a URL-less Hermes agent: memory toggle, status, and start", async () => {
+    const managed = { ...AGENT, runtime: "hermes", hermesUrl: "", hermesMemory: false };
+    const putBodies: unknown[] = [];
+    let starts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan/hermes/start") {
+          starts += 1;
+          return jsonResponse({
+            runtime: "hermes",
+            managed: true,
+            available: true,
+            warnings: [],
+            running: true,
+            enabledToolsets: [],
+          });
+        }
+        if (url === "/admin/agents/analis-keuangan/hermes") {
+          return jsonResponse({
+            runtime: "hermes",
+            managed: true,
+            available: true,
+            warnings: ["Skill 'query-explorer' memakai tools.py dan tidak berjalan di Hermes."],
+            running: false,
+            enabledToolsets: [],
+          });
+        }
+        if (url === "/admin/agents/analis-keuangan" && init?.method === "PUT") {
+          putBodies.push(JSON.parse(String(init.body)));
+          return jsonResponse({ ...managed, hermesMemory: true });
+        }
+        if (url === "/admin/agents") return jsonResponse({ agents: [managed] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") {
+          return jsonResponse({ sources: [] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    expect(await screen.findByText("Hermes: belum berjalan")).toBeInTheDocument();
+    expect(screen.getByText(/tidak berjalan di Hermes/)).toBeInTheDocument();
+    expect(screen.getByLabelText("URL Hermes")).toHaveAttribute(
+      "placeholder",
+      "Kosong = dikelola SSS",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Mulai Hermes" }));
+    expect(await screen.findByText("Hermes: berjalan")).toBeInTheDocument();
+    expect(starts).toBe(1);
+
+    await userEvent.click(screen.getByRole("switch", { name: "Memori Hermes" }));
+    await userEvent.click(screen.getByText("Simpan agen"));
+    await waitFor(() => expect(putBodies).toEqual([{ hermesMemory: true }]));
   });
 
   it("requires a description before enabling create", async () => {
