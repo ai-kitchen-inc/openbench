@@ -5,6 +5,16 @@ Agent profile** instead of the built-in OpenBench `BaseAgent`. Default
 runtime is unchanged; nothing here runs unless an agent is switched to
 `Runtime: Hermes`.
 
+Two modes:
+
+- **Managed (default, same host)** — leave the Hermes URL empty. SSS renders the
+  agent's minimal Hermes profile from the panel fields, runs its gateway, and
+  holds every key itself. Set up entirely from the Agen panel. Needs
+  `GENERAL_CHAT_HERMES_BACKEND` on the server (`process` locally, `docker` on
+  the VM).
+- **Remote** — enter a Hermes URL. The profile is run elsewhere (see *Remote
+  mode* below) and its key comes from `GENERAL_CHAT_HERMES_KEY_<AGENT_ID>`.
+
 Hermes Agent = open-source self-hosted agent runtime by Nous Research
 (`NousResearch/hermes-agent`, MIT). No Hermes/Nous account is needed; it runs
 on the existing Gemini API key. Everything below was checked against the
@@ -63,7 +73,46 @@ Not carried over from the OpenBench runtime: tool-bearing OpenBench skills
 Expose those through an MCP server if a Hermes agent needs them; otherwise
 keep that agent on the default runtime.
 
-## Local run
+## Managed mode (same host) — set up from the Agen panel
+
+Server, once:
+
+```bash
+# local dev: Hermes installed in a venv (official repo at the pinned tag)
+export GENERAL_CHAT_HERMES_BACKEND=process
+export GENERAL_CHAT_HERMES_BIN=/c/Users/Admin/hermes-spike/venv/Scripts/hermes.exe
+# VM: GENERAL_CHAT_HERMES_BACKEND=docker in .env.gcp (see deploy/DEPLOY.md)
+```
+
+Then per agent, in the panel: **Runtime: Hermes**, leave URL empty, Simpan,
+*Mulai Hermes* (or just chat — it starts on the first turn). What the panel
+fields become:
+
+| Panel field | Hermes profile |
+|---|---|
+| Persona (agent or global) + Guardrails | `SOUL.md` |
+| Model | `model.default` (provider gemini) |
+| Skills without `tools.py` (SDK or custom) | inlined into `SOUL.md` |
+| Skills with `tools.py` | skipped, listed as a warning in the panel |
+| MCP servers (enabled tools only) | `mcp_servers.<name>.tools.include`; secrets as env |
+| Memori Hermes switch | `memory.memory_enabled` + `memory` toolset |
+| Sumber agen, escalation, rich output | not available in Hermes |
+
+Profiles live in `<storage_root>/hermes/<agent>/`. `GOOGLE_API_KEY` and MCP
+secrets are passed to the gateway as environment and never written there; the
+per-agent `API_SERVER_KEY` is generated on first render, kept in that dir, and
+never returned by the admin API. Saving a change in the panel restarts that
+agent's gateway on its next turn; leaving the runtime stops it; deleting the
+agent deletes its Hermes memories and sessions.
+
+Verified live (2026-09-21, process backend): two managed agents started by SSS
+in ~5 s each, each answering from its own persona over `/agents/<id>/awp`; LLM
+key absent from both profile dirs; persona edit picked up on the next turn;
+runtime switch stopped the gateway; delete removed the profile. One gateway
+uses ~180–200 MB RSS. The `docker` backend is unit-tested only (container
+flags, no socket, secrets by name) — not yet run against a real daemon.
+
+## Remote mode — local run
 
 ```bash
 # 1. describe the agents
@@ -86,7 +135,7 @@ export GENERAL_CHAT_HERMES_KEY_<AGENT_ID>=<API_SERVER_KEY from that .env>
 `<AGENT_ID>` = agent id upper-cased with every non-alphanumeric as `_`
 (`analis-keuangan` → `GENERAL_CHAT_HERMES_KEY_ANALIS_KEUANGAN`).
 
-## Separate VM
+## Remote mode — separate VM
 
 ```bash
 python -m general_chat.hermes_profile hermes/agents.yaml --out hermes/profiles \
@@ -120,6 +169,9 @@ MCP endpoint.
 - `tests/test_hermes_adapter.py` — HTTP adapter (mocked).
 - `tests/test_general_chat_hermes_runtime.py` — profile fields, per-agent key
   lookup, registry builds, 503 (never a fallback agent) when Hermes is unbuildable.
+- `tests/test_general_chat_hermes_supervisor.py` — managed mode: supervisor
+  lifecycle (process + docker backends), panel-fields → profile plan, status/start
+  endpoints, stop on runtime switch, remove on delete.
 - `tests/test_general_chat_hermes_profile.py` — minimal defaults, MCP
   allow-lists, and cross-agent isolation of the rendered profiles/compose.
 - `tests/test_general_chat_hermes_live_isolation.py` — against two running

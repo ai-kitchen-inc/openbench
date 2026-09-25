@@ -26,6 +26,13 @@ services:
       SAM_SEGMENTATION_MCP_DEBUG_PATH: ${SAM_SEGMENTATION_MCP_DEBUG_PATH:-/app-data/uploads/_sam_debug}
       OPENBENCH_MCP_DOCKER_PROFILE: ${OPENBENCH_MCP_DOCKER_PROFILE:-openbench}
       DOCKER_MCP_IN_CONTAINER: ${DOCKER_MCP_IN_CONTAINER:-1}
+      # SSS-managed Hermes agents: empty = feature off. `docker` makes the API
+      # spawn one sibling container per Hermes-runtime agent on the
+      # openbench-hermes network; profiles live under the storage root
+      # (same path inside + outside, so the sibling bind mount resolves).
+      GENERAL_CHAT_HERMES_BACKEND: ${GENERAL_CHAT_HERMES_BACKEND:-}
+      GENERAL_CHAT_HERMES_IMAGE: ${GENERAL_CHAT_HERMES_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/hermes-agent:v2026.9.14}
+      GENERAL_CHAT_HERMES_NETWORK: ${GENERAL_CHAT_HERMES_NETWORK:-openbench-hermes}
       # db_server MCP → Cloud SQL Postgres (appdata) over the instance's public IP
       # (same path as GENERAL_CHAT_DATABASE_URL). The API interpolates these into
       # mcp/db-server-docker.yaml when it spawns the db_server container.
@@ -70,6 +77,10 @@ services:
       # Same path inside + outside the container so the sibling `docker run -v`
       # (custom_function MCP + test runs) resolves on the host.
       - /app-data/custom-functions:/app-data/custom-functions
+    networks:
+      - default
+      # Reaches per-agent Hermes containers by alias (http://hermes-<agent>:8642).
+      - openbench-hermes
 
   openbench-worker:
     image: ${OPENBENCH_IMAGE:-openbench-general-chat:latest}
@@ -133,3 +144,9 @@ services:
     volumes:
       - /app-data/grafana:/var/lib/grafana
       - /home/Admin/openbench-deploy/grafana-provisioning:/etc/grafana/provisioning/datasources:ro
+
+networks:
+  # Dedicated bridge for SSS-managed Hermes containers. Only the API joins it
+  # from this file; worker and Grafana stay unreachable from Hermes agents.
+  openbench-hermes:
+    name: openbench-hermes

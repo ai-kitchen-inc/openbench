@@ -1,0 +1,25 @@
+# Hermes Agent runtime image for SSS-managed per-agent gateways.
+# Built from the upstream repo at a pinned release tag (no fork, no local
+# source): bump the tag here, in deploy/deploy.sh (HERMES_IMAGE) and in
+# general_chat/hermes_profile.py (HERMES_VERSION_VERIFIED) together, after
+# re-verifying the config keys the profile generator relies on.
+steps:
+  - name: gcr.io/cloud-builders/git
+    args:
+      - clone
+      - --depth=1
+      - --branch=v2026.9.14
+      - https://github.com/NousResearch/hermes-agent.git
+      - hermes-agent
+  - name: gcr.io/cloud-builders/docker
+    dir: hermes-agent
+    args:
+      - build
+      - -t
+      - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/hermes-agent:v2026.9.14
+      - .
+images:
+  - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/hermes-agent:v2026.9.14
+timeout: 3600s
+options:
+  machineType: E2_HIGHCPU_8

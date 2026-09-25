@@ -18,6 +18,7 @@
 #   frontend       Alias of backend — the SPA ships inside the API image
 #   mcp-image      Build the forked db_server MCP image (Cloud Build) + pull on VM
 #   fn-image       Build the custom_function MCP image (Cloud Build) + pull on VM
+#   hermes-image   Build the pinned Hermes Agent image (Cloud Build) + pull on VM
 #   grafana        Provision + start the self-hosted Grafana on the VM (subpath /grafana/)
 #   nginx          Sync compose + nginx reverse-proxy config to the VM, reload nginx
 #   add-user EMAIL [ROLE]  Break-glass: upsert a user row (openbench_users) via psql.
@@ -75,6 +76,11 @@ MCP_IMAGE_DIR="${MCP_IMAGE_DIR:-examples/general-chat/mcp/db-server}"
 FN_IMAGE="${FN_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/custom-function-mcp:0.1.0}"
 FN_CLOUDBUILD_CONFIG="${FN_CLOUDBUILD_CONFIG:-cloudbuild.custom-function-mcp.yaml}"
 FN_IMAGE_DIR="${FN_IMAGE_DIR:-mcp/custom-function-mcp}"
+
+# Hermes Agent runtime (SSS-managed per-agent gateways): upstream repo at a
+# pinned tag, cloned inside Cloud Build — no local source is uploaded.
+HERMES_IMAGE="${HERMES_IMAGE:-us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/hermes-agent:v2026.9.14}"
+HERMES_CLOUDBUILD_CONFIG="${HERMES_CLOUDBUILD_CONFIG:-cloudbuild.hermes-agent.yaml}"
 
 VM_NAME="${VM_NAME:-openbench-general-chat}"
 VM_ZONE="${VM_ZONE:-us-central1-a}"
@@ -225,6 +231,33 @@ cmd_fn_image() {
   vm_ssh "sudo docker pull $FN_IMAGE && sudo mkdir -p /app-data/custom-functions" \
     || die "VM pull of $FN_IMAGE failed"
   ok "custom_function MCP image + functions dir ready on the VM"
+}
+
+# --- hermes-image --------------------------------------------------------------
+# Build the pinned upstream Hermes Agent image via Cloud Build and pull it on
+# the VM. The API spawns one container per Hermes-runtime agent from it
+# (GENERAL_CHAT_HERMES_BACKEND=docker in .env.gcp enables that; see DEPLOY.md).
+cmd_hermes_image() {
+  log "Building Hermes Agent image via Cloud Build ($HERMES_IMAGE)"
+  local build_id
+  build_id="$("$GCLOUD" builds submit --async --no-source --config "$HERMES_CLOUDBUILD_CONFIG" \
+    --format='value(id)')" || die "Cloud Build submit failed"
+  [ -n "$build_id" ] || die "Could not capture Cloud Build id"
+  ok "submitted build $build_id — polling"
+
+  local status=""
+  while :; do
+    status="$("$GCLOUD" builds describe "$build_id" --format='value(status)' 2>/dev/null || echo '')"
+    case "$status" in
+      SUCCESS) ok "build $build_id SUCCESS"; break ;;
+      FAILURE|TIMEOUT|CANCELLED|EXPIRED) die "build $build_id ended: $status" ;;
+      *) printf '  ... %s\n' "${status:-pending}"; sleep 30 ;;
+    esac
+  done
+
+  log "Pulling Hermes image on the VM ($VM_NAME)"
+  vm_ssh "sudo docker pull $HERMES_IMAGE" || die "VM pull of $HERMES_IMAGE failed"
+  ok "Hermes Agent image ready on the VM"
 }
 
 # --- grafana -------------------------------------------------------------------
@@ -491,6 +524,7 @@ case "${1:-help}" in
   frontend) cmd_frontend ;;
   mcp-image) cmd_mcp_image ;;
   fn-image) cmd_fn_image ;;
+  hermes-image) cmd_hermes_image ;;
   grafana)  cmd_grafana ;;
   nginx)    cmd_nginx ;;
   add-user) shift; cmd_add_user "${1:-}" ;;

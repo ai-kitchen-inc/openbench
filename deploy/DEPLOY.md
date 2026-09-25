@@ -571,6 +571,65 @@ Smoke: Functions panel → save `add` (`def add(a, b): return a + b`) → Test r
 with `{"a": 2, "b": 3}` → `5`; then in chat: "run the add function with a=2
 b=3" → the agent calls `custom_function.run_function`.
 
+## Hermes runtime (SSS-managed per-agent Hermes Agent)
+
+Optional, **off by default**. An agent set to **Runtime: Hermes** in the Agen
+panel (URL left empty) is answered by its own Hermes Agent gateway, which the
+API renders and runs itself on this VM. Full design + measurements:
+[examples/general-chat/hermes/README.md](../examples/general-chat/hermes/README.md).
+
+- **One container per agent**, spawned by `openbench-api` through the docker
+  socket (`docker run -d --name hermes-<agent> --restart unless-stopped`), image
+  `hermes-agent:v2026.9.14` (upstream repo at a pinned tag, built by Cloud Build).
+- **Isolation:** each container mounts only its own profile dir
+  (`/app-data/openbench/hermes/<agent>` → `/opt/data`), has **no docker socket**,
+  `--memory 1g --cpus 1 --pids-limit 256 --security-opt no-new-privileges`, and
+  sits on the dedicated `openbench-hermes` bridge. Only the API joins that
+  network from compose — worker and Grafana are not reachable from an agent.
+  Hermes' terminal/file/browser/code/cron/delegation toolsets are never enabled
+  by the generator.
+- **Keys:** the API passes its own `GOOGLE_API_KEY` (and any MCP secrets the
+  agent's servers need) as container environment; nothing is written to the
+  profile. Each agent's `API_SERVER_KEY` is generated on first render and stays
+  in that agent's profile dir; it is never returned by the admin API.
+- **Lifecycle:** started on the first turn or the panel's *Mulai Hermes* button;
+  restarted automatically when persona/skills/MCP/model/memory or a secret
+  changes; stopped when the agent leaves the Hermes runtime or is disabled;
+  profile dir (memories, sessions) deleted with the agent. Containers survive an
+  API restart/redeploy and are re-adopted.
+- **Sizing:** one minimal gateway measured ~180–200 MB RSS (2026-09-21), so ~5
+  agents ≈ 1 GB on the e2-standard-2. Resize the VM only if many agents are
+  switched over (`docker stats` shows `hermes-*`).
+- **Limits:** docker-spawned MCP servers and the in-process `openbench` MCP
+  server cannot run inside a Hermes container (no socket) — only URL-based MCP
+  servers carry over; the panel lists what was skipped. Agent sources (RAG),
+  A2UI rich output, tool-bearing skills, escalation and SSS usage metering do
+  not apply to Hermes turns.
+
+### First-time setup
+
+```bash
+bash deploy/deploy.sh hermes-image   # Cloud Build the pinned image + pull on VM (~15-25 min)
+# on the VM: add to /home/Admin/openbench-deploy/.env.gcp
+#   GENERAL_CHAT_HERMES_BACKEND=docker
+bash deploy/deploy.sh nginx          # push the updated compose (env + openbench-hermes network)
+bash deploy/deploy.sh backend        # roll out the API; recreate picks up the new env/network
+```
+
+Compose env changes need a recreate with `--env-file .env.gcp` (`deploy.sh
+backend` alone does not sync compose). **Never `docker system prune -a` on the
+VM** — it would delete the Hermes image along with the on-demand MCP images.
+
+Smoke: Agen panel → agent → Runtime: Hermes → Simpan → *Mulai Hermes* → status
+"Hermes: berjalan", toolsets "tidak ada"; chat with the agent. On the VM:
+`sudo docker ps --filter name=hermes-`.
+
+### Turn it off
+
+Set agents back to Runtime: OpenBench (stops their containers), or remove
+`GENERAL_CHAT_HERMES_BACKEND` from `.env.gcp` + recreate the API, then
+`sudo docker rm -f $(sudo docker ps -aq --filter name=hermes-)`.
+
 ## Verify
 
 ```bash
