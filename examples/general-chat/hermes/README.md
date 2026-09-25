@@ -181,6 +181,6 @@ MCP endpoint.
 
 Runtime switch: set the agent back to `Runtime: OpenBench` — next turn uses
 `BaseAgent` again (registry is invalidated on save). Code: everything landed
-after tag `pre-hermes-2026-09-21`; `git revert pre-hermes-2026-09-21..HEAD`
-(or reset to the tag) removes it. Stored profiles keep working either way —
+after commit `a768178`; `git revert --no-edit a768178..HEAD`
+(or reset to that commit) removes it. Stored profiles keep working either way —
 unknown `runtime`/`hermesUrl` keys are ignored by older code.
