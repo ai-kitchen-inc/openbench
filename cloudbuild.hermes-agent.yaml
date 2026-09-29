@@ -13,11 +13,27 @@ steps:
       - hermes-agent
   - name: gcr.io/cloud-builders/docker
     dir: hermes-agent
+    # Upstream Dockerfile needs BuildKit (ARG TARGETARCH, COPY --chmod/--link).
+    # The worker daemon's built-in dockerfile frontend is too old for --link
+    # ("Unknown flag: link"), so pin the external frontend via a syntax
+    # directive and drop --link (see below).
+    entrypoint: bash
+    env:
+      - DOCKER_BUILDKIT=1
     args:
-      - build
-      - -t
-      - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/hermes-agent:v2026.9.14
-      - .
+      - -c
+      - |
+        set -euo pipefail
+        grep -q '^# syntax=' Dockerfile || sed -i '1i # syntax=docker/dockerfile:1' Dockerfile
+        # The worker daemon's BuildKit applies only NUMERIC --chmod values; the
+        # upstream symbolic `--chmod=a+rX,go-w` came out as mode 000 on every
+        # file (gateway could not start: "Permission denied" on /opt/hermes/*).
+        # 0755 keeps root-writable / non-root read+traverse, no g/o write.
+        sed -i 's/^COPY --link --chmod=a+rX,go-w \. \.$/COPY --chmod=0755 . ./' Dockerfile
+        grep -q '^COPY --chmod=0755 \. \.$' Dockerfile || { echo 'tree COPY line not found - upstream Dockerfile changed?'; exit 1; }
+        sed -i 's/^COPY --link /COPY /' Dockerfile
+        head -1 Dockerfile; grep -n '^COPY --chmod=0755 \. \.' Dockerfile
+        docker build -t us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/hermes-agent:v2026.9.14 .
 images:
   - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/hermes-agent:v2026.9.14
 timeout: 3600s

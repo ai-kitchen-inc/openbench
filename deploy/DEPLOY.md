@@ -620,6 +620,24 @@ Compose env changes need a recreate with `--env-file .env.gcp` (`deploy.sh
 backend` alone does not sync compose). **Never `docker system prune -a` on the
 VM** — it would delete the Hermes image along with the on-demand MCP images.
 
+First run (2026-09-29) took five tries. The upstream Dockerfile needs BuildKit
+(`ARG TARGETARCH`, `COPY --chmod/--link`); the Cloud Build worker's built-in
+frontend rejects `--link` ("Unknown flag: link"), and its daemon applies only
+*numeric* `--chmod` values — the upstream symbolic `--chmod=a+rX,go-w` produced
+mode-000 files, so the non-root gateway died with "Permission denied" on
+`/opt/hermes/*` (exit 126 restart loop; the supervisor times out after 120 s and
+removes the container). `cloudbuild.hermes-agent.yaml` therefore sets
+`DOCKER_BUILDKIT=1`, injects `# syntax=docker/dockerfile:1`, rewrites the tree
+copy to `COPY --chmod=0755 . .` and drops `--link` before building; it fails
+fast if the upstream line changes. Re-check on a Hermes tag bump. Image is
+~2.7 GB on the VM; the build takes ~10 min on E2_HIGHCPU_8; a gateway
+container idles at ~260 MB RSS. When a build fails, `gcloud builds log` is
+denied for the deploy account but the same lines are in Cloud Logging:
+
+```bash
+gcloud logging read 'resource.type="build" AND resource.labels.build_id="<id>"'   --project sss-poc1-corporate --order=asc --format='value(textPayload)' | tail -40
+```
+
 Smoke: Agen panel → agent → Runtime: Hermes → Simpan → *Mulai Hermes* → status
 "Hermes: berjalan", toolsets "tidak ada"; chat with the agent. On the VM:
 `sudo docker ps --filter name=hermes-`.
