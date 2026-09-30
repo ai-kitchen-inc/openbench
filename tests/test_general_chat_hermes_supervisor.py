@@ -283,6 +283,27 @@ class TestManagedPlan(_TmpCase):
         self.assertEqual(plan.env, {"GOOGLE_API_KEY": "llm"})
         self.assertEqual(plan.warnings, [])
 
+    def test_docker_backend_passes_toolsets_with_container_host_access(self):
+        profile = AgentProfileRecord(id="toko", name="Toko")
+        profile.hermes_toolsets = ["web", "browser"]
+        profile.hermes_bundled_skills = True
+        plan = self._plan(profile, backend="docker")
+        self.assertEqual(plan.spec.toolsets, ["web", "browser"])
+        self.assertTrue(plan.spec.allow_host_access)
+        self.assertEqual(plan.spec.terminal_cwd, "/opt/data/workspace")
+        self.assertTrue(plan.spec.bundled_skills)
+        self.assertEqual(plan.warnings, [])
+
+    def test_process_backend_drops_host_access_toolsets_with_a_warning(self):
+        profile = AgentProfileRecord(id="toko", name="Toko")
+        profile.hermes_toolsets = ["web", "browser", "bogus"]
+        plan = self._plan(profile)
+        self.assertEqual(plan.spec.toolsets, ["web"])
+        self.assertFalse(plan.spec.allow_host_access)
+        self.assertEqual(plan.spec.terminal_cwd, "")
+        self.assertEqual(len(plan.warnings), 2)
+        self.assertTrue(any("browser" in w for w in plan.warnings))
+
     def test_tool_skills_are_skipped_with_a_warning(self):
         plan = self._plan(
             AgentProfileRecord(id="a", name="A"),
@@ -436,6 +457,27 @@ class TestManagedHermesInApp(_LocalHarness):
         with patch.object(supervisor, "remove") as remove:
             self.assertEqual(client.delete(f"/admin/agents/{agent_id}").status_code, 200)
         remove.assert_called_once_with(agent_id)
+
+    def test_toolset_options_and_validation(self):
+        client = self._managed_client()
+        options = client.get("/admin/agents/options").json()
+        ids = {item["id"]: item["hostAccess"] for item in options["hermesToolsets"]}
+        self.assertFalse(ids["web"])
+        self.assertTrue(ids["browser"])
+        self.assertFalse(options["hermesHostAccess"])  # process backend
+
+        agent_id = self._add_agent(client, "Agen Hermes", runtime="hermes")
+        ok = client.put(
+            f"/admin/agents/{agent_id}",
+            json={"hermesToolsets": ["web"], "hermesBundledSkills": True},
+        )
+        self.assertEqual(ok.status_code, 200, ok.text)
+        self.assertEqual(ok.json()["hermesToolsets"], ["web"])
+        self.assertTrue(ok.json()["hermesBundledSkills"])
+
+        for bad in (["bogus"], ["browser"], "web"):
+            response = client.put(f"/admin/agents/{agent_id}", json={"hermesToolsets": bad})
+            self.assertEqual(response.status_code, 400, bad)
 
     def test_without_backend_a_url_less_hermes_agent_is_rejected(self):
         environ.pop("GENERAL_CHAT_HERMES_BACKEND", None)

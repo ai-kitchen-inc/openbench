@@ -586,8 +586,10 @@ API renders and runs itself on this VM. Full design + measurements:
   `--memory 1g --cpus 1 --pids-limit 256 --security-opt no-new-privileges`, and
   sits on the dedicated `openbench-hermes` bridge. Only the API joins that
   network from compose — worker and Grafana are not reachable from an agent.
-  Hermes' terminal/file/browser/code/cron/delegation toolsets are never enabled
-  by the generator.
+  Hermes' built-in toolsets are off unless ticked per agent in the panel
+  ("Toolset bawaan Hermes"); host-reaching ones (terminal/file/browser/code/
+  delegation) then run inside that agent's container only. Bundled Hermes
+  skills are off unless "Skill bawaan Hermes" is on.
 - **Keys:** the API passes its own `GOOGLE_API_KEY` (and any MCP secrets the
   agent's servers need) as container environment; nothing is written to the
   profile. Each agent's `API_SERVER_KEY` is generated on first render and stays
@@ -639,7 +641,8 @@ gcloud logging read 'resource.type="build" AND resource.labels.build_id="<id>"' 
 ```
 
 Smoke: Agen panel → agent → Runtime: Hermes → Simpan → *Mulai Hermes* → status
-"Hermes: berjalan", toolsets "tidak ada"; chat with the agent. On the VM:
+"Hermes: berjalan", toolsets "tidak ada" (for an agent with no toolset ticked);
+chat with the agent. On the VM:
 `sudo docker ps --filter name=hermes-`.
 
 ### Turn it off

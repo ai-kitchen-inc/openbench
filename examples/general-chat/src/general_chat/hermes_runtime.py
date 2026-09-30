@@ -24,7 +24,9 @@ from urllib.parse import urlparse
 
 from general_chat.hermes_profile import (
     DEFAULT_MODEL,
+    HOST_ACCESS_TOOLSETS,
     LLM_KEY_ENV,
+    MANAGED_TOOLSET_CHOICES,
     HermesMCPServer,
     HermesProfileSpec,
     secret_env_name,
@@ -42,6 +44,8 @@ HERMES_KEY_ENV_PREFIX = "GENERAL_CHAT_HERMES_KEY_"
 _SECRET_REF_RE = re.compile(r"\$\{secret:([A-Za-z0-9_.-]+)\}")
 _ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _DOCKER_COMMANDS = ("docker", "docker.exe")
+#: Where the docker backend mounts the profile inside the container.
+CONTAINER_WORKSPACE = "/opt/data/workspace"
 
 
 class HermesRuntimeConfigError(ValueError):
@@ -163,13 +167,32 @@ def plan_managed_profile(
             )
         )
 
+    toolsets = []
+    for name in profile.hermes_toolsets:
+        if name not in MANAGED_TOOLSET_CHOICES:
+            warnings.append(f"Toolset Hermes '{name}' tidak dikenal (dilewati).")
+        elif name in HOST_ACCESS_TOOLSETS and backend != BACKEND_DOCKER:
+            warnings.append(
+                f"Toolset Hermes '{name}' menjangkau host dan hanya diizinkan pada backend "
+                "docker (dilewati)."
+            )
+        elif name not in toolsets:
+            toolsets.append(name)
+    host_access = backend == BACKEND_DOCKER and any(n in HOST_ACCESS_TOOLSETS for n in toolsets)
+
     spec = HermesProfileSpec(
         agent_id=profile.id,
         soul=soul,
         model=profile.model or default_model or DEFAULT_MODEL,
+        toolsets=toolsets,
+        # Docker backend: host-access tools run inside the agent's own
+        # hardened container (own mount, no socket), not on the SSS host.
+        allow_host_access=host_access,
+        terminal_cwd=CONTAINER_WORKSPACE if host_access else "",
         skill_dirs=knowledge_skills,
         mcp_servers=servers,
         memory_enabled=profile.hermes_memory,
+        bundled_skills=profile.hermes_bundled_skills,
     )
     return ManagedHermesPlan(spec=spec, env=env, warnings=warnings)
 

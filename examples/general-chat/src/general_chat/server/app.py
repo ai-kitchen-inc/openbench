@@ -84,13 +84,14 @@ from general_chat.group_store import (
     UnknownGroupError,
     build_group_store,
 )
+from general_chat.hermes_profile import HOST_ACCESS_TOOLSETS, MANAGED_TOOLSET_CHOICES
 from general_chat.hermes_runtime import (
     ManagedHermesPlan,
     build_hermes_agent,
     plan_managed_profile,
     validate_hermes_url,
 )
-from general_chat.hermes_supervisor import HermesSupervisor
+from general_chat.hermes_supervisor import BACKEND_DOCKER, HermesSupervisor
 from general_chat.server.auth import (
     LOCAL_OWNER,
     _extract_bearer_token,
@@ -2602,6 +2603,8 @@ def create_app() -> FastAPI:
             ("runtime", "runtime"),
             ("hermesUrl", "hermes_url"),
             ("hermesMemory", "hermes_memory"),
+            ("hermesToolsets", "hermes_toolsets"),
+            ("hermesBundledSkills", "hermes_bundled_skills"),
         ):
             if wire_key in body:
                 changes[field_name] = body[wire_key]
@@ -2617,6 +2620,25 @@ def create_app() -> FastAPI:
                 changes["hermes_url"] = validate_hermes_url(str(changes["hermes_url"]))
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from None
+        if "hermes_toolsets" in changes:
+            toolsets_value = changes["hermes_toolsets"]
+            if not isinstance(toolsets_value, list):
+                raise HTTPException(
+                    status_code=400, detail="Toolset Hermes harus berupa daftar."
+                )
+            for name in toolsets_value:
+                if str(name) not in MANAGED_TOOLSET_CHOICES:
+                    raise HTTPException(
+                        status_code=400, detail=f"Toolset Hermes tidak dikenal: {name}"
+                    )
+                if str(name) in HOST_ACCESS_TOOLSETS and not _hermes_host_access():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Toolset Hermes '{name}' menjangkau host dan hanya tersedia "
+                            "pada backend docker."
+                        ),
+                    )
         guardrails_value = changes.get("guardrails")
         if guardrails_value is not None:
             if not isinstance(guardrails_value, str):
@@ -2671,6 +2693,10 @@ def create_app() -> FastAPI:
                 )
         return changes
 
+    def _hermes_host_access() -> bool:
+        """Host-access Hermes toolsets only run inside a per-agent container."""
+        return hermes_supervisor is not None and hermes_supervisor.backend == BACKEND_DOCKER
+
     def _check_routable(record: AgentProfileRecord) -> None:
         """Enabled agents must carry a router-usable description."""
         if record.enabled and not record.description.strip():
@@ -2716,6 +2742,11 @@ def create_app() -> FastAPI:
                 }
                 for server in mcp_registry_store.list_payload()["servers"]
             ],
+            "hermesToolsets": [
+                {"id": name, "label": label, "hostAccess": name in HOST_ACCESS_TOOLSETS}
+                for name, label in MANAGED_TOOLSET_CHOICES.items()
+            ],
+            "hermesHostAccess": _hermes_host_access(),
             "defaults": {"confidenceThreshold": 0.5},
         }
 

@@ -290,6 +290,10 @@ export type AgentProfileItem = {
   hermesUrl: string;
   /** Hermes long-term memory for this agent (managed mode). */
   hermesMemory: boolean;
+  /** Hermes built-in toolsets re-enabled for this agent (managed mode). */
+  hermesToolsets?: string[];
+  /** Hermes' own bundled skills + skills toolset (managed mode). */
+  hermesBundledSkills?: boolean;
   createdAt: string;
   createdBy: string;
   updatedAt: string;
@@ -317,6 +321,8 @@ export type AgentProfilePatch = Partial<
     | "runtime"
     | "hermesUrl"
     | "hermesMemory"
+    | "hermesToolsets"
+    | "hermesBundledSkills"
   >
 >;
 
@@ -350,6 +356,10 @@ export type AgentProfileOptions = {
   /** Per-SDK-skill problem summary (load error or warnings); healthy skills absent.
    * Full detail lives at GET /admin/skills/health. */
   sdkSkillWarnings: Record<string, string>;
+  /** Hermes built-in toolsets selectable per managed agent. */
+  hermesToolsets?: { id: string; label: string; hostAccess: boolean }[];
+  /** False = host-access toolsets are refused (non-docker backend). */
+  hermesHostAccess?: boolean;
   defaults: { confidenceThreshold: number };
 };
 

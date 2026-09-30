@@ -96,7 +96,19 @@ fields become:
 | Skills with `tools.py` | skipped, listed as a warning in the panel |
 | MCP servers (enabled tools only) | `mcp_servers.<name>.tools.include`; secrets as env |
 | Memori Hermes switch | `memory.memory_enabled` + `memory` toolset |
+| Skill bawaan Hermes switch | no `.no-bundled-skills` marker (Hermes seeds its ~58 bundled skills) + `skills` toolset (+~5.7k tokens/request) |
+| Toolset bawaan Hermes checklist | those toolsets in `platform_toolsets.api_server`, removed from `agent.disabled_toolsets` |
 | Sumber agen, escalation, rich output | not available in Hermes |
+
+The checklist offers `web, browser, vision, image_gen, terminal, file,
+code_execution, todo, session_search, delegation` ("Aktifkan semua bawaan" ticks
+all of them plus bundled skills; "Minimal" clears them). Host-reaching ones
+(`terminal, file, browser, code_execution, delegation`) are accepted only on the
+`docker` backend, where they run inside the agent's own container (cwd
+`/opt/data/workspace`); the `process` backend refuses them (400 in the API, a
+warning + skip in the plan). `web` works without a key through Hermes' keyless
+free-tier fallback; `browser` uses the headless Chromium baked into the image.
+See [cases/tokopedia.md](cases/tokopedia.md) for a worked example.
 
 Profiles live in `<storage_root>/hermes/<agent>/`. `GOOGLE_API_KEY` and MCP
 secrets are passed to the gateway as environment and never written there; the

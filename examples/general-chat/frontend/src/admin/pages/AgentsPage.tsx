@@ -302,8 +302,10 @@ function AgentDetail({
 
   const set = (patch: AgentProfilePatch) => setDraft((prev) => ({ ...prev, ...patch }));
 
+  const hermesToolsetChoices = options.hermesToolsets ?? [];
+
   const toggleListValue = (
-    key: "skills" | "customSkillIds" | "mcpServerIds",
+    key: "skills" | "customSkillIds" | "mcpServerIds" | "hermesToolsets",
     item: string,
   ) => {
     const current = (value[key] ?? []) as string[];
@@ -512,6 +514,72 @@ function AgentDetail({
                 onClick={() => set({ hermesMemory: !value.hermesMemory })}
               />
             </div>
+            <div className="cap-row">
+              <div className="cap-row__main">
+                <div className="cap-row__label">Skill bawaan Hermes</div>
+                <div className="cap-row__desc">
+                  Kumpulan skill bawaan Hermes beserta toolset skill (menambah sekitar 6 ribu
+                  token per permintaan).
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                className="switch"
+                aria-checked={Boolean(value.hermesBundledSkills)}
+                aria-label="Skill bawaan Hermes"
+                onClick={() => set({ hermesBundledSkills: !value.hermesBundledSkills })}
+              />
+            </div>
+            {hermesToolsetChoices.length > 0 && (
+              <>
+                <div className="cap-row">
+                  <div className="cap-row__main">
+                    <div className="cap-row__label">Toolset bawaan Hermes</div>
+                    <div className="cap-row__desc">
+                      Kosong = tanpa toolset (paling hemat token). Setiap toolset menambah
+                      token per permintaan.
+                      {!options.hermesHostAccess &&
+                        " Toolset yang menjangkau host (terminal, file, browser, eksekusi kode, delegasi) hanya tersedia pada backend docker."}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="panel-button"
+                    onClick={() =>
+                      set({
+                        hermesToolsets: hermesToolsetChoices
+                          .filter((choice) => options.hermesHostAccess || !choice.hostAccess)
+                          .map((choice) => choice.id),
+                        hermesBundledSkills: true,
+                      })
+                    }
+                  >
+                    Aktifkan semua bawaan
+                  </button>
+                  <button
+                    type="button"
+                    className="panel-button"
+                    onClick={() => set({ hermesToolsets: [], hermesBundledSkills: false })}
+                  >
+                    Minimal
+                  </button>
+                </div>
+                <div className="agents-skill-grid">
+                  {hermesToolsetChoices.map((choice) => (
+                    <label key={choice.id} className="agents-skill-grid__item">
+                      <input
+                        type="checkbox"
+                        checked={(value.hermesToolsets ?? []).includes(choice.id)}
+                        disabled={choice.hostAccess && !options.hermesHostAccess}
+                        onChange={() => toggleListValue("hermesToolsets", choice.id)}
+                      />
+                      {choice.label} ({choice.id})
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
           </>
         )}
         {value.runtime === "hermes" && value.hermesUrl && (

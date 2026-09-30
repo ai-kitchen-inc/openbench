@@ -116,6 +116,12 @@ class AgentProfileRecord:
     #: Hermes long-term memory tool for this agent (managed mode; costs
     #: ~2.2k prompt tokens per request, so off by default).
     hermes_memory: bool = False
+    #: Hermes built-in toolsets re-enabled for this agent (managed mode;
+    #: [] = none, the token-cheapest profile).
+    hermes_toolsets: list[str] = field(default_factory=list)
+    #: Hermes' own bundled skills + skills toolset (managed mode; ~5.7k
+    #: prompt tokens per request, so off by default).
+    hermes_bundled_skills: bool = False
     created_at: str = field(default_factory=_utcnow_iso)
     created_by: str = ""
     updated_at: str = field(default_factory=_utcnow_iso)
@@ -140,6 +146,8 @@ class AgentProfileRecord:
             "runtime": self.runtime,
             "hermesUrl": self.hermes_url,
             "hermesMemory": self.hermes_memory,
+            "hermesToolsets": list(self.hermes_toolsets),
+            "hermesBundledSkills": self.hermes_bundled_skills,
             "createdAt": self.created_at,
             "createdBy": self.created_by,
             "updatedAt": self.updated_at,
@@ -175,6 +183,8 @@ class AgentProfileRecord:
             runtime=_normalize_runtime(data.get("runtime")),
             hermes_url=str(data.get("hermesUrl", "") or "").strip(),
             hermes_memory=bool(data.get("hermesMemory", False)),
+            hermes_toolsets=_str_list(data.get("hermesToolsets")),
+            hermes_bundled_skills=bool(data.get("hermesBundledSkills", False)),
             created_at=str(data.get("createdAt", "") or now),
             created_by=str(data.get("createdBy", "") or ""),
             updated_at=str(data.get("updatedAt", "") or now),
@@ -219,6 +229,10 @@ class AgentProfileRecord:
             self.hermes_url = str(changes["hermes_url"] or "").strip()
         if "hermes_memory" in changes:
             self.hermes_memory = bool(changes["hermes_memory"])
+        if "hermes_toolsets" in changes:
+            self.hermes_toolsets = _str_list(changes["hermes_toolsets"])
+        if "hermes_bundled_skills" in changes:
+            self.hermes_bundled_skills = bool(changes["hermes_bundled_skills"])
         self.updated_at = _utcnow_iso()
 
 

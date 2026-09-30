@@ -438,6 +438,67 @@ describe("AgentsPage", () => {
     await waitFor(() => expect(putBodies).toEqual([{ hermesMemory: true }]));
   });
 
+  it("re-enables Hermes built-in toolsets and bundled skills", async () => {
+    const managed = { ...AGENT, runtime: "hermes", hermesUrl: "", hermesMemory: false };
+    const hermesOptions = {
+      ...OPTIONS,
+      hermesToolsets: [
+        { id: "web", label: "Pencarian & ekstraksi web", hostAccess: false },
+        { id: "browser", label: "Browser (Chromium headless)", hostAccess: true },
+        { id: "todo", label: "Daftar tugas", hostAccess: false },
+      ],
+      hermesHostAccess: false,
+    };
+    const putBodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan/hermes") {
+          return jsonResponse({
+            runtime: "hermes",
+            managed: true,
+            available: true,
+            warnings: [],
+            running: false,
+          });
+        }
+        if (url === "/admin/agents/analis-keuangan" && init?.method === "PUT") {
+          putBodies.push(JSON.parse(String(init.body)));
+          return jsonResponse(managed);
+        }
+        if (url === "/admin/agents") return jsonResponse({ agents: [managed] });
+        if (url === "/admin/agents/options") return jsonResponse(hermesOptions);
+        if (url === "/admin/agents/analis-keuangan/sources") {
+          return jsonResponse({ sources: [] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    const browser = await screen.findByRole("checkbox", { name: /browser/ });
+    expect(browser).toBeDisabled();
+    expect(screen.getByText(/hanya tersedia pada backend docker/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /\(web\)/ }));
+    await userEvent.click(screen.getByRole("switch", { name: "Skill bawaan Hermes" }));
+    await userEvent.click(screen.getByText("Simpan agen"));
+    await waitFor(() =>
+      expect(putBodies).toEqual([{ hermesToolsets: ["web"], hermesBundledSkills: true }]),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Aktifkan semua bawaan" }));
+    await userEvent.click(screen.getByText("Simpan agen"));
+    await waitFor(() =>
+      expect(putBodies[1]).toEqual({ hermesToolsets: ["web", "todo"], hermesBundledSkills: true }),
+    );
+  });
+
   it("requires a description before enabling create", async () => {
     vi.stubGlobal(
       "fetch",

@@ -15,6 +15,7 @@ if str(GENERAL_CHAT_SRC) not in sys.path:
 
 from general_chat.hermes_profile import (  # noqa: E402
     BUILTIN_TOOLSETS,
+    MANAGED_TOOLSET_CHOICES,
     NO_BUNDLED_SKILLS_MARKER,
     HermesMCPServer,
     HermesProfileError,
@@ -244,6 +245,59 @@ class TestWriteProfile(_TmpCase):
         profile_dir = write_profile(self.root, spec)
         parsed = yaml.safe_load((profile_dir / "config.yaml").read_text(encoding="utf-8"))
         self.assertEqual(Path(parsed["terminal"]["cwd"]), (profile_dir / "workspace").resolve())
+
+    def test_terminal_cwd_override_is_used_verbatim(self):
+        spec = HermesProfileSpec(
+            agent_id="ops",
+            soul="s",
+            toolsets=["browser"],
+            allow_host_access=True,
+            terminal_cwd="/opt/data/workspace",
+        )
+        profile_dir = write_profile(self.root, spec)
+        parsed = yaml.safe_load((profile_dir / "config.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(parsed["terminal"]["cwd"], "/opt/data/workspace")
+
+    def test_panel_toolset_choices_are_real_builtin_toolsets(self):
+        self.assertLessEqual(set(MANAGED_TOOLSET_CHOICES), set(BUILTIN_TOOLSETS))
+        self.assertNotIn("memory", MANAGED_TOOLSET_CHOICES)
+        self.assertNotIn("skills", MANAGED_TOOLSET_CHOICES)
+
+
+class TestBundledSkills(_TmpCase):
+    def test_bundled_skills_drop_the_marker_and_enable_the_skills_toolset(self):
+        spec = HermesProfileSpec(agent_id="riset", soul="s", bundled_skills=True)
+        profile_dir = write_profile(self.root, spec)
+
+        self.assertFalse((profile_dir / NO_BUNDLED_SKILLS_MARKER).exists())
+        parsed = yaml.safe_load((profile_dir / "config.yaml").read_text(encoding="utf-8"))
+        self.assertIn("skills", parsed["platform_toolsets"]["api_server"])
+        self.assertNotIn("skills", parsed["agent"]["disabled_toolsets"])
+
+        spec.bundled_skills = False
+        write_profile(self.root, spec)
+        self.assertTrue((profile_dir / NO_BUNDLED_SKILLS_MARKER).is_file())
+        parsed = yaml.safe_load((profile_dir / "config.yaml").read_text(encoding="utf-8"))
+        self.assertIn("skills", parsed["agent"]["disabled_toolsets"])
+
+    def test_rerender_keeps_hermes_synced_skills_but_drops_stale_copied_ones(self):
+        rules = self._skill("aturan-pajak")
+        spec = HermesProfileSpec(
+            agent_id="pajak",
+            soul="s",
+            skill_dirs=[rules],
+            inline_skills=False,
+            bundled_skills=True,
+        )
+        profile_dir = write_profile(self.root, spec)
+        synced = profile_dir / "skills" / "research"  # seeded by Hermes itself
+        synced.mkdir()
+
+        spec.skill_dirs = []
+        write_profile(self.root, spec)
+
+        self.assertTrue(synced.is_dir())
+        self.assertFalse((profile_dir / "skills" / "aturan-pajak").exists())
 
 
 class TestCrossAgentIsolation(_TmpCase):

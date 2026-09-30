@@ -45,6 +45,15 @@ class TestAgentProfileRuntimeFields(unittest.TestCase):
         self.assertEqual(restored.runtime, RUNTIME_HERMES)
         self.assertEqual(restored.hermes_url, "http://h:8643")
 
+    def test_hermes_toolsets_and_bundled_skills_round_trip(self):
+        record = AgentProfileRecord.from_dict({"id": "a", "name": "A"})
+        self.assertEqual(record.hermes_toolsets, [])
+        self.assertFalse(record.hermes_bundled_skills)
+        record.apply_changes({"hermes_toolsets": ["web", " browser "], "hermes_bundled_skills": 1})
+        restored = AgentProfileRecord.from_dict(record.to_dict())
+        self.assertEqual(restored.hermes_toolsets, ["web", "browser"])
+        self.assertTrue(restored.hermes_bundled_skills)
+
     def test_unknown_runtime_falls_back_to_default(self):
         record = AgentProfileRecord.from_dict({"id": "a", "name": "A", "runtime": "skynet"})
         self.assertEqual(record.runtime, "")
