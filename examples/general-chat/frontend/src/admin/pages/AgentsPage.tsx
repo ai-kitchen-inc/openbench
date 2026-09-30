@@ -540,7 +540,7 @@ function AgentDetail({
               className="panel-button"
               onClick={() => onNavigate("skill")}
             >
-              Buat skill kustom
+              Buat skill
             </button>
           )}
         </div>
@@ -588,7 +588,7 @@ function AgentDetail({
                   className="panel-button"
                   onClick={() => onNavigate("skill")}
                 >
-                  Buat skill kustom
+                  Buat skill
                 </button>
               </>
             )}

@@ -133,7 +133,7 @@ describe("AgentsPage", () => {
       </ToastProvider>,
     );
     await userEvent.click(await screen.findByText("Kelola"));
-    await userEvent.click(screen.getByRole("button", { name: "Buat skill kustom" }));
+    await userEvent.click(screen.getByRole("button", { name: "Buat skill" }));
     expect(onNavigate).toHaveBeenCalledWith("skill");
     await userEvent.click(screen.getByRole("button", { name: "Tambah server MCP" }));
     expect(onNavigate).toHaveBeenCalledWith("mcp", { tambah: "1" });
@@ -156,7 +156,7 @@ describe("AgentsPage", () => {
       </ToastProvider>,
     );
     await userEvent.click(await screen.findByText("Kelola"));
-    expect(screen.queryByRole("button", { name: "Buat skill kustom" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Buat skill" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Tambah server MCP" })).toBeNull();
   });
 
