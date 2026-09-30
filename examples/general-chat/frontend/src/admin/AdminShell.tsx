@@ -1,5 +1,5 @@
 import type { User } from "firebase/auth";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { Me } from "../account/api";
 import { setLocalRole } from "../api";
 import { BrandMark } from "../brand/BrandMark";
@@ -11,6 +11,8 @@ import {
   CodeIcon,
   LayoutIcon,
   MessageIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   PersonaIcon,
   ServerIcon,
   SettingsIcon,
@@ -83,17 +85,31 @@ export function AdminShell({
 }) {
   const [dark, toggleDark] = useDarkMode();
   const [page, setPage, params] = useHashPage();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const email = me.email || user?.email || "";
+  const collapseLabel = sidebarCollapsed ? "Tampilkan menu panel" : "Minimize menu panel";
 
   return (
     <div className="admin-shell">
-      <aside className="admin-sidebar">
+      <aside
+        className={`admin-sidebar${sidebarCollapsed ? " admin-sidebar--collapsed" : ""}`}
+        aria-label="Panel kendali"
+      >
         <div className="admin-sidebar__brand">
           <BrandMark size={38} />
           <span className="brand-lockup__text">
             <span className="brand-lockup__name">{APP_NAME}</span>
             <span className="brand-lockup__tagline">{APP_TAGLINE}</span>
           </span>
+          <button
+            type="button"
+            className="admin-sidebar__collapse"
+            onClick={() => setSidebarCollapsed((current) => !current)}
+            aria-label={collapseLabel}
+            title={collapseLabel}
+          >
+            {sidebarCollapsed ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
+          </button>
         </div>
         <nav className="admin-nav" aria-label="Navigasi admin">
           <div className="admin-nav__label">Panel Kendali</div>
@@ -103,6 +119,8 @@ export function AdminShell({
               type="button"
               className={`admin-nav__item${page === item.page ? " admin-nav__item--active" : ""}`}
               aria-current={page === item.page ? "page" : undefined}
+              aria-label={item.label}
+              title={item.label}
               onClick={() => setPage(item.page)}
             >
               {item.icon}

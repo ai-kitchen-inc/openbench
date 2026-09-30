@@ -8,6 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { useToast } from "../Toast";
+import { readErrorMessage } from "../shared/apiHelpers";
+import { RevealToggle } from "../shared/RevealToggle";
 import {
   discoverServer,
   deleteToolHiveWorkload,
@@ -58,15 +60,12 @@ const DEFAULT_FILTERS: RegistryFilters = {
 
 const TOOLHIVE_DOC_SERVER = "toolhive-doc-mcp";
 
-function readErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
 type SecretRow = {
   id: string;
   key: string;
   value: string;
+  /** Eye toggle: show the value as plain text instead of bullets. */
+  revealed?: boolean;
 };
 
 function buildSecretPayload(rows: SecretRow[]): Record<string, string> | undefined {
@@ -210,22 +209,40 @@ function ImportDialog({
                     }
                   />
                 </label>
-                <label className="mcp-field">
-                  <span>Value</span>
-                  <input
-                    type="password"
-                    value={row.value}
-                    autoComplete="off"
-                    placeholder="Docker env value"
-                    onChange={(event) =>
-                      setSecretRows((current) =>
-                        current.map((item) =>
-                          item.id === row.id ? { ...item, value: event.target.value } : item,
-                        ),
-                      )
-                    }
-                  />
-                </label>
+                <div className="mcp-field">
+                  <label htmlFor={`${row.id}-value`}>
+                    <span>Value</span>
+                  </label>
+                  <div className="secret-field">
+                    <input
+                      id={`${row.id}-value`}
+                      type={row.revealed ? "text" : "password"}
+                      value={row.value}
+                      autoComplete="off"
+                      placeholder="Docker env value"
+                      onChange={(event) =>
+                        setSecretRows((current) =>
+                          current.map((item) =>
+                            item.id === row.id ? { ...item, value: event.target.value } : item,
+                          ),
+                        )
+                      }
+                    />
+                    <RevealToggle
+                      revealed={Boolean(row.revealed)}
+                      onToggle={() =>
+                        setSecretRows((current) =>
+                          current.map((item) =>
+                            item.id === row.id ? { ...item, revealed: !item.revealed } : item,
+                          ),
+                        )
+                      }
+                      showLabel="Show value"
+                      hideLabel="Hide value"
+                      className="mcp-btn"
+                    />
+                  </div>
+                </div>
                 <button
                   type="button"
                   className="mcp-btn"
@@ -811,17 +828,21 @@ export function McpCatalogPanel({
   open,
   onClose,
   embedded = false,
+  initialImportOpen = false,
 }: {
   open: boolean;
   onClose: () => void;
   embedded?: boolean;
+  /** Start with the "Add MCP servers" dialog open (deep link from other
+   * admin pages, e.g. the Agen panel). */
+  initialImportOpen?: boolean;
 }) {
   const toast = useToast();
   const [data, setData] = useState<MCPRegistryPayload>({ servers: [] });
   const [filters, setFilters] = useState<RegistryFilters>(DEFAULT_FILTERS);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [importOpen, setImportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(initialImportOpen);
   const [details, setDetails] = useState<RegisteredMCPServer | null>(null);
 
   const load = useCallback(async () => {

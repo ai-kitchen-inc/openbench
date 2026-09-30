@@ -29,6 +29,17 @@ const riskSkill: CustomSkill = {
     scripts: [],
   },
   skill_md: "# Risk Review",
+  markdown_files: [
+    {
+      path: "SKILL.md",
+      label: "SKILL.md",
+      description: "Instruksi utama skill.",
+      bucket: "root",
+      primary: true,
+      content: "# Risk Review",
+      size_bytes: 13,
+    },
+  ],
 };
 
 const budgetSkill: CustomSkill = {
@@ -60,6 +71,7 @@ const budgetSkill: CustomSkill = {
         filename: "accounting-rules.md",
         path: "references/accounting-rules.md",
         description: "Accounting rules.",
+        generated: true,
       },
     ],
     assets: [
@@ -72,6 +84,25 @@ const budgetSkill: CustomSkill = {
     examples: [],
     scripts: [],
   },
+  markdown_files: [
+    {
+      path: "SKILL.md",
+      label: "SKILL.md",
+      description: "Instruksi utama skill.",
+      bucket: "root",
+      primary: true,
+      content: "# Budget Estimation",
+      size_bytes: 19,
+    },
+    {
+      path: "references/accounting-rules.md",
+      label: "accounting-rules.md",
+      description: "Accounting rules.",
+      bucket: "references",
+      content: "# Accounting Rules\n\nUse invoice totals.",
+      size_bytes: 38,
+    },
+  ],
 };
 
 function renderPanel() {
@@ -152,7 +183,21 @@ describe("CustomSkillsPanel", () => {
   });
 
   it("opens generated markdown for manual editing", async () => {
-    const updatedSkill = { ...riskSkill, skill_md: "# Risk Review\n\nUpdated." };
+    const updatedSkill = {
+      ...riskSkill,
+      skill_md: "# Risk Review\n\nUpdated.",
+      markdown_files: [
+        {
+          path: "SKILL.md",
+          label: "SKILL.md",
+          description: "Instruksi utama skill.",
+          bucket: "root" as const,
+          primary: true,
+          content: "# Risk Review\n\nUpdated.",
+          size_bytes: 24,
+        },
+      ],
+    };
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse({ skills: [riskSkill] }))
@@ -161,7 +206,7 @@ describe("CustomSkillsPanel", () => {
     renderPanel();
 
     await userEvent.click(await screen.findByRole("button", { name: "Edit MD" }));
-    const editor = screen.getByLabelText("Markdown skill");
+    const editor = screen.getByLabelText("SKILL.md");
     expect(editor).toHaveValue("# Risk Review");
     await userEvent.clear(editor);
     await userEvent.type(editor, "# Risk Review\n\nUpdated.");
@@ -170,7 +215,42 @@ describe("CustomSkillsPanel", () => {
     const saveCall = fetchMock.mock.calls[1];
     expect(JSON.parse(String((saveCall[1] as RequestInit).body))).toEqual({
       id: "risk-review",
+      path: "SKILL.md",
       skill_md: "# Risk Review\n\nUpdated.",
+    });
+  });
+
+  it("lets admins choose another generated markdown file to edit", async () => {
+    const updatedSkill = {
+      ...budgetSkill,
+      markdown_files: budgetSkill.markdown_files?.map((file) =>
+        file.path === "references/accounting-rules.md"
+          ? { ...file, content: "# Accounting Rules\n\nUpdated reference." }
+          : file,
+      ),
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ skills: [budgetSkill] }))
+      .mockResolvedValueOnce(jsonResponse(updatedSkill))
+      .mockResolvedValueOnce(jsonResponse({ skills: [updatedSkill] }));
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit MD" }));
+    expect(screen.getByText("references/accounting-rules.md")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /accounting-rules\.md/ }));
+
+    const editor = screen.getByLabelText("references/accounting-rules.md");
+    expect(editor).toHaveValue("# Accounting Rules\n\nUse invoice totals.");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "# Accounting Rules\n\nUpdated reference.");
+    await userEvent.click(screen.getByRole("button", { name: "Simpan perubahan MD" }));
+
+    const saveCall = fetchMock.mock.calls[1];
+    expect(JSON.parse(String((saveCall[1] as RequestInit).body))).toEqual({
+      id: "budget-estimation",
+      path: "references/accounting-rules.md",
+      skill_md: "# Accounting Rules\n\nUpdated reference.",
     });
   });
 

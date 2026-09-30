@@ -41,6 +41,7 @@ function meResponse(role: "admin" | "user") {
     email: fakeUser.email,
     role,
     displayName: fakeUser.displayName,
+    group: "",
     capabilities: {
       attachments: all,
       session_sources: all,
@@ -59,9 +60,12 @@ function stubFetch(role: "admin" | "user") {
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.startsWith("/account/me")) return jsonResponse(meResponse(role));
-      if (url.startsWith("/account/shared-sources")) return jsonResponse({ sources: [] });
+      if (url.startsWith("/account/shared-sources")) {
+        return jsonResponse({ sources: [], groupSources: [] });
+      }
       if (url.startsWith("/admin/shared-sources")) return jsonResponse({ sources: [] });
       if (url.startsWith("/admin/users")) return jsonResponse({ users: [] });
+      if (url.startsWith("/admin/groups")) return jsonResponse({ groups: [] });
       if (url.startsWith("/admin/capabilities")) {
         return jsonResponse({ definitions: [], roles: { user: {} }, global: {} });
       }
@@ -102,6 +106,27 @@ describe("App role branching", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    window.history.pushState({}, "", "/");
+  });
+
+  it("renders the embed chat without the auth gate on /embed/:id", async () => {
+    window.history.pushState({}, "", "/embed/analis-keuangan?key=k-1");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/agents/analis-keuangan") {
+        return jsonResponse({ id: "analis-keuangan", name: "Analis Keuangan", description: "" });
+      }
+      if (url.startsWith("/agents/analis-keuangan/sessions")) return jsonResponse({}, 501);
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect((await screen.findAllByText("Analis Keuangan")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Panel Kendali")).toBeNull();
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.startsWith("/account/me"))).toBe(false);
   });
 
   it("renders the admin control panel for role=admin", async () => {

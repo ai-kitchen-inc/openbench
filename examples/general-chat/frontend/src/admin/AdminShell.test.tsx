@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../Toast";
 import type { Me } from "../account/api";
 import { AdminShell } from "./AdminShell";
@@ -63,5 +64,23 @@ describe("AdminShell navigation", () => {
     const buttons = within(nav).getAllByRole("button");
     expect(buttons[0]).toHaveTextContent("Buka Chat");
     expect(buttons[1]).toHaveTextContent("Ringkasan");
+  });
+
+  it("can collapse the admin sidebar to icon-only mode", async () => {
+    window.location.hash = "#chat";
+    render(
+      <ToastProvider>
+        <AdminShell me={ME} user={null} onSignOut={vi.fn()} />
+      </ToastProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Minimize menu panel" }));
+
+    expect(screen.getByRole("complementary")).toHaveClass("admin-sidebar--collapsed");
+    expect(screen.getByRole("button", { name: "Tampilkan menu panel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Buka Chat" })).toHaveAttribute(
+      "title",
+      "Buka Chat",
+    );
   });
 });

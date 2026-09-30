@@ -81,6 +81,7 @@ class TestCustomSkillStore(unittest.TestCase):
         self.assertTrue(first["id"].startswith("review-kontrak-vendor"))
         self.assertIn("## Instructions", first["skill_md"])
         self.assertIn("## Triggers", first["skill_md"])
+        self.assertEqual(first["markdown_files"][0]["path"], "SKILL.md")
 
     def test_save_from_prompt_reuses_existing_custom_function(self):
         functions = CustomFunctionStore(self._tmp.name)
@@ -204,6 +205,27 @@ class TestCustomSkillStore(unittest.TestCase):
         self.assertTrue((paths[0] / "references" / "output-template.md").is_file())
         self.assertIn("references/prompt-rules.md", saved["skill_md"])
         self.assertEqual(len(saved["resources"]["references"]), 2)
+        editable_paths = [item["path"] for item in saved["markdown_files"]]
+        self.assertEqual(
+            editable_paths,
+            [
+                "SKILL.md",
+                "references/prompt-rules.md",
+                "references/output-template.md",
+            ],
+        )
+
+        updated = self.store.save_markdown(
+            saved["id"],
+            "# Output Template\n\nGunakan format ringkas.",
+            path="references/output-template.md",
+        )
+        updated_file = next(
+            item
+            for item in updated["markdown_files"]
+            if item["path"] == "references/output-template.md"
+        )
+        self.assertIn("format ringkas", updated_file["content"])
 
     def test_save_from_prompt_persists_uploaded_assets_and_text_references(self):
         upload_dir = Path(self._tmp.name) / "uploads"
@@ -531,6 +553,33 @@ class TestCustomSkillStore(unittest.TestCase):
         self.assertEqual(updated["version"], "0.2.0")
         self.assertEqual(updated["triggers"], ["audit internal"])
         self.assertIn("Selalu susun", updated["instructions"])
+
+    def test_save_markdown_rejects_non_generated_resource_markdown(self):
+        upload_dir = Path(self._tmp.name) / "uploads"
+        upload_dir.mkdir()
+        reference = upload_dir / "manual-reference.md"
+        reference.write_text("# Manual Reference\n\nUploaded.", encoding="utf-8")
+        saved = self.store.save_from_prompt(
+            "Buat skill dengan referensi upload.",
+            uploads=[
+                {
+                    "filename": "manual-reference.md",
+                    "source_name": "manual-reference.md",
+                    "bucket": "references",
+                    "description": "Uploaded markdown.",
+                    "source_path": str(reference),
+                }
+            ],
+        )
+
+        editable_paths = [item["path"] for item in saved["markdown_files"]]
+        self.assertEqual(editable_paths, ["SKILL.md"])
+        with self.assertRaises(CustomSkillError):
+            self.store.save_markdown(
+                saved["id"],
+                "# Changed",
+                path="references/manual-reference.md",
+            )
 
 
 class TestCustomSkillRoutes(unittest.TestCase):

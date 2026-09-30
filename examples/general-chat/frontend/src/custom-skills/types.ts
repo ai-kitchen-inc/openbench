@@ -34,6 +34,16 @@ export interface CustomSkillResources {
   scripts: CustomSkillResource[];
 }
 
+export interface CustomSkillMarkdownFile {
+  path: string;
+  label: string;
+  description?: string;
+  bucket: "root" | "references" | "assets" | "examples" | "scripts";
+  primary?: boolean;
+  content: string;
+  size_bytes?: number;
+}
+
 export interface CustomSkill {
   id: string;
   name: string;
@@ -49,4 +59,5 @@ export interface CustomSkill {
   resources?: CustomSkillResources;
   template_tool?: string;
   skill_md?: string;
+  markdown_files?: CustomSkillMarkdownFile[];
 }

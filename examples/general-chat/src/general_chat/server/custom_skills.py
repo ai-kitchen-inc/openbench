@@ -477,6 +477,29 @@ def _safe_filename(value: str, *, fallback: str = "resource") -> str:
     return f"{cleaned_stem[:80]}{suffix[:16]}"
 
 
+def _safe_markdown_relative_path(value: str) -> str:
+    cleaned = str(value or "SKILL.md").replace("\\", "/").strip().lstrip("/")
+    if not cleaned:
+        cleaned = "SKILL.md"
+    parts = Path(cleaned).parts
+    if any(part in {"", ".", ".."} for part in parts):
+        raise CustomSkillError("invalid markdown path")
+    if Path(cleaned).suffix.lower() != ".md":
+        raise CustomSkillError("only markdown files can be edited")
+    return Path(*parts).as_posix()
+
+
+def _markdown_path_for(skill_dir: Path, relative_path: str) -> Path:
+    safe_path = _safe_markdown_relative_path(relative_path)
+    target = (skill_dir / safe_path).resolve()
+    root = skill_dir.resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        raise CustomSkillError("markdown path must stay inside the skill directory") from None
+    return target
+
+
 def _unique_child_path(directory: Path, filename: str) -> Path:
     filename = _safe_filename(filename)
     candidate = directory / filename
@@ -1797,6 +1820,46 @@ def _write_resource_files(skill_dir: Path, resources: dict[str, Any] | None) -> 
     return persisted
 
 
+def _resource_markdown_paths(resources: dict[str, Any]) -> set[str]:
+    allowed: set[str] = set()
+    for bucket, items in (resources or {}).items():
+        if bucket not in _empty_resources():
+            continue
+        for item in items or []:
+            if not isinstance(item, dict) or not item.get("generated"):
+                continue
+            path = str(item.get("path") or "")
+            if not path:
+                filename = _safe_filename(str(item.get("filename") or "resource"))
+                path = f"{bucket}/{filename}"
+            try:
+                safe_path = _safe_markdown_relative_path(path)
+            except CustomSkillError:
+                continue
+            if Path(safe_path).suffix.lower() == ".md":
+                allowed.add(safe_path)
+    return allowed
+
+
+def _update_resource_markdown_size(
+    resources: dict[str, Any],
+    relative_path: str,
+    size_bytes: int,
+) -> dict[str, Any]:
+    updated = _empty_resources()
+    for bucket in updated:
+        updated_items: list[dict[str, Any]] = []
+        for item in (resources or {}).get(bucket) or []:
+            if not isinstance(item, dict):
+                continue
+            copied = dict(item)
+            if str(copied.get("path") or "") == relative_path:
+                copied["size_bytes"] = size_bytes
+            updated_items.append(copied)
+        updated[bucket] = updated_items
+    return updated
+
+
 def _write_template_tools(
     skill_dir: Path,
     *,
@@ -2504,11 +2567,55 @@ class CustomSkillStore:
             resources=resources,
         )
 
-    def save_markdown(self, skill_id: str, markdown: str) -> dict[str, Any]:
+    def save_markdown(
+        self,
+        skill_id: str,
+        markdown: str,
+        *,
+        path: str = "SKILL.md",
+    ) -> dict[str, Any]:
         skill_id = self._validate_id(skill_id)
         markdown = _clean_multiline(markdown)
         if not markdown:
             raise CustomSkillError("skill markdown is required")
+
+        relative_path = _safe_markdown_relative_path(path)
+        skill_dir = self._path_for(skill_id)
+        if relative_path != "SKILL.md":
+            existing = self.get(skill_id, include_markdown=False)
+            if not existing:
+                raise CustomSkillError("skill not found")
+            existing_resources = existing.get("resources")
+            resources = (
+                existing_resources
+                if isinstance(existing_resources, dict)
+                else _empty_resources()
+            )
+            allowed_paths = _resource_markdown_paths(resources)
+            if relative_path not in allowed_paths:
+                raise CustomSkillError("markdown file is not editable")
+            target_path = _markdown_path_for(skill_dir, relative_path)
+            if not target_path.is_file():
+                raise CustomSkillError("markdown file not found")
+            target_path.write_text(markdown.strip() + "\n", encoding="utf-8")
+
+            meta_path = skill_dir / "metadata.json"
+            metadata: dict[str, Any] = {}
+            if meta_path.is_file():
+                try:
+                    raw_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    if isinstance(raw_meta, dict):
+                        metadata = raw_meta
+                except (OSError, ValueError):
+                    metadata = {}
+            metadata["resources"] = _update_resource_markdown_size(
+                resources,
+                relative_path,
+                target_path.stat().st_size,
+            )
+            metadata["updated_at"] = _utc_now()
+            meta_path.write_text(json.dumps(metadata), encoding="utf-8")
+            return self._serialize(skill_dir, include_markdown=True)
 
         with tempfile.TemporaryDirectory() as tmp:
             temp_dir = Path(tmp) / skill_id
@@ -2517,7 +2624,6 @@ class CustomSkillStore:
             loaded = Skill.from_dir(temp_dir)
         version = self._validate_version(loaded.version)
 
-        skill_dir = self._path_for(skill_id)
         existing = self.get(skill_id, include_markdown=False)
         created_at = existing.get("created_at") if existing else _utc_now()
         existing_tooling = existing.get("tooling") if existing else None
@@ -2579,7 +2685,64 @@ class CustomSkillStore:
         }
         if include_markdown:
             item["skill_md"] = skill.raw_skill_md
+            item["markdown_files"] = self._markdown_files(skill_dir, skill.raw_skill_md, metadata)
         return item
+
+    def _markdown_files(
+        self,
+        skill_dir: Path,
+        skill_md: str,
+        metadata: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        files: list[dict[str, Any]] = [
+            {
+                "path": "SKILL.md",
+                "label": "SKILL.md",
+                "description": "Instruksi utama skill.",
+                "bucket": "root",
+                "primary": True,
+                "content": skill_md,
+                "size_bytes": len(skill_md.encode("utf-8")),
+            }
+        ]
+        resources = (
+            metadata.get("resources")
+            if isinstance(metadata.get("resources"), dict)
+            else _empty_resources()
+        )
+        for bucket in ("references", "examples", "assets", "scripts"):
+            for item in resources.get(bucket) or []:
+                if not isinstance(item, dict) or not item.get("generated"):
+                    continue
+                relative_path = str(item.get("path") or "")
+                if not relative_path:
+                    filename = _safe_filename(str(item.get("filename") or "resource"))
+                    relative_path = f"{bucket}/{filename}"
+                try:
+                    safe_path = _safe_markdown_relative_path(relative_path)
+                    target = _markdown_path_for(skill_dir, safe_path)
+                except CustomSkillError:
+                    continue
+                if not target.is_file():
+                    continue
+                try:
+                    content = target.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                files.append(
+                    {
+                        "path": safe_path,
+                        "label": Path(safe_path).name,
+                        "description": _clean_single_line(
+                            item.get("description") or "", max_len=220
+                        ),
+                        "bucket": bucket,
+                        "primary": False,
+                        "content": content,
+                        "size_bytes": target.stat().st_size,
+                    }
+                )
+        return files
 
     def get(self, skill_id: str, *, include_markdown: bool = True) -> dict[str, Any] | None:
         skill_dir = self._path_for(skill_id)

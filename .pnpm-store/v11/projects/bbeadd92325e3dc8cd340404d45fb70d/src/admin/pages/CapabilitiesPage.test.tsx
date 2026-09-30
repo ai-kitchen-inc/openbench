@@ -36,6 +36,7 @@ describe("CapabilitiesPage", () => {
     const putBodies: unknown[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url === "/admin/groups") return jsonResponse({ groups: [] });
       if (url === "/admin/capabilities" && (!init || !init.method)) {
         return jsonResponse({
           definitions: DEFINITIONS,
@@ -81,6 +82,7 @@ describe("CapabilitiesPage", () => {
   it("keeps state and shows an error toast when PUT fails", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url === "/admin/groups") return jsonResponse({ groups: [] });
       if (url === "/admin/capabilities" && (!init || !init.method)) {
         return jsonResponse({
           definitions: DEFINITIONS,

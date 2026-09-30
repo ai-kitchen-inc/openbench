@@ -7,7 +7,7 @@ import {
   listCustomSkills,
   saveCustomSkillMarkdown,
 } from "./api";
-import type { CustomSkill } from "./types";
+import type { CustomSkill, CustomSkillMarkdownFile } from "./types";
 
 const PROMPT_PLACEHOLDER = [
   "Jelaskan skill kustom yang ingin ditambahkan ke agent.",
@@ -93,6 +93,27 @@ function markdownForSkill(skill: CustomSkill): string {
   );
 }
 
+function markdownFilesForSkill(skill: CustomSkill): CustomSkillMarkdownFile[] {
+  const files = skill.markdown_files ?? [];
+  if (files.length > 0) return files;
+  return [
+    {
+      path: "SKILL.md",
+      label: "SKILL.md",
+      description: "Instruksi utama skill.",
+      bucket: "root",
+      primary: true,
+      content: markdownForSkill(skill),
+      size_bytes: markdownForSkill(skill).length,
+    },
+  ];
+}
+
+function markdownBucketLabel(file: CustomSkillMarkdownFile): string {
+  if (file.primary || file.bucket === "root") return "utama";
+  return file.bucket;
+}
+
 export function CustomSkillsPanel() {
   const toast = useToast();
   const [skills, setSkills] = useState<CustomSkill[]>([]);
@@ -104,8 +125,13 @@ export function CustomSkillsPanel() {
   const [resourceFiles, setResourceFiles] = useState<File[]>([]);
   const [isDraggingResource, setIsDraggingResource] = useState(false);
   const [editingSkill, setEditingSkill] = useState<CustomSkill | null>(null);
+  const [activeMarkdownPath, setActiveMarkdownPath] = useState("SKILL.md");
   const [markdownDraft, setMarkdownDraft] = useState("");
+  const [markdownDrafts, setMarkdownDrafts] = useState<Record<string, string>>({});
   const resourceInputRef = useRef<HTMLInputElement | null>(null);
+  const markdownFiles = editingSkill ? markdownFilesForSkill(editingSkill) : [];
+  const activeMarkdownFile =
+    markdownFiles.find((file) => file.path === activeMarkdownPath) ?? markdownFiles[0];
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -130,13 +156,27 @@ export function CustomSkillsPanel() {
 
   function closeEditor() {
     setEditingSkill(null);
+    setActiveMarkdownPath("SKILL.md");
     setMarkdownDraft("");
+    setMarkdownDrafts({});
     setFormError(null);
   }
 
   function handleEdit(skill: CustomSkill) {
+    const files = markdownFilesForSkill(skill);
+    const firstFile = files[0];
     setEditingSkill(skill);
-    setMarkdownDraft(markdownForSkill(skill));
+    setActiveMarkdownPath(firstFile.path);
+    setMarkdownDraft(firstFile.content);
+    setMarkdownDrafts({ [firstFile.path]: firstFile.content });
+    setFormError(null);
+  }
+
+  function handleSelectMarkdown(file: CustomSkillMarkdownFile) {
+    const nextDrafts = { ...markdownDrafts, [activeMarkdownPath]: markdownDraft };
+    setMarkdownDrafts(nextDrafts);
+    setActiveMarkdownPath(file.path);
+    setMarkdownDraft(nextDrafts[file.path] ?? file.content);
     setFormError(null);
   }
 
@@ -173,10 +213,22 @@ export function CustomSkillsPanel() {
     setSavingMarkdown(true);
     setFormError(null);
     try {
-      const saved = await saveCustomSkillMarkdown(editingSkill.id, markdownDraft.trim());
+      const saved = await saveCustomSkillMarkdown(
+        editingSkill.id,
+        markdownDraft.trim(),
+        activeMarkdownFile?.path ?? "SKILL.md",
+      );
       toast.show(`Skill "${saved.name}" diperbarui dan agent dimuat ulang`, "success");
       setEditingSkill(saved);
-      setMarkdownDraft(markdownForSkill(saved));
+      const nextFiles = markdownFilesForSkill(saved);
+      const nextActiveFile =
+        nextFiles.find((file) => file.path === (activeMarkdownFile?.path ?? "SKILL.md")) ??
+        nextFiles[0];
+      setActiveMarkdownPath(nextActiveFile.path);
+      setMarkdownDraft(nextActiveFile.content);
+      setMarkdownDrafts(
+        Object.fromEntries(nextFiles.map((file) => [file.path, file.content])),
+      );
       await load();
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Gagal menyimpan markdown skill");
@@ -327,7 +379,7 @@ export function CustomSkillsPanel() {
         <section className="mcp-section custom-skills__editor">
           <div className="mcp-section__header">
             <div>
-              <h3>Edit SKILL.md</h3>
+              <h3>Edit MD</h3>
               <p>
                 Mengedit {editingSkill.name} | ID tetap: {editingSkill.id}
               </p>
@@ -339,15 +391,52 @@ export function CustomSkillsPanel() {
             </div>
           </div>
 
-          <label className="mcp-field custom-skills__markdown">
-            <span>Markdown skill</span>
-            <textarea
-              value={markdownDraft}
-              spellCheck={false}
-              rows={18}
-              onChange={(event) => setMarkdownDraft(event.target.value)}
-            />
-          </label>
+          <div className="custom-skills__editor-layout">
+            <label className="mcp-field custom-skills__markdown">
+              <span>{activeMarkdownFile?.path ?? "Markdown skill"}</span>
+              <textarea
+                value={markdownDraft}
+                spellCheck={false}
+                rows={18}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setMarkdownDraft(nextValue);
+                  setMarkdownDrafts((current) => ({
+                    ...current,
+                    [activeMarkdownPath]: nextValue,
+                  }));
+                }}
+              />
+            </label>
+
+            <aside className="custom-skills__markdown-menu" aria-label="Pilih file markdown">
+              <div className="custom-skills__markdown-menu-header">
+                <strong>File MD</strong>
+                <span>{markdownFiles.length} file</span>
+              </div>
+              <div className="custom-skills__markdown-options">
+                {markdownFiles.map((file) => (
+                  <button
+                    type="button"
+                    key={file.path}
+                    className={`custom-skills__markdown-option${
+                      file.path === activeMarkdownPath ? " custom-skills__markdown-option--active" : ""
+                    }`}
+                    onClick={() => handleSelectMarkdown(file)}
+                  >
+                    <span className="custom-skills__markdown-option-title">
+                      {file.label || file.path}
+                    </span>
+                    <span className="custom-skills__markdown-option-path">{file.path}</span>
+                    <span className="custom-skills__markdown-option-meta">
+                      {markdownBucketLabel(file)}
+                      {file.size_bytes ? ` | ${Math.ceil(file.size_bytes / 1024)} KB` : ""}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </aside>
+          </div>
 
           {formError && (
             <div className="mcp-state mcp-state--error" role="alert">

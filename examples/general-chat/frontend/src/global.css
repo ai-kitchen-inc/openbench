@@ -699,6 +699,11 @@ body {
   background: var(--sss-sidebar-bg);
   color: var(--sss-sidebar-text);
   border-right: 1px solid var(--sss-sidebar-border);
+  transition: flex-basis 180ms ease;
+}
+
+.admin-sidebar--collapsed {
+  flex-basis: 68px;
 }
 
 .admin-sidebar__brand {
@@ -707,6 +712,28 @@ body {
   gap: 12px;
   padding: 18px 16px;
   border-bottom: 1px solid var(--sss-sidebar-border);
+  color: var(--sss-sidebar-text-strong);
+}
+
+.admin-sidebar__collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  border: 1px solid var(--sss-sidebar-border);
+  border-radius: var(--sss-radius-sm);
+  background: transparent;
+  color: var(--sss-sidebar-text);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.admin-sidebar__collapse:hover {
+  border-color: rgba(216, 180, 92, 0.2);
+  background: var(--sss-sidebar-hover);
   color: var(--sss-sidebar-text-strong);
 }
 
@@ -863,6 +890,49 @@ body {
   color: var(--sss-sidebar-text-strong);
 }
 
+.admin-sidebar--collapsed .admin-sidebar__brand .brand-lockup__text,
+.admin-sidebar--collapsed .admin-nav__label,
+.admin-sidebar--collapsed .admin-nav__item span,
+.admin-sidebar--collapsed .admin-sidebar__user-info,
+.admin-sidebar--collapsed .admin-sidebar__signout {
+  display: none;
+}
+
+.admin-sidebar--collapsed .admin-sidebar__brand {
+  justify-content: center;
+  padding-inline: 8px;
+}
+
+.admin-sidebar--collapsed .admin-sidebar__brand > .brand-mark {
+  display: none;
+}
+
+.admin-sidebar--collapsed .admin-sidebar__collapse {
+  margin-left: 0;
+}
+
+.admin-sidebar--collapsed .admin-nav {
+  padding-inline: 8px;
+}
+
+.admin-sidebar--collapsed .admin-nav__item {
+  justify-content: center;
+  padding: 8px;
+}
+
+.admin-sidebar--collapsed .admin-nav__item--active::before {
+  left: -8px;
+}
+
+.admin-sidebar--collapsed .admin-sidebar__footer {
+  padding-inline: 8px;
+}
+
+.admin-sidebar--collapsed .admin-sidebar__footer-actions,
+.admin-sidebar--collapsed .admin-sidebar__user {
+  justify-content: center;
+}
+
 .admin-content {
   display: flex;
   flex: 1;
@@ -980,6 +1050,89 @@ body {
 .mcp-field.custom-skills__markdown textarea {
   min-height: 420px;
   font-size: 12px;
+}
+
+.custom-skills__editor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 240px);
+  gap: 16px;
+  align-items: start;
+}
+
+.custom-skills__markdown-menu {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--sss-border);
+  border-radius: 8px;
+  background: var(--sss-surface);
+}
+
+.custom-skills__markdown-menu-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.custom-skills__markdown-menu-header strong {
+  color: var(--sss-primary);
+  font-size: 13px;
+}
+
+.custom-skills__markdown-menu-header span {
+  color: var(--sss-text-2);
+  font-size: 11px;
+}
+
+.custom-skills__markdown-options {
+  display: grid;
+  gap: 6px;
+}
+
+.custom-skills__markdown-option {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sss-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.custom-skills__markdown-option:hover,
+.custom-skills__markdown-option--active {
+  border-color: var(--sss-border-strong);
+  background: var(--sss-wash);
+}
+
+.custom-skills__markdown-option--active {
+  box-shadow: inset 3px 0 0 var(--sss-primary);
+}
+
+.custom-skills__markdown-option-title,
+.custom-skills__markdown-option-path,
+.custom-skills__markdown-option-meta {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.custom-skills__markdown-option-title {
+  color: var(--sss-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.custom-skills__markdown-option-path,
+.custom-skills__markdown-option-meta {
+  color: var(--sss-text-2);
+  font-size: 11px;
 }
 
 .custom-skills__upload {
@@ -1202,6 +1355,14 @@ body {
 }
 
 @media (max-width: 860px) {
+  .custom-skills__editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .custom-skills__markdown-menu {
+    order: -1;
+  }
+
   .custom-skills__upload-shell {
     grid-template-columns: 1fr;
   }
@@ -1264,9 +1425,21 @@ body {
     display: none;
   }
 
+  .admin-sidebar__brand > .brand-mark {
+    display: none;
+  }
+
   .admin-sidebar__brand,
   .admin-nav__item {
     justify-content: center;
+  }
+
+  .admin-sidebar__brand {
+    padding-inline: 8px;
+  }
+
+  .admin-sidebar__collapse {
+    margin-left: 0;
   }
 
   .admin-nav__item {

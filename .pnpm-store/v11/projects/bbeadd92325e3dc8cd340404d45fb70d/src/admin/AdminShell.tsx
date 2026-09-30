@@ -1,56 +1,76 @@
 import type { User } from "firebase/auth";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { Me } from "../account/api";
 import { setLocalRole } from "../api";
 import { BrandMark } from "../brand/BrandMark";
 import {
   BookIcon,
+  BotIcon,
+  ChartIcon,
+  ClipboardIcon,
   CodeIcon,
   LayoutIcon,
   MessageIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   PersonaIcon,
   ServerIcon,
   SettingsIcon,
   SlidersIcon,
+  UsersGroupIcon,
   UsersIcon,
 } from "../brand/icons";
 import { UserChat } from "../chat/UserChat";
 import { APP_NAME, APP_TAGLINE, COMMON, LOCAL_ROLE } from "../i18n/id";
 import { ThemeIcon, useDarkMode } from "../theme";
+import { AgentsPage } from "./pages/AgentsPage";
+import { AuditPage } from "./pages/AuditPage";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FunctionsPage } from "./pages/FunctionsPage";
+import { GroupsPage } from "./pages/GroupsPage";
 import { CustomSkillsPage } from "./pages/CustomSkillsPage";
 import { McpServersPage } from "./pages/McpServersPage";
 import { PersonaPage } from "./pages/PersonaPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
+import { UsagePage } from "./pages/UsagePage";
 import { UsersPage } from "./pages/UsersPage";
 import { useHashPage, type AdminPage } from "./useHashPage";
 
 const NAV_ITEMS: { page: AdminPage; label: string; icon: ReactNode }[] = [
+  // "Buka Chat" stays first: the most-used action should not hide below
+  // thirteen control-panel entries.
+  { page: "chat", label: "Buka Chat", icon: <MessageIcon /> },
   { page: "ringkasan", label: "Ringkasan", icon: <LayoutIcon /> },
   { page: "sumber", label: "Sumber Global", icon: <BookIcon /> },
   { page: "persona", label: "Persona", icon: <PersonaIcon /> },
+  { page: "agen", label: "Agen", icon: <BotIcon /> },
   { page: "kemampuan", label: "Kemampuan", icon: <SlidersIcon /> },
   { page: "pengaturan", label: "Pengaturan", icon: <SettingsIcon /> },
   { page: "pengguna", label: "Pengguna", icon: <UsersIcon /> },
+  { page: "grup", label: "Grup", icon: <UsersGroupIcon /> },
   { page: "mcp", label: "Server MCP", icon: <ServerIcon /> },
   { page: "fungsi", label: "Fungsi Kustom", icon: <CodeIcon /> },
   { page: "skill", label: "Skill Kustom", icon: <BookIcon /> },
-  { page: "chat", label: "Buka Chat", icon: <MessageIcon /> },
+  { page: "audit", label: "Audit", icon: <ClipboardIcon /> },
+  { page: "penggunaan", label: "Penggunaan", icon: <ChartIcon /> },
 ];
 
 const PAGE_TITLES: Record<AdminPage, string> = {
   ringkasan: "Ringkasan",
   sumber: "Sumber Global",
   persona: "Persona",
+  agen: "Agen",
   kemampuan: "Kemampuan",
   pengaturan: "Pengaturan",
   pengguna: "Pengguna",
+  grup: "Grup",
   mcp: "Server MCP",
   fungsi: "Fungsi Kustom",
   skill: "Skill Kustom",
+  audit: "Jejak Audit",
+  penggunaan: "Penggunaan",
   chat: "Buka Chat",
 };
 
@@ -64,18 +84,32 @@ export function AdminShell({
   onSignOut: () => void;
 }) {
   const [dark, toggleDark] = useDarkMode();
-  const [page, setPage] = useHashPage();
+  const [page, setPage, params] = useHashPage();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const email = me.email || user?.email || "";
+  const collapseLabel = sidebarCollapsed ? "Tampilkan menu panel" : "Minimize menu panel";
 
   return (
     <div className="admin-shell">
-      <aside className="admin-sidebar">
+      <aside
+        className={`admin-sidebar${sidebarCollapsed ? " admin-sidebar--collapsed" : ""}`}
+        aria-label="Panel kendali"
+      >
         <div className="admin-sidebar__brand">
           <BrandMark size={38} />
           <span className="brand-lockup__text">
             <span className="brand-lockup__name">{APP_NAME}</span>
             <span className="brand-lockup__tagline">{APP_TAGLINE}</span>
           </span>
+          <button
+            type="button"
+            className="admin-sidebar__collapse"
+            onClick={() => setSidebarCollapsed((current) => !current)}
+            aria-label={collapseLabel}
+            title={collapseLabel}
+          >
+            {sidebarCollapsed ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
+          </button>
         </div>
         <nav className="admin-nav" aria-label="Navigasi admin">
           <div className="admin-nav__label">Panel Kendali</div>
@@ -85,6 +119,8 @@ export function AdminShell({
               type="button"
               className={`admin-nav__item${page === item.page ? " admin-nav__item--active" : ""}`}
               aria-current={page === item.page ? "page" : undefined}
+              aria-label={item.label}
+              title={item.label}
               onClick={() => setPage(item.page)}
             >
               {item.icon}
@@ -149,12 +185,16 @@ export function AdminShell({
                 {page === "ringkasan" && <DashboardPage onNavigate={setPage} />}
                 {page === "sumber" && <SourcesPage />}
                 {page === "persona" && <PersonaPage />}
+                {page === "agen" && <AgentsPage onNavigate={setPage} />}
                 {page === "kemampuan" && <CapabilitiesPage />}
                 {page === "pengaturan" && <SettingsPage />}
                 {page === "pengguna" && <UsersPage currentEmail={me.email} />}
-                {page === "mcp" && <McpServersPage />}
+                {page === "grup" && <GroupsPage />}
+                {page === "mcp" && <McpServersPage initialImportOpen={params.tambah === "1"} />}
                 {page === "fungsi" && <FunctionsPage />}
                 {page === "skill" && <CustomSkillsPage />}
+                {page === "audit" && <AuditPage />}
+                {page === "penggunaan" && <UsagePage />}
               </div>
             </main>
           </div>

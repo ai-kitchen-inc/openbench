@@ -40,8 +40,12 @@ export async function createCustomSkillPackage(
   return parseJsonResponse<CustomSkill>(response);
 }
 
-export async function saveCustomSkillMarkdown(id: string, skillMd: string): Promise<CustomSkill> {
-  return postCustomSkill({ id, skill_md: skillMd });
+export async function saveCustomSkillMarkdown(
+  id: string,
+  skillMd: string,
+  path = "SKILL.md",
+): Promise<CustomSkill> {
+  return postCustomSkill({ id, path, skill_md: skillMd });
 }
 
 export async function deleteCustomSkill(id: string): Promise<void> {

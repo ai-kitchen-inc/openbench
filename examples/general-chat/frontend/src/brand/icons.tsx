@@ -25,6 +25,26 @@ export function XIcon({ size = 16 }: IconProps) {
   );
 }
 
+export function PanelLeftCloseIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...iconAttrs(size)}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="9" y1="4" x2="9" y2="20" />
+      <polyline points="16 9 13 12 16 15" />
+    </svg>
+  );
+}
+
+export function PanelLeftOpenIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...iconAttrs(size)}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="9" y1="4" x2="9" y2="20" />
+      <polyline points="13 9 16 12 13 15" />
+    </svg>
+  );
+}
+
 export function LayoutIcon({ size = 16 }: IconProps) {
   return (
     <svg {...iconAttrs(size)}>

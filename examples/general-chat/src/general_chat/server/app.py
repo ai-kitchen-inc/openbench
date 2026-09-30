@@ -1440,6 +1440,7 @@ def create_app() -> FastAPI:
                     meta = custom_skills.save_markdown(
                         str(body.get("id") or ""),
                         str(body.get("skill_md") or ""),
+                        path=str(body.get("path") or "SKILL.md"),
                     )
                 elif "prompt" in body:
                     meta = custom_skills.save_from_prompt(

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { listGroups, type GroupItem } from "../account/api";
 import { UsersIcon, XIcon } from "../brand/icons";
 import { useToast } from "../Toast";
 import { readErrorMessage } from "./sourcesApi";
@@ -12,13 +13,16 @@ export function UsersSection({ currentEmail }: { currentEmail: string }) {
   // the load effect in a feedback loop.
   const { show: showToast } = useToast();
   const [users, setUsers] = useState<UserItem[]>([]);
+  const [groups, setGroups] = useState<GroupItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isMutating, setIsMutating] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      setUsers(await listUsers());
+      const [userList, groupList] = await Promise.all([listUsers(), listGroups()]);
+      setUsers(userList);
+      setGroups(groupList);
     } catch (error) {
       showToast(`Gagal memuat pengguna: ${readErrorMessage(error)}`, "error");
     } finally {
@@ -115,6 +119,24 @@ export function UsersSection({ currentEmail }: { currentEmail: string }) {
                 >
                   <option value="user">user</option>
                   <option value="admin">admin</option>
+                </select>
+                <select
+                  aria-label={`Grup ${user.email}`}
+                  value={user.group ?? ""}
+                  disabled={isMutating}
+                  onChange={(event) =>
+                    void runMutation(async () => {
+                      await updateUser(user.email, { group: event.target.value });
+                      showToast(`Grup ${user.email} diperbarui`, "success");
+                    })
+                  }
+                >
+                  <option value="">(tanpa grup)</option>
+                  {groups.map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name}
+                    </option>
+                  ))}
                 </select>
                 {user.email !== currentEmail && (
                   <button
