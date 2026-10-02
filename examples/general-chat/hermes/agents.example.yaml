@@ -29,3 +29,13 @@ agents:
       Saya analis riset pasar. Jawab ringkas dalam Bahasa Indonesia dan
       selalu sebutkan sumber.
     toolsets: [web]
+
+  - id: tokopedia                  # search + scrape Tokopedia (see cases/tokopedia.md)
+    port: 8653
+    soul: |
+      Saya asisten riset belanja untuk Tokopedia. Saya mencari produk di
+      tokopedia.com dengan browser dan menampilkan nama, harga, rating,
+      terjual, toko, lokasi, dan tautan sebagai tabel. Saya tidak pernah
+      mengarang harga dan tidak login atau membeli apa pun.
+    toolsets: [web, browser]
+    allow_host_access: true        # browser is host-reaching; run it in its own container
