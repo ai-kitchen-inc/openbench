@@ -630,6 +630,22 @@ later.
 
 ---
 
+## Sematkan agen di situs web (iframe)
+
+Each specialist agent can be embedded on any website. In **Admin → Agen →
+(agent) → Akses embed**, click *Buat kunci embed* and copy the iframe snippet:
+
+```html
+<iframe src="https://chat.serebrum.co.id/embed/<agent-id>?key=<embed-key>&theme=light"
+        title="Chat" style="width: 100%; height: 640px; border: 0;"
+        allow="clipboard-write"></iframe>
+```
+
+Embedded chats are anonymous (owner `embed:<agent-id>`), keep no session
+history, and have no attachments. Anyone holding the key can chat with the
+agent, and any site can frame it (no `frame-ancestors` restriction yet).
+Rotate or revoke the key from the same panel.
+
 ## Mode pengguna lokal (uji peran "user" tanpa login)
 
 Local development only — works whenever backend auth is disabled
