@@ -258,8 +258,16 @@ class HermesAgent(Agent):
     transcript scope, so two chat sessions never share a Hermes transcript.
     """
 
-    def __init__(self, adapter: HermesAdapter) -> None:
+    def __init__(self, adapter: HermesAdapter, *, empty_reply: str = "") -> None:
+        """
+        Args:
+            adapter: The Hermes profile endpoint.
+            empty_reply: Shown instead of a blank answer when Hermes finishes a
+                turn without any text (e.g. it spent its whole ``max_turns``
+                budget on tool calls). "" = pass the empty output through.
+        """
         self.adapter = adapter
+        self.empty_reply = empty_reply
 
     @property
     def agent_type(self) -> str:
@@ -299,11 +307,18 @@ class HermesAgent(Agent):
                 status="error",
                 metadata={"framework": self.adapter.framework_name, "error": str(exc)},
             )
+        output = "".join(parts)
+        metadata = self.adapter._metadata(usage or None)
+        if not output.strip() and self.empty_reply:
+            output = self.empty_reply
+            metadata["emptyReply"] = True
+            if on_chunk:
+                on_chunk(output)
         total = usage.get("total_tokens")
         return ExecutionResult(
-            output="".join(parts),
+            output=output,
             status="success",
-            metadata=self.adapter._metadata(usage or None),
+            metadata=metadata,
             tokens_used=int(total) if isinstance(total, (int, float)) else None,
         )
 

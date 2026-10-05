@@ -257,6 +257,32 @@ class TestHermesAgent(unittest.TestCase):
         self.assertEqual(result.output, "ok")
         self.assertIsNone(result.tokens_used)
 
+    def test_empty_turn_uses_empty_reply_text(self):
+        http = MagicMock()
+        http.post.return_value = _sse_response(
+            [
+                "event: hermes.tool.progress",
+                "data: " + json.dumps({"tool": "search"}),
+                "",
+                "data: [DONE]",
+            ]
+        )
+        chunks = []
+        result = HermesAgent(_adapter(http), empty_reply="Tidak ada jawaban.").execute(
+            self._context(), on_chunk=chunks.append
+        )
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.output, "Tidak ada jawaban.")
+        self.assertEqual(chunks, ["Tidak ada jawaban."])
+        self.assertTrue(result.metadata["emptyReply"])
+
+    def test_empty_turn_passes_through_without_empty_reply(self):
+        http = MagicMock()
+        http.post.return_value = _sse_response(["data: [DONE]"])
+        result = HermesAgent(_adapter(http)).execute(self._context())
+        self.assertEqual(result.output, "")
+        self.assertNotIn("emptyReply", result.metadata)
+
     def test_execute_returns_error_result_on_hermes_failure(self):
         http = MagicMock()
         http.post.return_value = _json_response({"error": "boom"}, 500)

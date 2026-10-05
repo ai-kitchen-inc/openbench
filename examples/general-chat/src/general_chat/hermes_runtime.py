@@ -46,6 +46,13 @@ _ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _DOCKER_COMMANDS = ("docker", "docker.exe")
 #: Where the docker backend mounts the profile inside the container.
 CONTAINER_WORKSPACE = "/opt/data/workspace"
+#: Shown when a Hermes turn ends without text (typically: every step of the
+#: profile's max_turns went to tool calls).
+EMPTY_REPLY_TEXT = (
+    "Agen Hermes berhenti tanpa jawaban setelah memakai seluruh langkahnya untuk "
+    "memanggil alat. Coba persempit pertanyaan atau minta jawaban dari data yang "
+    "sudah ditemukan."
+)
 
 
 class HermesRuntimeConfigError(ValueError):
@@ -211,7 +218,10 @@ def build_hermes_agent(
                 "(set GENERAL_CHAT_HERMES_BACKEND) and no Hermes URL is configured"
             )
         endpoint = supervisor.ensure(plan.spec, plan.env)
-        return HermesAgent(HermesAdapter(endpoint.url, api_key=endpoint.api_key, model=profile.id))
+        return HermesAgent(
+            HermesAdapter(endpoint.url, api_key=endpoint.api_key, model=profile.id),
+            empty_reply=EMPTY_REPLY_TEXT,
+        )
     try:
         url = validate_hermes_url(profile.hermes_url)
     except ValueError as exc:
@@ -220,4 +230,6 @@ def build_hermes_agent(
     api_key = os.getenv(env_name, "").strip()
     if not api_key:
         raise HermesRuntimeConfigError(f"agent {profile.id!r}: env {env_name} is not set")
-    return HermesAgent(HermesAdapter(url, api_key=api_key, model=profile.id))
+    return HermesAgent(
+        HermesAdapter(url, api_key=api_key, model=profile.id), empty_reply=EMPTY_REPLY_TEXT
+    )

@@ -20,6 +20,7 @@ if str(GENERAL_CHAT_SRC) not in sys.path:
 from general_chat.agent_store import AgentProfileRecord  # noqa: E402
 from general_chat.hermes_profile import HermesProfileSpec  # noqa: E402
 from general_chat.hermes_runtime import (  # noqa: E402
+    EMPTY_REPLY_TEXT,
     HermesRuntimeConfigError,
     ManagedHermesPlan,
     build_hermes_agent,
@@ -381,6 +382,7 @@ class TestBuildManagedAgent(unittest.TestCase):
         self.assertIsInstance(agent, HermesAgent)
         self.assertEqual(agent.adapter.base_url, "http://127.0.0.1:41001")
         self.assertEqual(agent.adapter._api_key, "key-a")
+        self.assertEqual(agent.empty_reply, EMPTY_REPLY_TEXT)
         supervisor.ensure.assert_called_once_with(plan.spec, plan.env)
 
     def test_managed_build_without_supervisor_fails(self):
