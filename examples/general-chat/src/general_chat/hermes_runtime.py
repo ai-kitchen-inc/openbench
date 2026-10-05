@@ -53,6 +53,13 @@ EMPTY_REPLY_TEXT = (
     "memanggil alat. Coba persempit pertanyaan atau minta jawaban dari data yang "
     "sudah ditemukan."
 )
+#: Shown when a Hermes turn ends without text *and* without any tool call: the
+#: model call failed inside Hermes (credits/quota, invalid key, outage).
+FAILED_REPLY_TEXT = (
+    "Agen Hermes tidak mendapat jawaban dari model AI. Kemungkinan kuota atau "
+    "kredit API model habis, kunci API tidak valid, atau layanan model sedang "
+    "gangguan. Hubungi admin."
+)
 
 
 class HermesRuntimeConfigError(ValueError):
@@ -221,6 +228,7 @@ def build_hermes_agent(
         return HermesAgent(
             HermesAdapter(endpoint.url, api_key=endpoint.api_key, model=profile.id),
             empty_reply=EMPTY_REPLY_TEXT,
+            failed_reply=FAILED_REPLY_TEXT,
         )
     try:
         url = validate_hermes_url(profile.hermes_url)
@@ -231,5 +239,7 @@ def build_hermes_agent(
     if not api_key:
         raise HermesRuntimeConfigError(f"agent {profile.id!r}: env {env_name} is not set")
     return HermesAgent(
-        HermesAdapter(url, api_key=api_key, model=profile.id), empty_reply=EMPTY_REPLY_TEXT
+        HermesAdapter(url, api_key=api_key, model=profile.id),
+        empty_reply=EMPTY_REPLY_TEXT,
+        failed_reply=FAILED_REPLY_TEXT,
     )

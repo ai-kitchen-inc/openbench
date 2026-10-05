@@ -20,6 +20,7 @@ Two entry points:
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -27,6 +28,8 @@ import requests
 from openbench.core import FrameworkAdapter
 from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult
 from openbench.intelligence.agent_config import ProgressEvent
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -258,16 +261,22 @@ class HermesAgent(Agent):
     transcript scope, so two chat sessions never share a Hermes transcript.
     """
 
-    def __init__(self, adapter: HermesAdapter, *, empty_reply: str = "") -> None:
+    def __init__(
+        self, adapter: HermesAdapter, *, empty_reply: str = "", failed_reply: str = ""
+    ) -> None:
         """
         Args:
             adapter: The Hermes profile endpoint.
-            empty_reply: Shown instead of a blank answer when Hermes finishes a
-                turn without any text (e.g. it spent its whole ``max_turns``
+            empty_reply: Shown instead of a blank answer when Hermes calls tools
+                but finishes without any text (it spent its whole ``max_turns``
                 budget on tool calls). "" = pass the empty output through.
+            failed_reply: Shown when Hermes returns no text *and* made no tool
+                call — the model call itself failed inside Hermes (quota,
+                invalid key, provider outage). "" = fall back to ``empty_reply``.
         """
         self.adapter = adapter
         self.empty_reply = empty_reply
+        self.failed_reply = failed_reply
 
     @property
     def agent_type(self) -> str:
@@ -289,7 +298,11 @@ class HermesAgent(Agent):
         config = _config_from_context(context)
         usage: dict[str, Any] = {}
 
+        tool_steps = 0
+
         def _progress(label: str) -> None:
+            nonlocal tool_steps
+            tool_steps += 1
             if on_progress:
                 on_progress(ProgressEvent(phase=label))
 
@@ -309,11 +322,16 @@ class HermesAgent(Agent):
             )
         output = "".join(parts)
         metadata = self.adapter._metadata(usage or None)
-        if not output.strip() and self.empty_reply:
-            output = self.empty_reply
-            metadata["emptyReply"] = True
-            if on_chunk:
-                on_chunk(output)
+        if not output.strip():
+            logger.warning(
+                "hermes.empty_turn model=%s tool_steps=%d", self.adapter.model, tool_steps
+            )
+            fallback = self.empty_reply if tool_steps else (self.failed_reply or self.empty_reply)
+            if fallback:
+                output = fallback
+                metadata["emptyReply"] = "budget" if tool_steps else "failed"
+                if on_chunk:
+                    on_chunk(output)
         total = usage.get("total_tokens")
         return ExecutionResult(
             output=output,

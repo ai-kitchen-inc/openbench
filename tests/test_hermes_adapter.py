@@ -274,7 +274,21 @@ class TestHermesAgent(unittest.TestCase):
         self.assertEqual(result.status, "success")
         self.assertEqual(result.output, "Tidak ada jawaban.")
         self.assertEqual(chunks, ["Tidak ada jawaban."])
-        self.assertTrue(result.metadata["emptyReply"])
+        self.assertEqual(result.metadata["emptyReply"], "budget")
+
+    def test_empty_turn_without_tool_calls_uses_failed_reply(self):
+        http = MagicMock()
+        http.post.return_value = _sse_response(["data: [DONE]"])
+        agent = HermesAgent(_adapter(http), empty_reply="Langkah habis.", failed_reply="LLM gagal.")
+        result = agent.execute(self._context())
+        self.assertEqual(result.output, "LLM gagal.")
+        self.assertEqual(result.metadata["emptyReply"], "failed")
+
+    def test_failed_reply_defaults_to_empty_reply(self):
+        http = MagicMock()
+        http.post.return_value = _sse_response(["data: [DONE]"])
+        result = HermesAgent(_adapter(http), empty_reply="Langkah habis.").execute(self._context())
+        self.assertEqual(result.output, "Langkah habis.")
 
     def test_empty_turn_passes_through_without_empty_reply(self):
         http = MagicMock()
