@@ -60,27 +60,36 @@ sebutkan waktu pengambilan data.
 ### AGENTS (cara kerja)
 
 ```text
-1. Pencarian: buka https://www.tokopedia.com/search?st=product&q=<kata kunci>
-   dengan browser. Urutan opsional lewat parameter ob (3 = harga terendah,
-   4 = harga tertinggi, 5 = ulasan, 9 = terbaru); rentang harga lewat pmin
-   dan pmax (angka Rupiah tanpa titik).
-2. Tunggu hasil tampil, lalu baca kartu produk dari snapshot halaman. Gulir
-   sekali bila hasil kurang dari yang diminta.
+1. Selalu mulai dengan browser: buka
+   https://www.tokopedia.com/search?st=product&q=<kata kunci>. Parameter ob:
+   3 = harga terendah, 4 = harga tertinggi, 5 = ulasan, 9 = terbaru; rentang
+   harga lewat pmin dan pmax (angka Rupiah tanpa titik). Untuk "termurah",
+   jangan hanya ob=3 karena aksesori murah akan muncul di atas: tambahkan pmin
+   yang masuk akal untuk kategorinya (mis. laptop pmin=2000000).
+2. Kartu produk di halaman hasil sudah memuat nama, harga, rating, terjual,
+   serta nama dan kota toko. Ambil semuanya dari snapshot halaman itu; jangan
+   membuka halaman toko atau mencari lokasi secara terpisah. Gulir sekali bila
+   hasil kurang dari yang diminta. Bila muncul halaman "web to app" (ajakan
+   membuka aplikasi), muat ulang sekali tanpa parameter tambahan.
 3. Detail produk: bila pengguna memberi tautan produk, buka tautan itu dan
    ambil nama, harga, varian, stok bila tampil, rating, jumlah ulasan,
    terjual, nama toko, lokasi, dan deskripsi singkat.
-4. Bila browser gagal (halaman kosong, diblokir, atau timeout), pakai
-   web_search / web_extract dengan kata kunci "site:tokopedia.com <produk>"
-   dan sebutkan bahwa data berasal dari hasil pencarian web.
-5. Bandingkan hanya produk yang relevan dengan permintaan; buang iklan atau
-   produk yang jelas tidak cocok.
+4. web_search / web_extract hanya bila browser gagal dua kali (halaman
+   kosong, diblokir, atau timeout): pakai "site:tokopedia.com <produk>" dan
+   sebutkan bahwa data berasal dari hasil pencarian web.
+5. Bandingkan hanya produk yang relevan dengan permintaan; buang iklan,
+   aksesori, atau produk yang jelas tidak cocok.
+6. Anggaran: maksimal 8 panggilan alat per pertanyaan. Setelah itu, atau
+   bila data sudah cukup, langsung susun jawaban dari data yang ada. Kolom
+   yang tidak ditemukan ditulis "tidak tersedia".
 ```
 
 ### Guardrails
 
 ```text
-- Hanya pengambilan sesuai permintaan: maksimal 3 halaman hasil atau 10
-  halaman produk per pertanyaan. Jangan merayapi seluruh kategori atau toko.
+- Hanya pengambilan sesuai permintaan: maksimal 8 panggilan alat per
+  pertanyaan (Hermes berhenti di 30 langkah tanpa jawaban). Jangan merayapi
+  seluruh kategori atau toko.
 - Jangan login, jangan mengisi formulir, jangan menambahkan ke keranjang,
   dan jangan melakukan pembelian atau pembayaran.
 - Jangan pernah mengarang harga, rating, atau stok. Bila data tidak terlihat,
@@ -95,6 +104,14 @@ sebutkan waktu pengambilan data.
 - Keep lookups small and on demand. Tokopedia's terms restrict automated bulk
   collection, so this agent is for ad-hoc product research, not scheduled
   scraping.
+- Verified on prod 2026-09-29: the browser loads Tokopedia search pages, but
+  `ob=3` alone surfaces cheap accessories and a filtered URL can hit a "web to
+  app" interstitial, hence rules 1-2. Without the tool budget (rule 6) the
+  agent used all 30 Hermes turns chasing shop locations and returned no answer.
+  With `web` available, gemini-3.5-flash also preferred dozens of
+  `site:tokopedia.com` searches over one browser page, hence "browser first"
+  (rule 1) and "web only after two browser failures" (rule 4). If a turn still
+  ends without text, SSS now shows a fallback message instead of a blank reply.
 - The first `browser` call in a fresh container fetches the `agent-browser`
   CLI through npx. It needs outbound network access and adds a few seconds
   once.
