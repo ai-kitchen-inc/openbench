@@ -539,8 +539,8 @@ class DatabaseManager:
             if re.search(pattern, cleaned_query):
                 return False
         
-        # Must start with SELECT
-        if not re.match(r'^\s*SELECT\b', cleaned_query):
+        # Must start with SELECT (or a CTE: WITH ... SELECT)
+        if not re.match(r'^\s*(SELECT|WITH)\b', cleaned_query):
             return False
         
         return True
@@ -594,6 +594,40 @@ class DatabaseManager:
             logger.error(f"Error executing query: {e}")
             raise
     
+    async def execute_capped_query(self, query: str, limit: int) -> List[Dict[str, Any]]:
+        """Read-only SELECT with an OUTER row cap.
+
+        Unlike ``execute_safe_query`` this never rewrites a ``LIMIT`` inside
+        the statement text (which clobbers top-N panels and sub-queries):
+        the statement is wrapped as a sub-select and capped on the outside.
+        Used by ``execute_sql_json`` (live dashboards).
+        """
+        if not self._is_query_safe(query):
+            raise ValueError("Query contains unsafe operations. Only SELECT queries are allowed.")
+        cap = max(1, int(limit))
+        if self.database_type == "mongodb":
+            return await self._execute_safe_mongo_query(query, limit=cap)
+        stripped = query.strip().rstrip(";").strip()
+        wrapped = f"SELECT * FROM ({stripped}) AS _ob_capped LIMIT {cap}"
+        try:
+            async with self.engine.begin() as conn:
+                result = await conn.execute(text(wrapped))
+                rows = []
+                for row in result:
+                    row_dict = {}
+                    for i, col in enumerate(result.keys()):
+                        value = row[i]
+                        if hasattr(value, 'isoformat'):
+                            value = value.isoformat()
+                        elif hasattr(value, '__str__') and not isinstance(value, (str, int, float, bool, type(None))):
+                            value = str(value)
+                        row_dict[col] = value
+                    rows.append(row_dict)
+                return rows
+        except Exception as e:
+            logger.error(f"Error executing capped query: {e}")
+            raise
+
     async def execute_unsafe_query(self, query: str) -> List[Dict[str, Any]]:
         """Execute any SQL query without safety restrictions (allows CREATE, DELETE, INSERT, etc.)"""
         try:

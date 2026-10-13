@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,14 @@ from general_chat.mcp_registry import MCPServerRegistryStore
 from openbench.mcp.config import MCPConfig
 
 logger = logging.getLogger(__name__)
+
+# The db_server entry is resolved at seed time from
+# GENERAL_CHAT_MCP_DB_SERVER_CONFIG so local dev can swap the docker image for
+# the fork run directly with python (``db-server-local.yaml``). Both files
+# register the same server name, hence the same registry id -- never seed both.
+DB_SERVER_CONFIG_PLACEHOLDER = "<db-server>"
+DEFAULT_DB_SERVER_CONFIG = "db-server-docker.yaml"
+DB_SERVER_CONFIG_ENV = "GENERAL_CHAT_MCP_DB_SERVER_CONFIG"
 
 BUNDLED_MCP_CONFIGS = (
     "filesystem-mcp.yaml",
@@ -19,7 +28,7 @@ BUNDLED_MCP_CONFIGS = (
     "docker-mcp-gateway.yaml",
     "aggregate-data-stdio.yaml",
     "dashboard-generator-stdio.yaml",
-    "db-server-docker.yaml",
+    DB_SERVER_CONFIG_PLACEHOLDER,
     "custom-function-docker.yaml",
     "google-drive-mcp.yaml",
 )
@@ -44,7 +53,7 @@ def seed_all_mcp_registry(
     missing: list[str] = []
     errors: list[dict[str, str]] = []
 
-    for filename in BUNDLED_MCP_CONFIGS:
+    for filename in bundled_mcp_config_names():
         path = resolved_config_dir / filename
         if not path.exists():
             missing.append(filename)
@@ -77,6 +86,14 @@ def seed_all_mcp_registry(
         "missing": missing,
         "errors": errors,
     }
+
+
+def bundled_mcp_config_names() -> tuple[str, ...]:
+    """Bundled config filenames with the db_server entry resolved from the env."""
+    db_server = os.getenv(DB_SERVER_CONFIG_ENV, "").strip() or DEFAULT_DB_SERVER_CONFIG
+    return tuple(
+        db_server if name == DB_SERVER_CONFIG_PLACEHOLDER else name for name in BUNDLED_MCP_CONFIGS
+    )
 
 
 def _default_config_dir() -> Path:

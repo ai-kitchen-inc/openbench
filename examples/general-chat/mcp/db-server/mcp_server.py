@@ -7,6 +7,7 @@ It provides database query capabilities through the Model Context Protocol.
 """
 
 import asyncio
+import json
 import os
 import sys
 import logging
@@ -243,6 +244,46 @@ async def execute_sql(sql_query: str) -> str:
         
     except Exception as e:
         return f"Error executing SQL: {str(e)}"
+
+@mcp.tool()
+async def execute_sql_json(sql_query: str) -> str:
+    """
+    Execute a read-only SELECT and return the result as JSON.
+
+    Structured sibling of ``execute_sql`` for programmatic callers (live
+    dashboards): same safety checks and row cap, but the payload is
+    machine-readable instead of a text table.
+
+    Args:
+        sql_query: A single SELECT (or WITH ... SELECT) statement
+
+    Returns:
+        JSON text: {"columns": [...], "rows": [{...}], "rowCount": n, "truncated": bool}
+        or {"error": "..."} on failure.
+    """
+    try:
+        sql_lower = sql_query.lower().strip()
+        dangerous_keywords = ['drop', 'delete', 'truncate', 'alter', 'update']
+        for keyword in dangerous_keywords:
+            if sql_lower.startswith(keyword):
+                return json.dumps(
+                    {"error": f"{keyword.upper()} operations are not allowed for safety reasons."}
+                )
+
+        cap = _max_rows()
+        # Fetch one extra row so truncation is detectable without a COUNT(*).
+        # Capped on the outside: a LIMIT inside the statement is honored.
+        results = await db_manager.execute_capped_query(sql_query, limit=cap + 1)
+        truncated = len(results) > cap
+        rows = results[:cap]
+        columns = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+        return json.dumps(
+            {"columns": columns, "rows": rows, "rowCount": len(rows), "truncated": truncated},
+            ensure_ascii=False,
+            default=str,
+        )
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 @mcp.tool()
 async def connect_to_database(database_url: str) -> str:
@@ -596,7 +637,6 @@ async def get_database_schema() -> str:
         columns = await db_manager.describe_table(table['table_name'])
         schema_info[table['table_name']] = columns
     
-    import json
     return json.dumps(schema_info, indent=2)
 
 async def initialize_database(database_url: str = None, config_file: str = None):
@@ -614,7 +654,6 @@ async def initialize_database(database_url: str = None, config_file: str = None)
         elif config_file:
             # Simple JSON config file support
             try:
-                import json
                 with open(config_file, 'r') as f:
                     config = json.load(f)
                 final_database_url = config.get('database_url')

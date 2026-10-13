@@ -103,6 +103,33 @@ class TestForkServerNeverEchoesRawDsn(unittest.TestCase):
         )
 
 
+class TestForkStructuredQueryTool(unittest.TestCase):
+    """Live dashboards read rows through execute_sql_json; guard its contract."""
+
+    def test_execute_sql_json_defined_with_json_contract(self) -> None:
+        source = (FORK / "mcp_server.py").read_text(encoding="utf-8")
+        self.assertIn("async def execute_sql_json(sql_query: str) -> str", source)
+        body = source.split("async def execute_sql_json", 1)[1].split("@mcp.tool()", 1)[0]
+        for token in ('"columns"', '"rows"', '"rowCount"', '"truncated"', "limit=cap + 1"):
+            self.assertIn(token, body)
+        # Same dangerous-prefix guard as execute_sql, but the row cap is applied
+        # on the OUTSIDE so a LIMIT inside the statement (top-N panels) survives.
+        self.assertIn("dangerous_keywords", body)
+        self.assertIn("execute_capped_query", body)
+        self.assertRegex(source, r"(?m)^import json$")
+
+    def test_capped_query_wraps_instead_of_rewriting_limit(self) -> None:
+        db = (FORK / "app" / "db.py").read_text(encoding="utf-8")
+        body = db.split("async def execute_capped_query", 1)[1].split("async def execute_unsafe_query", 1)[0]
+        self.assertIn("AS _ob_capped LIMIT", body)
+        self.assertNotIn("re.sub", body)
+        self.assertIn("_is_query_safe", body)
+
+    def test_query_guard_accepts_cte(self) -> None:
+        db = (FORK / "app" / "db.py").read_text(encoding="utf-8")
+        self.assertIn("(SELECT|WITH)", db.split("def _is_query_safe", 1)[1].split("async def", 1)[0])
+
+
 class TestBundledMcpConfigs(unittest.TestCase):
     def _load(self, name: str) -> dict:
         return yaml.safe_load((MCP_DIR / name).read_text(encoding="utf-8"))["mcp"]
@@ -117,6 +144,15 @@ class TestBundledMcpConfigs(unittest.TestCase):
         for rel in ("cloudbuild.mcp-db-server.yaml", "deploy/deploy.sh"):
             text = (REPO / rel).read_text(encoding="utf-8")
             self.assertIn(image, text, f"{rel} does not reference {image}")
+
+    def test_local_db_server_twin_matches_docker_policy(self) -> None:
+        docker = self._load("db-server-docker.yaml")
+        local = self._load("db-server-local.yaml")
+        self.assertEqual(local["policy"]["denied_tools"], docker["policy"]["denied_tools"])
+        self.assertEqual(set(local["servers"]), set(docker["servers"]))
+        self.assertEqual(local["servers"]["db_server"]["namespace"], "db_server")
+        self.assertEqual(local["servers"]["db_server"]["transport"], "stdio")
+        self.assertIn("mcp_server.py", local["servers"]["db_server"]["args"])
 
     def test_stdio_dashboard_servers_allow_cold_start(self) -> None:
         # Cold start of the dashboard/aggregate stdio servers exceeded 30 s in
