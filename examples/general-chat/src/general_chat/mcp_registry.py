@@ -704,6 +704,37 @@ class MCPServerRegistryStore:
         self._save_state(state)
         return self._server_from_state(item, state)
 
+    def find_server_id(self, *, namespace: str) -> str | None:
+        """Return the id of the first enabled external server using ``namespace``.
+
+        Used by background jobs (live dashboards) that need the ``db_server``
+        connection without knowing which registry entry provides it.
+        """
+        state = self._load_state()
+        for item in state.get("servers", []):
+            if not item.get("enabled", True) or item.get("provider_kind") == "internal":
+                continue
+            if str(item.get("server_namespace") or item.get("name") or "") == namespace:
+                return str(item["id"])
+        return None
+
+    def open_client(self, server_id: str) -> tuple[MCPClient, str]:
+        """Build a standalone client for one enabled external server.
+
+        Returns ``(client, namespace)``. The caller owns the client and must
+        call ``close_sync()`` when done -- for stdio servers that is what stops
+        the spawned process. Raises ``KeyError`` for unknown or disabled ids
+        and ``MCPRegistryError`` for the internal server.
+        """
+        state = self._load_state()
+        item = self._find_server(state, server_id)
+        if item is None or not item.get("enabled", True):
+            raise KeyError(server_id)
+        if item.get("provider_kind") == "internal":
+            raise MCPRegistryError("open_client does not support the internal MCP server.")
+        client, namespace, _server_config = self._build_client_for_item(item)
+        return client, namespace
+
     def build_enabled_client_config(self) -> MCPClientConfig:
         state = self._load_state()
         servers: dict[str, MCPServerConnectionConfig] = {}

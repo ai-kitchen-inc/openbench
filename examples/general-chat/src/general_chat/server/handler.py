@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from general_chat.server.export_intent import ExportIntent, detect_export_intent
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.server.source_context import build_source_attachments
+from general_chat.server.turn_context import set_turn_owner
 from general_chat.source_index import get_document_index
 from openbench.chat.session import Attachment, ChatSession
 from openbench.chat.transport import AGUIHandler
@@ -964,6 +965,10 @@ class GeneralChatHandler(AGUIHandler):
             )
 
     async def _event_stream(self, body: dict[str, Any], accept: str) -> Any:
+        # Skill tools bound once at agent build (live dashboards) read the
+        # owner per call through this ContextVar; the executor copies the
+        # context into its worker threads.
+        set_turn_owner(self._owner)
         try:
             async for item in super()._event_stream(body, accept):
                 yield item
