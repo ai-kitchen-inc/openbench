@@ -143,6 +143,23 @@ class DashboardRenderer(ContentRenderer):
         if "template_name" in content:
             props["templateName"] = str(content["template_name"])
 
+        # Live (database-bound) dashboards: the frame subscribes to server
+        # pushes by id and overrides the baked-in snapshot.
+        dashboard_id = content.get("dashboardId") or content.get("dashboard_id")
+        if isinstance(dashboard_id, str) and dashboard_id:
+            props["dashboardId"] = dashboard_id
+        if content.get("live"):
+            props["live"] = True
+        interval = content.get("refreshIntervalSeconds", content.get("refresh_interval_seconds"))
+        if isinstance(interval, (int, float)) and not isinstance(interval, bool):
+            props["refreshIntervalSeconds"] = int(interval)
+        version = content.get("version")
+        if isinstance(version, int) and not isinstance(version, bool):
+            props["version"] = version
+        refreshed_at = content.get("refreshedAt") or content.get("refreshed_at")
+        if isinstance(refreshed_at, str) and refreshed_at:
+            props["refreshedAt"] = refreshed_at
+
         return [
             A2UIComponent(
                 id=gen_id("dashboard"),

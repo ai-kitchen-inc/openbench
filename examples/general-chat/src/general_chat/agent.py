@@ -117,6 +117,11 @@ def _mcp_registry_root() -> Path | None:
     return Path(raw).expanduser().resolve()
 
 
+# Project skill shipped with general-chat (not an SDK skill): bound to the
+# live dashboard store/runner/hub by create_agent(live_dashboard_bindings=...).
+_LIVE_DASHBOARD_SKILL_DIR = Path(__file__).resolve().parents[2] / "skills" / "live-dashboard"
+
+
 def _sdk_skill_dir(name: str) -> Path:
     import openbench
 
@@ -1147,6 +1152,7 @@ def create_agent(
     enable_file_generation: bool = True,
     custom_skill_paths: list[str | Path] | None = None,
     extra_skill_names: list[str] | None = None,
+    live_dashboard_bindings: dict[str, Any] | None = None,
 ) -> BaseAgent:
     """Create the general-purpose chat agent.
 
@@ -1164,6 +1170,10 @@ def create_agent(
     defaults (agent profiles select their own skill set); unknown names
     raise ``ValueError`` at construction, matching the fail-fast skill
     rules — the admin endpoints validate before ever storing one.
+    ``live_dashboard_bindings=`` (store/runner/hub/owner provider from the
+    server) loads the bundled ``live-dashboard`` project skill; omitted, the
+    agent has no live-dashboard tools. ``GENERAL_CHAT_LIVE_DASHBOARD_ENABLED=0``
+    turns it off even when bindings are passed.
     """
     key = api_key or os.getenv("GOOGLE_API_KEY")
     resolved_model = model or os.getenv("GENERAL_CHAT_MODEL", "gemini-3.5-flash")
@@ -1294,6 +1304,9 @@ def create_agent(
         }
 
     custom_skill_paths = list(custom_skill_paths or [])
+    if live_dashboard_bindings and _env_flag("GENERAL_CHAT_LIVE_DASHBOARD_ENABLED", default=True):
+        custom_skill_paths.append(_LIVE_DASHBOARD_SKILL_DIR)
+        bindings = {**bindings, **live_dashboard_bindings}
     if skill_names or custom_skill_paths:
         _load_sdk_skills(
             agent,

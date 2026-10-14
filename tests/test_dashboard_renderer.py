@@ -163,6 +163,37 @@ class TestDashboardRenderer(unittest.TestCase):
         self.assertEqual(props["templateFormat"], "markdown")
         self.assertEqual(props["templateName"], "design.md")
 
+    def test_render_passes_live_dashboard_props(self):
+        components = self.renderer.render(
+            {
+                "type": "dashboard",
+                "title": "Penjualan",
+                "viewModel": {"title": "Penjualan", "kpis": [{"label": "A", "value": 1}]},
+                "dashboardId": "abcdef123456",
+                "live": True,
+                "refreshIntervalSeconds": 30,
+                "version": 2,
+                "refreshedAt": "2026-10-12T08:00:00+00:00",
+            },
+            surface_id="s1",
+        )
+
+        props = components[0].properties
+        self.assertEqual(props["dashboardId"], "abcdef123456")
+        self.assertTrue(props["live"])
+        self.assertEqual(props["refreshIntervalSeconds"], 30)
+        self.assertEqual(props["version"], 2)
+        self.assertEqual(props["refreshedAt"], "2026-10-12T08:00:00+00:00")
+
+    def test_render_omits_live_props_for_static_dashboards(self):
+        components = self.renderer.render(
+            {"type": "dashboard", "title": "Sales", "viewModel": {"title": "Sales", "kpis": []}},
+            surface_id="s1",
+        )
+        props = components[0].properties
+        for key in ("dashboardId", "live", "refreshIntervalSeconds", "version", "refreshedAt"):
+            self.assertNotIn(key, props)
+
 
 class TestDashboardGeneratorMetadata(unittest.TestCase):
     """Tests for dashboard generator A2UI metadata contract."""
