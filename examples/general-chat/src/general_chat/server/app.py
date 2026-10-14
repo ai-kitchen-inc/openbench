@@ -21,7 +21,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from general_chat.admin_store import build_settings_store, build_user_store, seed_users
@@ -56,6 +56,21 @@ from general_chat.google_drive import (
     list_drive_folder,
     parse_drive_url,
 )
+from general_chat.live_dashboard import (
+    SSE_HEARTBEAT,
+    SSE_HEARTBEAT_SECONDS,
+    LiveDashboardHub,
+    LiveDashboardRecord,
+    LiveDashboardScheduler,
+    LiveDashboardValidationError,
+    LiveEvent,
+    LiveQueryRunner,
+    build_live_dashboard_store,
+    format_sse,
+    new_dashboard_id,
+    validate_dashboard_input,
+)
+from general_chat.live_dashboard.models import apply_record_changes
 from general_chat.mcp_bootstrap import seed_all_mcp_registry
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.persona_templates import (
@@ -118,6 +133,7 @@ from general_chat.server.handler import GeneralChatHandler, set_source_context_l
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.server.publish_store import PublishStore
 from general_chat.server.source_reindex import SourceReindexJob, run_source_reindex
+from general_chat.server.turn_context import current_turn_owner
 from general_chat.source_index import (
     check_embeddings,
     active_embedding_selection,
@@ -573,6 +589,36 @@ def create_app() -> FastAPI:
     source_parser = SourceParserRegistry(document_extractor=extractor)
     source_store = build_source_store(storage_root)
     mcp_registry_store = MCPServerRegistryStore(storage_root)
+    # Live (database-bound) dashboards: panels run SQL through the db_server
+    # MCP on an interval; changed snapshots fan out to SSE subscribers. The
+    # scheduler task starts on app startup (API process only -- it needs the
+    # docker socket the stdio db_server is spawned with).
+    live_dashboard_enabled = _env_flag("GENERAL_CHAT_LIVE_DASHBOARD_ENABLED", default=True)
+    live_dashboard_store = build_live_dashboard_store(storage_root)
+    live_dashboard_hub = LiveDashboardHub()
+    live_dashboard_runner = LiveQueryRunner(
+        mcp_registry_store,
+        timeout_seconds=float(_env_int("GENERAL_CHAT_LIVE_DASHBOARD_QUERY_TIMEOUT_S", 60)),
+    )
+    live_dashboard_scheduler = LiveDashboardScheduler(
+        live_dashboard_store,
+        live_dashboard_runner,
+        live_dashboard_hub,
+        tick_seconds=_env_int("GENERAL_CHAT_LIVE_DASHBOARD_TICK_SECONDS", 5),
+        max_concurrent=_env_int("GENERAL_CHAT_LIVE_DASHBOARD_MAX_CONCURRENT_REFRESH", 2),
+    )
+    live_dashboard_bindings: dict[str, Any] | None = (
+        {
+            "live_dashboard_store": live_dashboard_store,
+            "live_dashboard_runner": live_dashboard_runner,
+            "live_dashboard_hub": live_dashboard_hub,
+            # ContextVar reader: one binding serves every turn.
+            "live_dashboard_owner_provider": current_turn_owner,
+            "live_dashboard_public_base_url": os.getenv("GENERAL_CHAT_PUBLIC_BASE_URL", ""),
+        }
+        if live_dashboard_enabled
+        else None
+    )
     # None unless GENERAL_CHAT_HERMES_BACKEND is set: managed Hermes agents are opt-in.
     hermes_supervisor = HermesSupervisor.from_env(storage_root)
     toolhive_service = ToolHiveService()
@@ -675,6 +721,7 @@ def create_app() -> FastAPI:
             goal=goal or None,
             enable_file_generation=capability_cache.global_enabled("file_generation"),
             custom_skill_paths=custom_skills.paths(),
+            live_dashboard_bindings=live_dashboard_bindings,
         )
 
     agent_holder = AgentHolder(_agent_factory)
@@ -778,6 +825,7 @@ def create_app() -> FastAPI:
             enable_file_generation=capability_cache.global_enabled("file_generation"),
             custom_skill_paths=[p for p in custom_skills.paths() if p.name in custom_ids],
             extra_skill_names=list(profile.skills),
+            live_dashboard_bindings=live_dashboard_bindings,
         )
         if profile.mcp_server_ids:
             # Registry-backed tools attach directly to this fresh agent —
@@ -1129,6 +1177,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Exposed for tests (routes close over the locals).
+    app.state.live_dashboard_store = live_dashboard_store
+    app.state.live_dashboard_hub = live_dashboard_hub
+    app.state.live_dashboard_runner = live_dashboard_runner
+    app.state.live_dashboard_scheduler = live_dashboard_scheduler
 
     def _audit(
         request: Request | None,
@@ -1334,6 +1387,18 @@ def create_app() -> FastAPI:
         retention_days = privacy_cache.value.get("retention_days", 0)
         print(f"  Retention      : {retention_days or 'disabled'} days\n")
         app.state.retention_task = asyncio.create_task(_retention_loop())
+        live_dashboard_hub.bind_loop(asyncio.get_running_loop())
+        if live_dashboard_enabled:
+            app.state.live_dashboard_task = asyncio.create_task(
+                live_dashboard_scheduler.run_forever()
+            )
+            print(
+                "  Live dashboards: enabled "
+                f"(tick {live_dashboard_scheduler.tick_seconds:.0f}s, "
+                f"store {type(live_dashboard_store).__name__})"
+            )
+        else:
+            print("  Live dashboards: disabled")
 
     async def _retention_loop() -> None:
         # Only runs under a real server (TestClient never fires startup).
@@ -1354,6 +1419,9 @@ def create_app() -> FastAPI:
         task = getattr(app.state, "retention_task", None)
         if task is not None:
             task.cancel()
+        live_task = getattr(app.state, "live_dashboard_task", None)
+        if live_task is not None:
+            live_task.cancel()
         source_reindex_job.cancel()
         if hermes_supervisor is not None:
             await asyncio.to_thread(hermes_supervisor.shutdown)
@@ -3539,10 +3607,218 @@ def create_app() -> FastAPI:
         url = str(request.base_url).rstrip("/") + f"/d/{dashboard_id}"
         return {"id": dashboard_id, "url": url}
 
+    # --- Live (database-bound) dashboards -----------------------------------
+    # /dashboard/* is auth-gated + capability `dashboards`; /d/* is public and
+    # only ever serves records flagged public, without queries/owner.
+
+    def _require_live_enabled() -> None:
+        if not live_dashboard_enabled:
+            raise HTTPException(status_code=503, detail="Live dashboards are disabled.")
+
+    async def _live_record(dashboard_id: str) -> LiveDashboardRecord | None:
+        _require_live_enabled()
+        return await asyncio.to_thread(live_dashboard_store.get, dashboard_id)
+
+    async def _owned_live_record(dashboard_id: str, request: Request) -> LiveDashboardRecord:
+        """Owner's record, or 404 (also for foreign ids -- never confirm existence)."""
+        record = await _live_record(dashboard_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Dashboard not found")
+        if record.owner != current_owner(request) and current_role(request) != "admin":
+            raise HTTPException(status_code=404, detail="Dashboard not found")
+        return record
+
+    async def _public_live_record(dashboard_id: str) -> LiveDashboardRecord:
+        record = await _live_record(dashboard_id)
+        if record is None or not record.public:
+            raise HTTPException(status_code=404, detail="Dashboard not found")
+        return record
+
+    def _live_event_response(
+        request: Request, record: LiveDashboardRecord, *, public: bool
+    ) -> StreamingResponse:
+        """SSE: `snapshot` first, then hub events; heartbeat comments keep proxies open.
+
+        ``closed{reason: unpublished}`` is terminal only for the public
+        audience -- the owner's stream keeps running on a now-private record.
+        """
+
+        async def _events():
+            # Subscribe inside the generator so a response that is never
+            # iterated (client gone before the first byte) leaks nothing.
+            queue = live_dashboard_hub.subscribe(record.id)
+            try:
+                yield format_sse(LiveEvent("snapshot", record.public_payload()))
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_SECONDS)
+                    except asyncio.TimeoutError:
+                        yield SSE_HEARTBEAT
+                        continue
+                    if (
+                        event.type == "closed"
+                        and not public
+                        and event.data.get("reason") == "unpublished"
+                    ):
+                        continue
+                    yield format_sse(event)
+                    if event.type == "closed":
+                        break
+            finally:
+                live_dashboard_hub.unsubscribe(record.id, queue)
+
+        return StreamingResponse(
+            _events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    async def _live_json_body(request: Request) -> dict:
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Expected a JSON object") from None
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Expected a JSON object")
+        return body
+
+    @app.get("/dashboard/live")
+    async def list_live_dashboards(request: Request) -> dict:
+        _require_live_enabled()
+        owner = current_owner(request)
+        records = await asyncio.to_thread(live_dashboard_store.list, owner)
+        return {"dashboards": [record.summary() for record in records]}
+
+    @app.post("/dashboard/live", status_code=201)
+    async def create_live_dashboard_route(request: Request) -> dict:
+        _require_live_enabled()
+        body = await _live_json_body(request)
+        try:
+            validated = validate_dashboard_input(
+                title=body.get("title"),
+                queries=body.get("queries"),
+                view_model=body.get("viewModel", body.get("view_model")),
+                refresh_interval_seconds=body.get(
+                    "refreshIntervalSeconds", body.get("refresh_interval_seconds", 60)
+                ),
+                description=body.get("description", ""),
+                public=body.get("public", False),
+            )
+        except LiveDashboardValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # Always the registry's db_server entry: callers never pick a server
+        # (any enabled MCP server would otherwise be queryable through here).
+        server_id = await asyncio.to_thread(live_dashboard_runner.default_server_id)
+        if not server_id:
+            raise HTTPException(
+                status_code=409, detail="The db_server MCP is not registered or is disabled."
+            )
+        record = LiveDashboardRecord(
+            id=new_dashboard_id(),
+            owner=current_owner(request),
+            title=validated.title,
+            description=validated.description,
+            server_id=server_id,
+            namespace=live_dashboard_runner.default_namespace,
+            queries=validated.queries,
+            template=validated.template,
+            refresh_interval_seconds=validated.refresh_interval_seconds,
+            public=validated.public,
+        )
+        await asyncio.to_thread(live_dashboard_store.save, record)
+        refreshed = await live_dashboard_scheduler.refresh(record.id, force=True)
+        _audit(request, "dashboard.live.create", target=record.id)
+        return (refreshed or record).to_dict()
+
+    @app.get("/dashboard/live/{dashboard_id}")
+    async def get_live_dashboard(dashboard_id: str, request: Request) -> dict:
+        record = await _owned_live_record(dashboard_id, request)
+        return record.to_dict()
+
+    @app.patch("/dashboard/live/{dashboard_id}")
+    async def update_live_dashboard_route(dashboard_id: str, request: Request) -> dict:
+        record = await _owned_live_record(dashboard_id, request)
+        body = await _live_json_body(request)
+        was_public = record.public
+        try:
+            definition_changed = apply_record_changes(
+                record,
+                queries=body.get("queries"),
+                view_model=body.get("viewModel", body.get("view_model")),
+                refresh_interval_seconds=body.get(
+                    "refreshIntervalSeconds", body.get("refresh_interval_seconds")
+                ),
+                title=body.get("title"),
+                description=body.get("description"),
+                public=body.get("public"),
+                enabled=body.get("enabled"),
+            )
+        except LiveDashboardValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if definition_changed:
+            record.data_hash = ""  # new version even when rows are identical
+        await asyncio.to_thread(live_dashboard_store.save, record)
+        if definition_changed:
+            record = await live_dashboard_scheduler.refresh(record.id, force=True) or record
+        if was_public and not record.public:
+            live_dashboard_hub.publish(
+                record.id, LiveEvent("closed", {"id": record.id, "reason": "unpublished"})
+            )
+        _audit(request, "dashboard.live.update", target=record.id, detail={"keys": sorted(body)})
+        return record.to_dict()
+
+    @app.post("/dashboard/live/{dashboard_id}/refresh")
+    async def refresh_live_dashboard_route(dashboard_id: str, request: Request) -> dict:
+        record = await _owned_live_record(dashboard_id, request)
+        refreshed = await live_dashboard_scheduler.refresh(record.id, force=True)
+        _audit(request, "dashboard.live.refresh", target=record.id)
+        return (refreshed or record).public_payload()
+
+    @app.delete("/dashboard/live/{dashboard_id}")
+    async def delete_live_dashboard_route(dashboard_id: str, request: Request) -> dict:
+        record = await _owned_live_record(dashboard_id, request)
+        await asyncio.to_thread(live_dashboard_store.delete, record.id)
+        live_dashboard_hub.publish(
+            record.id, LiveEvent("closed", {"id": record.id, "reason": "deleted"})
+        )
+        _audit(request, "dashboard.live.delete", target=record.id)
+        return {"ok": True, "id": record.id}
+
+    @app.get("/dashboard/live/{dashboard_id}/events")
+    async def live_dashboard_events(dashboard_id: str, request: Request):
+        record = await _owned_live_record(dashboard_id, request)
+        return _live_event_response(request, record, public=False)
+
     # PUBLIC — no auth (see _AUTH_PROTECTED_PREFIXES). Registered before the SPA
-    # catch-all so the explicit route wins. This is the shareable dashboard link.
+    # catch-all so the explicit routes win. /d/{id} is the shareable link: a
+    # public live dashboard gets the SPA (which subscribes to /d/{id}/events);
+    # anything else falls back to the static HTML snapshot from /dashboard/publish.
+    static_dir = os.environ.get("GENERAL_CHAT_STATIC_DIR")
+    static_root = Path(static_dir).resolve() if static_dir and os.path.isdir(static_dir) else None
+
+    @app.get("/d/{dashboard_id}/data")
+    async def public_live_dashboard_data(dashboard_id: str) -> dict:
+        record = await _public_live_record(dashboard_id)
+        return record.public_payload()
+
+    @app.get("/d/{dashboard_id}/events")
+    async def public_live_dashboard_events(dashboard_id: str, request: Request):
+        record = await _public_live_record(dashboard_id)
+        return _live_event_response(request, record, public=True)
+
     @app.get("/d/{dashboard_id}")
     async def view_published_dashboard(dashboard_id: str):
+        record = await _live_record(dashboard_id)
+        if record is not None and record.public:
+            index_html = static_root / "index.html" if static_root is not None else None
+            if index_html is not None and index_html.is_file():
+                return FileResponse(index_html, media_type="text/html")
         html_path = publish_store.load_html_path(dashboard_id)
         if html_path is None:
             raise HTTPException(status_code=404, detail="Dashboard not found")
@@ -3624,9 +3900,7 @@ def create_app() -> FastAPI:
         name="image-search-previews",
     )
 
-    static_dir = os.environ.get("GENERAL_CHAT_STATIC_DIR")
-    if static_dir and os.path.isdir(static_dir):
-        static_root = Path(static_dir).resolve()
+    if static_root is not None:
 
         @app.get("/{full_path:path}")
         async def serve_spa(full_path: str):
