@@ -19,11 +19,12 @@ import { apiFetch, apiPath, getLocalRole, setLocalRole, transcribeAudio } from "
 import { BookIcon } from "../brand/icons";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { FunctionsPanel } from "../functions/FunctionsPanel";
-import { APP_NAME, COMMON, LOCAL_ROLE } from "../i18n/id";
+import { APP_NAME, COMMON, LIVE_DASHBOARD, LOCAL_ROLE } from "../i18n/id";
 import { McpCatalogPanel } from "../mcp-catalog/McpCatalogPanel";
 import { ThemeIcon, useDarkMode } from "../theme";
 import { useToast } from "../Toast";
 import { AgentSelect } from "./AgentSelect";
+import { createLiveSubscriptionPool, subscribeDashboardEvents } from "./liveDashboard";
 import {
   DashboardArtifactPanel,
   dashboardArtifactsForSurface,
@@ -744,6 +745,27 @@ export function UserChat({
   );
   const allowAttachments = me.capabilities.attachments;
 
+  // One fetch-based SSE connection per live dashboard per tab, shared by the
+  // inline frame and the side panel. The bearer token travels in a header
+  // (EventSource cannot send one), never in the URL.
+  const subscribeLive = useMemo(
+    () =>
+      createLiveSubscriptionPool((dashboardId, onEvent) =>
+        subscribeDashboardEvents(
+          apiPath(`/dashboard/live/${encodeURIComponent(dashboardId)}/events`),
+          {
+            getAuthToken,
+            extraHeaders: (): Record<string, string> => {
+              const role = getLocalRole();
+              return role ? { "X-Local-Role": role } : {};
+            },
+          },
+          onEvent,
+        ),
+      ),
+    [getAuthToken],
+  );
+
   const chatConfig = useMemo<ChatConfig>(() => {
     const config: ChatConfig = {
       streamUrl: STREAM_URL,
@@ -799,6 +821,15 @@ export function UserChat({
           if (!response.ok) throw new Error(`Gagal memuat: ${response.status}`);
           return response.text();
         },
+        subscribeLive,
+        refreshLive: async (dashboardId: string) => {
+          const response = await apiFetch(
+            apiPath(`/dashboard/live/${encodeURIComponent(dashboardId)}/refresh`),
+            { method: "POST" },
+          );
+          if (!response.ok) throw new Error(`Muat ulang gagal: ${response.status}`);
+        },
+        liveLabels: LIVE_DASHBOARD,
       },
     };
 
@@ -825,7 +856,7 @@ export function UserChat({
     }
 
     return config;
-  }, [allowAttachments, getAuthToken, toast]);
+  }, [allowAttachments, getAuthToken, subscribeLive, toast]);
 
   return (
     <ChatProvider config={chatConfig}>

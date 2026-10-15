@@ -41,7 +41,14 @@ export default defineConfig({
       "/uploads": { target: backendUrl, changeOrigin: true },
       "/downloads": { target: backendUrl, changeOrigin: true },
       "/dashboard": { target: backendUrl, changeOrigin: true },
-      "^/d/": { target: backendUrl, changeOrigin: true },
+      // Live dashboard data/events go to the API; the /d/<id> page itself is
+      // the SPA's public route (in prod the API serves index.html for it).
+      "^/d/": {
+        target: backendUrl,
+        changeOrigin: true,
+        bypass: (req) =>
+          /^\/d\/[0-9a-f]{12}\/(data|events)(\?|$)/.test(req.url ?? "") ? undefined : "/index.html",
+      },
       "/image-search": { target: backendUrl, changeOrigin: true },
       "/persona": { target: backendUrl, changeOrigin: true },
       "/skills": { target: backendUrl, changeOrigin: true },

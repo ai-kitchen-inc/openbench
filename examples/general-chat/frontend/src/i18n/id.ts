@@ -9,6 +9,18 @@ export const LOCAL_ROLE = {
   backToAdmin: "Kembali ke Admin",
 } as const;
 
+export const LIVE_DASHBOARD = {
+  live: "Live",
+  connecting: "Menghubungkan…",
+  offline: "Koneksi terputus, mencoba lagi…",
+  unavailable: "Dasbor tidak tersedia lagi",
+  updated: "diperbarui",
+  refresh: "Muat ulang data",
+  loading: "Memuat dasbor…",
+  notFound: "Dasbor tidak ditemukan.",
+  loadFailed: "Dasbor tidak dapat dimuat.",
+} as const;
+
 export const COMMON = {
   signOut: "Keluar",
   close: "Tutup",

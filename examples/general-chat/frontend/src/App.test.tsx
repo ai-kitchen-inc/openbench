@@ -129,6 +129,34 @@ describe("App role branching", () => {
     expect(urls.some((url) => url.startsWith("/account/me"))).toBe(false);
   });
 
+  it("renders the public live dashboard without the auth gate on /d/<id>", async () => {
+    window.history.pushState({}, "", "/d/abcdef123456");
+    vi.stubGlobal("EventSource", class {
+      addEventListener() {}
+      close() {}
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/d/abcdef123456/data") {
+        return jsonResponse({
+          id: "abcdef123456",
+          title: "Dasbor Penjualan",
+          version: 1,
+          viewModel: { title: "Dasbor Penjualan", kpis: [{ label: "Total", value: 7 }], sections: [] },
+        });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect((await screen.findAllByText("Dasbor Penjualan")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Panel Kendali")).toBeNull();
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.startsWith("/account/me"))).toBe(false);
+  });
+
   it("renders the admin control panel for role=admin", async () => {
     stubFetch("admin");
 
