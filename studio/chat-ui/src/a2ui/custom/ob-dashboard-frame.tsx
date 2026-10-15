@@ -9,6 +9,12 @@ import type { A2UIComponent, A2UIComponentRenderer, A2UISurface } from "../../ty
 import { resolveNumber, resolveString, resolveValue } from "../data-binding";
 import { ObChart } from "./ob-chart";
 import { ObTable } from "./ob-table";
+import {
+  DEFAULT_LIVE_LABELS,
+  formatClock,
+  type LiveDashboardStatus,
+  useLiveDashboard,
+} from "./use-live-dashboard";
 
 type DashboardRecord = Record<string, unknown>;
 type DashboardDatasets = Record<string, DashboardRecord[]>;
@@ -50,6 +56,27 @@ function ExternalLinkIcon() {
       <path d="M15 3h6v6" />
       <path d="M10 14 21 3" />
       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M8 16H3v5" />
     </svg>
   );
 }
@@ -1090,6 +1117,51 @@ function HtmlFallbackPreview({
   );
 }
 
+/** Status pill + manual refresh for live (database-bound) dashboards. */
+function LiveBadge({ status }: { status: LiveDashboardStatus }) {
+  const overrides = useChatContextOptional()?.dashboardActions?.liveLabels;
+  const labels = { ...DEFAULT_LIVE_LABELS, ...(overrides ?? {}) };
+  let text: string;
+  switch (status.state) {
+    case "connecting":
+      text = labels.connecting;
+      break;
+    case "offline":
+      text = labels.offline;
+      break;
+    case "unavailable":
+      text = labels.unavailable;
+      break;
+    default: {
+      const clock = formatClock(status.updatedAt);
+      text = clock ? `${labels.live} · ${labels.updated} ${clock}` : labels.live;
+    }
+  }
+  return (
+    <div
+      className="ob-dashboard-frame__live"
+      data-live-state={status.state}
+      title={status.error ?? undefined}
+      role="status"
+    >
+      <span className="ob-dashboard-frame__live-dot" aria-hidden="true" />
+      <span className="ob-dashboard-frame__live-text">{text}</span>
+      {status.onRefresh && status.state !== "unavailable" && (
+        <button
+          type="button"
+          className="ob-dashboard-frame__live-refresh"
+          onClick={status.onRefresh}
+          disabled={status.busy}
+          aria-label={labels.refresh}
+          title={labels.refresh}
+        >
+          <RefreshIcon />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function NativeHeader({
   title,
   description,
@@ -1097,6 +1169,7 @@ function NativeHeader({
   fileName,
   fileSize,
   viewModel,
+  liveStatus,
 }: {
   title: string;
   description: string;
@@ -1104,6 +1177,7 @@ function NativeHeader({
   fileName: string;
   fileSize?: number;
   viewModel?: unknown;
+  liveStatus?: LiveDashboardStatus;
 }) {
   return (
     <header className="ob-dashboard-frame__header">
@@ -1121,6 +1195,7 @@ function NativeHeader({
         )}
       </div>
       <div className="ob-dashboard-frame__header-actions">
+        {liveStatus && <LiveBadge status={liveStatus} />}
         {dashboardUrl && <OpenDashboardLink url={dashboardUrl} />}
         {viewModel != null && <HeaderActions viewModel={viewModel} title={title} />}
       </div>
@@ -1396,10 +1471,26 @@ function DashboardSection({
 
 export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) => {
   const dashboardComponent = normalizeComponentProperties(component);
-  const rawViewModel = resolveValue(
-    dashboardComponent.viewModel ?? dashboardComponent.view_model,
-    surface,
-  );
+  // Live (database-bound) dashboards carry an id; the server pushes fresh
+  // snapshots that override the ViewModel baked into the message. The hook
+  // runs unconditionally (before any early return) to keep hook order stable.
+  const dashboardId = resolveString(dashboardComponent.dashboardId ?? "", surface);
+  const isLive = Boolean(dashboardId) && resolveValue(dashboardComponent.live, surface) === true;
+  const live = useLiveDashboard(dashboardId || undefined, isLive);
+  const liveStatus: LiveDashboardStatus | undefined = isLive
+    ? {
+        state: live.state,
+        updatedAt: live.updatedAt,
+        version: live.version,
+        error: live.error,
+        busy: live.busy,
+        onRefresh: live.onRefresh,
+      }
+    : undefined;
+  const rawViewModel =
+    live.viewModel !== undefined
+      ? live.viewModel
+      : resolveValue(dashboardComponent.viewModel ?? dashboardComponent.view_model, surface);
   const viewModel = parseViewModel(rawViewModel);
   const rawComponents = [
     ...toRows(resolveValue(viewModel?.components ?? dashboardComponent.components, surface)),
@@ -1528,6 +1619,7 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
           dashboardUrl=""
           fileName={fileName}
           fileSize={fileSize}
+          liveStatus={liveStatus}
         />
         <div className="ob-dashboard-frame__empty">No dashboard data.</div>
       </section>
@@ -1549,6 +1641,7 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
         fileName={fileName}
         fileSize={fileSize}
         viewModel={exportViewModel}
+        liveStatus={liveStatus}
       />
       {kpis.length > 0 && (
         <div className="ob-dashboard-kpi-grid">

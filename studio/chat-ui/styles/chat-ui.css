@@ -1769,6 +1769,76 @@ video.chat-attachment-preview__media {
   gap: 6px;
 }
 
+/* Live dashboard badge: monochrome pill, colour only on the status dot. */
+.ob-dashboard-frame__live {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--ob-divider-color, rgba(55, 53, 47, 0.09));
+  border-radius: 999px;
+  color: var(--ob-text-secondary, #787774);
+  font-size: 0.75rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.ob-dashboard-frame__live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ob-text-secondary, #787774);
+}
+
+.ob-dashboard-frame__live[data-live-state="live"] .ob-dashboard-frame__live-dot {
+  background: var(--ob-success, #0f7b55);
+}
+
+.ob-dashboard-frame__live[data-live-state="connecting"] .ob-dashboard-frame__live-dot {
+  animation: ob-live-pulse 1.2s ease-in-out infinite;
+}
+
+.ob-dashboard-frame__live[data-live-state="offline"] .ob-dashboard-frame__live-dot,
+.ob-dashboard-frame__live[data-live-state="unavailable"] .ob-dashboard-frame__live-dot {
+  background: var(--ob-error, #eb5757);
+}
+
+.ob-dashboard-frame__live-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -3px -4px -3px 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.ob-dashboard-frame__live-refresh:hover:not(:disabled) {
+  background: var(--ob-hover-bg, rgba(55, 53, 47, 0.04));
+}
+
+.ob-dashboard-frame__live-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@keyframes ob-live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
 .ob-dashboard-frame__action-row {
   display: flex;
   gap: 8px;

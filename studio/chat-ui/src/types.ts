@@ -277,6 +277,46 @@ export interface DashboardActions {
    * authenticate. Returns the raw HTML text.
    */
   loadHtml?: (url: string) => Promise<string>;
+  /**
+   * Subscribe to server pushes for a live (database-bound) dashboard. The
+   * callback receives a `snapshot` on connect, then `update`/`error`
+   * events; `closed` means the dashboard was deleted or unpublished and no
+   * reconnect should follow. Returns an unsubscribe function. The host owns
+   * the transport (fetch-based SSE with its auth header, EventSource, ...).
+   */
+  subscribeLive?: (
+    dashboardId: string,
+    onEvent: (event: LiveDashboardEvent) => void,
+  ) => () => void;
+  /** Ask the server to re-run a live dashboard's queries now. */
+  refreshLive?: (dashboardId: string) => Promise<void>;
+  /** Localized labels for the live badge (defaults are English). */
+  liveLabels?: Partial<LiveDashboardLabels>;
+}
+
+/** Event delivered to a live dashboard subscriber. */
+export type LiveDashboardEvent =
+  | {
+      type: "snapshot" | "update";
+      version: number;
+      viewModel: unknown;
+      refreshedAt?: string | null;
+      errors?: Record<string, string>;
+    }
+  | { type: "error"; error: string; refreshedAt?: string | null }
+  | { type: "closed"; reason: string }
+  | { type: "status"; status: "connecting" | "live" | "offline" };
+
+/** Text shown by the live dashboard badge; hosts override for i18n. */
+export interface LiveDashboardLabels {
+  live: string;
+  connecting: string;
+  offline: string;
+  unavailable: string;
+  /** Prefix before the HH:MM of the last refresh, e.g. "updated". */
+  updated: string;
+  /** Accessible label of the manual refresh button. */
+  refresh: string;
 }
 
 export interface AttachmentUploadOptions {

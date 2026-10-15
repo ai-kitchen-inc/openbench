@@ -103,6 +103,8 @@ export type {
   // A2UI Server Messages
   CreateSurfacePayload,
   DashboardActions,
+  LiveDashboardEvent,
+  LiveDashboardLabels,
   DataBinding,
   DeleteSurfacePayload,
   DynamicBoolean,
