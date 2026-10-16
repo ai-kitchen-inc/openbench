@@ -3,6 +3,10 @@
 General Chat can generate dashboards from uploaded CSV/XLSX files using the
 standardized `mcp/dashboard-generator-mcp` standalone server.
 
+For dashboards bound to a **database** that refresh themselves (SQL through
+the `db_server` MCP, scheduled polling, SSE pushes, public live page), see
+[LIVE_DASHBOARD.md](LIVE_DASHBOARD.md).
+
 ## User Flow
 
 1. Open General Chat.

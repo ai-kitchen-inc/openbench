@@ -686,6 +686,10 @@ Invoke-RestMethod http://localhost:8005/mcp/tools
 
 For a complete walkthrough, see [MCP_TUTORIAL.md](MCP_TUTORIAL.md).
 
+Live, database-bound dashboards (SQL via the `db_server` MCP, scheduled
+refresh, SSE pushes to the chat panel and the public `/d/{id}` page) are
+documented in [LIVE_DASHBOARD.md](LIVE_DASHBOARD.md).
+
 The default internal allowlist includes `openbench.fetch_url` — the chat agent
 can fetch and read a general web page mid-conversation ("Tolong baca
 https://... dan ringkas"). It runs without a permission prompt (classified

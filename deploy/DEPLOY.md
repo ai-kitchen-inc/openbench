@@ -457,6 +457,18 @@ The `mcp_app` role is scoped to `appdata` only (SELECT on `public`, full control
 `mart`). Writes are gated by `MCP_ALLOW_WRITES`; read queries are capped by
 `MCP_MAX_ROWS`.
 
+Structured reads (image `1.3.1-ob3`, 2026-10-12): the fork adds
+`execute_sql_json` (JSON `{columns, rows, rowCount, truncated}`), which the
+**live dashboards** feature uses to re-run panel SQL on a schedule and push
+changes over SSE (`examples/general-chat/LIVE_DASHBOARD.md`). Deploy order
+for that feature: `bash deploy/deploy.sh mcp-image` (pin versions, diff
+`pip list` against the running image first) → `bash deploy/deploy.sh nginx`
+(compose gains the `GENERAL_CHAT_LIVE_DASHBOARD_*` / `GENERAL_CHAT_PUBLIC_BASE_URL`
+env) → `bash deploy/deploy.sh backend` → `verify`, then
+`curl -N https://chat.serebrum.co.id/d/<public id>/events` should print an
+`event: snapshot` block. Until the image is rebuilt the API falls back to
+parsing `execute_sql`'s text table.
+
 Credential hygiene (fork additions, image `1.3.1-ob2`, 2026-09-07): tool results
 and logs redact the DSN password (`app/redact.py`) — before this, any chat user
 could read the `mcp_app` password via `get_current_database_info`. The

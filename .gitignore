@@ -559,3 +559,6 @@ prompt-debug/
 # MCP settings
 tools.yml
 .pnpm-store/
+
+# Local venv for the vendored db_server MCP fork (LIVE_DASHBOARD.md)
+.venv-*/
