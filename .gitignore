@@ -560,5 +560,8 @@ prompt-debug/
 tools.yml
 .pnpm-store/
 
+# Marketing brochure (local only)
+brochure/
+
 # Local venv for the vendored db_server MCP fork (LIVE_DASHBOARD.md)
 .venv-*/
