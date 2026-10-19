@@ -2,21 +2,30 @@
 
 Usage::
 
-    python examples/general-chat/scripts/seed_live_demo_db.py [PATH]
+    python examples/general-chat/scripts/seed_live_demo_db.py [PATH] [--print-env] [--venv DIR]
 
 Writes ``sales(day, region, revenue)`` with a few rows and prints the
 ``sqlite+aiosqlite:///...`` URL to put in ``MCP_DB_DATABASE_URL``. Re-running
 appends one more row per call (handy for watching a dashboard refresh).
+
+``--print-env`` prints every line ``examples/general-chat/.env`` needs so
+``openbench demo run general-chat`` registers the sqlite ``db_server`` twin by
+itself (see LIVE_DASHBOARD.md, "Local recipe").
 """
 
 from __future__ import annotations
 
+import argparse
+import os
 import sqlite3
 import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-DEFAULT_PATH = Path(__file__).resolve().parents[1] / ".openbench" / "live-demo.db"
+EXAMPLE_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = EXAMPLE_ROOT.parents[1]
+DEFAULT_PATH = EXAMPLE_ROOT / ".openbench" / "live-demo.db"
+DEFAULT_VENV = REPO_ROOT / ".venv-dbserver"
 
 _REGIONS = ("Jawa", "Sumatra", "Kalimantan", "Sulawesi")
 
@@ -56,11 +65,59 @@ def seed(path: Path) -> int:
         conn.close()
 
 
+def venv_python(venv: Path, *, windows: bool | None = None) -> Path:
+    """Interpreter path inside ``venv`` for this platform."""
+    on_windows = os.name == "nt" if windows is None else windows
+    return venv / ("Scripts/python.exe" if on_windows else "bin/python")
+
+
+def print_env_lines(
+    db_path: Path,
+    venv: Path,
+    *,
+    example_root: Path = EXAMPLE_ROOT,
+    windows: bool | None = None,
+) -> list[str]:
+    """The ``.env`` lines that make the sqlite db_server twin start with the app."""
+    return [
+        f"DB_SERVER_MCP_PYTHON={venv_python(venv, windows=windows).as_posix()}",
+        f"MCP_DB_DATABASE_URL=sqlite+aiosqlite:///{db_path.resolve().as_posix()}",
+        f"DB_SERVER_MCP_CWD={(example_root / 'mcp' / 'db-server').resolve().as_posix()}",
+        "GENERAL_CHAT_SEED_MCP_CONFIGS=db-server-local.yaml",
+    ]
+
+
 def main(argv: list[str]) -> int:
-    path = Path(argv[1]).expanduser().resolve() if len(argv) > 1 else DEFAULT_PATH
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("path", nargs="?", default=str(DEFAULT_PATH), help="sqlite file to seed")
+    parser.add_argument(
+        "--print-env",
+        action="store_true",
+        help="print the examples/general-chat/.env lines for the local db_server twin",
+    )
+    parser.add_argument(
+        "--venv",
+        default=str(DEFAULT_VENV),
+        help="venv holding the db_server fork deps (default: <repo>/.venv-dbserver)",
+    )
+    args = parser.parse_args(argv[1:])
+
+    path = Path(args.path).expanduser().resolve()
     count = seed(path)
     print(f"sales rows: {count}")
-    print(f"MCP_DB_DATABASE_URL=sqlite+aiosqlite:///{path.as_posix()}")
+    if args.print_env:
+        venv = Path(args.venv).expanduser()
+        if not venv_python(venv).exists():
+            print(
+                f"note: {venv_python(venv)} does not exist yet; create the venv first "
+                "(see LIVE_DASHBOARD.md)",
+                file=sys.stderr,
+            )
+        print("\n# --- paste into examples/general-chat/.env ---")
+        for line in print_env_lines(path, venv):
+            print(line)
+    else:
+        print(f"MCP_DB_DATABASE_URL=sqlite+aiosqlite:///{path.as_posix()}")
     return 0
 
 

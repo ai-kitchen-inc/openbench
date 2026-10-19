@@ -5,10 +5,13 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from general_chat.mcp_registry import MCPServerRegistryStore
 from openbench.mcp.config import MCPConfig
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +21,13 @@ logger = logging.getLogger(__name__)
 # register the same server name, hence the same registry id -- never seed both.
 DB_SERVER_CONFIG_PLACEHOLDER = "<db-server>"
 DEFAULT_DB_SERVER_CONFIG = "db-server-docker.yaml"
+LOCAL_DB_SERVER_CONFIG = "db-server-local.yaml"
 DB_SERVER_CONFIG_ENV = "GENERAL_CHAT_MCP_DB_SERVER_CONFIG"
+
+# Comma-separated bundled yaml names to seed at startup WITHOUT seeding the
+# whole bundle (local dev: ``db-server-local.yaml`` only). Ignored when
+# GENERAL_CHAT_SEED_ALL_MCP is on, which seeds everything.
+SEED_CONFIGS_ENV = "GENERAL_CHAT_SEED_MCP_CONFIGS"
 
 BUNDLED_MCP_CONFIGS = (
     "filesystem-mcp.yaml",
@@ -40,20 +49,38 @@ BUNDLED_MCP_CONFIGS = (
 DISABLED_BY_DEFAULT_CONFIGS = frozenset({"google-drive-mcp.yaml"})
 
 
-def seed_all_mcp_registry(
+def seed_mcp_configs(
     storage_root: str | Path,
+    names: Iterable[str],
     *,
     config_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Import bundled MCP configs into the persistent General Chat registry."""
+    """Import the named bundled MCP configs into the persistent registry.
+
+    ``names`` are bare filenames inside the bundled ``mcp/`` directory; a name
+    with a path separator is refused (recorded under ``errors``) so the env
+    can never point the seed outside that directory.
+    """
     root = Path(storage_root).expanduser().resolve()
-    resolved_config_dir = Path(config_dir).expanduser().resolve() if config_dir else _default_config_dir()
+    resolved_config_dir = (
+        Path(config_dir).expanduser().resolve() if config_dir else _default_config_dir()
+    )
     store = MCPServerRegistryStore(root)
     seeded: list[str] = []
     missing: list[str] = []
     errors: list[dict[str, str]] = []
 
-    for filename in bundled_mcp_config_names():
+    requested = list(dict.fromkeys(names))
+    if DEFAULT_DB_SERVER_CONFIG in requested and LOCAL_DB_SERVER_CONFIG in requested:
+        logger.warning(
+            "mcp.bootstrap.seed both db_server configs requested; the later one wins "
+            "(same server name -> same registry id)"
+        )
+
+    for filename in requested:
+        if Path(filename).name != filename or not filename.endswith((".yaml", ".yml")):
+            errors.append({"config": filename, "error": "not a bundled yaml name"})
+            continue
         path = resolved_config_dir / filename
         if not path.exists():
             missing.append(filename)
@@ -62,9 +89,7 @@ def seed_all_mcp_registry(
             config = MCPConfig.from_file(path)
             preexisting_ids: set[str] = set()
             if filename in DISABLED_BY_DEFAULT_CONFIGS:
-                preexisting_ids = {
-                    item["id"] for item in store.list_payload()["servers"]
-                }
+                preexisting_ids = {item["id"] for item in store.list_payload()["servers"]}
             store.import_client_config(config.client_config(), source="manual")
             if filename in DISABLED_BY_DEFAULT_CONFIGS:
                 for item in store.list_payload()["servers"]:
@@ -88,12 +113,28 @@ def seed_all_mcp_registry(
     }
 
 
+def seed_all_mcp_registry(
+    storage_root: str | Path,
+    *,
+    config_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Import every bundled MCP config into the persistent General Chat registry."""
+    return seed_mcp_configs(storage_root, bundled_mcp_config_names(), config_dir=config_dir)
+
+
 def bundled_mcp_config_names() -> tuple[str, ...]:
     """Bundled config filenames with the db_server entry resolved from the env."""
     db_server = os.getenv(DB_SERVER_CONFIG_ENV, "").strip() or DEFAULT_DB_SERVER_CONFIG
     return tuple(
         db_server if name == DB_SERVER_CONFIG_PLACEHOLDER else name for name in BUNDLED_MCP_CONFIGS
     )
+
+
+def seed_config_names_from_env() -> tuple[str, ...]:
+    """Names listed in ``GENERAL_CHAT_SEED_MCP_CONFIGS`` (trimmed, de-duplicated)."""
+    raw = os.getenv(SEED_CONFIGS_ENV, "")
+    names = [part.strip() for part in raw.split(",")]
+    return tuple(dict.fromkeys(name for name in names if name))
 
 
 def _default_config_dir() -> Path:
