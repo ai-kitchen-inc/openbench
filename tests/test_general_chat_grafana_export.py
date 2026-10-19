@@ -19,10 +19,93 @@ GENERAL_CHAT_SRC = Path(__file__).resolve().parents[1] / "examples" / "general-c
 if str(GENERAL_CHAT_SRC) not in sys.path:
     sys.path.insert(0, str(GENERAL_CHAT_SRC))
 
+from general_chat.live_dashboard import LiveDashboardRecord, LiveQuery  # noqa: E402
 from general_chat.server.grafana import (  # noqa: E402
+    live_dashboard_to_grafana,
     partition_datasets,
     view_model_to_grafana,
 )
+
+_LIVE_QUERIES = {
+    "by_region": LiveQuery(
+        sql="SELECT region, SUM(revenue) AS revenue FROM sales GROUP BY region;", max_rows=500
+    ),
+    "by_day": LiveQuery(
+        sql="SELECT day, SUM(revenue) AS revenue FROM sales GROUP BY day", max_rows=90
+    ),
+    "total": LiveQuery(sql="SELECT SUM(revenue) AS total FROM sales", max_rows=1),
+}
+_LIVE_TEMPLATE = {
+    "kpis": [
+        {
+            "label": "Total Pendapatan",
+            "dataset": "total",
+            "value_column": "total",
+            "unit": "currencyUSD",
+        }
+    ],
+    "sections": [
+        {
+            "title": "Ringkasan",
+            "items": [
+                {
+                    "type": "chart",
+                    "chart_type": "bar",
+                    "title": "Per wilayah",
+                    "dataset": "by_region",
+                    "x_field": "region",
+                    "y_field": "revenue",
+                },
+                {
+                    "type": "chart",
+                    "chart_type": "line",
+                    "title": "Harian",
+                    "dataset": "by_day",
+                    "x_field": "day",
+                    "y_field": "revenue",
+                },
+                {
+                    "type": "table",
+                    "title": "Tabel",
+                    "dataset": "by_region",
+                    "columns": ["region", "revenue"],
+                },
+                {
+                    "type": "chart",
+                    "chart_type": "bar",
+                    "title": "Statis",
+                    "data": [{"k": "a", "v": 1}],
+                    "x_field": "k",
+                    "y_field": "v",
+                },
+            ],
+        }
+    ],
+}
+
+
+def _live_record(**overrides) -> LiveDashboardRecord:
+    base = {
+        "id": "abcdef123456",
+        "owner": "allowed@example.com",
+        "title": "Penjualan Live",
+        "description": "Uji",
+        "server_id": "server-db",
+        "queries": dict(_LIVE_QUERIES),
+        "template": _LIVE_TEMPLATE,
+        "refresh_interval_seconds": 30,
+        "snapshot": {
+            "datasets": {
+                "by_region": [{"region": "Jawa", "revenue": 10}],
+                "by_day": [{"day": "2026-10-19", "revenue": 10}],
+                "total": [{"total": 10}],
+            },
+            "viewModel": {"title": "Penjualan Live"},
+        },
+    }
+    base.update(overrides)
+    return LiveDashboardRecord(**base)
+
 
 _VIEW_MODEL = {
     "title": "Sales Dashboard",
@@ -219,9 +302,7 @@ class TestGrafanaRendererParity(unittest.TestCase):
             ]
         }
         panel = [p for p in view_model_to_grafana(vm)["panels"] if p["type"] != "row"][0]
-        self.assertEqual(
-            panel["targets"][0]["csvContent"].splitlines()[0], "month,revenue"
-        )
+        self.assertEqual(panel["targets"][0]["csvContent"].splitlines()[0], "month,revenue")
 
     def test_section_item_aliases(self):
         # Renderers accept items|components|widgets|panels|charts|cards —
@@ -265,9 +346,7 @@ class TestGrafanaRendererParity(unittest.TestCase):
             ]
         }
         panel = [p for p in view_model_to_grafana(vm)["panels"] if p["type"] != "row"][0]
-        self.assertEqual(
-            panel["targets"][0]["csvContent"].splitlines()[0], "month,revenue"
-        )
+        self.assertEqual(panel["targets"][0]["csvContent"].splitlines()[0], "month,revenue")
 
 
 class TestGrafanaTimeseriesFallback(unittest.TestCase):
@@ -329,15 +408,15 @@ class TestGrafanaTimeseriesFallback(unittest.TestCase):
                 }
             ],
         }
-        panel = [
-            p for p in view_model_to_grafana(base, live=live)["panels"] if p["type"] != "row"
-        ][0]
+        panel = [p for p in view_model_to_grafana(base, live=live)["panels"] if p["type"] != "row"][
+            0
+        ]
         self.assertEqual(panel["type"], "timeseries")
 
         base["sections"][0]["items"][0]["x"] = "category"
-        panel = [
-            p for p in view_model_to_grafana(base, live=live)["panels"] if p["type"] != "row"
-        ][0]
+        panel = [p for p in view_model_to_grafana(base, live=live)["panels"] if p["type"] != "row"][
+            0
+        ]
         self.assertEqual(panel["type"], "barchart")
 
 
@@ -390,9 +469,7 @@ class TestGrafanaLiveMode(unittest.TestCase):
             ]
         }
         panels = [
-            p
-            for p in view_model_to_grafana(vm, live=self._LIVE)["panels"]
-            if p["type"] != "row"
+            p for p in view_model_to_grafana(vm, live=self._LIVE)["panels"] if p["type"] != "row"
         ]
         self.assertEqual(panels[0]["targets"][0]["scenarioId"], "csv_content")
         self.assertEqual(panels[0]["datasource"]["uid"], "testdata")
@@ -406,9 +483,7 @@ class TestGrafanaLiveMode(unittest.TestCase):
     def test_unsafe_column_falls_back_to_csv(self):
         vm = {
             "datasets": {"by_region": [{'a"b': 1, "region": "EU"}]},
-            "sections": [
-                {"items": [{"type": "table", "dataset": "by_region"}]}
-            ],
+            "sections": [{"items": [{"type": "table", "dataset": "by_region"}]}],
         }
         model = view_model_to_grafana(vm, live=self._LIVE)
         table = next(p for p in model["panels"] if p["type"] == "table")
@@ -419,6 +494,122 @@ class TestGrafanaLiveMode(unittest.TestCase):
         live, inline = partition_datasets(vm, {"by_region": "public.by_region"})
         self.assertEqual(live, ["by_region"])
         self.assertEqual(inline, ["computed"])
+
+
+class TestGrafanaLiveRecord(unittest.TestCase):
+    """Live (database-bound) records become self-refreshing SQL panels."""
+
+    def _panels(self, model):
+        return {p["title"]: p for p in model["panels"] if p["type"] != "row"}
+
+    def test_export_mode_uses_subquery_sql_and_appdata_input(self):
+        model = live_dashboard_to_grafana(_live_record())
+        panels = self._panels(model)
+        bar = panels["Per wilayah"]
+        target = bar["targets"][0]
+        self.assertEqual(
+            target["rawSql"],
+            'SELECT "region", "revenue" FROM (SELECT region, SUM(revenue) AS revenue '
+            "FROM sales GROUP BY region) AS q LIMIT 500",
+        )
+        self.assertEqual(target["format"], "table")
+        self.assertEqual(
+            bar["datasource"], {"type": "grafana-postgresql-datasource", "uid": "${DS_APPDATA}"}
+        )
+        self.assertEqual(bar["type"], "barchart")
+        self.assertEqual(bar["options"]["xField"], "region")
+        self.assertEqual(model["refresh"], "30s")
+        self.assertEqual([i["name"] for i in model["__inputs"]], ["DS_TESTDATA", "DS_APPDATA"])
+        self.assertIn("grafana-postgresql-datasource", [r["id"] for r in model["__requires"]])
+        self.assertEqual(model["title"], "Penjualan Live")
+
+    def test_kpi_runs_query_with_value_alias(self):
+        panels = self._panels(live_dashboard_to_grafana(_live_record()))
+        kpi = panels["Total Pendapatan"]
+        self.assertEqual(kpi["type"], "stat")
+        self.assertEqual(
+            kpi["targets"][0]["rawSql"],
+            'SELECT "total" AS value FROM (SELECT SUM(revenue) AS total FROM sales) AS q LIMIT 1',
+        )
+        self.assertEqual(kpi["options"]["reduceOptions"]["fields"], "/^value$/")
+        self.assertNotIn("displayName", kpi["fieldConfig"]["defaults"])
+        self.assertEqual(kpi["fieldConfig"]["defaults"]["unit"], "currencyUSD")
+
+    def test_line_chart_keeps_timeseries_when_snapshot_x_is_temporal(self):
+        panels = self._panels(live_dashboard_to_grafana(_live_record()))
+        line = panels["Harian"]
+        self.assertEqual(line["type"], "timeseries")
+        self.assertIn(
+            "FROM (SELECT day, SUM(revenue) AS revenue FROM sales GROUP BY day) AS q LIMIT 90",
+            line["targets"][0]["rawSql"],
+        )
+
+    def test_table_and_static_items(self):
+        panels = self._panels(live_dashboard_to_grafana(_live_record()))
+        table = panels["Tabel"]
+        self.assertEqual(
+            table["targets"][0]["rawSql"].split(" FROM ")[0], 'SELECT "region", "revenue"'
+        )
+        static = panels["Statis"]
+        self.assertEqual(static["targets"][0]["scenarioId"], "csv_content")
+        self.assertEqual(static["datasource"]["uid"], "${DS_TESTDATA}")
+
+    def test_deploy_mode_targets_concrete_uid_without_inputs(self):
+        model = live_dashboard_to_grafana(
+            _live_record(),
+            live={"tables": {}, "pg_uid": "appdata-postgres", "testdata_uid": "testdata"},
+        )
+        self.assertNotIn("__inputs", model)
+        bar = self._panels(model)["Per wilayah"]
+        self.assertEqual(bar["datasource"]["uid"], "appdata-postgres")
+        self.assertEqual(model["refresh"], "30s")
+
+    def test_manual_interval_has_no_refresh(self):
+        model = live_dashboard_to_grafana(_live_record(refresh_interval_seconds=0))
+        self.assertNotIn("refresh", model)
+
+    def test_unsafe_column_falls_back_to_csv(self):
+        template = {
+            "sections": [
+                {
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "title": "Bad",
+                            "dataset": "by_region",
+                            "x_field": 'reg"ion',
+                            "y_field": "revenue",
+                        }
+                    ]
+                }
+            ]
+        }
+        panels = self._panels(live_dashboard_to_grafana(_live_record(template=template)))
+        self.assertEqual(panels["Bad"]["targets"][0]["scenarioId"], "csv_content")
+
+    def test_static_view_model_honours_x_field_y_field(self):
+        view_model = {
+            "title": "S",
+            "datasets": {"d": [{"month": "Jan", "a": 1, "b": 2}]},
+            "sections": [
+                {
+                    "items": [
+                        {
+                            "type": "chart",
+                            "chart_type": "bar",
+                            "title": "Multi",
+                            "dataset": "d",
+                            "x_field": "month",
+                            "y_fields": ["a", "b"],
+                        }
+                    ]
+                }
+            ],
+        }
+        panel = self._panels(view_model_to_grafana(view_model))["Multi"]
+        self.assertEqual(panel["options"]["xField"], "month")
+        self.assertEqual(panel["targets"][0]["csvContent"].splitlines()[0], "month,a,b")
 
 
 class TestDashboardRoutes(unittest.TestCase):
@@ -593,6 +784,58 @@ class TestDashboardRoutes(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 503)
         self.assertIn("unreachable", response.json()["detail"])
+
+    def _seed_live(self, client: TestClient, **overrides) -> LiveDashboardRecord:
+        record = _live_record(**overrides)
+        client.app.state.live_dashboard_store.save(record)
+        return record
+
+    def test_export_grafana_with_dashboard_id_uses_live_sql(self):
+        client = self._client()
+        record = self._seed_live(client)
+        response = client.post(
+            "/dashboard/export/grafana", json={"dashboardId": record.id}, headers=self._auth
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        model = response.json()
+        sqls = [t["rawSql"] for p in model["panels"] for t in p.get("targets", []) if "rawSql" in t]
+        self.assertTrue(any("AS q LIMIT 500" in sql for sql in sqls))
+        self.assertEqual(model["refresh"], "30s")
+
+    def test_export_grafana_foreign_dashboard_is_404(self):
+        client = self._client()
+        record = self._seed_live(client, owner="someone-else@example.com")
+        response = client.post(
+            "/dashboard/export/grafana", json={"dashboardId": record.id}, headers=self._auth
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_export_grafana_static_path_unchanged(self):
+        client = self._client()
+        response = client.post(
+            "/dashboard/export/grafana", json={"viewModel": _VIEW_MODEL}, headers=self._auth
+        )
+        self.assertEqual(response.status_code, 200)
+        targets = [t for p in response.json()["panels"] for t in p.get("targets", [])]
+        self.assertTrue(all(t.get("scenarioId") == "csv_content" for t in targets))
+        self.assertEqual([i["name"] for i in response.json()["__inputs"]], ["DS_TESTDATA"])
+
+    def test_deploy_grafana_with_dashboard_id_uses_live_deploy(self):
+        client = self._client()
+        record = self._seed_live(client)
+        result = {
+            "url": "https://host/grafana/d/abcdef123456",
+            "uid": record.id,
+            "live": ["by_region"],
+            "inline": [],
+        }
+        with patch("general_chat.server.app.deploy_live_dashboard", return_value=result) as deploy:
+            response = client.post(
+                "/dashboard/deploy/grafana", json={"dashboardId": record.id}, headers=self._auth
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), result)
+        self.assertEqual(deploy.call_args.args[0].id, record.id)
 
     def test_unknown_dashboard_id_is_404(self):
         client = self._client()

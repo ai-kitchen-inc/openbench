@@ -24,7 +24,11 @@ import logging
 import os
 from typing import Any
 
-from general_chat.server.grafana import partition_datasets, view_model_to_grafana
+from general_chat.server.grafana import (
+    live_dashboard_to_grafana,
+    partition_datasets,
+    view_model_to_grafana,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +93,7 @@ def list_appdata_tables() -> dict[str, str]:
                 "WHERE table_schema = ANY(%s) AND table_type = 'BASE TABLE'",
                 (list(_TABLE_SCHEMAS),),
             ).fetchall()
-    except Exception as exc:  # noqa: BLE001 - degrade, never block a deploy
+    except Exception as exc:
         logger.warning("appdata table discovery failed; deploying inline-only: %s", exc)
         return {}
 
@@ -110,29 +114,49 @@ def dashboard_uid(title: str) -> str:
     return hashlib.sha1(title.strip().lower().encode("utf-8")).hexdigest()[:12]
 
 
-def deploy_view_model(view_model: dict[str, Any]) -> dict[str, Any]:
-    """Convert + push a ViewModel; return ``{url, uid, live, inline}``."""
+def _client_from_env() -> tuple[GrafanaClient, str]:
+    """(client, browser-facing base url) from the GRAFANA_* environment."""
     password = os.getenv("GRAFANA_ADMIN_PASSWORD", "").strip()
     if not password:
         raise GrafanaDeployError("GRAFANA_ADMIN_PASSWORD is not configured")
     base_url = os.getenv("GRAFANA_URL", "http://grafana:3000").strip()
     username = os.getenv("GRAFANA_ADMIN_USER", "admin").strip()
     public_url = (os.getenv("GRAFANA_PUBLIC_URL", "").strip() or base_url).rstrip("/")
+    return GrafanaClient(base_url, username, password), public_url
+
+
+def _deploy_live_config() -> dict[str, Any]:
+    return {"pg_uid": _PG_DATASOURCE_UID, "testdata_uid": _TESTDATA_DATASOURCE_UID}
+
+
+def deploy_live_dashboard(record: Any) -> dict[str, Any]:
+    """Push a live (database-bound) dashboard as self-refreshing SQL panels.
+
+    The Grafana uid is the record id, so re-deploys (and renames) overwrite
+    the same Grafana dashboard. No table discovery: every bound panel runs
+    the record's own query against the provisioned appdata datasource.
+    """
+    client, public_url = _client_from_env()
+    model = live_dashboard_to_grafana(record, live={"tables": {}, **_deploy_live_config()})
+    uid = str(getattr(record, "id", "") or dashboard_uid(str(model.get("title") or "dashboard")))
+    model["uid"] = uid
+    model["id"] = None
+    client.push_dashboard(model)
+    queries = getattr(record, "queries", None) or {}
+    return {"url": f"{public_url}/d/{uid}", "uid": uid, "live": sorted(queries), "inline": []}
+
+
+def deploy_view_model(view_model: dict[str, Any]) -> dict[str, Any]:
+    """Convert + push a ViewModel; return ``{url, uid, live, inline}``."""
+    client, public_url = _client_from_env()
 
     tables = list_appdata_tables()
-    model = view_model_to_grafana(
-        view_model,
-        live={
-            "tables": tables,
-            "pg_uid": _PG_DATASOURCE_UID,
-            "testdata_uid": _TESTDATA_DATASOURCE_UID,
-        },
-    )
+    model = view_model_to_grafana(view_model, live={"tables": tables, **_deploy_live_config()})
     uid = dashboard_uid(str(model.get("title") or "dashboard"))
     model["uid"] = uid
     model["id"] = None
 
-    GrafanaClient(base_url, username, password).push_dashboard(model)
+    client.push_dashboard(model)
 
     live, inline = partition_datasets(view_model, tables)
     return {"url": f"{public_url}/d/{uid}", "uid": uid, "live": live, "inline": inline}

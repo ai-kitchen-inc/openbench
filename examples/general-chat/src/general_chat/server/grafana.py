@@ -14,6 +14,12 @@ Two modes:
   ``live`` keys: ``tables`` (dataset name -> "schema.table"), ``pg_uid``,
   ``testdata_uid``.
 
+* **Query-backed (``queries={...}``, either mode)** — for live (database-bound)
+  dashboards: every panel bound to a dataset key present in ``queries`` runs
+  that SQL itself (wrapped as a sub-select and capped), so Grafana re-queries
+  the database on its own refresh timer. In export mode the Postgres
+  datasource is the ``${DS_APPDATA}`` input. See ``live_dashboard_to_grafana``.
+
 The conversion mirrors the field-alias resolution used by the on-screen renderers
 (``DashboardGenerator`` and the React ``ObDashboardFrame``) so the exported
 dashboard matches what the user sees.
@@ -28,6 +34,10 @@ from typing import Any
 _TESTDATA_PLUGIN = "grafana-testdata-datasource"
 _DS_INPUT = "${DS_TESTDATA}"
 _POSTGRES_PLUGIN = "grafana-postgresql-datasource"
+_DS_PG_INPUT = "${DS_APPDATA}"
+# Grafana refuses dashboard refresh intervals below its min_refresh_interval (5s).
+_MIN_REFRESH_SECONDS = 5
+_DEFAULT_QUERY_ROWS = 500
 
 # Safe SQL identifier (unquoted); anything else falls back to inline CSV.
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -42,7 +52,11 @@ _PANEL_H = 8
 
 
 def view_model_to_grafana(
-    view_model: dict[str, Any], *, live: dict[str, Any] | None = None
+    view_model: dict[str, Any],
+    *,
+    live: dict[str, Any] | None = None,
+    queries: dict[str, Any] | None = None,
+    refresh_seconds: int | None = None,
 ) -> dict[str, Any]:
     """Convert a dashboard ViewModel to an importable Grafana dashboard model.
 
@@ -52,6 +66,10 @@ def view_model_to_grafana(
         live: Optional deploy-mode config (see module docstring). When set, the
             model targets concrete datasource UIDs (Postgres for table-backed
             datasets, TestData CSV otherwise) and omits ``__inputs``.
+        queries: Optional ``{dataset key: SQL}`` (values may be ``LiveQuery``,
+            ``{"sql", "maxRows"}`` dicts or plain strings). Panels bound to one
+            of these keys become Postgres ``rawSql`` panels running that query.
+        refresh_seconds: Dashboard auto-refresh interval; ``None``/``0`` = none.
 
     Returns:
         A Grafana dashboard dict ready to serialize to JSON and import (or POST
@@ -60,15 +78,17 @@ def view_model_to_grafana(
     view_model = view_model or {}
     datasets = _normalize_datasets(view_model.get("datasets"))
     title = str(view_model.get("title") or "OpenBench Dashboard")
-    targets = _Targets(live)
+    targets = _Targets(live, queries)
 
     panels: list[dict[str, Any]] = []
     cursor = _GridCursor()
     panel_id = _Counter()
 
-    for kpi in view_model.get("kpis") or []:
-        if isinstance(kpi, dict):
-            panels.append(_kpi_panel(kpi, datasets, panel_id.next(), cursor, targets))
+    panels.extend(
+        _kpi_panel(kpi, datasets, panel_id.next(), cursor, targets)
+        for kpi in view_model.get("kpis") or []
+        if isinstance(kpi, dict)
+    )
 
     for section in view_model.get("sections") or []:
         if not isinstance(section, dict):
@@ -108,6 +128,8 @@ def view_model_to_grafana(
         "uid": None,
         "version": 1,
     }
+    if refresh_seconds and int(refresh_seconds) > 0:
+        model["refresh"] = f"{max(_MIN_REFRESH_SECONDS, int(refresh_seconds))}s"
     if targets.live:
         return model
     model["__inputs"] = [
@@ -129,7 +151,50 @@ def view_model_to_grafana(
             "version": "1.0.0",
         },
     ]
+    if targets.uses_pg:
+        model["__inputs"].append(
+            {
+                "name": "DS_APPDATA",
+                "label": "AppData (PostgreSQL)",
+                "description": "The database the live dashboard queries run against",
+                "type": "datasource",
+                "pluginId": _POSTGRES_PLUGIN,
+                "pluginName": "PostgreSQL",
+            }
+        )
+        model["__requires"].append(
+            {
+                "type": "datasource",
+                "id": _POSTGRES_PLUGIN,
+                "name": "PostgreSQL",
+                "version": "1.0.0",
+            }
+        )
     return model
+
+
+def live_dashboard_to_grafana(record: Any, *, live: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Grafana model for a live (database-bound) dashboard record.
+
+    Every panel bound to one of the record's queries runs that SQL in Grafana
+    (sub-select + row cap), the dashboard refreshes on the record's interval,
+    and the last snapshot's rows only guide axis inference. Static panels (no
+    dataset binding) keep inline CSV. ``live`` has the same meaning as for
+    :func:`view_model_to_grafana`.
+    """
+    snapshot = getattr(record, "snapshot", None) or {}
+    view_model: dict[str, Any] = {
+        "title": getattr(record, "title", "") or "Dashboard",
+        "description": getattr(record, "description", "") or "",
+        "datasets": snapshot.get("datasets") or {},
+        **{k: v for k, v in (getattr(record, "template", None) or {}).items() if k != "datasets"},
+    }
+    return view_model_to_grafana(
+        view_model,
+        live=live,
+        queries=getattr(record, "queries", None) or {},
+        refresh_seconds=int(getattr(record, "refresh_interval_seconds", 0) or 0),
+    )
 
 
 def partition_datasets(
@@ -175,23 +240,86 @@ class _GridCursor:
         self._row_h = 0
 
 
+def _query_parts(value: Any) -> tuple[str, int]:
+    """(sql without trailing ';', row cap) from a LiveQuery / dict / str."""
+    if hasattr(value, "sql"):
+        sql, rows = getattr(value, "sql", ""), getattr(value, "max_rows", _DEFAULT_QUERY_ROWS)
+    elif isinstance(value, dict):
+        sql = value.get("sql", "")
+        rows = value.get("maxRows", value.get("max_rows", _DEFAULT_QUERY_ROWS))
+    else:
+        sql, rows = value, _DEFAULT_QUERY_ROWS
+    try:
+        max_rows = max(1, int(rows))
+    except (TypeError, ValueError):
+        max_rows = _DEFAULT_QUERY_ROWS
+    return str(sql or "").strip().rstrip(";").strip(), max_rows
+
+
+def _dataset_key(item: dict[str, Any]) -> str | None:
+    key = (
+        item.get("dataset") or item.get("dataset_id") or item.get("datasetId") or item.get("source")
+    )
+    return str(key) if key else None
+
+
 class _Targets:
     """Builds panel datasource refs + targets for export or deploy mode."""
 
-    def __init__(self, live: dict[str, Any] | None) -> None:
+    def __init__(self, live: dict[str, Any] | None, queries: dict[str, Any] | None = None) -> None:
         self.live = bool(live)
         live = live or {}
         raw_tables = live.get("tables") or {}
-        self.tables = {str(k): str(v) for k, v in raw_tables.items()} if isinstance(raw_tables, dict) else {}
+        self.tables = (
+            {str(k): str(v) for k, v in raw_tables.items()} if isinstance(raw_tables, dict) else {}
+        )
         self.pg_uid = str(live.get("pg_uid") or "appdata-postgres")
         self.testdata_uid = str(live.get("testdata_uid") or "testdata")
+        self.queries: dict[str, tuple[str, int]] = {}
+        for key, value in (queries or {}).items():
+            sql, max_rows = _query_parts(value)
+            if sql:
+                self.queries[str(key)] = (sql, max_rows)
+        # Set once any panel targets Postgres; export mode then adds DS_APPDATA.
+        self.uses_pg = False
 
     def inline_ref(self) -> dict[str, str]:
         uid = self.testdata_uid if self.live else _DS_INPUT
         return {"type": _TESTDATA_PLUGIN, "uid": uid}
 
     def pg_ref(self) -> dict[str, str]:
-        return {"type": _POSTGRES_PLUGIN, "uid": self.pg_uid}
+        return {"type": _POSTGRES_PLUGIN, "uid": self.pg_uid if self.live else _DS_PG_INPUT}
+
+    def _query_for(self, item: dict[str, Any]) -> tuple[str, int] | None:
+        """(sql, cap) when this item is bound to a query-backed dataset."""
+        if not self.queries:
+            return None
+        if isinstance(item.get("data") or item.get("records"), list):
+            return None
+        key = _dataset_key(item)
+        return self.queries.get(key) if key else None
+
+    def _sql_target(self, sql: str) -> dict[str, Any]:
+        self.uses_pg = True
+        return {"refId": "A", "datasource": self.pg_ref(), "format": "table", "rawSql": sql}
+
+    def kpi_target(
+        self, kpi: dict[str, Any], records: list[dict[str, Any]]
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        """Stat target: live ``SELECT <col> AS value`` when query-backed, else CSV."""
+        query = self._query_for(kpi) if kpi.get("value") is None else None
+        column = (
+            kpi.get("value_column")
+            or kpi.get("valueColumn")
+            or kpi.get("value_key")
+            or kpi.get("column")
+            or kpi.get("field")
+        )
+        if query and column and _IDENT_RE.match(str(column)):
+            sql, _max_rows = query
+            target = self._sql_target(f'SELECT "{column}" AS value FROM ({sql}) AS q LIMIT 1')
+            return self.pg_ref(), target
+        return self.inline_ref(), self.csv_target(records)
 
     def csv_target(self, records: list[dict[str, Any]]) -> dict[str, Any]:
         return {
@@ -208,12 +336,7 @@ class _Targets:
         # Inline data on the item always wins — mirror _resolve_item_data.
         if isinstance(item.get("data") or item.get("records"), list):
             return None
-        dataset_key = (
-            item.get("dataset")
-            or item.get("dataset_id")
-            or item.get("datasetId")
-            or item.get("source")
-        )
+        dataset_key = _dataset_key(item)
         if not dataset_key:
             return None
         table = self.tables.get(str(dataset_key))
@@ -229,12 +352,21 @@ class _Targets:
     ) -> tuple[dict[str, str], dict[str, Any]]:
         """(datasource ref, target) for a chart/table item.
 
-        Live SQL when the dataset is table-backed and every projected column is
-        a safe identifier; inline CSV otherwise.
+        Query-backed datasets (live dashboards) run their own SQL as a capped
+        sub-select; table-backed datasets select from the table; inline CSV
+        otherwise. Both SQL paths require every projected column to be a safe
+        identifier.
         """
-        table = self._live_table_for(item)
         columns = [k for k in dict.fromkeys(keys) if k]
-        if table and all(_IDENT_RE.match(k) for k in columns):
+        safe_columns = all(_IDENT_RE.match(k) for k in columns)
+        query = self._query_for(item)
+        if query and safe_columns:
+            sql, max_rows = query
+            select = ", ".join(f'"{k}"' for k in columns) if columns else "*"
+            target = self._sql_target(f"SELECT {select} FROM ({sql}) AS q LIMIT {max_rows}")
+            return self.pg_ref(), target
+        table = self._live_table_for(item)
+        if table and safe_columns:
             select = ", ".join(f'"{k}"' for k in columns) if columns else "*"
             target = {
                 "refId": "A",
@@ -259,9 +391,7 @@ def _row_panel(title: str, panel_id: int, cursor: _GridCursor) -> dict[str, Any]
     }
 
 
-def _resolve_kpi_value(
-    kpi: dict[str, Any], datasets: dict[str, list[dict[str, Any]]]
-) -> Any:
+def _resolve_kpi_value(kpi: dict[str, Any], datasets: dict[str, list[dict[str, Any]]]) -> Any:
     """Inline ``value`` or first-row dataset column — mirrors the renderers
     (ob-dashboard-frame.tsx resolveKpiValue / DashboardGenerator datasets.py)."""
     if kpi.get("value") is not None:
@@ -306,13 +436,14 @@ def _kpi_panel(
     value = _coerce_kpi_number(_resolve_kpi_value(kpi, datasets))
     unit = str(kpi.get("unit") or "")
     records = [{"metric": label, "value": value}]
+    datasource, target = targets.kpi_target(kpi, records)
     return {
         "id": panel_id,
         "type": "stat",
         "title": label,
         "gridPos": cursor.place(_KPI_W, _KPI_H),
-        "datasource": targets.inline_ref(),
-        "targets": [targets.csv_target(records)],
+        "datasource": datasource,
+        "targets": [target],
         # textMode "value" shows just the number — the panel title carries the
         # label. Do NOT set fieldConfig displayName here: the stat's
         # reduceOptions.fields regex matches DISPLAY names, so renaming the
@@ -405,16 +536,23 @@ def _chart_panel(
 ) -> dict[str, Any]:
     records = _resolve_item_data(item, datasets)
     chart_type = str(
-        item.get("chart_type") or item.get("chartType") or item.get("visualization") or item.get("type") or "bar"
+        item.get("chart_type")
+        or item.get("chartType")
+        or item.get("visualization")
+        or item.get("type")
+        or "bar"
     ).lower()
     panel_type = _CHART_PANEL_TYPE.get(chart_type, "barchart")
     x_key = str(
         item.get("x")
         or item.get("x_key")
         or item.get("xKey")
+        or item.get("x_field")
+        or item.get("xField")
         or item.get("x_axis")
         or item.get("xAxis")
-        or item.get("xField")
+        or item.get("label_column")
+        or item.get("labelColumn")
         or _first_category_key(records)
     )
     y_keys = _series_keys(item, records, x_key)
@@ -488,10 +626,7 @@ def _resolve_item_data(
     if isinstance(data, list):
         return [row for row in data if isinstance(row, dict)]
     dataset_key = (
-        item.get("dataset")
-        or item.get("dataset_id")
-        or item.get("datasetId")
-        or item.get("source")
+        item.get("dataset") or item.get("dataset_id") or item.get("datasetId") or item.get("source")
     )
     if dataset_key and str(dataset_key) in datasets:
         return datasets[str(dataset_key)]
@@ -504,9 +639,16 @@ def _series_keys(item: dict[str, Any], records: list[dict[str, Any]], x_key: str
         or item.get("y")
         or item.get("y_key")
         or item.get("yKey")
+        or item.get("y_field")
+        or item.get("yField")
+        or item.get("y_fields")
+        or item.get("yFields")
         or item.get("y_axis")
         or item.get("yAxis")
-        or item.get("yField")
+        or item.get("value_field")
+        or item.get("valueField")
+        or item.get("value_column")
+        or item.get("valueColumn")
         or item.get("metric")
         or item.get("value")
     )
@@ -628,9 +770,7 @@ def _first_numeric_key(records: list[dict[str, Any]], *, fallback: str = "") -> 
 # --- CSV serialization --------------------------------------------------------
 
 
-def _project_records(
-    records: list[dict[str, Any]], keys: list[str]
-) -> list[dict[str, Any]]:
+def _project_records(records: list[dict[str, Any]], keys: list[str]) -> list[dict[str, Any]]:
     seen: list[str] = []
     for key in keys:
         if key and key not in seen:
@@ -645,12 +785,11 @@ def _records_to_csv(records: list[dict[str, Any]]) -> str:
         return ""
     headers: list[str] = []
     for row in records:
-        for key in row.keys():
+        for key in row:
             if key not in headers:
                 headers.append(str(key))
     lines = [",".join(_csv_field(h) for h in headers)]
-    for row in records:
-        lines.append(",".join(_csv_field(row.get(h)) for h in headers))
+    lines.extend(",".join(_csv_field(row.get(h)) for h in headers) for row in records)
     return "\n".join(lines)
 
 

@@ -71,7 +71,11 @@ from general_chat.live_dashboard import (
     validate_dashboard_input,
 )
 from general_chat.live_dashboard.models import apply_record_changes
-from general_chat.mcp_bootstrap import seed_all_mcp_registry
+from general_chat.mcp_bootstrap import (
+    seed_all_mcp_registry,
+    seed_config_names_from_env,
+    seed_mcp_configs,
+)
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.persona_templates import (
     DEFAULT_TEMPLATE_ID,
@@ -127,8 +131,12 @@ from general_chat.server.custom_skills import (
 )
 from general_chat.server.dashboard_pdf import render_dashboard_pdf
 from general_chat.server.drive_auth import DriveOAuthManager
-from general_chat.server.grafana import view_model_to_grafana
-from general_chat.server.grafana_client import GrafanaDeployError, deploy_view_model
+from general_chat.server.grafana import live_dashboard_to_grafana, view_model_to_grafana
+from general_chat.server.grafana_client import (
+    GrafanaDeployError,
+    deploy_live_dashboard,
+    deploy_view_model,
+)
 from general_chat.server.handler import GeneralChatHandler, set_source_context_label_override
 from general_chat.server.mcp_permissions import GeneralChatMCPPermissionCoordinator
 from general_chat.server.publish_store import PublishStore
@@ -379,8 +387,8 @@ def _slugify_dashboard_title(title: str) -> str:
     return cleaned[:48] or "dashboard"
 
 
-async def _read_dashboard_view_model(request: Request) -> dict | None:
-    """Read the dashboard ViewModel from a request body.
+async def _read_dashboard_body(request: Request) -> dict | None:
+    """Read a dashboard action body (``{viewModel, dashboardId?}``).
 
     Decodes only the first JSON value and ignores any trailing bytes. This
     tolerates a duplicated/concatenated body — a known Starlette
@@ -395,10 +403,25 @@ async def _read_dashboard_view_model(request: Request) -> dict | None:
         payload, _ = json.JSONDecoder().raw_decode(raw)
     except json.JSONDecodeError:
         return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _view_model_from_body(payload: dict | None) -> dict | None:
     if not isinstance(payload, dict):
         return None
     view_model = payload.get("viewModel") or payload.get("view_model")
     return view_model if isinstance(view_model, dict) and view_model else None
+
+
+def _dashboard_id_from_body(payload: dict | None) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("dashboardId") or payload.get("dashboard_id") or "").strip()
+
+
+async def _read_dashboard_view_model(request: Request) -> dict | None:
+    """Read just the ViewModel from a dashboard action body."""
+    return _view_model_from_body(await _read_dashboard_body(request))
 
 
 def _requires_auth_path(path: str) -> bool:
@@ -1331,8 +1354,14 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def startup() -> None:
+        seed_summary = None
         if _env_flag("GENERAL_CHAT_SEED_ALL_MCP", default=False):
             seed_summary = seed_all_mcp_registry(storage_root)
+        elif seed_names := seed_config_names_from_env():
+            # Local dev: only the listed bundled configs (e.g. the sqlite
+            # db_server twin), never the docker-backed rest of the bundle.
+            seed_summary = seed_mcp_configs(storage_root, seed_names)
+        if seed_summary is not None:
             if seed_summary["errors"]:
                 print(f"  MCP seed errors: {seed_summary['errors']}")
             else:
@@ -3513,23 +3542,6 @@ def create_app() -> FastAPI:
         _audit(request, "session.delete", target=session_id)
         return {"ok": True, "sessionId": session_id}
 
-    @app.post("/dashboard/export/grafana")
-    async def export_dashboard_grafana(request: Request) -> dict:
-        view_model = await _read_dashboard_view_model(request)
-        if view_model is None:
-            raise HTTPException(status_code=400, detail="Missing viewModel")
-        return view_model_to_grafana(view_model)
-
-    @app.post("/dashboard/deploy/grafana")
-    async def deploy_dashboard_grafana(request: Request) -> dict:
-        view_model = await _read_dashboard_view_model(request)
-        if view_model is None:
-            raise HTTPException(status_code=400, detail="Missing viewModel")
-        try:
-            return deploy_view_model(view_model)
-        except GrafanaDeployError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-
     @app.post("/dashboard/export/pdf")
     async def export_dashboard_pdf(request: Request) -> Response:
         view_model = await _read_dashboard_view_model(request)
@@ -3633,6 +3645,39 @@ def create_app() -> FastAPI:
         if record is None or not record.public:
             raise HTTPException(status_code=404, detail="Dashboard not found")
         return record
+
+    # Grafana export/deploy. A body carrying ``dashboardId`` targets a live
+    # record: panels become self-refreshing SQL against the appdata datasource.
+    # Without it the static ViewModel path is unchanged (inline CSV panels).
+
+    @app.post("/dashboard/export/grafana")
+    async def export_dashboard_grafana(request: Request) -> dict:
+        body = await _read_dashboard_body(request)
+        dashboard_id = _dashboard_id_from_body(body)
+        if dashboard_id:
+            record = await _owned_live_record(dashboard_id, request)
+            return live_dashboard_to_grafana(record)
+        view_model = _view_model_from_body(body)
+        if view_model is None:
+            raise HTTPException(status_code=400, detail="Missing viewModel")
+        return view_model_to_grafana(view_model)
+
+    @app.post("/dashboard/deploy/grafana")
+    async def deploy_dashboard_grafana(request: Request) -> dict:
+        body = await _read_dashboard_body(request)
+        dashboard_id = _dashboard_id_from_body(body)
+        record = await _owned_live_record(dashboard_id, request) if dashboard_id else None
+        view_model = None if record is not None else _view_model_from_body(body)
+        if record is None and view_model is None:
+            raise HTTPException(status_code=400, detail="Missing viewModel")
+        try:
+            if record is not None:
+                result = await asyncio.to_thread(deploy_live_dashboard, record)
+                _audit(request, "dashboard.live.deploy_grafana", target=record.id)
+                return result
+            return await asyncio.to_thread(deploy_view_model, view_model)
+        except GrafanaDeployError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     def _live_event_response(
         request: Request, record: LiveDashboardRecord, *, public: bool
