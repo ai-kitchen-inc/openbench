@@ -145,6 +145,43 @@ describe("ObDashboardFrame live mode", () => {
     expect(screen.getByRole("button", { name: "Muat ulang data" })).toBeDefined();
   });
 
+  it("passes the dashboardId to publish/export/deploy on a live frame", async () => {
+    const publish = vi.fn(async () => ({ url: "https://host/d/abcdef123456" }));
+    const exportGrafana = vi.fn(async () => ({ panels: [] }));
+    const deployGrafana = vi.fn(async () => ({ url: "https://host/grafana/d/abcdef123456" }));
+    ctx.current = { dashboardActions: { subscribeLive, publish, exportGrafana, deployGrafana } };
+    vi.stubGlobal("open", vi.fn());
+    renderLive();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /publish/i }));
+    });
+    expect(publish).toHaveBeenCalledWith(expect.anything(), { dashboardId: "abcdef123456" });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /deploy/i }));
+    });
+    expect(deployGrafana).toHaveBeenCalledWith(expect.anything(), { dashboardId: "abcdef123456" });
+    vi.unstubAllGlobals();
+  });
+
+  it("passes no options for a static frame", async () => {
+    const publish = vi.fn(async () => ({ url: "https://host/d/static" }));
+    ctx.current = { dashboardActions: { publish } };
+    render(
+      <ObDashboardFrame
+        component={{
+          id: "static",
+          component: "ObDashboardFrame",
+          properties: { title: "Static", viewModel: bakedViewModel },
+        }}
+        surface={surface()}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /publish/i }));
+    });
+    expect(publish).toHaveBeenCalledWith(expect.anything(), undefined);
+  });
+
   it("does not subscribe without the live flag or without a host transport", () => {
     renderLive({ live: false });
     expect(subscribeLive).not.toHaveBeenCalled();

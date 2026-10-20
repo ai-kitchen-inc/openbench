@@ -782,8 +782,19 @@ function downloadJson(filename: string, data: unknown): void {
   downloadBlob(filename, new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
 }
 
-function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string }) {
+function HeaderActions({
+  viewModel,
+  title,
+  dashboardId,
+}: {
+  viewModel: unknown;
+  title: string;
+  dashboardId?: string;
+}) {
   const actions = useChatContextOptional()?.dashboardActions;
+  // Live frames tell the host which record they show so publish/export/deploy
+  // act on the stored queries instead of the baked snapshot.
+  const actionOptions = dashboardId ? { dashboardId } : undefined;
   const [busy, setBusy] = useState<"publish" | "export" | "pdf" | "deploy" | null>(null);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [deployedUrl, setDeployedUrl] = useState<string | null>(null);
@@ -824,7 +835,7 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
     setError(null);
     setCopied(false);
     try {
-      const result = await actions.publish(viewModel);
+      const result = await actions.publish(viewModel, actionOptions);
       setPublishedUrl(result?.url ?? null);
     } catch {
       setError("Publish failed");
@@ -839,7 +850,7 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
     setBusy("export");
     setError(null);
     try {
-      const model = await actions.exportGrafana(viewModel);
+      const model = await actions.exportGrafana(viewModel, actionOptions);
       downloadJson(`${slugify(title)}.grafana.json`, model);
     } catch {
       setError("Export failed");
@@ -868,7 +879,7 @@ function HeaderActions({ viewModel, title }: { viewModel: unknown; title: string
     setBusy("deploy");
     setError(null);
     try {
-      const result = await actions.deployGrafana(viewModel);
+      const result = await actions.deployGrafana(viewModel, actionOptions);
       const url = result?.url ?? null;
       setDeployedUrl(url);
       if (url) window.open(url, "_blank", "noopener");
@@ -1170,6 +1181,7 @@ function NativeHeader({
   fileSize,
   viewModel,
   liveStatus,
+  dashboardId,
 }: {
   title: string;
   description: string;
@@ -1178,6 +1190,7 @@ function NativeHeader({
   fileSize?: number;
   viewModel?: unknown;
   liveStatus?: LiveDashboardStatus;
+  dashboardId?: string;
 }) {
   return (
     <header className="ob-dashboard-frame__header">
@@ -1197,7 +1210,9 @@ function NativeHeader({
       <div className="ob-dashboard-frame__header-actions">
         {liveStatus && <LiveBadge status={liveStatus} />}
         {dashboardUrl && <OpenDashboardLink url={dashboardUrl} />}
-        {viewModel != null && <HeaderActions viewModel={viewModel} title={title} />}
+        {viewModel != null && (
+          <HeaderActions viewModel={viewModel} title={title} dashboardId={dashboardId} />
+        )}
       </div>
     </header>
   );
@@ -1595,6 +1610,7 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
           dashboardUrl={dashboardUrl}
           fileName={fileName}
           fileSize={fileSize}
+          dashboardId={dashboardId || undefined}
           viewModel={hasDashboardData ? exportViewModel : undefined}
         />
         {preview && dashboardUrl && (
@@ -1619,6 +1635,7 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
           dashboardUrl=""
           fileName={fileName}
           fileSize={fileSize}
+          dashboardId={dashboardId || undefined}
           liveStatus={liveStatus}
         />
         <div className="ob-dashboard-frame__empty">No dashboard data.</div>
@@ -1640,6 +1657,7 @@ export const ObDashboardFrame: A2UIComponentRenderer = ({ component, surface }) 
         dashboardUrl={dashboardUrl}
         fileName={fileName}
         fileSize={fileSize}
+        dashboardId={dashboardId || undefined}
         viewModel={exportViewModel}
         liveStatus={liveStatus}
       />

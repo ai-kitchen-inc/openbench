@@ -261,13 +261,25 @@ export interface ChatConfig {
   dashboardActions?: DashboardActions;
 }
 
+/**
+ * Context passed with publish/export/deploy. `dashboardId` is set when the
+ * frame renders a live (database-bound) dashboard, so the host can act on
+ * the stored record (live SQL panels, public toggle) instead of the snapshot.
+ */
+export interface DashboardActionOptions {
+  dashboardId?: string;
+}
+
 export interface DashboardActions {
   /** Persist the ViewModel and return a public, shareable URL. */
-  publish?: (viewModel: unknown) => Promise<{ url: string }>;
+  publish?: (viewModel: unknown, options?: DashboardActionOptions) => Promise<{ url: string }>;
   /** Convert the ViewModel to a Grafana dashboard JSON model. */
-  exportGrafana?: (viewModel: unknown) => Promise<unknown>;
+  exportGrafana?: (viewModel: unknown, options?: DashboardActionOptions) => Promise<unknown>;
   /** Push the ViewModel to a hosted Grafana; resolves to the dashboard URL. */
-  deployGrafana?: (viewModel: unknown) => Promise<{ url: string }>;
+  deployGrafana?: (
+    viewModel: unknown,
+    options?: DashboardActionOptions,
+  ) => Promise<{ url: string }>;
   /** Render the ViewModel to a PDF document (charts included) for download. */
   exportPdf?: (viewModel: unknown) => Promise<Blob>;
   /**

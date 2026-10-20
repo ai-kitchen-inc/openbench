@@ -102,6 +102,7 @@ export type {
   ComponentCatalog,
   // A2UI Server Messages
   CreateSurfacePayload,
+  DashboardActionOptions,
   DashboardActions,
   LiveDashboardEvent,
   LiveDashboardLabels,
