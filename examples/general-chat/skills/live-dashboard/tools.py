@@ -38,11 +38,13 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CREATE_LIVE_DASHBOARD_SCHEMA",
     "LIST_LIVE_DASHBOARDS_SCHEMA",
+    "OPEN_LIVE_DASHBOARD_SCHEMA",
     "REFRESH_LIVE_DASHBOARD_SCHEMA",
     "UPDATE_LIVE_DASHBOARD_SCHEMA",
     "bind",
     "create_live_dashboard",
     "list_live_dashboards",
+    "open_live_dashboard",
     "refresh_live_dashboard",
     "update_live_dashboard",
 ]
@@ -372,9 +374,24 @@ def update_live_dashboard(
 
 LIST_LIVE_DASHBOARDS_SCHEMA = {
     "name": "list_live_dashboards",
-    "description": "List the current user's live dashboards (id, title, interval, status, last refresh).",
+    "description": (
+        "List the current user's live dashboards (id, title, interval, status, last "
+        "refresh). The list is also rendered as a table in the chat."
+    ),
     "parameters": {"type": "object", "properties": {}},
 }
+
+
+def _interval_label(seconds: Any) -> str:
+    try:
+        value = int(seconds)
+    except (TypeError, ValueError):
+        return "-"
+    if value <= 0:
+        return "manual"
+    if value % 60 == 0:
+        return f"{value // 60} mnt"
+    return f"{value} dtk"
 
 
 def list_live_dashboards() -> dict[str, Any]:
@@ -400,7 +417,62 @@ def list_live_dashboards() -> dict[str, Any]:
         }
         for record in _store.list(owner)
     ]
+    if items:
+        shared_render_queue.push(
+            {
+                "type": "table",
+                "title": "Dashboard live",
+                "headers": ["ID", "Judul", "Interval", "Status", "Publik", "Pembaruan terakhir"],
+                "rows": [
+                    [
+                        item["id"],
+                        item["title"],
+                        _interval_label(item["refreshIntervalSeconds"]),
+                        "error" if item["lastError"] else ("aktif" if item["enabled"] else "jeda"),
+                        "ya" if item["public"] else "tidak",
+                        item["lastRefreshAt"] or "-",
+                    ]
+                    for item in items
+                ],
+            }
+        )
     return {"dashboards": items, "count": len(items)}
+
+
+OPEN_LIVE_DASHBOARD_SCHEMA = {
+    "name": "open_live_dashboard",
+    "description": (
+        "Show an existing live dashboard in the side panel again from its stored "
+        "snapshot, without re-running the queries. Use for 'buka dashboard live <id>' "
+        "or when the user wants to see a dashboard they created earlier."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"dashboard_id": {"type": "string"}},
+        "required": ["dashboard_id"],
+    },
+}
+
+
+def open_live_dashboard(dashboard_id: str) -> dict[str, Any]:
+    """Re-render the stored snapshot; the frame then follows live updates on its own."""
+    not_ready = _ready()
+    if not_ready:
+        return not_ready
+    owner = _owner()
+    if not owner:
+        return _error("cannot resolve the current user")
+    found = _owned(dashboard_id, owner)
+    if isinstance(found, dict):
+        return found
+    _render(found)
+    result = _result(found, "opened")
+    result["final_answer_hint"] = (
+        "The dashboard is rendered in the side panel from its stored snapshot and keeps "
+        "refreshing on its schedule. Do NOT call refresh/update/create for this request; "
+        "answer with one short sentence in the user's language."
+    )
+    return result
 
 
 REFRESH_LIVE_DASHBOARD_SCHEMA = {

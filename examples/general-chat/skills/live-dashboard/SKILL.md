@@ -18,6 +18,8 @@ for a dashboard that updates by itself.
 - User wants an existing live dashboard changed, refreshed, published,
   paused, or its refresh interval altered
 - User asks which live dashboards exist
+- Settings-panel hand-offs: `Buka dashboard live \`<id>\` ("<judul>")` and
+  `Perbarui dashboard live \`<id>\` ("<judul>"): <instruksi>`
 
 ## Tools
 
@@ -25,7 +27,10 @@ for a dashboard that updates by itself.
   render in the side panel, start the schedule
 - update_live_dashboard: change queries / panels / title / interval /
   public / enabled on an existing dashboard (prefer this over recreating)
-- list_live_dashboards: the caller's live dashboards with status
+- list_live_dashboards: the caller's live dashboards with status (also
+  rendered as a table in the chat)
+- open_live_dashboard: show an existing dashboard again from its stored
+  snapshot, without re-running queries
 - refresh_live_dashboard: re-run the queries now and push the result
 
 ## Protocol
@@ -66,7 +71,12 @@ for a dashboard that updates by itself.
    in the side panel. Summarize in the user's language: what it shows,
    the refresh interval, and the public link when `publicUrl` is present.
 8. **Revisions** go through `update_live_dashboard` using the `id`
-   returned at creation (or found via `list_live_dashboards`).
+   returned at creation (or found via `list_live_dashboards`). `queries` and
+   `view_model` are FULL replacements: when the user asks to add or change
+   one panel, resend every query and panel, with the change applied.
+9. **Reopen, don't rebuild.** "Buka dashboard live `<id>`" means
+   `open_live_dashboard` once, then one short sentence. Never re-create a
+   dashboard that already exists.
 
 ## Version
 

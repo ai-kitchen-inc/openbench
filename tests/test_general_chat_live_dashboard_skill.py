@@ -102,7 +102,7 @@ class TestLiveDashboardSkill(unittest.TestCase):
         render_queue.clear()
         self.addCleanup(render_queue.clear)
 
-    def test_discovers_four_tools_and_context(self):
+    def test_discovers_five_tools_and_context(self):
         self.assertEqual(
             set(self.tools),
             {
@@ -110,6 +110,7 @@ class TestLiveDashboardSkill(unittest.TestCase):
                 "update_live_dashboard",
                 "list_live_dashboards",
                 "refresh_live_dashboard",
+                "open_live_dashboard",
             },
         )
         self.assertIn("db_server.list_tables", self.context)
@@ -196,6 +197,46 @@ class TestLiveDashboardSkill(unittest.TestCase):
         self.owner = "other@example.com"
         self.assertEqual(self.tools["list_live_dashboards"]()["dashboards"], [])
         self.assertIn("not found", self.tools["refresh_live_dashboard"](dashboard_id)["error"])
+
+    def test_open_renders_stored_snapshot_without_rerunning(self):
+        created = self.tools["create_live_dashboard"](
+            title="T", queries=QUERIES, view_model=VIEW_MODEL
+        )
+        render_queue.clear()
+        self.runner.results[QUERIES["total"]] = [{"total": 999}]  # DB changed since
+        opened = self.tools["open_live_dashboard"](created["id"])
+        self.assertEqual(opened["status"], "opened")
+        self.assertEqual(opened["version"], 1)  # no refresh happened
+        self.assertIn("Do NOT call refresh", opened["final_answer_hint"])
+        items = render_queue.get_items()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["dashboardId"], created["id"])
+        self.assertEqual(items[0]["viewModel"]["kpis"][0]["value"], 10)  # stored snapshot
+        self.assertEqual(self.store.get(created["id"]).version, 1)
+
+    def test_open_foreign_or_missing_is_not_found(self):
+        created = self.tools["create_live_dashboard"](
+            title="T", queries=QUERIES, view_model=VIEW_MODEL
+        )
+        self.owner = "other@example.com"
+        self.assertIn("not found", self.tools["open_live_dashboard"](created["id"])["error"])
+        self.assertIn("not found", self.tools["open_live_dashboard"]("000000000000")["error"])
+
+    def test_list_renders_a_table(self):
+        self.assertEqual(self.tools["list_live_dashboards"]()["count"], 0)
+        self.assertEqual(render_queue.get_items(), [])
+        self.tools["create_live_dashboard"](
+            title="T", queries=QUERIES, view_model=VIEW_MODEL, refresh_interval_seconds=300
+        )
+        render_queue.clear()
+        listed = self.tools["list_live_dashboards"]()
+        self.assertEqual(listed["count"], 1)
+        items = render_queue.get_items()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["headers"][0], "ID")
+        self.assertEqual(items[0]["rows"][0][1], "T")
+        self.assertEqual(items[0]["rows"][0][2], "5 mnt")
+        self.assertEqual(items[0]["rows"][0][3], "aktif")
 
 
 class TestRegistryHelpers(unittest.TestCase):
