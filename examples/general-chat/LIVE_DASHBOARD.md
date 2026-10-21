@@ -107,13 +107,48 @@ message under `errors[datasetKey]`; the frame shows it as the badge tooltip.
 
 ## Chat tools (`skills/live-dashboard`)
 
-`create_live_dashboard`, `update_live_dashboard`, `list_live_dashboards`,
-`refresh_live_dashboard`. The skill's `SKILL.md` carries the protocol the
+`create_live_dashboard`, `update_live_dashboard`, `list_live_dashboards`
+(also renders a table), `refresh_live_dashboard`, `open_live_dashboard`
+(re-render the stored snapshot without re-querying; what the Settings
+"Dasbor" tab's *Buka* button asks for). The skill's `SKILL.md` carries the protocol the
 model follows (schema first, one aggregate SELECT per panel, template
 references datasets, fix SQL via `update_live_dashboard`, never paste the
 ViewModel back). The tools are bound to the server's store/runner/hub at
 agent build (`create_agent(live_dashboard_bindings=…)`); the owner comes from
 the per-turn ContextVar set by the chat handler.
+
+## Grafana (export and deploy)
+
+The frame's *Export* / *Deploy to Grafana* buttons send `{viewModel,
+dashboardId}` for a live frame. With a `dashboardId` the server builds the
+model from the stored record instead of the snapshot:
+
+- every panel bound to a query becomes a PostgreSQL `rawSql` target running
+  that query as a capped sub-select (`SELECT "x", "y" FROM (<sql>) AS q LIMIT
+  <maxRows>`); KPIs select their column `AS value` so the stat panel's
+  `/^value$/` reducer keeps working;
+- the dashboard `refresh` is the record interval (Grafana minimum 5 s);
+- *Export* yields importable JSON with two inputs, `DS_TESTDATA` (static
+  panels) and `DS_APPDATA` (PostgreSQL) — map the latter to the appdata
+  datasource on import;
+- *Deploy* pushes with `uid = <record id>` against the provisioned
+  `appdata-postgres` datasource (same DB and role the `db_server` MCP uses),
+  so re-deploys and renames overwrite one Grafana dashboard.
+
+Static / upload-based dashboards (no `dashboardId`) keep the previous
+behaviour: inline CSV panels, table-backed datasets become live only when a
+dataset name matches a real `public`/`mart` table. *Publish* on a live frame
+flips the record `public` and returns its `/d/{id}` page rather than writing
+a static HTML snapshot; unpublish lives in Settings → Dasbor.
+
+## Settings → Dasbor
+
+Users manage their live dashboards in the Settings dialog ("Dasbor" tab,
+capability `dashboards`): status, interval, last refresh, publish toggle with
+the shareable link, pause/resume, refresh, delete, *Buka* (asks the agent to
+`open_live_dashboard`, i.e. re-render the stored snapshot) and *Ubah dengan
+prompt* (sends `Perbarui dashboard live \`<id>\` ("<judul>"): <instruksi>` to
+the agent, which calls `update_live_dashboard`).
 
 ## Environment
 
@@ -125,35 +160,44 @@ the per-turn ContextVar set by the chat handler.
 | `GENERAL_CHAT_LIVE_DASHBOARD_QUERY_TIMEOUT_S` | `60` | per-query MCP call timeout |
 | `GENERAL_CHAT_PUBLIC_BASE_URL` | `` | prefix for `publicUrl` returned to the agent (e.g. `https://chat.serebrum.co.id`) |
 | `GENERAL_CHAT_MCP_DB_SERVER_CONFIG` | `db-server-docker.yaml` | which bundled db_server config `GENERAL_CHAT_SEED_ALL_MCP` seeds (`db-server-local.yaml` for the python/sqlite twin) |
+| `GENERAL_CHAT_SEED_MCP_CONFIGS` | `` | comma-separated bundled yaml names seeded at startup WITHOUT the rest of the bundle (local dev: `db-server-local.yaml`); ignored when `GENERAL_CHAT_SEED_ALL_MCP=1` |
 
 The scheduler runs only in the API process (it needs the docker socket the
 stdio `db_server` is spawned with); the GCS worker is untouched.
 
-## Local recipe (sqlite, no docker)
+## Local recipe (mock sqlite database, no docker)
 
 ```bash
-python -m venv .venv-dbserver
+python -m venv .venv-dbserver                       # once; gitignored
 .venv-dbserver/Scripts/pip install -r examples/general-chat/mcp/db-server/requirements.txt
-python examples/general-chat/scripts/seed_live_demo_db.py      # prints MCP_DB_DATABASE_URL
+python examples/general-chat/scripts/seed_live_demo_db.py --print-env
 ```
 
-Add to `examples/general-chat/.env` (local only):
+The script creates `examples/general-chat/.openbench/live-demo.db`
+(`sales(day, region, revenue)`) and prints the four lines to paste into
+`examples/general-chat/.env`:
 
 ```
-DB_SERVER_MCP_PYTHON=<abs path>/.venv-dbserver/Scripts/python.exe
-MCP_DB_DATABASE_URL=sqlite+aiosqlite:///<abs path>/examples/general-chat/.openbench/live-demo.db
-GENERAL_CHAT_SEED_ALL_MCP=1
-GENERAL_CHAT_MCP_DB_SERVER_CONFIG=db-server-local.yaml
-# only when the API process cwd is not examples/general-chat (e.g. uvicorn from the repo root):
-DB_SERVER_MCP_CWD=<abs path>/examples/general-chat/mcp/db-server
+DB_SERVER_MCP_PYTHON=<abs>/.venv-dbserver/Scripts/python.exe
+MCP_DB_DATABASE_URL=sqlite+aiosqlite:///<abs>/examples/general-chat/.openbench/live-demo.db
+DB_SERVER_MCP_CWD=<abs>/examples/general-chat/mcp/db-server
+GENERAL_CHAT_SEED_MCP_CONFIGS=db-server-local.yaml
 ```
 
-Then `openbench demo run general-chat`, check the MCP panel shows `db_server`
-with `execute_sql_json`, and ask: *"buatkan dashboard live dari database
-penjualan per wilayah, refresh 30 detik"*. Re-run the seed script to insert a
-row; the panel updates within one interval. `curl -N -H "Authorization:
-Bearer …" http://localhost:8005/dashboard/live/<id>/events` shows the raw
-stream.
+Then start as usual with `openbench demo run general-chat`: on startup the API
+seeds only `db-server-local.yaml` into the MCP registry (same server name as
+the docker twin, so it replaces it), and the MCP panel shows `db_server` with
+`execute_sql_json`. Ask: *"buatkan dashboard live dari database penjualan per
+wilayah, refresh 30 detik"*. Re-run the seed script (without `--print-env`) to
+append a row; the panel updates within one interval. `curl -N -H
+"Authorization: Bearer …" http://localhost:8005/dashboard/live/<id>/events`
+shows the raw stream. To return to the docker image, remove
+`GENERAL_CHAT_SEED_MCP_CONFIGS` and seed `db-server-docker.yaml` (for example
+via `GENERAL_CHAT_SEED_ALL_MCP=1` once).
+
+Grafana is not part of the local stack: "Export to Grafana" works (importable
+JSON with a `DS_APPDATA` PostgreSQL input), "Deploy to Grafana" needs the prod
+`GRAFANA_*` env and the appdata datasource.
 
 ## Limits and caveats
 
