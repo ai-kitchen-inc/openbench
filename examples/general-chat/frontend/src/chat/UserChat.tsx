@@ -3,6 +3,7 @@
  * dashboard artifact side panel, and the admin-curated global sources
  * drawer. */
 import {
+  type DashboardActionOptions,
   ChatPanel,
   ChatProvider,
   SessionSidebar,
@@ -25,6 +26,12 @@ import { ThemeIcon, useDarkMode } from "../theme";
 import { useToast } from "../Toast";
 import { AgentSelect } from "./AgentSelect";
 import { createLiveSubscriptionPool, subscribeDashboardEvents } from "./liveDashboard";
+import {
+  deployDashboardToGrafana,
+  exportDashboardToGrafana,
+  publishLiveDashboard,
+} from "../dashboard/api";
+import { LiveDashboardsPanel } from "../dashboard/LiveDashboardsPanel";
 import {
   DashboardArtifactPanel,
   dashboardArtifactsForSurface,
@@ -314,7 +321,7 @@ function UsageBadge() {
   );
 }
 
-type SettingsView = "artifact" | "tools" | "persona" | "usage";
+type SettingsView = "artifact" | "tools" | "dashboards" | "persona" | "usage";
 type ToolsView = "menu" | "mcp" | "function";
 
 function SidebarSettingsButton({ onClick }: { onClick: () => void }) {
@@ -359,6 +366,7 @@ function SettingsDialog({
   const showMcp = me.capabilities.mcp_management;
   const showFunctions = me.capabilities.custom_functions;
   const showTools = showMcp || showFunctions;
+  const showDashboards = me.capabilities.dashboards;
   const defaultView: SettingsView = showSources ? "artifact" : showTools ? "tools" : "persona";
   const [view, setView] = useState<SettingsView>(defaultView);
   const [toolsView, setToolsView] = useState<ToolsView>("menu");
@@ -384,7 +392,7 @@ function SettingsDialog({
         <div className="settings-dialog__header">
           <div>
             <h2>Pengaturan</h2>
-            <p>Kelola sumber, perangkat, persona, dan penggunaan.</p>
+            <p>Kelola sumber, perangkat, dasbor, persona, dan penggunaan.</p>
           </div>
           <button type="button" className="settings-dialog__close" onClick={onClose} aria-label="Tutup pengaturan">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -403,6 +411,11 @@ function SettingsDialog({
             {showTools && (
               <button type="button" className={view === "tools" ? "is-active" : ""} onClick={() => setView("tools")}>
                 Perangkat
+              </button>
+            )}
+            {showDashboards && (
+              <button type="button" className={view === "dashboards" ? "is-active" : ""} onClick={() => setView("dashboards")}>
+                Dasbor
               </button>
             )}
             <button type="button" className={view === "persona" ? "is-active" : ""} onClick={() => setView("persona")}>
@@ -460,6 +473,9 @@ function SettingsDialog({
                   </div>
                 )}
               </div>
+            )}
+            {view === "dashboards" && showDashboards && (
+              <LiveDashboardsPanel onRequestClose={onClose} />
             )}
             {view === "persona" && (
               <div className="settings-persona">
@@ -774,7 +790,12 @@ export function UserChat({
       getAuthToken,
       tableExport: TABLE_EXPORT,
       dashboardActions: {
-        publish: async (viewModel: unknown) => {
+        // A live frame passes its dashboardId: publish flips the stored record
+        // public (its /d/{id} page is already live), export/deploy produce
+        // Grafana panels that run the record's own SQL. Static frames keep
+        // the snapshot paths.
+        publish: async (viewModel: unknown, options?: DashboardActionOptions) => {
+          if (options?.dashboardId) return publishLiveDashboard(options.dashboardId);
           const response = await apiFetch(apiPath("/dashboard/publish"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -783,30 +804,10 @@ export function UserChat({
           if (!response.ok) throw new Error(`Publikasi gagal: ${response.status}`);
           return (await response.json()) as { url: string };
         },
-        exportGrafana: async (viewModel: unknown) => {
-          const response = await apiFetch(apiPath("/dashboard/export/grafana"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ viewModel }),
-          });
-          try {
-            return await parseJsonResponse<Record<string, unknown>>(response);
-          } catch (error) {
-            throw new Error(`Ekspor gagal: ${readErrorMessage(error)}`);
-          }
-        },
-        deployGrafana: async (viewModel: unknown) => {
-          const response = await apiFetch(apiPath("/dashboard/deploy/grafana"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ viewModel }),
-          });
-          try {
-            return await parseJsonResponse<{ url: string }>(response);
-          } catch (error) {
-            throw new Error(`Deploy gagal: ${readErrorMessage(error)}`);
-          }
-        },
+        exportGrafana: (viewModel: unknown, options?: DashboardActionOptions) =>
+          exportDashboardToGrafana(viewModel, options?.dashboardId),
+        deployGrafana: (viewModel: unknown, options?: DashboardActionOptions) =>
+          deployDashboardToGrafana(viewModel, options?.dashboardId),
         exportPdf: async (viewModel: unknown) => {
           const response = await apiFetch(apiPath("/dashboard/export/pdf"), {
             method: "POST",

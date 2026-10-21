@@ -5677,6 +5677,56 @@ body {
   text-align: center;
 }
 
+/* --- Settings > Dasbor (live dashboards) ------------------------------- */
+
+.settings-dashboards {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-dashboards__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-dashboards__row .source-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-dashboards__link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.settings-dashboards__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.settings-dashboards__danger {
+  color: var(--ob-error, #eb5757);
+}
+
+.settings-dashboards__prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.settings-dashboards__prompt textarea {
+  width: 100%;
+  resize: vertical;
+}
+
 /* --- Public live dashboard page (/d/<id>) ------------------------------ */
 
 .public-dashboard-root {
