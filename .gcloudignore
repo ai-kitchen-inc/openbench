@@ -120,3 +120,8 @@ examples/image-search-mcp/models/
 
 # ── Re-include files needed for the Docker build ──
 !examples/lci-mini/firebase-admin-sdk.json
+
+# Local artefacts never needed in the API image
+output/
+examples/general-chat/embed-demo/
+.venv-*/
