@@ -121,7 +121,8 @@ examples/image-search-mcp/models/
 # ── Re-include files needed for the Docker build ──
 !examples/lci-mini/firebase-admin-sdk.json
 
-# Local artefacts never needed in the API image
-output/
-examples/general-chat/embed-demo/
-.venv-*/
+# Local artefacts never needed in the API image. Anchored with a leading slash:
+# an unanchored `output/` also matches src/openbench/output/ and breaks the image.
+/output/
+/examples/general-chat/embed-demo/
+/.venv-*/
