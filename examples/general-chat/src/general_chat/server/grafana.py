@@ -57,6 +57,7 @@ def view_model_to_grafana(
     live: dict[str, Any] | None = None,
     queries: dict[str, Any] | None = None,
     refresh_seconds: int | None = None,
+    time_from: str | None = None,
 ) -> dict[str, Any]:
     """Convert a dashboard ViewModel to an importable Grafana dashboard model.
 
@@ -70,6 +71,8 @@ def view_model_to_grafana(
             ``{"sql", "maxRows"}`` dicts or plain strings). Panels bound to one
             of these keys become Postgres ``rawSql`` panels running that query.
         refresh_seconds: Dashboard auto-refresh interval; ``None``/``0`` = none.
+        time_from: Grafana ``time.from`` (relative like ``now-1y`` or an ISO
+            timestamp). Defaults to Grafana's usual ``now-6h``.
 
     Returns:
         A Grafana dashboard dict ready to serialize to JSON and import (or POST
@@ -122,7 +125,7 @@ def view_model_to_grafana(
         "schemaVersion": 39,
         "tags": ["openbench"],
         "templating": {"list": []},
-        "time": {"from": "now-6h", "to": "now"},
+        "time": {"from": time_from or "now-6h", "to": "now"},
         "timezone": "browser",
         "title": title,
         "uid": None,
@@ -183,18 +186,59 @@ def live_dashboard_to_grafana(record: Any, *, live: dict[str, Any] | None = None
     :func:`view_model_to_grafana`.
     """
     snapshot = getattr(record, "snapshot", None) or {}
+    datasets = snapshot.get("datasets") or {}
     view_model: dict[str, Any] = {
         "title": getattr(record, "title", "") or "Dashboard",
         "description": getattr(record, "description", "") or "",
-        "datasets": snapshot.get("datasets") or {},
+        "datasets": datasets,
         **{k: v for k, v in (getattr(record, "template", None) or {}).items() if k != "datasets"},
     }
+    # Live SQL panels re-query the DB, so Grafana's default 6-hour window
+    # would hide historical rows ("Data outside time range"). Start the range
+    # a day before the oldest date seen in the last snapshot, else a year back.
     return view_model_to_grafana(
         view_model,
         live=live,
         queries=getattr(record, "queries", None) or {},
         refresh_seconds=int(getattr(record, "refresh_interval_seconds", 0) or 0),
+        time_from=_earliest_temporal(_normalize_datasets(datasets)) or "now-1y",
     )
+
+
+def _earliest_temporal(datasets: dict[str, list[dict[str, Any]]]) -> str | None:
+    """ISO ``time.from`` one day before the oldest date-like string in the datasets."""
+    from datetime import datetime, timedelta
+
+    earliest: datetime | None = None
+    for rows in datasets.values():
+        for row in rows:
+            for value in row.values():
+                if not isinstance(value, str) or not _looks_like_date(value):
+                    continue
+                parsed = _parse_date(value)
+                if parsed is not None and (earliest is None or parsed < earliest):
+                    earliest = parsed
+    if earliest is None:
+        return None
+    start = earliest - timedelta(days=1)
+    return start.strftime("%Y-%m-%dT00:00:00.000Z")
+
+
+def _parse_date(text: str):
+    from datetime import datetime
+
+    cleaned = text.strip()
+    try:
+        parsed = datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=None)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m", "%Y/%m/%d", "%d-%m-%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(cleaned, fmt)
+        except ValueError:
+            continue
+    return None
 
 
 def partition_datasets(

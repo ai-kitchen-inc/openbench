@@ -564,6 +564,18 @@ class TestGrafanaLiveRecord(unittest.TestCase):
         self.assertEqual(bar["datasource"]["uid"], "appdata-postgres")
         self.assertEqual(model["refresh"], "30s")
 
+    def test_time_range_covers_snapshot_dates(self):
+        model = live_dashboard_to_grafana(_live_record())
+        self.assertEqual(model["time"], {"from": "2026-10-18T00:00:00.000Z", "to": "now"})
+        no_dates = _live_record(
+            snapshot={
+                "datasets": {"by_region": [{"region": "Jawa", "revenue": 1}]},
+                "viewModel": {},
+            }
+        )
+        self.assertEqual(live_dashboard_to_grafana(no_dates)["time"]["from"], "now-1y")
+        self.assertEqual(view_model_to_grafana(_VIEW_MODEL)["time"]["from"], "now-6h")
+
     def test_manual_interval_has_no_refresh(self):
         model = live_dashboard_to_grafana(_live_record(refresh_interval_seconds=0))
         self.assertNotIn("refresh", model)
