@@ -613,7 +613,7 @@ def _chart_panel(
         options["reduceOptions"] = {"calcs": ["lastNotNull"], "fields": "", "values": True}
 
     datasource, target = targets.item_target(item, records, [x_key, *y_keys])
-    return {
+    panel: dict[str, Any] = {
         "id": panel_id,
         "type": panel_type,
         "title": str(item.get("title") or "Chart"),
@@ -624,6 +624,18 @@ def _chart_panel(
         "fieldConfig": {"defaults": {"custom": {}}, "overrides": []},
         "options": options,
     }
+    if panel_type == "timeseries":
+        # The x column arrives as text from CSV, and from SQL whenever the
+        # query formats the date (TO_CHAR, strftime, DATE() on sqlite). Grafana
+        # then reports "Data is missing a time field"; converting the field is
+        # a no-op when it already is a time.
+        panel["transformations"] = [
+            {
+                "id": "convertFieldType",
+                "options": {"conversions": [{"targetField": x_key, "destinationType": "time"}]},
+            }
+        ]
+    return panel
 
 
 def _table_panel(

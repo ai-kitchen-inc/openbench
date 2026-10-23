@@ -539,6 +539,17 @@ class TestGrafanaLiveRecord(unittest.TestCase):
         panels = self._panels(live_dashboard_to_grafana(_live_record()))
         line = panels["Harian"]
         self.assertEqual(line["type"], "timeseries")
+        # Text dates (TO_CHAR / strftime / sqlite DATE()) must still drive the time axis.
+        self.assertEqual(
+            line["transformations"],
+            [
+                {
+                    "id": "convertFieldType",
+                    "options": {"conversions": [{"targetField": "day", "destinationType": "time"}]},
+                }
+            ],
+        )
+        self.assertNotIn("transformations", panels["Per wilayah"])
         self.assertIn(
             "FROM (SELECT day, SUM(revenue) AS revenue FROM sales GROUP BY day) AS q LIMIT 90",
             line["targets"][0]["rawSql"],
