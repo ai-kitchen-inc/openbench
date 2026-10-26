@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dark Dashboard Template</title>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    body {
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top, #1e344f 0%, #0b111c 45%, #05080d 100%);
+      color: #e8f1ff;
+      padding: 24px;
+    }
+
+    .dashboard {
+      max-width: 1500px;
+      margin: auto;
+      background: rgba(14, 24, 38, 0.95);
+      border: 1px solid #2c3f5a;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 25px 80px rgba(0, 0, 0, 0.55);
+    }
+
+    .top-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      border-bottom: 1px solid #263850;
+    }
+
+    .kpi-card {
+      min-height: 130px;
+      padding: 22px;
+      border-right: 1px solid #263850;
+      background: linear-gradient(180deg, #17283e, #101b2b);
+    }
+
+    .kpi-card:last-child {
+      border-right: none;
+    }
+
+    .kpi-title {
+      font-size: 14px;
+      color: #a8bbd4;
+      margin-bottom: 14px;
+    }
+
+    .kpi-value {
+      font-size: 36px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .kpi-desc {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #6f89aa;
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 2fr 1.15fr 1.25fr;
+      min-height: 620px;
+    }
+
+    .panel {
+      padding: 22px;
+      border-right: 1px solid #263850;
+      border-bottom: 1px solid #263850;
+      background: linear-gradient(180deg, #111e30, #0d1726);
+    }
+
+    .panel:last-child {
+      border-right: none;
+    }
+
+    .panel-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #dce9fb;
+      padding-bottom: 14px;
+      margin-bottom: 18px;
+      border-bottom: 1px solid #2b3e59;
+    }
+
+    .large-area {
+      height: 390px;
+      border-radius: 12px;
+      border: 1px solid #314761;
+      background:
+        linear-gradient(135deg, rgba(55, 86, 122, .22), rgba(17, 28, 44, .9));
+    }
+
+    .small-area {
+      height: 150px;
+      margin-top: 22px;
+      border-radius: 12px;
+      border: 1px solid #314761;
+      background:
+        linear-gradient(135deg, rgba(55, 86, 122, .18), rgba(17, 28, 44, .9));
+    }
+
+    .medium-area {
+      height: 260px;
+      border-radius: 12px;
+      border: 1px solid #314761;
+      background:
+        linear-gradient(135deg, rgba(55, 86, 122, .18), rgba(17, 28, 44, .9));
+    }
+
+    .list {
+      margin-top: 24px;
+    }
+
+    .list-item {
+      padding: 16px 0;
+      border-bottom: 1px solid #263850;
+      color: #c8d6e8;
+    }
+
+    .right-item {
+      display: grid;
+      grid-template-columns: 90px 1fr;
+      gap: 14px;
+      margin-bottom: 18px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid #263850;
+    }
+
+    .thumb {
+      height: 64px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #263c58, #142033);
+      border: 1px solid #314761;
+    }
+
+    .text-line {
+      height: 13px;
+      border-radius: 20px;
+      background: #314761;
+      margin-bottom: 10px;
+    }
+
+    .text-line.short {
+      width: 60%;
+    }
+
+    .footer-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0;
+    }
+
+    .footer-card {
+      min-height: 160px;
+      padding: 22px;
+      border-right: 1px solid #263850;
+      background: linear-gradient(180deg, #101b2b, #0b1422);
+    }
+
+    .footer-card:last-child {
+      border-right: none;
+    }
+
+    @media (max-width: 1100px) {
+      .top-grid,
+      .main-grid,
+      .footer-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .kpi-card,
+      .panel,
+      .footer-card {
+        border-right: none;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="dashboard">
+
+    <section class="top-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">KPI Title</div>
+        <div class="kpi-value">--</div>
+        <div class="kpi-desc">KPI description</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-title">KPI Title</div>
+        <div class="kpi-value">--</div>
+        <div class="kpi-desc">KPI description</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-title">KPI Title</div>
+        <div class="kpi-value">--</div>
+        <div class="kpi-desc">KPI description</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-title">KPI Title</div>
+        <div class="kpi-value">--</div>
+        <div class="kpi-desc">KPI description</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-title">KPI Title</div>
+        <div class="kpi-value">--</div>
+        <div class="kpi-desc">KPI description</div>
+      </div>
+    </section>
+
+    <section class="main-grid">
+
+      <div class="panel">
+        <div class="panel-title">Main Visualization Panel</div>
+        <div class="large-area"></div>
+        <div class="small-area"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Analysis Panel</div>
+        <div class="medium-area"></div>
+
+        <div class="list">
+          <div class="list-item">Insight item</div>
+          <div class="list-item">Insight item</div>
+          <div class="list-item">Insight item</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Summary Panel</div>
+
+        <div class="right-item">
+          <div class="thumb"></div>
+          <div>
+            <div class="text-line"></div>
+            <div class="text-line short"></div>
+          </div>
+        </div>
+
+        <div class="right-item">
+          <div class="thumb"></div>
+          <div>
+            <div class="text-line"></div>
+            <div class="text-line short"></div>
+          </div>
+        </div>
+
+        <div class="right-item">
+          <div class="thumb"></div>
+          <div>
+            <div class="text-line"></div>
+            <div class="text-line short"></div>
+          </div>
+        </div>
+
+        <div class="medium-area"></div>
+      </div>
+
+    </section>
+
+    <section class="footer-grid">
+      <div class="footer-card">
+        <div class="panel-title">Footer Panel</div>
+      </div>
+
+      <div class="footer-card">
+        <div class="panel-title">Footer Panel</div>
+      </div>
+
+      <div class="footer-card">
+        <div class="panel-title">Footer Panel</div>
+      </div>
+    </section>
+
+  </div>
+
+</body>
+</html>

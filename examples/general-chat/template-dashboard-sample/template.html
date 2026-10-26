@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{title}}</title>
+  <style>
+{{openbench_css}}
+    :root {
+      --ob-bg: #f0fdf4;
+      --ob-panel: #ffffff;
+      --ob-text: #132016;
+      --ob-text-secondary: #166534;
+      --ob-border: rgba(21, 128, 61, 0.22);
+      --ob-accent: #15803d;
+    }
+    body {
+      background:
+        linear-gradient(180deg, rgba(21, 128, 61, 0.12), transparent 260px),
+        var(--ob-bg);
+    }
+    .template-shell {
+      min-height: 100vh;
+    }
+    .template-ribbon {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 16px 0 0;
+      color: #15803d;
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+    .ob-dashboard {
+      padding-top: 16px;
+    }
+    .ob-dashboard__eyebrow {
+      color: #15803d;
+    }
+    .ob-kpi,
+    .ob-panel {
+      border-radius: 6px;
+      box-shadow: 0 1px 0 rgba(32, 29, 24, 0.04);
+    }
+    .ob-chart--bar rect,
+    .ob-chart--line polyline,
+    .ob-chart--line circle,
+    .ob-chart--scatter circle,
+    .slice-0 {
+      fill: #15803d;
+      stroke: #15803d;
+    }
+  </style>
+</head>
+<body data-custom-template="executive-html">
+  <div class="template-shell">
+    <div class="template-ribbon">Uploaded HTML template - Green executive dashboard</div>
+    {{body}}
+  </div>
+</body>
+</html>
