@@ -1,0 +1,521 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { ToastProvider } from "../../Toast";
+import { AgentsPage } from "./AgentsPage";
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+const AGENT = {
+  id: "analis-keuangan",
+  name: "Analis Keuangan",
+  description: "Laporan keuangan, anggaran, pajak.",
+  enabled: true,
+  persona: {},
+  model: "gemini-2.5-pro",
+  temperature: null,
+  skills: ["query-explorer"],
+  customSkillIds: [],
+  mcpServerIds: [],
+  useSources: true,
+  guardrails: "",
+  escalationAgentId: "",
+  confidenceThreshold: 0.5,
+  embedKey: "",
+  createdAt: "2026-08-24T00:00:00Z",
+  createdBy: "admin@x.co",
+  updatedAt: "2026-08-24T00:00:00Z",
+};
+
+const OPTIONS = {
+  models: ["gemini-2.5-flash", "gemini-2.5-pro"],
+  sdkSkills: ["export-excel", "query-explorer"],
+  customSkills: [],
+  escalationTargets: [{ id: "analis-keuangan", name: "Analis Keuangan" }],
+  personaTemplates: [
+    {
+      id: "strict",
+      name: "Ketat",
+      description: "Hanya menjawab dari sumber.",
+      soul: "SOUL ketat",
+      style: "STYLE ketat",
+      agents: "AGENTS ketat",
+      goal: "GOAL ketat",
+      sourceContextLabel: "Sumber",
+    },
+  ],
+  activeEmbedding: { provider: "google", model: "gemini-embedding-001", dimension: 1536 },
+  mcpServers: [
+    { id: "internal-openbench", name: "openbench", enabled: true, toolCount: 44 },
+  ],
+  sdkSkillWarnings: { "query-explorer": "Contoh peringatan skill." },
+  defaults: { confidenceThreshold: 0.5 },
+};
+
+describe("AgentsPage", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("lists agents from the API", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    expect(await screen.findByText("Analis Keuangan")).toBeDefined();
+    expect(screen.getByText(/1 agen terdaftar/)).toBeDefined();
+    expect(screen.getByText(/Laporan keuangan/)).toBeDefined();
+  });
+
+  it("creates an agent via POST", async () => {
+    const postBodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents" && init?.method === "POST") {
+          postBodies.push(JSON.parse(String(init.body)));
+          return jsonResponse(AGENT, 201);
+        }
+        if (url === "/admin/agents") return jsonResponse({ agents: [] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await screen.findByText(/Belum ada agen/);
+    await userEvent.type(screen.getByLabelText("Nama agen"), "Analis Keuangan");
+    await userEvent.type(
+      screen.getByLabelText("Deskripsi agen"),
+      "Laporan keuangan, anggaran, pajak.",
+    );
+    await userEvent.click(screen.getByText("Buat agen"));
+    await waitFor(() => expect(postBodies).toHaveLength(1));
+    expect(postBodies[0]).toEqual({
+      name: "Analis Keuangan",
+      description: "Laporan keuangan, anggaran, pajak.",
+    });
+  });
+
+  it("routes to Skill Kustom and the MCP import dialog from the agent detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") return jsonResponse({ sources: [] });
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    const onNavigate = vi.fn();
+    render(
+      <ToastProvider>
+        <AgentsPage onNavigate={onNavigate} />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    await userEvent.click(screen.getByRole("button", { name: "Buat skill" }));
+    expect(onNavigate).toHaveBeenCalledWith("skill");
+    await userEvent.click(screen.getByRole("button", { name: "Tambah server MCP" }));
+    expect(onNavigate).toHaveBeenCalledWith("mcp", { tambah: "1" });
+  });
+
+  it("hides the shortcut buttons when no navigation callback is given", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") return jsonResponse({ sources: [] });
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    expect(screen.queryByRole("button", { name: "Buat skill" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Tambah server MCP" })).toBeNull();
+  });
+
+  it("generates an embed key and shows iframe + curl snippets", async () => {
+    let embedKey = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan/embed-key" && init?.method === "POST") {
+          embedKey = "k-123456789";
+          return jsonResponse({ ...AGENT, embedKey });
+        }
+        if (url === "/admin/agents") return jsonResponse({ agents: [{ ...AGENT, embedKey }] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") return jsonResponse({ sources: [] });
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    await userEvent.click(screen.getByRole("button", { name: "Buat kunci embed" }));
+    // Hidden by default: the key never appears in any field or snippet.
+    const mask = "•".repeat("k-123456789".length);
+    expect(await screen.findByText(mask)).toBeInTheDocument();
+    expect(
+      screen.getByText(`${window.location.origin}/embed/analis-keuangan?key=${mask}`),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/curl -N -X POST .*\/agents\/analis-keuangan\/awp/)).toBeInTheDocument();
+    expect(screen.getByText(/<iframe/)).toBeInTheDocument();
+    expect(screen.queryByText(/k-123456789/)).not.toBeInTheDocument();
+    // Each field has its own eye; revealing one leaves the others masked.
+    await userEvent.click(screen.getByRole("button", { name: "Tampilkan kunci" }));
+    expect(screen.getByText("k-123456789")).toBeInTheDocument();
+    expect(
+      screen.getByText(`${window.location.origin}/embed/analis-keuangan?key=${mask}`),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Bearer k-123456789/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Tampilkan perintah curl" }));
+    expect(screen.getByText(/Bearer k-123456789/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Sembunyikan kunci" }));
+    expect(screen.getByText(mask)).toBeInTheDocument();
+    expect(screen.getByText(/Bearer k-123456789/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Tampilkan URL embed" }));
+    expect(
+      screen.getByText(`${window.location.origin}/embed/analis-keuangan?key=k-123456789`),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Tampilkan kode iframe" }));
+    expect(screen.getByText(/src="[^"]*key=k-123456789"/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Putar ulang kunci" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Nonaktifkan" })).toBeInTheDocument();
+  });
+
+  it("revokes the embed key after confirmation", async () => {
+    const deletes: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan/embed-key" && init?.method === "DELETE") {
+          deletes.push(url);
+          return jsonResponse({ ...AGENT, embedKey: "" });
+        }
+        if (url === "/admin/agents") {
+          return jsonResponse({ agents: [{ ...AGENT, embedKey: deletes.length ? "" : "k-1" }] });
+        }
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") return jsonResponse({ sources: [] });
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    await userEvent.click(screen.getByRole("button", { name: "Nonaktifkan" }));
+    await waitFor(() => expect(deletes).toHaveLength(1));
+    expect(await screen.findByRole("button", { name: "Buat kunci embed" })).toBeInTheDocument();
+  });
+
+  it("shows the full source manager (incl. upload) in the agent detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") {
+          return jsonResponse({
+            sources: [{ id: "src-1", name: "kebijakan.pdf", kind: "document" }],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    expect(await screen.findByText("kebijakan.pdf")).toBeDefined();
+    expect(screen.getByText("Unggah Dokumen")).toBeDefined();
+    expect(screen.getByText("Tempel Teks")).toBeDefined();
+    expect(screen.getByText("Tambah URL")).toBeDefined();
+    // Flagged skills carry a health dot with the warning as its label.
+    expect(
+      screen.getByLabelText(/Peringatan skill query-explorer: Contoh peringatan skill\./),
+    ).toBeDefined();
+  });
+
+  it("puts persona first in the detail and prefills from a template", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") {
+          return jsonResponse({ sources: [] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    const detail = (await screen.findByText("Persona")).closest(
+      ".panel-section__body",
+    ) as HTMLElement;
+    // Persona block renders before the Profil block.
+    const labels = Array.from(detail.querySelectorAll(".cap-row__label")).map(
+      (node) => node.textContent,
+    );
+    expect(labels.indexOf("Persona")).toBeLessThan(labels.indexOf("Profil"));
+
+    await userEvent.selectOptions(screen.getByLabelText("Templat persona"), "strict");
+    expect(screen.getByLabelText("SOUL — identitas agen")).toHaveValue("SOUL ketat");
+    expect(screen.getByLabelText("STYLE — gaya menjawab")).toHaveValue("STYLE ketat");
+    expect(screen.getByLabelText("AGENTS — aturan kerja")).toHaveValue("AGENTS ketat");
+    expect(screen.getByLabelText("Goal (opsional)")).toHaveValue("GOAL ketat");
+  });
+
+  it("saves an MCP server selection from the grid", async () => {
+    const putBodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan" && init?.method === "PUT") {
+          putBodies.push(JSON.parse(String(init.body)));
+          return jsonResponse({ ...AGENT, mcpServerIds: ["internal-openbench"] });
+        }
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") {
+          return jsonResponse({ sources: [] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    await userEvent.click(screen.getByText(/openbench \(44 tool\)/));
+    await userEvent.click(screen.getByText("Simpan agen"));
+    await waitFor(() =>
+      expect(putBodies).toEqual([{ mcpServerIds: ["internal-openbench"] }]),
+    );
+  });
+
+  it("switches an agent to the Hermes runtime with its own URL", async () => {
+    const putBodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan" && init?.method === "PUT") {
+          putBodies.push(JSON.parse(String(init.body)));
+          return jsonResponse({ ...AGENT, runtime: "hermes" });
+        }
+        if (url === "/admin/agents") return jsonResponse({ agents: [AGENT] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") {
+          return jsonResponse({ sources: [] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    expect(screen.queryByLabelText("URL Hermes")).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Runtime agen"), "hermes");
+    await userEvent.type(screen.getByLabelText("URL Hermes"), "http://hermes-a:8642");
+    expect(screen.getByText(/GENERAL_CHAT_HERMES_KEY_/)).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Simpan agen"));
+    await waitFor(() =>
+      expect(putBodies).toEqual([{ runtime: "hermes", hermesUrl: "http://hermes-a:8642" }]),
+    );
+  });
+
+  it("manages a URL-less Hermes agent: memory toggle, status, and start", async () => {
+    const managed = { ...AGENT, runtime: "hermes", hermesUrl: "", hermesMemory: false };
+    const putBodies: unknown[] = [];
+    let starts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan/hermes/start") {
+          starts += 1;
+          return jsonResponse({
+            runtime: "hermes",
+            managed: true,
+            available: true,
+            warnings: [],
+            running: true,
+            enabledToolsets: [],
+          });
+        }
+        if (url === "/admin/agents/analis-keuangan/hermes") {
+          return jsonResponse({
+            runtime: "hermes",
+            managed: true,
+            available: true,
+            warnings: ["Skill 'query-explorer' memakai tools.py dan tidak berjalan di Hermes."],
+            running: false,
+            enabledToolsets: [],
+          });
+        }
+        if (url === "/admin/agents/analis-keuangan" && init?.method === "PUT") {
+          putBodies.push(JSON.parse(String(init.body)));
+          return jsonResponse({ ...managed, hermesMemory: true });
+        }
+        if (url === "/admin/agents") return jsonResponse({ agents: [managed] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        if (url === "/admin/agents/analis-keuangan/sources") {
+          return jsonResponse({ sources: [] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    expect(await screen.findByText("Hermes: belum berjalan")).toBeInTheDocument();
+    expect(screen.getByText(/tidak berjalan di Hermes/)).toBeInTheDocument();
+    expect(screen.getByLabelText("URL Hermes")).toHaveAttribute(
+      "placeholder",
+      "Kosong = dikelola SSS",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Mulai Hermes" }));
+    expect(await screen.findByText("Hermes: berjalan")).toBeInTheDocument();
+    expect(starts).toBe(1);
+
+    await userEvent.click(screen.getByRole("switch", { name: "Memori Hermes" }));
+    await userEvent.click(screen.getByText("Simpan agen"));
+    await waitFor(() => expect(putBodies).toEqual([{ hermesMemory: true }]));
+  });
+
+  it("re-enables Hermes built-in toolsets and bundled skills", async () => {
+    const managed = { ...AGENT, runtime: "hermes", hermesUrl: "", hermesMemory: false };
+    const hermesOptions = {
+      ...OPTIONS,
+      hermesToolsets: [
+        { id: "web", label: "Pencarian & ekstraksi web", hostAccess: false },
+        { id: "browser", label: "Browser (Chromium headless)", hostAccess: true },
+        { id: "todo", label: "Daftar tugas", hostAccess: false },
+      ],
+      hermesHostAccess: false,
+    };
+    const putBodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/admin/agents/analis-keuangan/hermes") {
+          return jsonResponse({
+            runtime: "hermes",
+            managed: true,
+            available: true,
+            warnings: [],
+            running: false,
+          });
+        }
+        if (url === "/admin/agents/analis-keuangan" && init?.method === "PUT") {
+          putBodies.push(JSON.parse(String(init.body)));
+          return jsonResponse(managed);
+        }
+        if (url === "/admin/agents") return jsonResponse({ agents: [managed] });
+        if (url === "/admin/agents/options") return jsonResponse(hermesOptions);
+        if (url === "/admin/agents/analis-keuangan/sources") {
+          return jsonResponse({ sources: [] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await userEvent.click(await screen.findByText("Kelola"));
+    const browser = await screen.findByRole("checkbox", { name: /browser/ });
+    expect(browser).toBeDisabled();
+    expect(screen.getByText(/hanya tersedia pada backend docker/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /\(web\)/ }));
+    await userEvent.click(screen.getByRole("switch", { name: "Skill bawaan Hermes" }));
+    await userEvent.click(screen.getByText("Simpan agen"));
+    await waitFor(() =>
+      expect(putBodies).toEqual([{ hermesToolsets: ["web"], hermesBundledSkills: true }]),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Aktifkan semua bawaan" }));
+    await userEvent.click(screen.getByText("Simpan agen"));
+    await waitFor(() =>
+      expect(putBodies[1]).toEqual({ hermesToolsets: ["web", "todo"], hermesBundledSkills: true }),
+    );
+  });
+
+  it("requires a description before enabling create", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/admin/agents") return jsonResponse({ agents: [] });
+        if (url === "/admin/agents/options") return jsonResponse(OPTIONS);
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+    render(
+      <ToastProvider>
+        <AgentsPage />
+      </ToastProvider>,
+    );
+    await screen.findByText(/Belum ada agen/);
+    await userEvent.type(screen.getByLabelText("Nama agen"), "Analis");
+    expect((screen.getByText("Buat agen") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
