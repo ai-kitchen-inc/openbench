@@ -49,17 +49,17 @@ ruff check --fix src/ tests/
 mypy src/openbench/
 ```
 
-### TypeScript (packages/chat-ui/)
+### TypeScript (studio/chat-ui/)
 
 ```bash
 # Check linting + formatting (biome via npx)
-cd packages/chat-ui && npx @biomejs/biome check src/ tests/
+cd studio/chat-ui && npx @biomejs/biome check src/ tests/
 
 # Fix linting + formatting
-cd packages/chat-ui && npx @biomejs/biome check --write src/ tests/
+cd studio/chat-ui && npx @biomejs/biome check --write src/ tests/
 
 # Type checking (tsc) -- only on check
-cd packages/chat-ui && pnpm tsc --noEmit
+cd studio/chat-ui && pnpm tsc --noEmit
 ```
 
 3. Run Python and TypeScript checks in parallel when both are selected
