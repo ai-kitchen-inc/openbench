@@ -1,0 +1,38 @@
+# Community Google Drive MCP server (@isaacphi/mcp-gdrive) — gives the
+# agent gdrive_search / gdrive_read_file / gsheets_read tools.
+#
+# Seeded DISABLED by default (see mcp_bootstrap.DISABLED_BY_DEFAULT_CONFIGS):
+# it needs Google OAuth desktop-client credentials before it can run.
+#
+# ${VAR} placeholders are expanded from the backend process env at SEED
+# time (MCPConfig.from_file), not at tool-call time — set GDRIVE_MCP_*
+# in .env before seeding, or re-run seeding after setting them
+# (re-import preserves the enabled flag). Managed ${secret:...} refs are
+# docker-only and cannot be used for npx servers.
+#
+# First tool use triggers the package's own one-time browser OAuth; the
+# resulting credentials are cached in GDRIVE_MCP_CREDS_DIR (must be
+# writable). On Windows set GDRIVE_MCP_NPX=npx.cmd if plain npx fails.
+mcp:
+  policy:
+    allow_remote_servers: false
+    allowed_servers:
+      - google_drive
+    max_timeout_seconds: 60
+
+  servers:
+    google_drive:
+      transport: stdio
+      command: ${GDRIVE_MCP_NPX:-npx}
+      args:
+        - -y
+        - "@isaacphi/mcp-gdrive"
+      env:
+        CLIENT_ID: ${GDRIVE_MCP_CLIENT_ID}
+        CLIENT_SECRET: ${GDRIVE_MCP_CLIENT_SECRET}
+        GDRIVE_CREDS_DIR: ${GDRIVE_MCP_CREDS_DIR:-./.openbench/gdrive-mcp}
+      namespace: google_drive
+      allowed: true
+      discovery_timeout_seconds: 60
+      timeout_seconds: 60
+      retries: 0

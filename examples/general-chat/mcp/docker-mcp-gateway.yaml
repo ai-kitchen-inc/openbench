@@ -1,0 +1,20 @@
+mcp:
+  policy:
+    allow_remote_servers: false
+    allowed_servers:
+      - docker
+
+  servers:
+    docker:
+      transport: stdio
+      command: docker
+      args:
+        - mcp
+        - gateway
+        - run
+        - --profile
+        - "${OPENBENCH_MCP_DOCKER_PROFILE:-openbench}"
+      namespace: docker
+      allowed: true
+      discovery_timeout_seconds: 15
+      timeout_seconds: 3600

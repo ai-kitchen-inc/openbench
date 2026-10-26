@@ -1,0 +1,6 @@
+# Generated per-agent Hermes homes hold API keys, memories and transcripts.
+profiles/
+agents.yaml
+souls/
+skills/
+docker-compose.hermes.yml

@@ -1,0 +1,41 @@
+# One entry per general-chat agent that runs on Hermes. Render with:
+#   python -m general_chat.hermes_profile hermes/agents.yaml --out hermes/profiles
+# Copy to agents.yaml (git-ignored) and edit. Everything not listed is OFF.
+agents:
+  - id: analis-keuangan            # must equal the agent id in the Agen panel
+    port: 8651                     # unique per agent
+    model: gemini-3.5-flash
+    soul_file: souls/analis-keuangan.md   # or inline: soul: "..."
+    # Built-in Hermes toolsets. Default: none. Host-reaching ones (terminal,
+    # file, browser, code_execution, delegation, cronjob, computer_use) are
+    # refused unless allow_host_access: true.
+    toolsets: []
+    memory: false                  # Hermes memory tool + MEMORY.md; +~2.2k tokens/request when true
+    skills:                        # knowledge-only skill dirs (SKILL.md, no tools.py)
+      - skills/aturan-pajak
+    inline_skills: true            # default: SKILL.md text goes into SOUL.md;
+                                   # false = Hermes skills toolset (+~5.7k tokens/request)
+    mcp_servers:
+      - name: db
+        include_tools: [list_tables, query]   # allow-list; empty = no tools
+        config:
+          url: http://mcp-db:9000/mcp
+          headers:
+            Authorization: "Bearer ${secret:db.token}"   # -> ${DB_TOKEN} in this agent's .env
+
+  - id: riset-pasar
+    port: 8652
+    soul: |
+      Saya analis riset pasar. Jawab ringkas dalam Bahasa Indonesia dan
+      selalu sebutkan sumber.
+    toolsets: [web]
+
+  - id: tokopedia                  # search + scrape Tokopedia (see cases/tokopedia.md)
+    port: 8653
+    soul: |
+      Saya asisten riset belanja untuk Tokopedia. Saya mencari produk di
+      tokopedia.com dengan browser dan menampilkan nama, harga, rating,
+      terjual, toko, lokasi, dan tautan sebagai tabel. Saya tidak pernah
+      mengarang harga dan tidak login atau membeli apa pun.
+    toolsets: [web, browser]
+    allow_host_access: true        # browser is host-reaching; run it in its own container
