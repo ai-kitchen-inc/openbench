@@ -36,7 +36,7 @@ The `useChat` hook handles all events automatically. Text appears progressively 
 ## Package Location
 
 ```
-packages/chat-ui/
+studio/chat-ui/
 ├── src/
 │   ├── index.ts              # Public API exports
 │   ├── types.ts              # All TypeScript interfaces
@@ -167,7 +167,7 @@ See `docs/DESIGN_SYSTEM.md` for full design tokens.
 ## Build Commands
 
 ```bash
-cd packages/chat-ui
+cd studio/chat-ui
 pnpm install          # Install dependencies
 pnpm dev              # Dev server
 pnpm build            # Build library (ESM + .d.ts)

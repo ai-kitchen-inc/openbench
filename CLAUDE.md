@@ -19,6 +19,36 @@ Guidance for Claude Code when working with this repository.
 - Skip running tests after changes
 - Guess when you can ask the user
 
+## Deployment (general-chat)
+
+The `general-chat` example (product name **SSS**, Bahasa Indonesia UI) is
+deployed to GCP. **Read [deploy/DEPLOY.md](deploy/DEPLOY.md) before doing any
+deploy/infra work** — it is the single source of truth for the architecture
+(single origin: VM nginx/TLS at `chat.serebrum.co.id` → `openbench-api`
+container serving API + SPA via `GENERAL_CHAT_STATIC_DIR`; Firebase Google
+sign-in + `openbench_users` role table with an in-app admin panel) and the
+full resource inventory. All deploy actions go through
+[deploy/deploy.sh](deploy/deploy.sh):
+
+```bash
+bash deploy/deploy.sh all            # build API+SPA image + roll out VM + verify
+bash deploy/deploy.sh backend        # API+SPA image → Cloud Build → VM
+bash deploy/deploy.sh add-user EMAIL [ROLE]  # break-glass user upsert (psql); primary flow = admin panel
+bash deploy/deploy.sh remove-user EMAIL      # break-glass user delete (psql)
+bash deploy/deploy.sh verify         # probe the live deployment
+```
+
+Secrets live only in the VM's `.env.gcp` (never in the repo). `examples/lci-mini`
+uses Cloud Run and is unrelated.
+
+The `controlled-source-chat` example is deployed separately to **Cloud Run**
+(same GCP project, single container serving API + SPA, state in the
+`controlled_chat` database on the shared Cloud SQL instance, local
+username/password auth — no Firebase). **Read
+[examples/controlled-source-chat/DEPLOY.md](examples/controlled-source-chat/DEPLOY.md)
+before touching its deployment**; deploy via
+`bash examples/controlled-source-chat/deploy.sh all|image|run|verify`.
+
 ## Project Overview
 
 **OpenBench** - Open-source Python SDK for composable AI workflows.
@@ -140,7 +170,21 @@ openbench/
 │   │   ├── embeddings.py        # Embedding providers (Google, OpenAI)
 │   │   ├── planning.py          # TaskPlanner, TaskPlan (task decomposition)
 │   │   ├── memory.py            # PersistentMemory, SQLiteMemoryStore
+│   │   ├── persona.py           # Persona (SOUL/STYLE/AGENTS) — agent identity layer
+│   │   ├── skill.py             # Skill dataclass — reusable capability packages
+│   │   ├── skill_registry.py    # SkillRegistry (two-tier: SDK + project)
+│   │   ├── protocol/            # Agent communication protocol (multi-agent)
+│   │   │   ├── descriptor.py    # AgentDescriptor + AgentDirectory (lazy resolve)
+│   │   │   ├── envelope.py      # AgentRequest / AgentResponse handoff envelope
+│   │   │   ├── router.py        # route() — LLM dispatch over descriptors
+│   │   │   ├── escalation.py    # [[CONFIDENCE=x.y]] marker protocol
+│   │   │   └── agent.py         # ProtocolAgent — identity + escalation wrapper
 │   │   └── layer.py             # AgentFactory for creating agents
+│   ├── skills/                  # Bundled SDK skills (loaded by SkillRegistry.load_sdk_skills())
+│   │   ├── data-context-extractor/  # Read CSV/TSV/XLSX/JSON → normalized payload
+│   │   ├── data-visualization/      # Build ObChart-compatible chart dicts
+│   │   ├── export-excel/            # Single + multi-sheet .xlsx writer
+│   │   └── query-explorer/          # filter/sort/group/distinct/top-N over records
 │   ├── chat/                    # Chat layer (A2UI-powered)
 │   │   ├── engine.py            # ChatEngine (Chainable) -- main orchestrator
 │   │   ├── session.py           # ChatSession, ChatMessage, Attachment
@@ -174,7 +218,7 @@ openbench/
 │   │   ├── main.py              # CLI entry point
 │   │   └── commands/            # CLI command groups (init, data, agent, workflow, provider, models)
 │   └── utils/                   # Utilities
-├── packages/
+├── studio/
 │   └── chat-ui/                 # @openbench/chat-ui (React SDK)
 │       ├── src/
 │       │   ├── core/            # AG-UI transport, JSONL processor, Zustand store
@@ -186,8 +230,7 @@ openbench/
 ├── tests/                       # Test suite
 ├── examples/                    # Example workflows
 ├── docs/                        # Documentation
-├── pyproject.toml               # Python project configuration
-└── requirements.txt             # Dependencies
+└── pyproject.toml               # Python project configuration + dependency extras
 ```
 
 ## Core Abstractions
@@ -221,6 +264,125 @@ source = DataSourceRegistry.create('pdf', 'custom', path='./docs')
 workflow = Workflow(name="report", chain=data | intelligence | output, checkpoints=True)
 result = workflow.run({"project": "Q1 2026"})
 ```
+
+### Persona & Skill Layer
+
+**Persona** = WHO the agent is (identity). **Skill** = WHAT the agent can do
+(capability). They are orthogonal: one persona per agent, N skills per agent.
+See `.tmp/RFC-PERSONA-LAYER.md` for the full spec.
+
+#### Persona — agent identity from `soul/` directories
+
+A persona is composed from three markdown files in a `soul/` directory:
+
+```
+soul/
+├── SOUL.md     # Identity: "I am an LCA analyst. I prioritize accuracy over speed."
+├── STYLE.md    # Voice: "Reply in Indonesian. Use markdown tables for results."
+└── AGENTS.md   # Rules: "Always call xql_catalog first. Never fabricate data."
+```
+
+Load it via the `persona=` parameter on `BaseAgent`:
+
+```python
+from openbench.intelligence.base import BaseAgent
+from openbench.intelligence.persona import Persona
+
+# Option A: Path-based (most common)
+agent = BaseAgent(goal="Analyze data", persona="examples/lci-mini/soul/")
+
+# Option B: Explicit Persona object
+persona = Persona.from_dir("examples/lci-mini/soul/")
+agent = BaseAgent(goal="Analyze data", persona=persona)
+
+# Option C: Inline string (testing / dynamic composition)
+agent = BaseAgent(goal="Analyze data", persona=Persona.from_prompt("You are..."))
+```
+
+`persona=` takes precedence over `system_prompt=` — passing both logs a
+warning. `PersistentMemory` sessions replay the persona on resume.
+
+#### Agent Communication Protocol — multi-agent coordination
+
+`openbench.intelligence.protocol` coordinates *configured agent instances*
+(not classes — that is `PluginRegistry`'s job): register agents in an
+`AgentDirectory` with an `AgentDescriptor` (id/name/description) and a lazy
+`resolve()`; `route(message, directory, complete)` runs one small LLM call to
+pick the best specialist (any failure degrades to "use the default agent");
+`ProtocolAgent(inner, descriptor, fallback=...)` wraps an agent to add
+identity metadata (`agentId`/`agentName` on every result), a live
+"Agen: <name>" progress step, and low-confidence escalation via a trailing
+`[[CONFIDENCE=x.y]]` marker (`escalation.py`; missing marker = confident).
+general-chat builds on this: DB-backed agent profiles (`agent_store.py`),
+per-profile lazy builds (`server/agent_registry.py`), a per-session picker
+stored in `ChatSession.metadata["agentId"]`, and agent-scoped sources
+(`agent:<id>` owner prefix). Zero profiles = single-agent behavior,
+bit-identical to before.
+
+#### Skills — reusable capability packages
+
+A skill is a directory containing `SKILL.md`, optional `references/*.md`,
+and optional `tools.py`. The skill loader auto-discovers `FOO_SCHEMA` +
+`foo()` pairs in `tools.py` and registers them with the agent.
+
+Two tiers:
+
+1. **SDK skills** — bundled in `src/openbench/skills/`. Every project gets
+   them for free. Currently: `data-context-extractor`, `data-visualization`,
+   `export-excel`, `query-explorer`.
+2. **Project skills** — domain-specific, loaded from project paths.
+   Project names override SDK names of the same skill (project wins).
+
+```python
+agent = BaseAgent(
+    goal="Analyze uploaded spreadsheet",
+    persona="soul/",
+    skills=[
+        # SDK skills — bare names, resolved via load_sdk_skills()
+        "data-context-extractor",
+        "query-explorer",
+        "data-visualization",
+        "export-excel",
+        # Project skills — paths
+        "skills/my-domain-parser",
+        "skills/my-domain-rules",    # knowledge-only, no tools
+    ],
+)
+```
+
+Every `BaseAgent` owns its own `SkillRegistry` instance (not a global
+singleton) so two agents in the same process can have different skill sets.
+Skills can be **tool-bearing** (expose callables via `tools.py`) or
+**knowledge-only** (only contribute `SKILL.md` + references to the system
+prompt).
+
+#### Authoring a new SDK skill
+
+1. Create `src/openbench/skills/<skill-name>/` with `SKILL.md` (H1 =
+   skill name, first paragraph = description, required `## Triggers`
+   and `## Version` sections, optional `## Dependencies`).
+2. Add `references/*.md` for any domain knowledge the agent needs
+   alongside the description.
+3. If the skill has tools, add `tools.py` with callables + matching
+   `FOO_SCHEMA` dicts (uppercase variable → lowercase function, same
+   prefix). The loader discovers pairs by convention — no decorators.
+4. Add tests in `tests/test_sdk_skills.py` following the existing pattern
+   (discovery + per-tool correctness + ChartRenderer/FileRenderer contract
+   round-trip when applicable).
+
+#### Key rules
+
+- **Fail fast on init**: missing `SKILL.md`, malformed H1, and import
+  errors in `tools.py` raise at `BaseAgent` construction — not at tool
+  call time.
+- **Lazy optional deps**: SDK skills import pandas/openpyxl inside tool
+  functions (never at module top) so loading a skill never fails due to
+  missing extras. The error only surfaces on actual tool invocation.
+- **No tool name collisions**: `SkillRegistry.collect_tools()` raises
+  `ValueError` if two loaded skills expose the same tool name.
+- **Token budget is advisory**: `SkillRegistry.summary()` reports
+  `context_chars` — use it to watch budget, but enforcement is not yet
+  implemented (RFC Milestone 3).
 
 ## Build and Development
 
@@ -276,6 +438,10 @@ examples/
 │   ├── basic_chat_demo.py          # ChatEngine standalone
 │   ├── chat_with_rag_demo.py       # DataLayer | ChatLayer pipeline
 │   └── server.py                   # FastAPI AG-UI server
+├── lci-ignite-x/    # Full-stack LCA analysis app (Backend + React frontend)
+│   ├── server.py                  # Demo entry point (:8003)
+│   ├── frontend/                 # React app (@openbench/chat-ui)
+│   └── src/lci_ignite/          # Python package (data, intelligence, output)
 └── workflows/      # Complete E2E workflow examples
     ├── pdf/        # PDF processing workflows
     │   ├── pdf_google_adk_workflow.py
@@ -297,7 +463,8 @@ examples/
 Use newer model names (minimum 2.5 series):
 - `gemini-2.5-flash` - Fast, cost-effective
 - `gemini-2.5-pro` - Balanced performance
-- `gemini-3-flash-preview` - Latest preview
+- `gemini-3-flash-preview` - Gen-3 preview
+- `gemini-3.5-flash` - Latest fast model (general-chat default)
 
 Avoid outdated: `gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-2.0-flash-exp`
 
@@ -418,7 +585,15 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/intelligence/embeddings.py` | Embedding providers (Google, OpenAI) |
 | `src/openbench/intelligence/planning.py` | TaskPlanner, TaskPlan (task decomposition) |
 | `src/openbench/intelligence/memory.py` | PersistentMemory, SQLiteMemoryStore (persistent conversation) |
+| `src/openbench/intelligence/persona.py` | Persona (SOUL/STYLE/AGENTS composer) — agent identity layer |
+| `src/openbench/intelligence/skill.py` | Skill dataclass — SKILL.md + references/ + tools.py loader |
+| `src/openbench/intelligence/skill_registry.py` | SkillRegistry — two-tier SDK + project skill resolution |
+| `src/openbench/intelligence/protocol/` | Agent communication protocol: AgentDirectory, LLM router, confidence-marker escalation, ProtocolAgent wrapper |
 | `src/openbench/intelligence/layer.py` | AgentFactory for creating agents |
+| `src/openbench/skills/data-context-extractor/` | SDK skill: CSV/TSV/XLSX/JSON reader with schema summary |
+| `src/openbench/skills/data-visualization/` | SDK skill: ObChart-compatible chart dict builders |
+| `src/openbench/skills/export-excel/` | SDK skill: single + multi-sheet .xlsx writer |
+| `src/openbench/skills/query-explorer/` | SDK skill: filter / sort / group / distinct / top-N over records |
 | `src/openbench/data/sources/pdf.py` | PDF data source with chunking support |
 | `src/openbench/data/sources/grounded_search.py` | Grounded search (Tavily, Google, DuckDuckGo) |
 | `src/openbench/data/sources/langextract.py` | Structured entity extraction (Google LangExtract) |
@@ -434,11 +609,11 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `src/openbench/chat/renderers/base.py` | ContentRenderer ABC + ContentRendererRegistry |
 | `src/openbench/chat/transport/agui.py` | AGUIHandler -- AG-UI SSE event streaming |
 | `src/openbench/chat/transport/agui_actions.py` | AGUIActionHandler -- REST for A2UI actions |
-| `packages/chat-ui/src/index.ts` | @openbench/chat-ui public API exports |
-| `packages/chat-ui/src/types.ts` | TypeScript interfaces for chat messages, A2UI, etc. |
-| `packages/chat-ui/src/a2ui/surface-renderer.tsx` | A2UI adjacency list to React tree |
-| `packages/chat-ui/src/a2ui/catalog.ts` | Component registry (standard + custom) |
-| `packages/chat-ui/src/core/chat-store.ts` | Zustand store (sessions, messages, streaming) |
+| `studio/chat-ui/src/index.ts` | @openbench/chat-ui public API exports |
+| `studio/chat-ui/src/types.ts` | TypeScript interfaces for chat messages, A2UI, etc. |
+| `studio/chat-ui/src/a2ui/surface-renderer.tsx` | A2UI adjacency list to React tree |
+| `studio/chat-ui/src/a2ui/catalog.ts` | Component registry (standard + custom) |
+| `studio/chat-ui/src/core/chat-store.ts` | Zustand store (sessions, messages, streaming) |
 
 ## Slash Commands
 
@@ -450,7 +625,11 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 | `/check` | Run all quality checks (lint + type check + tests) |
 | `/coverage` | Run tests with coverage report |
 
-## Skills (Auto-Invoked)
+## Documentation Skills (Claude Code Auto-Invoked)
+
+These are **Claude Code meta-skills** (authoring guidance for contributors)
+— distinct from the OpenBench **Skill Layer** (runtime agent capabilities,
+see `## Core Abstractions → Persona & Skill Layer` above).
 
 | Skill | Triggers On |
 |-------|-------------|
@@ -485,10 +664,10 @@ DataSourceRegistry.register('custom', 'my-impl', MyDataSource)
 
 Full design tokens: [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)
 
-## Frontend Build (packages/chat-ui)
+## Frontend Build (studio/chat-ui)
 
 ```bash
-cd packages/chat-ui
+cd studio/chat-ui
 pnpm install              # Install dependencies
 pnpm dev                  # Dev server
 pnpm build                # Build library (ESM + .d.ts)
@@ -504,3 +683,42 @@ pnpm vitest               # Run tests
 - [docs/CHAT_UI_ARCHITECTURE.md](docs/CHAT_UI_ARCHITECTURE.md) - Chat UI SDK architecture
 - [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) - Design tokens and visual language
 - [examples/README.md](examples/README.md) - Example usage patterns
+
+<!-- code-review-graph MCP tools -->
+## MCP Tools: code-review-graph
+
+**IMPORTANT: This project has a knowledge graph. ALWAYS use the
+code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
+the codebase.** The graph is faster, cheaper (fewer tokens), and gives
+you structural context (callers, dependents, test coverage) that file
+scanning cannot.
+
+### When to use graph tools FIRST
+
+- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
+- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
+- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
+- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
+- **Architecture questions**: `get_architecture_overview` + `list_communities`
+
+Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+
+### Key Tools
+
+| Tool | Use when |
+|------|----------|
+| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
+| `get_review_context` | Need source snippets for review — token-efficient |
+| `get_impact_radius` | Understanding blast radius of a change |
+| `get_affected_flows` | Finding which execution paths are impacted |
+| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
+| `semantic_search_nodes` | Finding functions/classes by name or keyword |
+| `get_architecture_overview` | Understanding high-level codebase structure |
+| `refactor_tool` | Planning renames, finding dead code |
+
+### Workflow
+
+1. The graph auto-updates on file changes (via hooks).
+2. Use `detect_changes` for code review.
+3. Use `get_affected_flows` to understand impact.
+4. Use `query_graph` pattern="tests_for" to check coverage.

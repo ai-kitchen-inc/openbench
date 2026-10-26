@@ -69,6 +69,12 @@ python examples/core/orchestration_demo.py           # L1/L2 two-level compositi
 python examples/workflows/reports/sustainability_report.py  # Complete E2E workflow
 ```
 
+Full-stack application example with backend + React frontend:
+
+```bash
+openbench demo run lci-ignite-x    # Auto-installs deps, builds chat-ui, starts :8003 + :5173
+```
+
 ---
 
 ## Core Concepts
