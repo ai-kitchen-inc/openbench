@@ -1,0 +1,50 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "dev.openbench/sam-segmentation-mcp",
+  "title": "OpenBench SAM 3 Concept Counting MCP",
+  "description": "Local Ultralytics SAM 3 concept segmentation for object-specific counting.",
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "openbench/sam-segmentation-mcp:cpu",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SAM3_MODEL_PATH",
+          "description": "Path to mounted SAM 3 weights. Defaults to /models/sam3.pt.",
+          "isRequired": true
+        },
+        {
+          "name": "SAM3_DEVICE",
+          "description": "cpu or cuda.",
+          "isRequired": false
+        },
+        {
+          "name": "SAM3_CONF",
+          "description": "Default SAM 3 confidence threshold.",
+          "isRequired": false
+        },
+        {
+          "name": "MAX_IMAGE_BYTES",
+          "description": "Maximum image payload size in bytes.",
+          "isRequired": false
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "dev.openbench": {
+        "tools": ["count_objects_with_sam3", "service_info"],
+        "permissions": {
+          "filesystem": {
+            "read": ["/general-chat/uploads", "/data", "/input", "/models/sam3.pt"]
+          }
+        }
+      }
+    }
+  }
+}
