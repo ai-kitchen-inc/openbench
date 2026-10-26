@@ -110,6 +110,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.gcp
 .venv
 env/
 venv/
@@ -140,6 +141,17 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# ruff linter cache
+.ruff_cache/
+
+# Local scratch / scratch upload artifacts
+.tmp/
+
+# Local agent / tooling metadata
+.agents/
+.codex/
+.code-review-graph/
 
 # ==========================================
 # Node.js
@@ -381,9 +393,12 @@ workflow_state/
 # Data directories
 data/
 !src/openbench/data/
+!examples/*/src/*/data/
 datasets/
 uploads/
 downloads/
+profiles/
+.firebase/
 
 # Generated outputs
 outputs/
@@ -427,6 +442,12 @@ credentials/
 *.pfx
 .secrets
 service-account*.json
+firebase-adminsdk*.json
+firebase-admin-sdk*.json
+**/firebase-admin-sdk.json
+client_secret*.json
+google-oauth-client-secret*.json
+**/google-oauth-client-secret.json
 
 # Configuration overrides
 config.local.*
@@ -465,6 +486,21 @@ docs/.vitepress/cache/
 # Docker
 # ==========================================
 .dockerignore
+!examples/sam-segmentation-mcp/.dockerignore
+# The root .dockerignore decides what `COPY . /app` puts into the general-chat
+# image. Untracked it would be missing from a fresh clone, and that build would
+# copy uploads/, .venv, node_modules and *.db straight into the image.
+!/.dockerignore
+# Root-level Dockerfile is a transient artifact from examples/*/deploy.sh
+# (copied during gcloud run deploy --source . and meant to be removed after).
+# Anchored with leading slash so nested Dockerfiles (examples/*/Dockerfile) stay tracked.
+/Dockerfile
+# NOTE: Dockerfile.general-chat and cloudbuild.general-chat.yaml are NOT
+# transient — they are the permanent build definition for the deployed SSS
+# image and are tracked on purpose. They were once ignored here by association
+# with the rule above; the result was that a production-critical fix (the
+# `tabular` extra) lived on one laptop and no fresh clone could rebuild the
+# running image. Do not re-add them.
 
 # ==========================================
 # Terraform
@@ -491,3 +527,41 @@ override.tf.json
 *~
 .temp
 uv.lock
+
+# LCI Ignite-X
+examples/lci-ignite-x/docs/
+examples/lci-ignite-x/src/lci_ignite/data/mapping_profiles/*.json
+examples/lci-ignite-x/tests/fixtures/*.xlsx
+examples/lci-ignite-x/uploads/
+examples/lci-ignite-x/.firebase/
+examples/lci-ignite-x/frontend/dist/
+
+# LCI Mini storage + build artifacts
+examples/lci-mini/uploads/
+examples/lci-mini/downloads/
+examples/lci-mini/profiles/
+examples/lci-mini/.openbench/
+examples/general-chat/.openbench/
+examples/general-chat/env.cloudrun.yaml
+scripts/nginx-openbench-api.conf
+examples/lci-mini/lci_mini_memory.db
+examples/lci-mini/frontend/dist/
+
+# Local AI assistant artifacts
+.claude/worktrees/
+.claude/settings.local.json
+.codex/
+.agents/
+prompt-debug/
+# Added by code-review-graph
+.code-review-graph/
+
+# MCP settings
+tools.yml
+.pnpm-store/
+
+# Marketing brochure (local only)
+brochure/
+
+# Local venv for the vendored db_server MCP fork (LIVE_DASHBOARD.md)
+.venv-*/

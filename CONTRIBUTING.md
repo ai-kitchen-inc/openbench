@@ -69,46 +69,52 @@ git remote add upstream https://github.com/ai-kitchen-inc/openbench.git
 
 #### For Python Development (Intelligence Layer, Data Layer):
 
+We develop against **Python 3.12** (the package supports 3.10+).
+
 ```bash
-# Create virtual environment
+# Option A: conda (recommended)
+conda create -n py312 python=3.12 && conda activate py312
+
+# Option B: venv
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
+# Install the package with all extras (editable)
+pip install -e ".[all]"
 
-# Install pre-commit hooks
-pre-commit install
+# Install git hooks (lefthook runs ruff + biome on staged files)
+npx lefthook install
 
-# Run tests
+# Run the test suite
 pytest
 ```
 
-#### For JavaScript/TypeScript Development (Frontend, API):
+#### Running checks locally
+
+The CI in [.github/workflows/ci.yml](.github/workflows/ci.yml) runs exactly
+these. Run them before opening a PR:
 
 ```bash
-# Install dependencies
-npm install
-
-# Run development server
-npm run dev
-
-# Run tests
-npm test
-
-# Run linter
-npm run lint
+ruff check src/ tests/            # lint
+ruff format --check src/ tests/   # formatting
+mypy src/openbench                # type check
+pytest tests/ --cov=openbench     # tests + coverage
 ```
 
-#### Using Docker:
+`ruff check --fix` and `ruff format` apply autofixes.
+
+#### For TypeScript Development (studio/chat-ui):
+
+The frontend SDK uses **pnpm** and **Biome**.
 
 ```bash
-# Build and run all services
-docker-compose up
-
-# Run tests in container
-docker-compose run --rm app pytest
+cd studio/chat-ui
+pnpm install        # Install dependencies
+pnpm dev            # Dev server
+pnpm test:run       # Run tests
+pnpm typecheck      # tsc --noEmit
+pnpm lint           # Biome
+pnpm build          # Build library (ESM + .d.ts)
 ```
 
 ## 🤝 How to Contribute
@@ -213,21 +219,20 @@ git checkout -b fix/bug-description
 
 ```bash
 # Run all tests
-npm test         # JavaScript
-pytest           # Python
+pytest                              # Python
+cd studio/chat-ui && pnpm test:run  # TypeScript
 
 # Run specific tests
-npm test -- path/to/test
 pytest tests/test_specific.py
+cd studio/chat-ui && pnpm test path/to/test
 
 # Check code coverage
-npm run test:coverage
 pytest --cov=openbench
 
 # Lint your code
-npm run lint
-flake8 .
-black --check .
+ruff check src/ tests/
+ruff format --check src/ tests/
+mypy src/openbench
 ```
 
 ### 4. Commit Your Changes
@@ -260,6 +265,19 @@ git commit -m "fix(intelligence): resolve agent timeout issue #123"
 git commit -m "docs(api): update REST API examples"
 ```
 
+**Project commit rules:**
+- Do **not** add an AI/tool watermark (no `Co-Authored-By` trailer for tools).
+- Keep commits focused and atomic; the subject line stays imperative and ≤ 72 chars.
+
+**Sign-off (DCO):** Contributions are accepted under the
+[Developer Certificate of Origin](https://developercertificate.org/). Add a
+sign-off to each commit to certify you wrote the code or have the right to
+submit it:
+
+```bash
+git commit -s -m "feat(core): ..."
+```
+
 ### 5. Push to Your Fork
 
 ```bash
@@ -271,8 +289,8 @@ git push origin feature/your-feature-name
 ### Python
 
 - **Style Guide**: [PEP 8](https://peps.python.org/pep-0008/)
-- **Formatter**: Black (line length: 100)
-- **Linter**: Flake8, pylint
+- **Formatter & Linter**: [Ruff](https://docs.astral.sh/ruff/) (line length: 100) — single tool for lint + format
+- **Type Checker**: mypy (`mypy src/openbench`)
 - **Type Hints**: Use type annotations (PEP 484)
 - **Docstrings**: Google-style docstrings
 
@@ -302,9 +320,8 @@ def process_documents(
 
 ### JavaScript/TypeScript
 
-- **Style Guide**: [Airbnb JavaScript Style Guide](https://github.com/airbnb/javascript)
-- **Formatter**: Prettier
-- **Linter**: ESLint
+- **Formatter & Linter**: [Biome](https://biomejs.dev/) (`pnpm lint`, `pnpm format`)
+- **Package manager**: pnpm
 - **TypeScript**: Strict mode enabled
 
 ```typescript
