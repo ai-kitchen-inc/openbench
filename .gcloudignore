@@ -1,0 +1,128 @@
+# gcloud build context ignore (mirrors .gitignore but allows files needed in Cloud Build context).
+# Without this file, gcloud falls back to .gitignore — which excludes baked-in service account
+# credentials. This file pulls those back in.
+
+# ── Inherited exclusions (mirror of .gitignore essentials) ──
+.git/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+ENV/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Node / frontend
+node_modules/
+**/node_modules/
+**/.next/
+**/dist/
+**/.cache/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Env (keep .env.example / .env.example.gcp)
+.env
+**/.env
+.env.local
+.env.*.local
+# Real secrets: a local .env.gcp (GOOGLE_API_KEY, GENERAL_CHAT_DATABASE_URL
+# with the Cloud SQL password) is untracked but was still being tarred into
+# the Cloud Build staging bucket. The build never needs it — the VM's own
+# .env.gcp is what runs the containers.
+.env.gcp
+**/.env.gcp
+
+# Misc
+.tmp/
+*.tmp
+.code-review-graph/
+.firebase/
+*.bak
+*.orig
+*.stackdump
+.mypy_cache/
+prompt-debug/
+general_chat_memory.db
+
+# Repo-root mcp/ (standalone MCP server projects, ~0.5 MB, no model weights)
+# MUST ship in the general-chat API image: the bundled aggregate_data /
+# dashboard_generator stdio configs (examples/general-chat/mcp/*.yaml) run
+# with cwd ../../mcp/<name>, i.e. /app/mcp/<name> in the container, and the
+# VM prune-recovery recipe docker-cp's build contexts out of /app/mcp/.
+# Do NOT re-add a blanket /mcp/ ignore here (it broke prod discovery with
+# Errno 2), and never put model weights in this tree — mount them from
+# /app-data on the VM instead.
+#
+# The weight/dataset subdirs below ARE excluded (~1.17 GB, 94% of the upload).
+# They are local-dev only: image_search and sam_segmentation run as *sibling*
+# containers (openbench/image-search-mcp:cpu, openbench/sam-segmentation-mcp:cpu
+# — see examples/general-chat/mcp/{image-search,sam-segmentation}-docker.yaml).
+# SAM's weights are baked into its own image at /models/sam3.pt; image_search
+# bind-mounts ${IMAGE_SEARCH_MCP_DATA_PATH}/${_MODELS_PATH} = /app-data/... on
+# the VM (docker-compose.gce.yml). Nothing ever reads /app/mcp/*/{data,models}.
+mcp/*/data/
+mcp/*/models/
+mcp/*/weights/
+mcp/*/.venv/
+
+# Sphinx output (~34 MB) — the `build/` rule above does not match `_build`.
+docs/_build/
+
+# Build artifacts (paths that should NOT enter image)
+examples/lci-mini/uploads/
+examples/lci-mini/downloads/
+examples/lci-mini/profiles/
+examples/lci-mini/.openbench/
+examples/lci-mini/lci_mini_memory.db
+examples/lci-mini/frontend/dist/
+examples/lci-ignite-x/uploads/
+examples/lci-ignite-x/.firebase/
+examples/lci-ignite-x/frontend/dist/
+examples/general-chat/uploads/
+examples/general-chat/downloads/
+examples/general-chat/profiles/
+examples/general-chat/.openbench/
+examples/general-chat/.firebase/
+examples/general-chat/general_chat_memory.db
+examples/general-chat/frontend/dist/
+examples/controlled-source-chat/uploads/
+examples/controlled-source-chat/downloads/
+examples/controlled-source-chat/profiles/
+examples/controlled-source-chat/.openbench/
+examples/controlled-source-chat/controlled_source_chat_memory.db
+examples/controlled-source-chat/frontend/dist/
+# Legacy local-dev location (now empty; the real tree is repo-root mcp/, which
+# is covered by the mcp/*/{data,models,weights,.venv}/ rules above). Kept
+# because examples/general-chat/.env.example still points IMAGE_SEARCH_MCP_*
+# here for local runs.
+examples/image-search-mcp/.venv/
+examples/image-search-mcp/data/
+examples/image-search-mcp/models/
+
+# ── Re-include files needed for the Docker build ──
+!examples/lci-mini/firebase-admin-sdk.json
+
+# Local artefacts never needed in the API image. Anchored with a leading slash:
+# an unanchored `output/` also matches src/openbench/output/ and breaks the image.
+/output/
+/examples/general-chat/embed-demo/
+/.venv-*/
