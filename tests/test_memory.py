@@ -6,12 +6,108 @@ import os
 import tempfile
 import unittest
 
+from openbench.intelligence.agent_memory import AgentMemory
 from openbench.intelligence.base import Message, MessageRole
 from openbench.intelligence.memory import (
     MemoryStore,
     PersistentMemory,
     SQLiteMemoryStore,
 )
+
+
+class TestAgentMemoryWindow(unittest.TestCase):
+    """Pairing-safe history token window in AgentMemory.get_messages()."""
+
+    def test_budget_none_returns_full_history(self):
+        m = AgentMemory()
+        m.add_system("sys")
+        for i in range(4):
+            m.add_user(f"u{i}")
+            m.add_assistant(f"a{i}")
+        self.assertEqual(m.get_messages(token_budget=None), m.get_messages())
+
+    def test_window_keeps_system_and_drops_oldest(self):
+        m = AgentMemory()
+        m.add_system("system prompt")
+        m.add_user("oldest " + "x" * 4000)  # ~1000 tokens, should be dropped
+        m.add_user("recent question")
+        m.add_assistant("recent answer")
+
+        windowed = m.get_messages(token_budget=100)
+        self.assertEqual(windowed[0]["role"], "system")
+        self.assertLess(len(windowed), len(m.get_messages()))
+        # The big oldest message is gone; the recent turn survives.
+        contents = [msg["content"] for msg in windowed]
+        self.assertNotIn("oldest " + "x" * 4000, contents)
+        self.assertIn("recent answer", contents)
+
+    def test_window_never_starts_with_orphan_tool_result(self):
+        m = AgentMemory()
+        m.add_system("sys")
+        m.add_user("old question")
+        # A large assistant tool-call turn that the budget will exclude...
+        m.add_assistant("", tool_calls=[{"id": "c0", "name": "calc", "arguments": {"q": "x" * 1200}}])
+        m.add_tool_result("c0", "calc", "result data")  # ...leaving this as an orphan
+        m.add_user("recent question")
+        m.add_assistant("recent answer")
+
+        windowed = m.get_messages(token_budget=50)
+        # System stays first; the first non-system message must NOT be an orphan
+        # tool result (Gemini rejects a function_response without its call).
+        self.assertEqual(windowed[0]["role"], "system")
+        self.assertNotEqual(windowed[1]["role"], "tool")
+        # The dangling tool result was trimmed; the recent turn is intact.
+        self.assertEqual(windowed[-1]["content"], "recent answer")
+
+    def test_window_returns_dicts_compatible_with_full(self):
+        m = AgentMemory()
+        m.add_system("sys")
+        m.add_user("hello")
+        m.add_assistant("hi")
+        windowed = m.get_messages(token_budget=10_000)
+        # Generous budget -> same as full history.
+        self.assertEqual(windowed, m.get_messages())
+
+    def test_window_reanchors_leading_function_call_on_user_turn(self):
+        # Regression: a tight budget can strand the window on an assistant
+        # function-call turn after its user message fell outside — Gemini
+        # rejects that with 400 INVALID_ARGUMENT ("function call turn must
+        # come immediately after a user turn or a function response turn").
+        m = AgentMemory()
+        m.add_system("sys")
+        m.add_user("build a dashboard")
+        # A large early tool exchange the budget will exclude.
+        m.add_assistant("", tool_calls=[{"id": "c0", "name": "extract", "arguments": {}}])
+        m.add_tool_result("c0", "extract", "x" * 8000)
+        # Recent tool-call turns that fit the budget.
+        m.add_assistant("", tool_calls=[{"id": "c1", "name": "generate", "arguments": {}}])
+        m.add_tool_result("c1", "generate", "result " + "y" * 400)
+        m.add_assistant("", tool_calls=[{"id": "c2", "name": "generate", "arguments": {}}])
+        m.add_tool_result("c2", "generate", "result " + "z" * 400)
+
+        windowed = m.get_messages(token_budget=400)
+        self.assertEqual(windowed[0]["role"], "system")
+        # The window must not open on an assistant function-call turn: the
+        # most recent user message is re-inserted as an anchor.
+        self.assertEqual(windowed[1]["role"], "user")
+        self.assertEqual(windowed[1]["content"], "build a dashboard")
+        # The recent tool exchange is intact and correctly ordered.
+        roles = [msg["role"] for msg in windowed[2:]]
+        self.assertEqual(roles[:2], ["assistant", "tool"])
+
+    def test_window_without_any_user_message_keeps_suffix(self):
+        # No user message exists at all (degenerate) — window falls back to
+        # the plain suffix instead of crashing.
+        m = AgentMemory()
+        m.add_system("sys")
+        m.add_assistant("", tool_calls=[{"id": "c0", "name": "calc", "arguments": {}}])
+        m.add_tool_result("c0", "calc", "x" * 4000)
+        m.add_assistant("", tool_calls=[{"id": "c1", "name": "calc", "arguments": {}}])
+        m.add_tool_result("c1", "calc", "small")
+
+        windowed = m.get_messages(token_budget=50)
+        self.assertEqual(windowed[0]["role"], "system")
+        self.assertEqual(windowed[1]["role"], "assistant")
 
 
 class TestSQLiteMemoryStore(unittest.TestCase):
@@ -138,6 +234,59 @@ class TestSQLiteMemoryStore(unittest.TestCase):
         """Test SQLiteMemoryStore is a MemoryStore."""
         self.assertIsInstance(self.store, MemoryStore)
 
+    def test_delete_tail_removes_most_recent_messages(self):
+        """delete_tail should remove the last N rows for a session."""
+        msgs = [
+            Message(role=MessageRole.USER, content="m0"),
+            Message(role=MessageRole.ASSISTANT, content="m1"),
+            Message(role=MessageRole.USER, content="m2"),
+            Message(role=MessageRole.ASSISTANT, content="m3"),
+        ]
+        self.store.save("tail-test", msgs)
+
+        self.store.delete_tail("tail-test", 2)
+
+        remaining = self.store.load("tail-test")
+        self.assertEqual([m.content for m in remaining], ["m0", "m1"])
+
+    def test_delete_tail_count_zero_is_noop(self):
+        """delete_tail with count <= 0 should not change anything."""
+        self.store.save(
+            "noop",
+            [
+                Message(role=MessageRole.USER, content="keep"),
+                Message(role=MessageRole.ASSISTANT, content="also keep"),
+            ],
+        )
+        self.store.delete_tail("noop", 0)
+        self.store.delete_tail("noop", -5)
+        self.assertEqual(len(self.store.load("noop")), 2)
+
+    def test_delete_tail_count_exceeds_length(self):
+        """delete_tail with count > length should empty the session."""
+        self.store.save(
+            "overflow",
+            [Message(role=MessageRole.USER, content=f"m{i}") for i in range(3)],
+        )
+        self.store.delete_tail("overflow", 99)
+        self.assertEqual(self.store.load("overflow"), [])
+
+    def test_delete_tail_does_not_affect_other_sessions(self):
+        """delete_tail is scoped to the given session_id."""
+        self.store.save(
+            "session-a",
+            [Message(role=MessageRole.USER, content=f"a{i}") for i in range(3)],
+        )
+        self.store.save(
+            "session-b",
+            [Message(role=MessageRole.USER, content=f"b{i}") for i in range(3)],
+        )
+
+        self.store.delete_tail("session-a", 2)
+
+        self.assertEqual(len(self.store.load("session-a")), 1)
+        self.assertEqual(len(self.store.load("session-b")), 3)
+
 
 class TestPersistentMemory(unittest.TestCase):
     """Test PersistentMemory (AgentMemory with persistence)."""
@@ -245,6 +394,75 @@ class TestPersistentMemory(unittest.TestCase):
         self.assertEqual(loaded[0].role, MessageRole.TOOL)
         self.assertEqual(loaded[0].name, "search")
         self.assertEqual(loaded[0].tool_call_id, "call_0")
+
+    def test_truncate_to_syncs_in_memory_and_store(self):
+        """truncate_to must delete orphaned messages from BOTH memory and store.
+
+        This is the regression test for Issue 1: a plain in-memory slice
+        left SQLite rows intact, so a Gemini orphaned-tool-call would
+        resurface on the next ``PersistentMemory(...)`` load.
+        """
+        memory = PersistentMemory(store=self.store, session_id="truncate-test")
+        memory.add_user("user question")
+        memory.add_assistant(
+            "calling tool",
+            tool_calls=[{"id": "call_0", "name": "search", "arguments": {}}],
+        )
+        # Pretend tool execution blew up before add_tool_result ran — we
+        # now have an orphaned assistant(tool_calls) at the end.
+        self.assertEqual(len(memory.messages), 2)
+        self.assertEqual(len(self.store.load("truncate-test")), 2)
+
+        memory.truncate_to(1)
+
+        # In-memory is truncated
+        self.assertEqual(len(memory.messages), 1)
+        # Store is also truncated — the orphaned assistant row is gone
+        loaded = self.store.load("truncate-test")
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].content, "user question")
+
+    def test_truncate_to_survives_session_reload(self):
+        """After truncate_to, a fresh PersistentMemory must not resurrect orphans.
+
+        This covers the full fix: rollback must be durable across
+        process restarts, not just valid in the current process.
+        """
+        mem1 = PersistentMemory(store=self.store, session_id="reload-test")
+        mem1.add_user("q")
+        mem1.add_assistant(
+            "tool call",
+            tool_calls=[{"id": "call_0", "name": "x", "arguments": {}}],
+        )
+        mem1.truncate_to(1)
+
+        # Simulate process restart
+        mem2 = PersistentMemory(store=self.store, session_id="reload-test")
+        self.assertEqual(len(mem2.messages), 1)
+        self.assertEqual(mem2.messages[0].content, "q")
+
+    def test_truncate_to_noop_when_length_gte_current(self):
+        """truncate_to(length >= current) must not touch the store."""
+        memory = PersistentMemory(store=self.store, session_id="noop-test")
+        memory.add_user("a")
+        memory.add_assistant("b")
+
+        memory.truncate_to(2)  # same length
+        self.assertEqual(len(self.store.load("noop-test")), 2)
+
+        memory.truncate_to(99)  # larger than length
+        self.assertEqual(len(self.store.load("noop-test")), 2)
+
+    def test_truncate_to_zero_empties_everything(self):
+        """truncate_to(0) clears both memory and store."""
+        memory = PersistentMemory(store=self.store, session_id="zero-test")
+        memory.add_user("a")
+        memory.add_assistant("b")
+
+        memory.truncate_to(0)
+
+        self.assertEqual(len(memory.messages), 0)
+        self.assertEqual(self.store.load("zero-test"), [])
 
 
 if __name__ == "__main__":

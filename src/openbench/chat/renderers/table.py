@@ -7,11 +7,10 @@ Supports striped rows and compact mode.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 
 @ContentRendererRegistry.register("table", "default", description="Structured table renderer")
@@ -66,7 +65,7 @@ class TableRenderer(ContentRenderer):
         if title:
             components.append(
                 A2UIComponent(
-                    id=_gen_id("table-title"),
+                    id=gen_id("table-title"),
                     component="Text",
                     properties={"text": title, "variant": "h4"},
                 )
@@ -76,7 +75,7 @@ class TableRenderer(ContentRenderer):
         if caption:
             components.append(
                 A2UIComponent(
-                    id=_gen_id("table-caption"),
+                    id=gen_id("table-caption"),
                     component="Text",
                     properties={"text": caption, "variant": "caption"},
                 )
@@ -92,15 +91,10 @@ class TableRenderer(ContentRenderer):
 
         components.append(
             A2UIComponent(
-                id=_gen_id("table"),
+                id=gen_id("table"),
                 component="ObTable",
                 properties=table_props,
             )
         )
 
         return components
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"

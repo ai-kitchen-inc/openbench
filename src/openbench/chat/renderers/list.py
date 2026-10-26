@@ -7,11 +7,10 @@ Supports ordered and unordered lists with optional subtitles.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 
 @ContentRendererRegistry.register("list", "default", description="Structured list renderer")
@@ -64,7 +63,7 @@ class ListRenderer(ContentRenderer):
         if title:
             components.append(
                 A2UIComponent(
-                    id=_gen_id("list-title"),
+                    id=gen_id("list-title"),
                     component="Text",
                     properties={"text": title, "variant": "h4"},
                 )
@@ -76,7 +75,7 @@ class ListRenderer(ContentRenderer):
 
         for item in items:
             if isinstance(item, str):
-                item_id = _gen_id("list-item")
+                item_id = gen_id("list-item")
                 child_ids.append(item_id)
                 child_components.append(
                     A2UIComponent(
@@ -89,9 +88,9 @@ class ListRenderer(ContentRenderer):
                 subtitle = item.get("subtitle")
                 if subtitle:
                     # Wrap in Column for text + subtitle
-                    col_id = _gen_id("list-item-col")
-                    text_id = _gen_id("list-item-text")
-                    sub_id = _gen_id("list-item-sub")
+                    col_id = gen_id("list-item-col")
+                    text_id = gen_id("list-item-text")
+                    sub_id = gen_id("list-item-sub")
                     child_ids.append(col_id)
                     child_components.append(
                         A2UIComponent(
@@ -118,7 +117,7 @@ class ListRenderer(ContentRenderer):
                         )
                     )
                 else:
-                    item_id = _gen_id("list-item")
+                    item_id = gen_id("list-item")
                     child_ids.append(item_id)
                     child_components.append(
                         A2UIComponent(
@@ -129,8 +128,8 @@ class ListRenderer(ContentRenderer):
                     )
 
         # Card wrapper
-        card_id = _gen_id("list-card")
-        list_id = _gen_id("list")
+        card_id = gen_id("list-card")
+        list_id = gen_id("list")
 
         list_props: dict[str, Any] = {
             "children": child_ids,
@@ -150,8 +149,3 @@ class ListRenderer(ContentRenderer):
         components.extend(child_components)
 
         return components
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"

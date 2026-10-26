@@ -1,8 +1,9 @@
 """
 OpenBench custom A2UI catalog definition.
 
-Extends the 18 standard A2UI v0.10 components with 6 OpenBench-specific components:
+Extends the 18 standard A2UI v0.10 components with 7 OpenBench-specific components:
 - ObChart: Recharts-based chart rendering (bar, line, pie, scatter, area)
+- ObDashboardFrame: Native dashboard ViewModel renderer with HTML fallback
 - ObFileCard: File preview card with download
 - ObCodeBlock: Syntax-highlighted code (Shiki)
 - ObMarkdown: Rich markdown rendering (react-markdown)
@@ -58,7 +59,7 @@ STANDARD_FUNCTIONS = (
     "not",
 )
 
-# OpenBench custom catalog: 6 additional components
+# OpenBench custom catalog: 7 additional components
 OPENBENCH_CATALOG: dict = {
     "catalogId": OPENBENCH_CATALOG_ID,
     "components": {
@@ -73,6 +74,24 @@ OPENBENCH_CATALOG: dict = {
                 "options": {"type": "object"},
                 "width": {"type": "string"},
                 "height": {"type": "string"},
+            },
+        },
+        "ObDashboardFrame": {
+            "description": "Native dashboard ViewModel renderer with HTML fallback",
+            "properties": {
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "viewModel": {"type": "object"},
+                "datasets": {"type": "object"},
+                "kpis": {"type": "array"},
+                "sections": {"type": "array"},
+                "dashboardUrl": {"type": "string"},
+                "fileName": {"type": "string"},
+                "summary": {"type": "string"},
+                "mimeType": {"type": "string"},
+                "fileSize": {"type": "number"},
+                "height": {"type": "number"},
+                "preview": {"type": "boolean"},
             },
         },
         "ObFileCard": {

@@ -11,6 +11,7 @@ import os
 
 from openbench.core.abstractions import EmbeddingProvider
 from openbench.core.config import EMBEDDING_MODELS, invalidate_embedding_cache
+from openbench.core.constants import DEFAULT_EMBED_BATCH_SIZE
 
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
@@ -128,7 +129,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         return response.data[0].embedding
 
     def embed_batch(
-        self, texts: list[str], model: str | None = None, batch_size: int = 100
+        self, texts: list[str], model: str | None = None, batch_size: int = DEFAULT_EMBED_BATCH_SIZE
     ) -> list[list[float]]:
         model = model or self._model
         client = self._get_client()
@@ -272,7 +273,7 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
         return result["embedding"]
 
     def embed_batch(
-        self, texts: list[str], model: str | None = None, batch_size: int = 100
+        self, texts: list[str], model: str | None = None, batch_size: int = DEFAULT_EMBED_BATCH_SIZE
     ) -> list[list[float]]:
         self._configure()
         import google.generativeai as genai

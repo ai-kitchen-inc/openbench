@@ -7,11 +7,10 @@ Supports: bar, line, pie, scatter, area chart types.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 VALID_CHART_TYPES = ("bar", "line", "pie", "scatter", "area")
 
@@ -61,7 +60,7 @@ class ChartRenderer(ContentRenderer):
         if title:
             components.append(
                 A2UIComponent(
-                    id=_gen_id("chart-title"),
+                    id=gen_id("chart-title"),
                     component="Text",
                     properties={"text": title, "variant": "h4"},
                 )
@@ -79,15 +78,10 @@ class ChartRenderer(ContentRenderer):
 
         components.append(
             A2UIComponent(
-                id=_gen_id("chart"),
+                id=gen_id("chart"),
                 component="ObChart",
                 properties=chart_props,
             )
         )
 
         return components
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"

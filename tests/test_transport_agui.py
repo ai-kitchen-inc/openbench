@@ -5,10 +5,19 @@ import json
 import unittest
 from typing import Any
 
+from fastapi import HTTPException
+
 from openbench.chat.a2ui.schema import A2UI_VERSION
 from openbench.chat.engine import ChatEngine
-from openbench.chat.transport.agui import AGUIHandler
+from openbench.chat.transport.agui import A2UIStreamMessage, AGUIHandler
+from openbench.chat.transport.validation import MAX_CONTENT_LENGTH
 from openbench.core.abstractions import Agent, ExecutionContext, ExecutionResult
+from openbench.mcp.permissions import (
+    MCPPermissionContext,
+    MCPPermissionRequest,
+    MCPPermissionSession,
+)
+from openbench.mcp.policy import RiskLevel
 
 
 class MockAgent(Agent):
@@ -62,6 +71,64 @@ class StreamingMockAgent(Agent):
         return 0.001
 
 
+class CountingAgent(MockAgent):
+    """Mock agent that records whether execution was reached."""
+
+    def __init__(self, response: str = "Hello!"):
+        super().__init__(response)
+        self.calls = 0
+
+    def execute(self, context: ExecutionContext) -> ExecutionResult:
+        self.calls += 1
+        return super().execute(context)
+
+
+class PermissionPromptAgent(Agent):
+    """Mock agent that requests MCP permission during execution."""
+
+    @property
+    def agent_type(self) -> str:
+        return "permission-prompt-mock"
+
+    def execute(self, context: ExecutionContext) -> ExecutionResult:
+        request = MCPPermissionRequest(
+            tool_name="openbench.distinct_values",
+            purpose="Distinct values",
+            arguments={"column": "region"},
+            risk=RiskLevel.READ,
+            action="Call MCP tool.",
+        )
+        decision = MCPPermissionSession().request(request)
+        return ExecutionResult(
+            output="approved" if decision.approved else "blocked",
+            status="success",
+            metadata={},
+        )
+
+    def estimate_cost(self, context: ExecutionContext) -> float:
+        return 0.0
+
+
+class PermissionPromptHandler(AGUIHandler):
+    def _create_permission_context(self, *, session_id, thread_id, run_id, queue, loop):
+        def provider(_request):
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                A2UIStreamMessage(
+                    {
+                        "version": A2UI_VERSION,
+                        "createSurface": {
+                            "surfaceId": "permission-surface",
+                            "catalogId": "openbench",
+                        },
+                    }
+                ),
+            )
+            return "yes"
+
+        return MCPPermissionContext(provider)
+
+
 class ErrorMockAgent(Agent):
     """Mock agent that raises an error."""
 
@@ -79,11 +146,11 @@ class ErrorMockAgent(Agent):
 class MockRequest:
     """Mock FastAPI Request object."""
 
-    def __init__(self, body: dict[str, Any], accept: str = "text/event-stream"):
+    def __init__(self, body: Any, accept: str = "text/event-stream"):
         self._body = body
         self.headers = {"accept": accept}
 
-    async def json(self) -> dict[str, Any]:
+    async def json(self) -> Any:
         return self._body
 
 
@@ -105,6 +172,17 @@ async def _collect_events(handler: AGUIHandler, body: dict[str, Any]) -> list[di
         if line.startswith("data: "):
             data = json.loads(line[6:])
             events.append(data)
+    return events
+
+
+async def _collect_response_events(response: Any) -> list[dict]:
+    """Collect all SSE events from a StreamingResponse."""
+    events = []
+    async for chunk in response.body_iterator:
+        line = chunk.decode() if isinstance(chunk, bytes) else chunk
+        line = line.strip()
+        if line.startswith("data: "):
+            events.append(json.loads(line[6:]))
     return events
 
 
@@ -179,6 +257,26 @@ class TestAGUIHandlerEventStream(unittest.TestCase):
 
         custom_events = [e for e in events if e["type"] == "CUSTOM" and e.get("name") == "a2ui"]
         self.assertEqual(len(custom_events), 0)
+
+    def test_event_stream_emits_mid_run_a2ui_message(self):
+        """A2UI stream messages should emit as CUSTOM events during a run."""
+        engine = ChatEngine(agent=PermissionPromptAgent())
+        handler = PermissionPromptHandler(engine=engine)
+
+        events = _run(_collect_events(handler, {"content": "Use a tool"}))
+
+        custom_events = [
+            event
+            for event in events
+            if event.get("type") == "CUSTOM" and event.get("name") == "a2ui"
+        ]
+        self.assertEqual(len(custom_events), 1)
+        self.assertEqual(
+            custom_events[0]["value"]["createSurface"]["surfaceId"],
+            "permission-surface",
+        )
+        self.assertEqual(events[-1]["type"], "RUN_FINISHED")
+        self.assertEqual(events[-1]["result"]["content"], "approved")
 
     def test_event_stream_rich_content_has_two_step_pairs_for_non_base_agent(self):
         """Non-BaseAgent with rich content emits 2 STEP pairs (Processing + Rendering).
@@ -332,6 +430,41 @@ class TestAGUIHandlerErrorHandling(unittest.TestCase):
         self.assertIn("message", error_events[0])
         self.assertEqual(error_events[0]["code"], "AGENT_ERROR")
 
+    def test_error_writes_aborted_placeholder(self):
+        """Layer 2b — agent crash must leave an 'aborted' placeholder
+        assistant message in the session + persistent store, so a
+        reloaded thread doesn't dead-end on a bare user turn."""
+        import tempfile
+        from pathlib import Path
+
+        from openbench.chat.stores.sqlite import SQLiteSessionStore
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = SQLiteSessionStore(str(Path(tmpdir) / "sessions.db"))
+            engine = ChatEngine(agent=ErrorMockAgent(), session_store=store)
+            handler = AGUIHandler(engine=engine)
+
+            events = _run(
+                _collect_events(
+                    handler,
+                    {"threadId": "thread-err-1", "content": "Hello"},
+                )
+            )
+
+            # Error event emitted
+            self.assertTrue(any(e["type"] == "RUN_ERROR" for e in events))
+
+            # Session reloaded from store ends on aborted placeholder
+            reloaded = store.load("thread-err-1")
+            self.assertIsNotNone(reloaded)
+            assert reloaded is not None
+            self.assertEqual(len(reloaded.messages), 2)
+            self.assertEqual(reloaded.messages[0].content, "Hello")
+            last = reloaded.messages[1]
+            self.assertIn("Turn interrupted", last.content)
+            self.assertTrue(last.metadata.get("aborted"))
+            self.assertIn("Agent crashed", last.metadata.get("error", ""))
+
 
 class TestAGUIHandlerContentExtraction(unittest.TestCase):
     """Tests for _extract_content() -- dual format support."""
@@ -422,7 +555,7 @@ class TestAGUIHandlerContentExtraction(unittest.TestCase):
             "context": [],
         }
 
-        content, attachments = handler._extract_content(body)
+        content, _attachments = handler._extract_content(body)
 
         self.assertEqual(content, "")
 
@@ -442,6 +575,91 @@ class TestAGUIHandlerHandle(unittest.TestCase):
 
         self.assertIsInstance(response, StreamingResponse)
         self.assertEqual(response.media_type, "text/event-stream")
+
+    def test_handle_valid_agui_messages_streams_normally(self):
+        """A valid AG-UI messages body should pass validation and stream."""
+        engine = ChatEngine(agent=MockAgent("Reply"))
+        handler = AGUIHandler(engine=engine)
+        request = MockRequest(
+            {
+                "threadId": "thread-1",
+                "runId": "run-1",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "forwardedProps": {"sessionId": "session-1"},
+            }
+        )
+
+        response = _run(handler.handle(request))
+        events = _run(_collect_response_events(response))
+
+        self.assertEqual(events[0]["type"], "RUN_STARTED")
+        self.assertEqual(events[-1]["type"], "RUN_FINISHED")
+        self.assertEqual(events[-1]["result"]["content"], "Reply")
+
+    def test_handle_rejects_non_object_json_before_agent_execution(self):
+        agent = CountingAgent("Reply")
+        engine = ChatEngine(agent=agent)
+        handler = AGUIHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(MockRequest(["not", "an", "object"])))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(agent.calls, 0)
+        self.assertEqual(handler._sessions, {})
+
+    def test_handle_rejects_invalid_thread_id_before_agent_execution(self):
+        agent = CountingAgent("Reply")
+        engine = ChatEngine(agent=agent)
+        handler = AGUIHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(MockRequest({"content": "Hello", "threadId": "bad id!"})))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(agent.calls, 0)
+
+    def test_handle_rejects_invalid_forwarded_session_id(self):
+        agent = CountingAgent("Reply")
+        engine = ChatEngine(agent=agent)
+        handler = AGUIHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(
+                handler.handle(
+                    MockRequest(
+                        {
+                            "content": "Hello",
+                            "forwardedProps": {"sessionId": "bad/session"},
+                        }
+                    )
+                )
+            )
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(agent.calls, 0)
+
+    def test_handle_rejects_overlong_content(self):
+        agent = CountingAgent("Reply")
+        engine = ChatEngine(agent=agent)
+        handler = AGUIHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(MockRequest({"content": "x" * (MAX_CONTENT_LENGTH + 1)})))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(agent.calls, 0)
+
+    def test_handle_rejects_malformed_messages(self):
+        agent = CountingAgent("Reply")
+        engine = ChatEngine(agent=agent)
+        handler = AGUIHandler(engine=engine)
+
+        with self.assertRaises(HTTPException) as ctx:
+            _run(handler.handle(MockRequest({"messages": [{"role": "user", "content": 123}]})))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(agent.calls, 0)
 
 
 class TestAGUIHandlerTextStreaming(unittest.TestCase):
@@ -672,6 +890,236 @@ class TestAGUIHandlerSessionIsolation(unittest.TestCase):
         b_contents = [m.content for m in session_b.messages]
         self.assertTrue(any("cooking" in c for c in b_contents))
         self.assertFalse(any("quantum" in c for c in b_contents))
+
+
+class TestAGUIHandlerSessionPersistence(unittest.TestCase):
+    """The handler must save to + load from the engine's session_store.
+
+    Regression: a previous implementation maintained an in-memory
+    ``_sessions`` dict that bypassed the store entirely, so Drive/SQLite
+    backends silently did no persistence.
+    """
+
+    def _make_store(self):
+        """Minimal in-memory SessionStore that records every call."""
+        from openbench.chat.session_store import SessionStore
+
+        class _MemStore(SessionStore):
+            def __init__(self):
+                self.saved: list[Any] = []
+                self.loaded: list[str] = []
+                self._db: dict[str, Any] = {}
+                self.load_error: Exception | None = None
+
+            def save(self, session):
+                self.saved.append(session)
+                self._db[session.session_id] = session
+
+            def load(self, session_id):
+                self.loaded.append(session_id)
+                if self.load_error is not None:
+                    raise self.load_error
+                return self._db.get(session_id)
+
+            def list(self, limit=50, offset=0):
+                return []
+
+            def delete(self, session_id):
+                pass
+
+        return _MemStore()
+
+    def test_save_called_after_user_and_assistant_message(self):
+        store = self._make_store()
+        engine = ChatEngine(agent=MockAgent(response="hi"), session_store=store)
+        handler = AGUIHandler(engine=engine)
+
+        body = {
+            "content": "hello",
+            "forwardedProps": {"sessionId": "s-1"},
+        }
+        _run(_collect_events(handler, body))
+
+        # Two saves per turn: one after user append, one after assistant.
+        self.assertGreaterEqual(len(store.saved), 2)
+        # Both saves point at the same session id.
+        for saved in store.saved:
+            self.assertEqual(saved.session_id, "s-1")
+        # Final save includes both messages.
+        final = store.saved[-1]
+        roles = [str(m.role.value) for m in final.messages]
+        self.assertIn("user", roles)
+        self.assertIn("assistant", roles)
+
+    def test_load_consulted_before_in_memory_fallback(self):
+        store = self._make_store()
+        # Pre-seed the store with existing history for "s-1".
+        from openbench.chat.session import ChatMessage, ChatSession
+
+        seeded = ChatSession(session_id="s-1")
+        seeded.messages.append(
+            ChatMessage(id="m-old", role="user", content="earlier", timestamp="2026-01-01T00:00:00")
+        )
+        store._db["s-1"] = seeded
+
+        engine = ChatEngine(agent=MockAgent(response="hi"), session_store=store)
+        handler = AGUIHandler(engine=engine)
+
+        body = {"content": "new message", "forwardedProps": {"sessionId": "s-1"}}
+        _run(_collect_events(handler, body))
+
+        self.assertIn("s-1", store.loaded)
+        # Fresh session in handler's dict should carry the pre-seeded turn.
+        self.assertEqual(handler._sessions["s-1"].session_id, "s-1")
+        contents = [m.content for m in handler._sessions["s-1"].messages]
+        self.assertIn("earlier", contents)
+        self.assertIn("new message", contents)
+
+    def test_load_failure_falls_back_to_in_memory_and_keeps_going(self):
+        store = self._make_store()
+        store.load_error = RuntimeError("drive offline")
+        engine = ChatEngine(agent=MockAgent(), session_store=store)
+        handler = AGUIHandler(engine=engine)
+
+        body = {"content": "ping", "forwardedProps": {"sessionId": "s-err"}}
+        # Must not raise despite load failure.
+        events = _run(_collect_events(handler, body))
+        self.assertTrue(any(e.get("type") == "RUN_FINISHED" for e in events))
+        # Subsequent save is still attempted.
+        self.assertGreaterEqual(len(store.saved), 1)
+
+    def test_no_store_wired_is_a_no_op(self):
+        """engine.session_store = None → handler must not crash."""
+        engine = ChatEngine(agent=MockAgent())
+        self.assertIsNone(engine.session_store)
+        handler = AGUIHandler(engine=engine)
+
+        body = {"content": "ping", "forwardedProps": {"sessionId": "s-none"}}
+        events = _run(_collect_events(handler, body))
+        self.assertTrue(any(e.get("type") == "RUN_FINISHED" for e in events))
+
+    def test_on_session_resolved_hook_fires_once_per_request(self):
+        """Subclasses use this hook to set up per-request thread-local state."""
+
+        class _Recording(AGUIHandler):
+            def __init__(self, engine):
+                super().__init__(engine)
+                self.hook_calls: list[str] = []
+
+            def _on_session_resolved(self, session_id: str) -> None:
+                self.hook_calls.append(session_id)
+
+        engine = ChatEngine(agent=MockAgent())
+        handler = _Recording(engine)
+
+        body = {"content": "ping", "forwardedProps": {"sessionId": "abc"}}
+        _run(_collect_events(handler, body))
+        self.assertEqual(handler.hook_calls, ["abc"])
+
+    def test_hook_fires_when_session_loaded_from_store(self):
+        """Regression: hook must fire even on the load-from-store fast path."""
+        store = self._make_store()
+        from openbench.chat.session import ChatSession
+
+        store._db["loaded-id"] = ChatSession(session_id="loaded-id")
+
+        class _Recording(AGUIHandler):
+            def __init__(self, engine):
+                super().__init__(engine)
+                self.hook_calls: list[str] = []
+
+            def _on_session_resolved(self, session_id: str) -> None:
+                self.hook_calls.append(session_id)
+
+        engine = ChatEngine(agent=MockAgent(), session_store=store)
+        handler = _Recording(engine)
+
+        body = {"content": "ping", "forwardedProps": {"sessionId": "loaded-id"}}
+        _run(_collect_events(handler, body))
+        self.assertEqual(handler.hook_calls, ["loaded-id"])
+
+
+class TestSurfaceSnapshotPersistence(TestAGUIHandlerSessionPersistence):
+    """Rich A2UI surfaces persist as full snapshots, not id-only stubs.
+
+    Regression: surfaces were stored as ``[{"surfaceId": ...}]`` only, so
+    reloading a session dropped all rich content and crashed frontends
+    that dereferenced ``surface.components``.
+    """
+
+    _CHART_ITEM = {
+        "title": "Sales",
+        "data": [{"x": "Q1", "y": 100}],
+        "chart_type": "bar",
+    }
+
+    def _stream_with_items(self, items, response="Here are the results"):
+        store = self._make_store()
+        engine = ChatEngine(
+            agent=MockAgent(response=response),
+            session_store=store,
+            render_items_fn=lambda: items,
+        )
+        handler = AGUIHandler(engine=engine)
+        body = {"content": "Show chart", "forwardedProps": {"sessionId": "s-rich"}}
+        events = _run(_collect_events(handler, body))
+        return store.saved[-1], events
+
+    def test_rich_run_persists_full_surface_snapshot(self):
+        session, events = self._stream_with_items([dict(self._CHART_ITEM)])
+
+        assistant = session.messages[-1]
+        self.assertEqual(str(assistant.role.value), "assistant")
+        self.assertIsNotNone(assistant.surfaces)
+        record = assistant.surfaces[0]
+
+        create_events = [
+            e["value"]["createSurface"]
+            for e in events
+            if e.get("type") == "CUSTOM"
+            and e.get("name") == "a2ui"
+            and "createSurface" in e.get("value", {})
+        ]
+        self.assertEqual(record["surfaceId"], create_events[0]["surfaceId"])
+        self.assertEqual(record["catalogId"], create_events[0]["catalogId"])
+
+        components = record["components"]
+        self.assertIsInstance(components, list)
+        self.assertTrue(components)
+        ids = {c["id"] for c in components}
+        self.assertIn("root", ids)
+        for component in components:
+            self.assertIn("id", component)
+            self.assertIn("component", component)
+
+    def test_text_only_run_persists_no_surface(self):
+        session, _events = self._stream_with_items(None)
+        self.assertIsNone(session.messages[-1].surfaces)
+
+    def test_surface_snapshot_round_trips_through_session_dict(self):
+        from openbench.chat.session import ChatSession
+
+        session, _events = self._stream_with_items([dict(self._CHART_ITEM)])
+
+        payload = json.dumps(session.to_dict())
+        restored = ChatSession.from_dict(json.loads(payload))
+        self.assertEqual(
+            restored.messages[-1].surfaces,
+            session.messages[-1].surfaces,
+        )
+
+    def test_form_run_persists_data_model(self):
+        form_item = {
+            "fields": [
+                {"name": "email", "label": "Email", "type": "text", "value": ""},
+            ],
+            "title": "Contact",
+        }
+        session, _events = self._stream_with_items([form_item])
+
+        record = session.messages[-1].surfaces[0]
+        self.assertIn("dataModel", record)
+        self.assertIsInstance(record["dataModel"], dict)
 
 
 if __name__ == "__main__":

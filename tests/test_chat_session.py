@@ -220,11 +220,88 @@ class TestChatSession(unittest.TestCase):
         session.add_user_message("test")
         self.assertGreaterEqual(session.updated_at, initial)
 
+    def test_metadata_defaults_empty(self):
+        session = ChatSession()
+        self.assertEqual(session.metadata, {})
+        # Empty metadata must not appear in the serialized form (old rows
+        # and their consumers stay byte-identical).
+        self.assertNotIn("metadata", session.to_dict())
+
+    def test_metadata_roundtrip(self):
+        session = ChatSession(session_id="s1", metadata={"agentId": "finance-analyst"})
+        data = session.to_dict()
+        self.assertEqual(data["metadata"], {"agentId": "finance-analyst"})
+        restored = ChatSession.from_dict(data)
+        self.assertEqual(restored.metadata, {"agentId": "finance-analyst"})
+
+    def test_metadata_absent_key_defaults(self):
+        restored = ChatSession.from_dict({"sessionId": "s1", "title": "T", "messages": []})
+        self.assertEqual(restored.metadata, {})
+
+    def test_metadata_non_dict_tolerated(self):
+        restored = ChatSession.from_dict(
+            {"sessionId": "s1", "title": "T", "messages": [], "metadata": "junk"}
+        )
+        self.assertEqual(restored.metadata, {})
+
     def test_repr(self):
         session = ChatSession(session_id="abc")
         session.add_user_message("hello")
         self.assertIn("abc", repr(session))
         self.assertIn("1", repr(session))
+
+
+class TestTolerantDeserialization(unittest.TestCase):
+    """Loading must degrade on partial corruption, not raise (history robustness)."""
+
+    def test_skips_malformed_message_keeps_valid(self):
+        data = {
+            "sessionId": "s1",
+            "title": "T",
+            "createdAt": "2026-06-30T00:00:00+00:00",
+            "updatedAt": "2026-06-30T00:00:00+00:00",
+            "messages": [
+                {"id": "m1", "role": "user", "content": "hi", "timestamp": "2026-06-30T00:00:00+00:00"},
+                {"id": "m2", "role": "bogus-role", "content": "x", "timestamp": "2026-06-30T00:00:00+00:00"},
+                {"id": "m3", "role": "assistant", "content": "ok", "timestamp": "2026-06-30T00:00:00+00:00"},
+            ],
+        }
+        restored = ChatSession.from_dict(data)
+        # The bad-role message is dropped; the two valid ones survive.
+        self.assertEqual(len(restored), 2)
+        self.assertEqual(restored.messages[0].content, "hi")
+        self.assertEqual(restored.messages[1].content, "ok")
+
+    def test_missing_top_level_fields_do_not_raise(self):
+        restored = ChatSession.from_dict({"messages": []})
+        self.assertTrue(restored.session_id)  # defaulted uuid
+        self.assertIsNotNone(restored.created_at)
+        self.assertIsNotNone(restored.updated_at)
+
+    def test_message_defaults_missing_fields(self):
+        msg = ChatMessage.from_dict({"role": "user"})
+        self.assertTrue(msg.id)  # defaulted uuid
+        self.assertEqual(msg.content, "")
+        self.assertIsNotNone(msg.timestamp)
+
+    def test_message_bad_timestamp_falls_back(self):
+        msg = ChatMessage.from_dict(
+            {"id": "m", "role": "user", "content": "c", "timestamp": "not-a-date"}
+        )
+        self.assertIsNotNone(msg.timestamp)
+
+    def test_message_drops_bad_attachment(self):
+        msg = ChatMessage.from_dict(
+            {
+                "id": "m",
+                "role": "user",
+                "content": "c",
+                "timestamp": "2026-06-30T00:00:00+00:00",
+                "attachments": ["not-a-dict"],
+            }
+        )
+        # Bad attachment dropped, message still loads.
+        self.assertIsNone(msg.attachments)
 
 
 if __name__ == "__main__":

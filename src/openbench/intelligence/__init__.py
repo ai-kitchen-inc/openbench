@@ -43,11 +43,27 @@ from openbench.intelligence.layer import AgentFactory
 # LLM providers
 from openbench.intelligence.llm_providers import GeminiLLMProvider
 
+# VLM providers and vision agent
+from openbench.intelligence.vlm_providers import GeminiVLMProvider, GemmaVLMProvider
+from openbench.intelligence.vision import VisionAgent, extract_image_inputs
+
 # Memory (persistent conversation memory)
-from openbench.intelligence.memory import PersistentMemory, SQLiteMemoryStore
+from openbench.intelligence.memory import (
+    LocalSQLiteMemoryStore,
+    MemoryStore,
+    PersistentMemory,
+    SQLiteMemoryStore,
+)
+
+# Persona Layer (file-based agent identity)
+from openbench.intelligence.persona import Persona
 
 # Planning (task decomposition)
 from openbench.intelligence.planning import TaskPlan, TaskPlanner
+
+# Skill Layer (two-tier capability packages)
+from openbench.intelligence.skill import Skill
+from openbench.intelligence.skill_registry import SkillRegistry
 
 __all__ = [
     # L2 Orchestrator
@@ -74,9 +90,22 @@ __all__ = [
     "MessageRole",
     # LLM providers
     "GeminiLLMProvider",
+    # VLM providers
+    "GeminiVLMProvider",
+    "GemmaVLMProvider",
+    # Vision agents
+    "VisionAgent",
+    "extract_image_inputs",
+    # Persona Layer
+    "Persona",
+    # Skill Layer
+    "Skill",
+    "SkillRegistry",
     # Memory
+    "MemoryStore",
     "PersistentMemory",
     "SQLiteMemoryStore",
+    "LocalSQLiteMemoryStore",
     # Planning
     "TaskPlan",
     "TaskPlanner",

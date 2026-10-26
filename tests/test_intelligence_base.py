@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -23,7 +24,12 @@ from openbench.intelligence.base import (
     SimpleAgent,
     StructuredOutputAgent,
     ToolExecutor,
+    _sanitize_for_json,
+    _tool_result_to_json,
 )
+
+# Mirrors the local cap in BaseAgent.execute (kept in sync by the retry tests).
+_MAX_EMPTY_RETRIES = 2
 
 
 class TestMessageRole(unittest.TestCase):
@@ -183,6 +189,19 @@ class MockTool(Tool):
         }
 
 
+class SlowMockTool(MockTool):
+    """Mock tool with a configurable execution delay and timeout."""
+
+    def __init__(self, *, delay_seconds: float, timeout_seconds: float):
+        super().__init__("slow_mock_tool")
+        self.delay_seconds = delay_seconds
+        self.timeout_seconds = timeout_seconds
+
+    def execute(self, **params) -> Any:
+        time.sleep(self.delay_seconds)
+        return {"result": "slow", "params": params}
+
+
 class TestToolExecutor(unittest.TestCase):
     """Test ToolExecutor."""
 
@@ -260,6 +279,72 @@ class TestToolExecutor(unittest.TestCase):
 
         self.assertIn("not found", str(ctx.exception))
 
+    def test_execute_uses_tool_timeout_seconds_when_omitted(self):
+        """Tool-specific timeout should replace the default 30s timeout."""
+        executor = ToolExecutor()
+        executor.register("slow", SlowMockTool(delay_seconds=0.05, timeout_seconds=0.01))
+
+        with self.assertRaises(TimeoutError) as ctx:
+            executor.execute("slow")
+
+        self.assertIn("exceeded 0.01s timeout", str(ctx.exception))
+
+    def test_execute_explicit_timeout_overrides_tool_timeout_seconds(self):
+        """Explicit timeout should win over the tool's timeout_seconds."""
+        executor = ToolExecutor()
+        executor.register("slow", SlowMockTool(delay_seconds=0.02, timeout_seconds=0.001))
+
+        result = executor.execute("slow", timeout=0.2, query="ok")
+
+        self.assertEqual(result["result"], "slow")
+        self.assertEqual(result["params"]["query"], "ok")
+
+    def test_execute_callable_still_uses_default_timeout(self):
+        """Plain callables should keep the ordinary 30s fallback."""
+        executor = ToolExecutor()
+        executor.register("add", lambda a, b: a + b)
+
+        self.assertEqual(executor.execute("add", a=2, b=3), 5)
+
+    def test_execute_tool_param_named_name_via_arguments(self):
+        """A tool parameter called `name` must not collide with execute()'s own.
+
+        Regression: custom_function.run_function(name, kwargs_json) raised
+        "ToolExecutor.execute() got multiple values for argument 'name'".
+        """
+        executor = ToolExecutor()
+        executor.register("describe", lambda name: name.upper())
+
+        self.assertEqual(executor.execute("describe", arguments={"name": "add"}), "ADD")
+
+    def test_execute_tool_param_named_name_via_kwargs(self):
+        """Legacy kwargs style also works: execute()'s `name` is positional-only."""
+        executor = ToolExecutor()
+        executor.register("describe", lambda name: name.upper())
+
+        self.assertEqual(executor.execute("describe", **{"name": "add"}), "ADD")
+
+    def test_execute_tool_param_named_timeout_via_arguments(self):
+        """A tool parameter called `timeout` reaches the tool, not the executor."""
+        executor = ToolExecutor()
+        executor.register("cfg", lambda timeout: {"tool_saw_timeout": timeout})
+
+        result = executor.execute("cfg", arguments={"timeout": 5})
+
+        self.assertEqual(result, {"tool_saw_timeout": 5})
+
+    def test_execute_parallel_tool_param_named_name(self):
+        """execute_parallel must pass colliding-named args through cleanly."""
+        executor = ToolExecutor()
+        executor.register("describe", lambda name: name.upper())
+
+        results = executor.execute_parallel(
+            [{"id": "c1", "name": "describe", "arguments": {"name": "add"}}]
+        )
+
+        self.assertIsNone(results[0]["error"])
+        self.assertEqual(results[0]["result"], "ADD")
+
 
 class MockLLMProvider(LLMProvider):
     """Mock LLM provider for testing."""
@@ -281,6 +366,173 @@ class MockLLMProvider(LLMProvider):
             tokens_used=100,
             cost=0.001,
         )
+
+
+class FailingAfterToolLLMProvider(LLMProvider):
+    """Returns one tool call, then fails when the agent asks for final text."""
+
+    @property
+    def provider_name(self) -> str:
+        return "mock-failing"
+
+    def __init__(self):
+        self.call_count = 0
+
+    def generate(self, prompt: Any, model: str, **params) -> LLMResponse:
+        self.call_count += 1
+        if self.call_count > 1:
+            raise RuntimeError("400 INVALID_ARGUMENT")
+        response = LLMResponse(text="", model=model, tokens_used=10, cost=0.0)
+        response.tool_calls = [{"name": "mock_tool", "arguments": {}}]
+        return response
+
+
+class EmptyResponseLLMProvider(LLMProvider):
+    """Returns empty text with a configurable empty-response finish_reason.
+
+    Used to test that the agent's empty-response retry is skipped for a
+    deterministic MAX_TOKENS dropout but kept for a transient one.
+    """
+
+    def __init__(self, finish_reason: str):
+        self.finish_reason = finish_reason
+        self.call_count = 0
+
+    @property
+    def provider_name(self) -> str:
+        return "mock-empty"
+
+    def generate(self, prompt: Any, model: str, **params) -> LLMResponse:
+        self.call_count += 1
+        return LLMResponse(
+            text="",
+            model=model,
+            tokens_used=10,
+            cost=0.0,
+            metadata={"empty_response_diagnostics": {"finish_reason": self.finish_reason}},
+        )
+
+
+class TestBaseAgentEmptyResponseRetry(unittest.TestCase):
+    """Empty-response retry must be MAX_TOKENS-aware (no wasted retries)."""
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_max_tokens_empty_response_is_not_retried(self, mock_get_service):
+        """A MAX_TOKENS dropout is deterministic — retrying just burns calls."""
+        provider = EmptyResponseLLMProvider("FinishReason.MAX_TOKENS")
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = provider
+        mock_get_service.return_value = mock_service
+
+        agent = BaseAgent(goal="Test goal")
+        result = agent.execute(ExecutionContext(goal="hi"))
+
+        self.assertEqual(provider.call_count, 1)  # one call, no retries
+        self.assertEqual(result.output, "")
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_transient_empty_response_is_retried(self, mock_get_service):
+        """A non-MAX_TOKENS empty turn (Confidence Dropout) still retries."""
+        provider = EmptyResponseLLMProvider("FinishReason.STOP")
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = provider
+        mock_get_service.return_value = mock_service
+
+        agent = BaseAgent(goal="Test goal")
+        agent.execute(ExecutionContext(goal="hi"))
+
+        # initial call + the retries
+        self.assertEqual(provider.call_count, 1 + _MAX_EMPTY_RETRIES)
+
+
+class CountingTool(MockTool):
+    """Mock tool that records how many times it was executed."""
+
+    def __init__(self):
+        super().__init__("mock_tool")
+        self.execute_count = 0
+
+    def execute(self, **params) -> Any:
+        self.execute_count += 1
+        return {"result": "mock", "params": params}
+
+
+class RepeatSameToolLLMProvider(LLMProvider):
+    """Always returns the same tool call with identical arguments (thrash)."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    @property
+    def provider_name(self) -> str:
+        return "mock-repeat"
+
+    def generate(self, prompt: Any, model: str, **params) -> LLMResponse:
+        self.call_count += 1
+        response = LLMResponse(text="", model=model, tokens_used=10, cost=0.0)
+        response.tool_calls = [{"name": "mock_tool", "arguments": {"query": "x"}}]
+        return response
+
+
+class VaryingToolThenAnswerLLMProvider(LLMProvider):
+    """Emits N tool calls with DISTINCT args, then a final text answer."""
+
+    def __init__(self, n: int):
+        self.n = n
+        self.call_count = 0
+
+    @property
+    def provider_name(self) -> str:
+        return "mock-vary"
+
+    def generate(self, prompt: Any, model: str, **params) -> LLMResponse:
+        self.call_count += 1
+        if self.call_count <= self.n:
+            response = LLMResponse(text="", model=model, tokens_used=10, cost=0.0)
+            response.tool_calls = [
+                {"name": "mock_tool", "arguments": {"query": f"q{self.call_count}"}}
+            ]
+            return response
+        return LLMResponse(text="done", model=model, tokens_used=10, cost=0.0)
+
+
+class TestBaseAgentRepeatedToolGuard(unittest.TestCase):
+    """The reasoning loop must not re-run identical tool calls forever."""
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_repeated_identical_tool_call_stops_loop(self, mock_get_service):
+        provider = RepeatSameToolLLMProvider()
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = provider
+        mock_get_service.return_value = mock_service
+
+        tool = CountingTool()
+        agent = BaseAgent(goal="Test", tools=[tool], max_iterations=20)
+        agent.execute(ExecutionContext(goal="hi"))
+
+        # The tool ran exactly once; every later identical call was skipped.
+        self.assertEqual(tool.execute_count, 1)
+        # iter 1 (fresh) + 2 duplicate-only strikes = 3 LLM calls, well under 20.
+        self.assertEqual(provider.call_count, 3)
+        joined = " ".join(
+            str(getattr(m, "content", "")) for m in agent.memory.messages
+        )
+        self.assertIn("duplicate_call_skipped", joined)
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_distinct_tool_calls_are_not_deduplicated(self, mock_get_service):
+        provider = VaryingToolThenAnswerLLMProvider(3)
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = provider
+        mock_get_service.return_value = mock_service
+
+        tool = CountingTool()
+        agent = BaseAgent(goal="Test", tools=[tool], max_iterations=20)
+        result = agent.execute(ExecutionContext(goal="hi"))
+
+        # Each distinct-argument call executed; no false-positive dedup.
+        self.assertEqual(tool.execute_count, 3)
+        self.assertEqual(result.output, "done")
 
 
 class TestBaseAgent(unittest.TestCase):
@@ -344,6 +596,21 @@ class TestBaseAgent(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.output, "Test response")
         self.assertGreater(result.tokens_used, 0)
+
+    @patch("openbench.intelligence.base.get_provider_service")
+    def test_execute_rolls_back_tool_turn_when_followup_llm_call_fails(self, mock_get_service):
+        """A 400 after a tool result must not leave function responses in memory."""
+        mock_provider = FailingAfterToolLLMProvider()
+        mock_service = MagicMock()
+        mock_service.resolve.return_value = mock_provider
+        mock_get_service.return_value = mock_service
+
+        agent = BaseAgent(goal="Test goal", tools=[MockTool()])
+        result = agent.execute(ExecutionContext(goal="Use the tool"))
+
+        self.assertEqual(result.status, "failed")
+        roles = [message.role for message in agent.memory.messages]
+        self.assertEqual(roles, [MessageRole.SYSTEM, MessageRole.USER])
 
     def test_estimate_cost(self):
         """Test cost estimation."""
@@ -1078,6 +1345,97 @@ class TestBaseAgentProgressEvents(unittest.TestCase):
         self.assertEqual(len(tool_phase), 1)
         self.assertIn("search", tool_phase[0])
         self.assertIn("calculate", tool_phase[0])
+
+
+class TestSanitizeForJson(unittest.TestCase):
+    """Regression tests for _sanitize_for_json / _tool_result_to_json.
+
+    These cover the Gemini 'Invalid JSON payload received. Unexpected
+    token NaN' crash: tool results from pandas/numpy contain float('nan')
+    for empty cells, and Python's json.dumps emits those as bareword
+    NaN literals which Gemini rejects.
+    """
+
+    def test_nan_replaced_with_none(self):
+        self.assertIsNone(_sanitize_for_json(float("nan")))
+
+    def test_infinity_replaced_with_none(self):
+        self.assertIsNone(_sanitize_for_json(float("inf")))
+        self.assertIsNone(_sanitize_for_json(float("-inf")))
+
+    def test_finite_float_preserved(self):
+        self.assertEqual(_sanitize_for_json(3.14), 3.14)
+        self.assertEqual(_sanitize_for_json(0.0), 0.0)
+        self.assertEqual(_sanitize_for_json(-1.5), -1.5)
+
+    def test_nested_dict_with_nan(self):
+        data = {
+            "category": float("nan"),
+            "rule": "materials",
+            "rows": [{"value": 1.0}, {"value": float("nan")}],
+        }
+        result = _sanitize_for_json(data)
+        self.assertIsNone(result["category"])
+        self.assertEqual(result["rule"], "materials")
+        self.assertEqual(result["rows"][0]["value"], 1.0)
+        self.assertIsNone(result["rows"][1]["value"])
+
+    def test_list_with_mixed_values(self):
+        result = _sanitize_for_json([1.0, float("nan"), "text", None, 2.5])
+        self.assertEqual(result, [1.0, None, "text", None, 2.5])
+
+    def test_tuple_becomes_list(self):
+        # Tuples aren't JSON-native; they serialize as lists anyway,
+        # so we flatten them to lists during sanitization.
+        result = _sanitize_for_json((1.0, float("nan"), 3.0))
+        self.assertEqual(result, [1.0, None, 3.0])
+
+    def test_non_numeric_values_untouched(self):
+        self.assertEqual(_sanitize_for_json("hello"), "hello")
+        self.assertEqual(_sanitize_for_json(42), 42)
+        self.assertTrue(_sanitize_for_json(True))
+        self.assertIsNone(_sanitize_for_json(None))
+
+    def test_tool_result_to_json_produces_strict_json(self):
+        """The main regression: a tool result containing NaN must
+        round-trip through strict json.loads (which rejects NaN)."""
+        import json
+
+        result = {
+            "pareto_threshold": 0.8,
+            "categories": [
+                {
+                    "category": float("nan"),  # empty cell from pandas
+                    "rule": "materials",
+                    "total": 1234.5,
+                    "rows": [
+                        {"process": "A", "amount": 100.0},
+                        {"process": "B", "amount": float("nan")},
+                    ],
+                }
+            ],
+        }
+        serialized = _tool_result_to_json(result)
+        # Strict parser (no allow_nan=True equivalent on load)
+        parsed = json.loads(serialized)
+        self.assertIsNone(parsed["categories"][0]["category"])
+        self.assertEqual(parsed["categories"][0]["rule"], "materials")
+        self.assertIsNone(parsed["categories"][0]["rows"][1]["amount"])
+
+    def test_tool_result_to_json_rejects_nan_literal(self):
+        """Output must never contain the bareword 'NaN' literal."""
+        serialized = _tool_result_to_json({"x": float("nan")})
+        self.assertNotIn("NaN", serialized)
+        self.assertIn("null", serialized)
+
+    def test_tool_result_to_json_handles_non_serializable(self):
+        """Non-JSON-native types still fall through default=str."""
+        from pathlib import Path
+
+        serialized = _tool_result_to_json({"path": Path("/tmp/x"), "v": float("nan")})
+        parsed = __import__("json").loads(serialized)
+        self.assertIsNone(parsed["v"])
+        self.assertTrue(parsed["path"].endswith("x"))
 
 
 if __name__ == "__main__":

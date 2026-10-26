@@ -7,11 +7,10 @@ Supports variant-based styling (default, info, success, warning).
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 VALID_VARIANTS = ("default", "info", "success", "warning")
 
@@ -65,13 +64,8 @@ class CalloutRenderer(ContentRenderer):
 
         return [
             A2UIComponent(
-                id=_gen_id("callout"),
+                id=gen_id("callout"),
                 component="ObCallout",
                 properties=callout_props,
             )
         ]
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"

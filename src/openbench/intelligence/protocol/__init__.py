@@ -1,0 +1,38 @@
+"""Agent communication protocol — descriptors, routing, and escalation.
+
+Framework-agnostic primitives for coordinating multiple configured agents:
+
+- :class:`AgentDescriptor` / :class:`AgentDirectory` — who the agents are
+  and how to build them (lazily).
+- :class:`AgentRequest` / :class:`AgentResponse` — the handoff envelope.
+
+Applications register their configured agents in a directory, route
+incoming messages to the best specialist, and escalate low-confidence
+answers to a stronger agent.
+"""
+
+from openbench.intelligence.protocol.agent import ProtocolAgent
+from openbench.intelligence.protocol.descriptor import AgentDescriptor, AgentDirectory
+from openbench.intelligence.protocol.envelope import AgentRequest, AgentResponse
+from openbench.intelligence.protocol.escalation import (
+    CONFIDENCE_MARKER_RE,
+    CONFIDENCE_PROTOCOL_PROMPT,
+    DEFAULT_CONFIDENCE_THRESHOLD,
+    extract_confidence,
+)
+from openbench.intelligence.protocol.router import RouteDecision, build_router_prompt, route
+
+__all__ = [
+    "AgentDescriptor",
+    "AgentDirectory",
+    "AgentRequest",
+    "AgentResponse",
+    "CONFIDENCE_MARKER_RE",
+    "CONFIDENCE_PROTOCOL_PROMPT",
+    "DEFAULT_CONFIDENCE_THRESHOLD",
+    "ProtocolAgent",
+    "RouteDecision",
+    "build_router_prompt",
+    "extract_confidence",
+    "route",
+]

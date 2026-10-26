@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from openbench.chat.files import FileContentExtractor, FileStore, StoredFile
+from openbench.chat.files import FileContentExtractor, LocalFileStore, StoredFile
 from openbench.chat.session import Attachment
 
 
@@ -17,7 +18,7 @@ class TestFileStore(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        self.store = FileStore(upload_dir=self.tmpdir)
+        self.store = LocalFileStore(upload_dir=self.tmpdir)
 
     def tearDown(self):
         import shutil
@@ -44,7 +45,7 @@ class TestFileStore(unittest.TestCase):
     def test_creates_directory(self):
         """FileStore.store() auto-creates upload_dir subdirectories."""
         nested_dir = os.path.join(self.tmpdir, "deep", "nested")
-        store = FileStore(upload_dir=nested_dir)
+        store = LocalFileStore(upload_dir=nested_dir)
         stored = store.store("file.txt", b"data", "text/plain")
         self.assertTrue(Path(stored.path).exists())
 
@@ -72,6 +73,26 @@ class TestFileStore(unittest.TestCase):
         file_dir.mkdir()
         result = self.store.get("file-empty")
         self.assertIsNone(result)
+
+    def test_delete_removes_stored_file_directory(self):
+        """delete() removes a stored upload directory."""
+        stored = self.store.store("file.txt", b"data", "text/plain")
+        file_dir = Path(stored.path).parent
+
+        self.assertTrue(self.store.delete(stored.id))
+
+        self.assertFalse(file_dir.exists())
+        self.assertIsNone(self.store.get(stored.id))
+
+    def test_delete_rejects_paths_outside_upload_root(self):
+        """delete() only removes upload subdirectories."""
+        outside = Path(self.tmpdir).parent / f"outside-{uuid.uuid4().hex}"
+        outside.mkdir()
+        try:
+            self.assertFalse(self.store.delete(f"..{os.sep}{outside.name}"))
+            self.assertTrue(outside.exists())
+        finally:
+            outside.rmdir()
 
 
 class TestStoredFile(unittest.TestCase):
