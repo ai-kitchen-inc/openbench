@@ -42,6 +42,24 @@ class MockAgent(Agent):
         return 0.001
 
 
+class FailedMockAgent(Agent):
+    """Mock agent that returns a failed ExecutionResult."""
+
+    @property
+    def agent_type(self) -> str:
+        return "mock-failed"
+
+    def execute(self, context: ExecutionContext) -> ExecutionResult:
+        return ExecutionResult(
+            output=None,
+            status="failed",
+            metadata={"error": "400 INVALID_ARGUMENT"},
+        )
+
+    def estimate_cost(self, context: ExecutionContext) -> float:
+        return 0.0
+
+
 class MockFrameworkAdapter(FrameworkAdapter):
     """Mock framework adapter for testing."""
 
@@ -384,6 +402,72 @@ class TestChatEngineAsyncStream(unittest.TestCase):
         self.assertEqual(last["type"], "error")
         self.assertIn("error", last.get("metadata", {}))
 
+    def _collect_components(self, messages):
+        """Pull components out of updateComponents messages.
+
+        A2UI v0.10 flattens property keys onto the component object, so
+        variant/title/message appear as direct keys, not nested in a
+        'properties' dict.
+        """
+        components = []
+        for msg in messages:
+            update = msg.get("updateComponents")
+            if not update:
+                continue
+            components.extend(update.get("components", []))
+        return components
+
+    def test_invoke_failed_result_renders_error_callout(self):
+        """ExecutionResult(status='failed') should render as ObCallout in invoke()."""
+        agent = MockAgent()
+        agent.execute = MagicMock(
+            return_value=ExecutionResult(
+                output=None,
+                status="failed",
+                metadata={"error": "400 INVALID_ARGUMENT: schema is broken"},
+            )
+        )
+        engine = ChatEngine(agent=agent)
+        result = engine.invoke("Hello")
+
+        components = self._collect_components(result["messages"])
+        error_callouts = [
+            c
+            for c in components
+            if c.get("component") == "ObCallout" and c.get("variant") == "error"
+        ]
+        self.assertEqual(len(error_callouts), 1)
+        self.assertIn("400 INVALID_ARGUMENT", error_callouts[0]["message"])
+        self.assertEqual(error_callouts[0]["title"], "Agent execution failed")
+
+    def test_stream_failed_result_renders_error_callout(self):
+        """ExecutionResult(status='failed') should render as ObCallout in stream()."""
+        agent = MockAgent()
+        agent.execute = MagicMock(
+            return_value=ExecutionResult(
+                output=None,
+                status="failed",
+                metadata={"error": "some tool rejected"},
+            )
+        )
+        engine = ChatEngine(agent=agent)
+
+        lines = list(engine.stream("Hello"))
+        parsed = [json.loads(ln) for ln in lines]
+        components = self._collect_components(parsed)
+
+        error_callouts = [
+            c
+            for c in components
+            if c.get("component") == "ObCallout" and c.get("variant") == "error"
+        ]
+        self.assertEqual(len(error_callouts), 1)
+        self.assertIn("some tool rejected", error_callouts[0]["message"])
+
+        # Stream should still complete cleanly
+        last = parsed[-1]
+        self.assertEqual(last["type"], "stream_end")
+
     def test_async_stream_step_names(self):
         """async_stream steps should have correct names."""
         engine = ChatEngine(agent=MockAgent("Reply"))
@@ -547,6 +631,28 @@ class TestChatEngineRenderItems(unittest.TestCase):
         has_text = any(c["component"] in ("ObMarkdown", "Text") for c in components)
         self.assertTrue(has_text, "Should have text alongside chart")
 
+    def test_invoke_persists_full_surface_snapshot(self):
+        """Session history keeps the full surface (components), not an id stub."""
+        chart_item = {
+            "type": "bar",
+            "title": "Sales",
+            "data": [{"name": "Q1", "value": 100}],
+        }
+        engine = ChatEngine(
+            agent=MockAgent("Here's the chart:"),
+            render_items_fn=lambda: [chart_item],
+        )
+        result = engine.invoke("Show sales chart")
+
+        record = result["session"].messages[-1].surfaces[0]
+        self.assertEqual(
+            record["surfaceId"],
+            result["messages"][0]["createSurface"]["surfaceId"],
+        )
+        self.assertEqual(record["catalogId"], engine.builder.catalog_id)
+        ids = {c["id"] for c in record["components"]}
+        self.assertIn("root", ids)
+
     def test_invoke_with_form_render_item(self):
         """render_items_fn returning form dict should produce form components."""
         form_item = {
@@ -579,6 +685,54 @@ class TestChatEngineRenderItems(unittest.TestCase):
         components = result["messages"][1]["updateComponents"]["components"]
         component_types = [c["component"] for c in components]
         self.assertIn("ObFileCard", component_types)
+
+    def test_invoke_with_dashboard_view_model_render_item(self):
+        """Dashboard ViewModel items should render without requiring an HTML URL."""
+        dashboard_item = {
+            "type": "dashboard",
+            "title": "Sales Dashboard",
+            "viewModel": {
+                "title": "Sales Dashboard",
+                "datasets": {"sales": [{"region": "EU", "revenue": 10}]},
+                "kpis": [{"label": "Revenue", "value": 10}],
+                "sections": [{"title": "Revenue", "items": []}],
+            },
+        }
+        engine = ChatEngine(
+            agent=MockAgent("Dashboard ready:"),
+            render_items_fn=lambda: [dashboard_item],
+        )
+        result = engine.invoke("Show dashboard")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        dashboards = [c for c in components if c["component"] == "ObDashboardFrame"]
+        self.assertEqual(len(dashboards), 1)
+        self.assertEqual(dashboards[0]["viewModel"]["title"], "Sales Dashboard")
+        self.assertNotIn("dashboardUrl", dashboards[0])
+
+    def test_failed_agent_still_renders_dashboard_render_item(self):
+        """A late LLM failure should not hide a dashboard already queued by a tool."""
+        dashboard_item = {
+            "type": "dashboard",
+            "title": "Sales Dashboard",
+            "viewModel": {
+                "title": "Sales Dashboard",
+                "datasets": {"sales": [{"region": "EU", "revenue": 10}]},
+                "kpis": [{"label": "Revenue", "value": 10}],
+                "sections": [{"title": "Revenue", "items": []}],
+            },
+        }
+        engine = ChatEngine(
+            agent=FailedMockAgent(),
+            render_items_fn=lambda: [dashboard_item],
+        )
+
+        result = engine.invoke("Show dashboard")
+
+        components = result["messages"][1]["updateComponents"]["components"]
+        component_types = [c["component"] for c in components]
+        self.assertIn("ObCallout", component_types)
+        self.assertIn("ObDashboardFrame", component_types)
 
     def test_invoke_no_render_items_regression(self):
         """Engine with render_items_fn returning empty list should render normally."""
@@ -741,6 +895,361 @@ class TestChatEngineRenderItems(unittest.TestCase):
         components = result["messages"][1]["updateComponents"]["components"]
         file_cards = [c for c in components if c["component"] == "ObFileCard"]
         self.assertEqual(len(file_cards), 1, "Same-name file cards should be deduped")
+
+
+class TestChatEngineClearRenderItems(unittest.TestCase):
+    """Regression tests for clear_render_items_fn wiring (Issue 2).
+
+    The docstring on ``ChatEngine.__init__`` promises that
+    ``clear_render_items_fn`` is "Called before each agent execution for
+    per-request isolation." Before the fix, the callback was stored but
+    never invoked — so stale render items bled across turns.
+    """
+
+    def test_invoke_calls_clear_before_execution(self):
+        clear_calls: list[int] = []
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=lambda: clear_calls.append(1),
+        )
+        engine.invoke("Hello")
+        self.assertEqual(len(clear_calls), 1)
+
+    def test_invoke_calls_clear_on_every_turn(self):
+        clear_calls: list[int] = []
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=lambda: clear_calls.append(1),
+        )
+        engine.invoke("Turn 1")
+        engine.invoke("Turn 2")
+        engine.invoke("Turn 3")
+        self.assertEqual(len(clear_calls), 3)
+
+    def test_stream_calls_clear_before_execution(self):
+        clear_calls: list[int] = []
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=lambda: clear_calls.append(1),
+        )
+        list(engine.stream("Hello"))
+        self.assertEqual(len(clear_calls), 1)
+
+    def test_async_stream_calls_clear_before_execution(self):
+        clear_calls: list[int] = []
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=lambda: clear_calls.append(1),
+        )
+
+        async def collect():
+            async for _ in engine.async_stream("Hello"):
+                pass
+
+        asyncio.run(collect())
+        self.assertEqual(len(clear_calls), 1)
+
+    def test_clear_called_before_render_items_fn(self):
+        """clear_render_items_fn must fire BEFORE the agent runs, so that
+        stale items from a previous turn do not leak into render_items_fn.
+        """
+        call_order: list[str] = []
+
+        # Simulate a process-global queue.
+        queue: list[dict] = [{"type": "bar", "title": "Stale chart", "data": []}]
+
+        def clear():
+            call_order.append("clear")
+            queue.clear()
+
+        def render_items():
+            call_order.append("render_items")
+            return list(queue)
+
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=clear,
+            render_items_fn=render_items,
+        )
+        result = engine.invoke("Hello")
+
+        # clear must happen before render_items is collected
+        self.assertEqual(call_order[0], "clear")
+        self.assertIn("render_items", call_order)
+        self.assertLess(call_order.index("clear"), call_order.index("render_items"))
+
+        # The stale chart must NOT appear in the output
+        components = result["messages"][1]["updateComponents"]["components"]
+        ob_charts = [c for c in components if c["component"] == "ObChart"]
+        self.assertEqual(
+            len(ob_charts),
+            0,
+            "Stale chart from previous turn should have been cleared before execution",
+        )
+
+    def test_no_clear_fn_is_safe(self):
+        """When clear_render_items_fn is None, invoke() must still work."""
+        engine = ChatEngine(agent=MockAgent("Reply"))
+        result = engine.invoke("Hello")
+        self.assertIn("messages", result)
+
+    def test_clear_fn_exception_does_not_break_invoke(self):
+        """If clear_render_items_fn raises, the turn must still complete."""
+
+        def bad_clear():
+            raise RuntimeError("boom")
+
+        engine = ChatEngine(
+            agent=MockAgent("Reply"),
+            clear_render_items_fn=bad_clear,
+        )
+        # Should not propagate the RuntimeError
+        result = engine.invoke("Hello")
+        self.assertIn("messages", result)
+
+
+class TestChatEngineSessionStore(unittest.TestCase):
+    """ChatEngine persists the session after each turn when a store is set."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from openbench.chat.stores.sqlite import SQLiteSessionStore
+
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.store = SQLiteSessionStore(str(Path(self._tmpdir.name) / "sessions.db"))
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def test_invoke_persists_session(self):
+        engine = ChatEngine(agent=MockAgent("Reply"), session_store=self.store)
+        engine.invoke("Hi")
+        reloaded = self.store.load(engine.session.session_id)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+        # Two messages: user + assistant
+        self.assertEqual(len(reloaded.messages), 2)
+        self.assertEqual(reloaded.messages[0].role, MessageRole.USER)
+        self.assertEqual(reloaded.messages[1].role, MessageRole.ASSISTANT)
+
+    def test_invoke_persists_twice_per_turn(self):
+        """Session saved after user message AND after assistant message."""
+
+        class CountingStore:
+            def __init__(self, inner):
+                self.inner = inner
+                self.saves = 0
+
+            def save(self, session):
+                self.saves += 1
+                self.inner.save(session)
+
+            def load(self, session_id):
+                return self.inner.load(session_id)
+
+            def list(self, limit=50, offset=0):
+                return self.inner.list(limit=limit, offset=offset)
+
+            def delete(self, session_id):
+                self.inner.delete(session_id)
+
+        counter = CountingStore(self.store)
+        engine = ChatEngine(agent=MockAgent("Reply"), session_store=counter)
+        engine.invoke("Hi")
+        # One save after user message, one after assistant
+        self.assertEqual(counter.saves, 2)
+
+    def test_stream_persists_session(self):
+        engine = ChatEngine(agent=MockAgent("Reply"), session_store=self.store)
+        for _ in engine.stream("Streaming hi"):
+            pass
+        reloaded = self.store.load(engine.session.session_id)
+        assert reloaded is not None
+        self.assertEqual(len(reloaded.messages), 2)
+
+    def test_store_failure_does_not_break_turn(self):
+        """A transient store exception must not sink the live turn."""
+
+        class BrokenStore:
+            def save(self, session):
+                raise RuntimeError("disk full")
+
+            def load(self, session_id):
+                return None
+
+            def list(self, limit=50, offset=0):
+                return []
+
+            def delete(self, session_id):
+                pass
+
+        engine = ChatEngine(agent=MockAgent("Reply"), session_store=BrokenStore())
+        result = engine.invoke("Hi")
+        self.assertIn("messages", result)
+        # In-memory session still intact
+        self.assertEqual(len(engine.session.messages), 2)
+
+    def test_no_store_means_no_persist(self):
+        engine = ChatEngine(agent=MockAgent("Reply"), session_store=None)
+        engine.invoke("Hi")
+        self.assertIsNone(self.store.load(engine.session.session_id))
+
+
+class _RaisingAgent(Agent):
+    """Agent that always raises to simulate a mid-turn crash."""
+
+    def __init__(self, exc: BaseException):
+        self._exc = exc
+
+    @property
+    def agent_type(self) -> str:
+        return "raising"
+
+    def execute(self, context):
+        raise self._exc
+
+    def estimate_cost(self, context):
+        return 0.0
+
+
+class TestChatEngineAbortPlaceholder(unittest.TestCase):
+    """Layer 2b — aborted-turn placeholder.
+
+    When ``_execute_agent`` raises, ``invoke`` / ``stream`` /
+    ``async_stream`` must leave the session ending on a placeholder
+    assistant message (``metadata["aborted"] == True``) and propagate
+    the exception (for invoke) or emit a stream ERROR (for stream).
+    """
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from openbench.chat.stores.sqlite import SQLiteSessionStore
+
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.store = SQLiteSessionStore(str(Path(self._tmpdir.name) / "sessions.db"))
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def test_invoke_writes_placeholder_on_crash(self):
+        engine = ChatEngine(
+            agent=_RaisingAgent(RuntimeError("Gemini 500")),
+            session_store=self.store,
+        )
+        with self.assertRaises(RuntimeError):
+            engine.invoke("analyze this")
+
+        # In-memory session ended on placeholder
+        msgs = engine.session.messages
+        self.assertEqual(len(msgs), 2)
+        self.assertEqual(msgs[0].role, MessageRole.USER)
+        self.assertEqual(msgs[0].content, "analyze this")
+        self.assertEqual(msgs[1].role, MessageRole.ASSISTANT)
+        self.assertIn("Turn interrupted", msgs[1].content)
+        self.assertTrue(msgs[1].metadata.get("aborted"))
+        self.assertIn("Gemini 500", msgs[1].metadata.get("error", ""))
+
+        # Session saved to store with both messages
+        reloaded = self.store.load(engine.session.session_id)
+        assert reloaded is not None
+        self.assertEqual(len(reloaded.messages), 2)
+        self.assertTrue(reloaded.messages[1].metadata.get("aborted"))
+
+    def test_stream_writes_placeholder_on_crash(self):
+        engine = ChatEngine(
+            agent=_RaisingAgent(RuntimeError("tool exploded")),
+            session_store=self.store,
+        )
+        # Consume the stream so the except handler runs
+        output = list(engine.stream("something"))
+        # Last emitted stream message is an ERROR type
+        last = json.loads(output[-1])
+        self.assertEqual(last["type"], "error")
+
+        # Placeholder persisted
+        reloaded = self.store.load(engine.session.session_id)
+        assert reloaded is not None
+        self.assertEqual(len(reloaded.messages), 2)
+        self.assertTrue(reloaded.messages[1].metadata.get("aborted"))
+        self.assertIn("Turn interrupted", reloaded.messages[1].content)
+
+    def test_async_stream_writes_placeholder_on_crash(self):
+        engine = ChatEngine(
+            agent=_RaisingAgent(RuntimeError("async boom")),
+            session_store=self.store,
+        )
+
+        async def _collect():
+            return [line async for line in engine.async_stream("hi")]
+
+        loop = asyncio.new_event_loop()
+        try:
+            output = loop.run_until_complete(_collect())
+        finally:
+            loop.close()
+        self.assertEqual(json.loads(output[-1])["type"], "error")
+
+        reloaded = self.store.load(engine.session.session_id)
+        assert reloaded is not None
+        self.assertEqual(len(reloaded.messages), 2)
+        self.assertTrue(reloaded.messages[1].metadata.get("aborted"))
+
+    def test_placeholder_disabled_by_env(
+        self,
+    ):
+        """With the env flag off, the session ends on the user message —
+        matches pre-Layer-2b behaviour, useful as a rollback lever."""
+        import os
+
+        os.environ["OPENBENCH_PLACEHOLDER_ON_ABORT"] = "0"
+        try:
+            engine = ChatEngine(
+                agent=_RaisingAgent(RuntimeError("x")),
+                session_store=self.store,
+            )
+            with self.assertRaises(RuntimeError):
+                engine.invoke("q")
+
+            # No placeholder added
+            self.assertEqual(len(engine.session.messages), 1)
+            self.assertEqual(engine.session.messages[0].role, MessageRole.USER)
+
+            # Store has only the user message (from the upfront save)
+            reloaded = self.store.load(engine.session.session_id)
+            assert reloaded is not None
+            self.assertEqual(len(reloaded.messages), 1)
+        finally:
+            del os.environ["OPENBENCH_PLACEHOLDER_ON_ABORT"]
+
+    def test_placeholder_store_failure_does_not_mask_original_exception(self):
+        """If the placeholder save itself raises, the ORIGINAL exception
+        from the agent must still propagate unchanged."""
+
+        class BrokenStore:
+            def save(self, session):
+                raise OSError("disk full")
+
+            def load(self, session_id):
+                return None
+
+            def list(self, limit=50, offset=0):
+                return []
+
+            def delete(self, session_id):
+                pass
+
+        engine = ChatEngine(
+            agent=_RaisingAgent(RuntimeError("original")),
+            session_store=BrokenStore(),
+        )
+        with self.assertRaises(RuntimeError) as cm:
+            engine.invoke("hi")
+        # The original exception propagates — not the disk-full OSError
+        self.assertIn("original", str(cm.exception))
 
 
 if __name__ == "__main__":

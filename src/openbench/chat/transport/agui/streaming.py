@@ -1,129 +1,24 @@
-"""
-AG-UI protocol transport for chat.
-
-Replaces the custom SSE/WebSocket transport with AG-UI (Agent-User Interaction
-Protocol) standardized event streaming. Uses AG-UI event types for lifecycle
-management and wraps A2UI v0.10 messages as CustomEvent payloads.
-
-AG-UI handles transport; A2UI handles rendering.
-
-Per-session isolation: Each sessionId gets its own ChatSession instance and
-each request gets a fresh agent copy (clean memory). This prevents context
-contamination when multiple requests stream in parallel.
-
-Note: ag-ui-protocol and fastapi are optional dependencies -- imported lazily.
-"""
+"""AG-UI SSE event streaming: the queue-bridged agent run loop."""
 
 from __future__ import annotations
 
 import asyncio
-import copy
 import logging
-import threading
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from openbench.chat.session import ChatSession
-from openbench.intelligence.base import AgentMemory, BaseAgent, ProgressEvent
+from openbench.chat.transport.agui.messages import A2UIStreamMessage
+from openbench.intelligence.base import ProgressEvent
+from openbench.mcp.permissions import MCPPermissionContext, use_mcp_permission_context
+
+if TYPE_CHECKING:
+    from openbench.chat.session import ChatSession
 
 logger = logging.getLogger(__name__)
 
 
-class AGUIHandler:
-    """AG-UI protocol handler for chat message streaming.
-
-    Streams AG-UI events as SSE, wrapping A2UI v0.10 messages inside
-    CustomEvent(name="a2ui") payloads.
-
-    Supports parallel request isolation:
-    - Each sessionId maps to its own ChatSession (conversation history).
-    - Each request gets a fresh agent copy with clean memory.
-    - Render items use ContextVar for per-request isolation (no locks needed).
-
-    Event sequence:
-        RunStartedEvent
-        → StepStartedEvent("Processing input") → StepFinishedEvent
-        → StepStartedEvent("Thinking") → StepFinishedEvent
-        → StepStartedEvent("Rendering response") → CustomEvent(a2ui)... → StepFinishedEvent
-        → RunFinishedEvent
-
-    Usage with FastAPI:
-        from fastapi import FastAPI, Request
-        from fastapi.responses import StreamingResponse
-        from openbench.chat import ChatEngine
-        from openbench.chat.transport.agui import AGUIHandler
-
-        app = FastAPI()
-        engine = ChatEngine(agent=my_agent)
-        handler = AGUIHandler(engine=engine)
-
-        @app.post("/awp")
-        async def agent_endpoint(request: Request):
-            return await handler.handle(request)
-    """
-
-    def __init__(self, engine: Any):
-        """Initialize AG-UI handler.
-
-        Args:
-            engine: ChatEngine instance for processing messages.
-        """
-        self.engine = engine
-        self._sessions: dict[str, ChatSession] = {}
-        self._sessions_lock = threading.Lock()
-
-    def _get_or_create_session(self, session_id: str) -> ChatSession:
-        """Get or create a ChatSession for the given session ID.
-
-        Thread-safe: uses a lock for concurrent access.
-        """
-        with self._sessions_lock:
-            if session_id not in self._sessions:
-                self._sessions[session_id] = ChatSession(session_id=session_id)
-            return self._sessions[session_id]
-
-    def _create_request_agent(self) -> Any:
-        """Create a request-scoped copy of the agent with fresh memory.
-
-        For BaseAgent: shallow copy with a new AgentMemory (system prompt only).
-        For other agent types: returns the original (assumed stateless).
-        """
-        agent = self.engine.agent
-        if isinstance(agent, BaseAgent):
-            agent_copy = copy.copy(agent)
-            agent_copy.memory = AgentMemory()
-            agent_copy.memory.add_system(agent._system_prompt)
-            # Share LLM provider and tools (thread-safe, read-only references)
-            agent_copy._llm = agent._llm
-            agent_copy.tools = agent.tools
-            return agent_copy
-        return agent
-
-    async def handle(self, request: Any) -> Any:
-        """Handle an incoming request and return an SSE StreamingResponse.
-
-        Accepts both AG-UI RunAgentInput format and OpenBench format.
-
-        Args:
-            request: FastAPI Request object.
-
-        Returns:
-            StreamingResponse with AG-UI SSE events.
-        """
-        from fastapi.responses import StreamingResponse
-
-        body = await request.json()
-        accept = request.headers.get("accept", "text/event-stream")
-
-        return StreamingResponse(
-            self._event_stream(body, accept),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
+class _EventStreamMixin:
+    """Mixin for AGUIHandler; not instantiated directly."""
 
     async def _event_stream(self, body: dict[str, Any], accept: str) -> Any:
         """Generate AG-UI events as SSE strings.
@@ -165,8 +60,17 @@ class AGUIHandler:
         forwarded = body.get("forwardedProps") or {}
         session_id = forwarded.get("sessionId") or thread_id
 
-        # Get or create per-session ChatSession
-        session = self._get_or_create_session(session_id)
+        # Get or create per-session ChatSession. If the engine has a
+        # persistent session store wired, try loading from there first
+        # so cross-request / cross-replica history actually carries over
+        # (the in-memory dict only survives within a single process).
+        session = self._load_session_from_store(session_id)
+        if session is None:
+            session = self._get_or_create_session(session_id)
+        # Give subclasses a hook to run per-request setup (e.g.
+        # stashing session_id on a thread-local). Runs regardless of
+        # which code path produced ``session`` above.
+        self._on_session_resolved(session_id)
 
         # Create a request-scoped agent copy with fresh memory
         request_agent = self._create_request_agent()
@@ -180,11 +84,13 @@ class AGUIHandler:
             # ── Step 1: Processing input ──
             yield encoder.encode(StepStartedEvent(step_name="Processing input"))
             session.add_user_message(content, attachments=attachments)
+            self._after_user_message(session, content)
+            self._persist_session(session)
             yield encoder.encode(StepFinishedEvent(step_name="Processing input"))
 
             # ── Step 2: Agent execution (with streaming text + progress) ──
             message_id = f"msg-{uuid.uuid4().hex[:8]}"
-            queue: asyncio.Queue[str | ProgressEvent | None] = asyncio.Queue()
+            queue: asyncio.Queue[str | ProgressEvent | A2UIStreamMessage | None] = asyncio.Queue()
             loop = asyncio.get_event_loop()
 
             def on_chunk(delta: str) -> None:
@@ -195,6 +101,14 @@ class AGUIHandler:
                 """Callback from sync agent thread → async queue."""
                 loop.call_soon_threadsafe(queue.put_nowait, event)
 
+            permission_context = self._create_permission_context(
+                session_id=session_id,
+                thread_id=thread_id,
+                run_id=run_id,
+                queue=queue,
+                loop=loop,
+            )
+
             # Clear render items before agent execution
             if self.engine._clear_render_items_fn:
                 self.engine._clear_render_items_fn()
@@ -202,9 +116,9 @@ class AGUIHandler:
             # Run agent in thread pool with per-request agent and session
             agent_task = asyncio.create_task(
                 asyncio.to_thread(
-                    self.engine._execute_agent,
+                    self._execute_agent_with_permission_context,
+                    permission_context,
                     content,
-                    None,
                     attachments,
                     on_chunk,
                     session,
@@ -230,6 +144,9 @@ class AGUIHandler:
                 item = await queue.get()
                 if item is None:
                     break
+                if isinstance(item, A2UIStreamMessage):
+                    yield encoder.encode(CustomEvent(name="a2ui", value=item.message))
+                    continue
                 if isinstance(item, ProgressEvent):
                     # Close previous step, open new one
                     if current_step:
@@ -264,7 +181,7 @@ class AGUIHandler:
             # ── Step 3: Rendering response (rich content only) ──
             # Text was already streamed via TEXT_MESSAGE events.
             # A2UI surfaces are only for rich content (charts, forms, files).
-            surface_id = None
+            surface_record = None
 
             if extra_items:
                 yield encoder.encode(StepStartedEvent(step_name="Rendering response"))
@@ -276,6 +193,11 @@ class AGUIHandler:
                 messages = self.engine.builder.build_surface(
                     surface_id, components, data_model=data_model
                 )
+                # Persist the full snapshot (not just the id) so reloading
+                # the session can replay this surface.
+                surface_record = self.engine._build_surface_record(
+                    surface_id, components, data_model
+                )
 
                 for msg in messages:
                     yield encoder.encode(CustomEvent(name="a2ui", value=msg))
@@ -286,9 +208,10 @@ class AGUIHandler:
             text_content = self.engine._extract_text_content(agent_output)
             session.add_assistant_message(
                 content=text_content,
-                surfaces=[{"surfaceId": surface_id}] if surface_id else None,
+                surfaces=[surface_record] if surface_record else None,
                 metadata=metadata,
             )
+            self._persist_session(session)
 
             # Run finished
             yield encoder.encode(
@@ -304,45 +227,37 @@ class AGUIHandler:
 
         except Exception as e:
             logger.error(f"AG-UI stream error: {e}")
+            # Drop a placeholder assistant message into the session before
+            # emitting the error event. Otherwise the reloaded thread
+            # ends on a dangling user turn, which looks to the user like
+            # their message disappeared. The engine owns the placeholder
+            # helper so the behaviour matches ChatEngine.invoke/stream.
+            try:
+                self.engine._write_aborted_placeholder(session, e)
+            except Exception:
+                logger.exception(
+                    "Failed to write aborted-turn placeholder for session_id=%s",
+                    session.session_id,
+                )
             yield encoder.encode(RunErrorEvent(message=str(e), code="AGENT_ERROR"))
 
-    def _extract_content(self, body: dict[str, Any]) -> tuple[str, list | None]:
-        """Extract content and attachments from request body.
-
-        Accepts both AG-UI RunAgentInput format (messages array) and
-        OpenBench format ({content: "..."}).
-
-        Args:
-            body: Request body dict.
-
-        Returns:
-            Tuple of (content string, optional attachments list).
-        """
-        # AG-UI format: messages array with role-based messages
-        messages = body.get("messages")
-        if messages and isinstance(messages, list):
-            # Find the last user message
-            for msg in reversed(messages):
-                if isinstance(msg, dict) and msg.get("role") == "user":
-                    content = msg.get("content", "")
-                    break
-            else:
-                content = ""
-
-            # Attachments from forwardedProps
-            forwarded = body.get("forwardedProps") or {}
-            raw_attachments = forwarded.get("attachments")
-            attachments = self._coerce_attachments(raw_attachments)
-            return content, attachments
-
-        # OpenBench format: {content: "...", attachments: [...]}
-        content = body.get("content", "")
-        raw_attachments = body.get("attachments")
-        attachments = self._coerce_attachments(raw_attachments)
-        return content, attachments
-
-    def _coerce_attachments(self, raw: Any) -> list | None:
-        """Coerce raw attachment data to Attachment objects or None."""
-        if not raw:
-            return None
-        return self.engine._coerce_attachments(raw) if raw else None
+    def _execute_agent_with_permission_context(
+        self,
+        permission_context: MCPPermissionContext | None,
+        content: str,
+        attachments: list | None,
+        on_chunk,
+        session: ChatSession,
+        request_agent: Any,
+        on_progress,
+    ) -> Any:
+        with use_mcp_permission_context(permission_context):
+            return self.engine._execute_agent(
+                content,
+                None,
+                attachments,
+                on_chunk,
+                session,
+                request_agent,
+                on_progress,
+            )

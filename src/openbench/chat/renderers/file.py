@@ -6,11 +6,10 @@ Converts file metadata dicts to A2UI ObFileCard components.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 
 @ContentRendererRegistry.register("file", "default", description="File preview renderer")
@@ -66,14 +65,14 @@ class FileRenderer(ContentRenderer):
             props["mimeType"] = file_data["mimeType"]
         if "previewUrl" in file_data:
             props["previewUrl"] = file_data["previewUrl"]
+        # Propagate the "external" flag when set by a cloud-backed
+        # producer (e.g. Drive ``webViewLink``) so the frontend opens
+        # the URL in a new tab without forcing a download.
+        if file_data.get("external"):
+            props["external"] = True
 
         return A2UIComponent(
-            id=_gen_id("file"),
+            id=gen_id("file"),
             component="ObFileCard",
             properties=props,
         )
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"

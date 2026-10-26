@@ -15,16 +15,13 @@ while maintaining compatibility with any LLM provider.
 
 from __future__ import annotations
 
-import inspect
 import json
 import logging
-import threading
-from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 from openbench.core.abstractions import (
     Agent,
@@ -33,428 +30,47 @@ from openbench.core.abstractions import (
     ExecutionResult,
     LLMProvider,
     LLMResponse,
-    Query,
+    MediaContent,
     Tool,
 )
 from openbench.core.config import get_config, get_default_model
 from openbench.core.providers import ProviderType, get_provider_service
 
+# Backward-compat re-exports: these primitives moved into focused modules but
+# are still imported from ``openbench.intelligence.base`` across the codebase.
+from openbench.intelligence.agent_config import (
+    AgentConfig,  # noqa: F401  # re-exported for openbench.intelligence.__init__
+    ProgressEvent,
+    _emit_progress,
+)
+from openbench.intelligence.agent_memory import AgentMemory
+from openbench.intelligence.agent_rag import _AgentRAGMixin
+from openbench.intelligence.messages import Message, MessageRole
+from openbench.intelligence.query_rewriter import (
+    QueryRewriter,  # noqa: TC001  # runtime re-export for openbench.intelligence.__init__
+)
+from openbench.intelligence.tool_executor import (
+    ToolExecutor,
+    _sanitize_for_json,  # noqa: F401  # re-exported for callers importing from base
+    _tool_result_to_json,
+)
+
 logger = logging.getLogger(__name__)
 
 
-class MessageRole(Enum):
-    """Role in conversation."""
+def _tool_call_signature(tc: dict[str, Any]) -> str:
+    """Stable signature for a tool call (name + canonical arguments).
 
-    SYSTEM = "system"
-    USER = "user"
-    ASSISTANT = "assistant"
-    TOOL = "tool"
-
-
-@dataclass
-class Message:
-    """A message in agent conversation."""
-
-    role: MessageRole
-    content: str
-    name: str | None = None
-    tool_call_id: str | None = None
-    tool_calls: list[dict[str, Any]] | None = None
-    raw_content: Any = field(default=None, repr=False)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to LLM-compatible format."""
-        result = {"role": self.role.value, "content": self.content}
-        if self.name:
-            result["name"] = self.name
-        if self.tool_call_id:
-            result["tool_call_id"] = self.tool_call_id
-        if self.tool_calls:
-            result["tool_calls"] = self.tool_calls
-        if self.raw_content is not None:
-            result["raw_content"] = self.raw_content
-        return result
-
-
-@dataclass
-class AgentMemory:
-    """Agent conversation memory."""
-
-    messages: list[Message] = field(default_factory=list)
-    max_messages: int = 100
-    max_tokens: int | None = None
-
-    def _estimate_tokens(self) -> int:
-        """Rough token estimate: ~4 chars per token."""
-        return sum(len(m.content) // 4 for m in self.messages)
-
-    def _trim_oldest(self, keep_count: int) -> None:
-        """Trim oldest messages, preserving system message."""
-        if self.messages and self.messages[0].role == MessageRole.SYSTEM:
-            self.messages = [self.messages[0], *self.messages[-(keep_count - 1) :]]
-        else:
-            self.messages = self.messages[-keep_count:]
-
-    def add(self, role: MessageRole, content: str, **kwargs) -> None:
-        """Add message to memory."""
-        self.messages.append(Message(role=role, content=content, **kwargs))
-
-        # Trim by message count
-        if len(self.messages) > self.max_messages:
-            self._trim_oldest(self.max_messages)
-
-        # Trim by token budget
-        if self.max_tokens and self._estimate_tokens() > self.max_tokens:
-            # Remove oldest non-system messages until under budget
-            while len(self.messages) > 1 and self._estimate_tokens() > self.max_tokens:
-                # Find first non-system message to remove
-                for i, m in enumerate(self.messages):
-                    if m.role != MessageRole.SYSTEM:
-                        self.messages.pop(i)
-                        break
-                else:
-                    break
-            # Warn if still over budget (system message alone exceeds limit)
-            if self._estimate_tokens() > self.max_tokens:
-                logger.warning(
-                    "System message alone (~%d tokens) exceeds max_tokens (%d). "
-                    "Consider increasing max_tokens or shortening the system prompt.",
-                    self._estimate_tokens(),
-                    self.max_tokens,
-                )
-
-    def add_system(self, content: str) -> None:
-        """Add system message."""
-        self.add(MessageRole.SYSTEM, content)
-
-    def add_user(self, content: str) -> None:
-        """Add user message."""
-        self.add(MessageRole.USER, content)
-
-    def add_assistant(
-        self,
-        content: str,
-        tool_calls: list[dict] | None = None,
-        raw_content: Any = None,
-    ) -> None:
-        """Add assistant message."""
-        self.add(
-            MessageRole.ASSISTANT,
-            content,
-            tool_calls=tool_calls,
-            raw_content=raw_content,
-        )
-
-    def add_tool_result(self, tool_call_id: str, name: str, result: str) -> None:
-        """Add tool result message."""
-        self.add(MessageRole.TOOL, result, name=name, tool_call_id=tool_call_id)
-
-    def get_messages(self) -> list[dict[str, Any]]:
-        """Get messages in LLM-compatible format."""
-        return [m.to_dict() for m in self.messages]
-
-    def clear(self) -> None:
-        """Clear all messages except system."""
-        if self.messages and self.messages[0].role == MessageRole.SYSTEM:
-            self.messages = [self.messages[0]]
-        else:
-            self.messages = []
-
-
-class ToolExecutor:
+    Used to detect a model re-emitting the exact same call within one
+    reasoning turn so the loop can short-circuit the thrash instead of
+    re-executing it until ``max_iterations``.
     """
-    Unified tool execution interface.
-
-    Supports:
-    - Function tools (Python callables)
-    - OpenBench Tool abstractions
-    - Dynamic tool registration
-    """
-
-    def __init__(self):
-        self._tools: dict[str, Tool | Callable] = {}
-        self._schemas: dict[str, dict[str, Any]] = {}
-
-    def register(
-        self,
-        name: str,
-        tool: Tool | Callable,
-        schema: dict[str, Any] | None = None,
-        description: str | None = None,
-    ) -> None:
-        """
-        Register a tool.
-
-        Args:
-            name: Tool name
-            tool: Tool instance or callable
-            schema: JSON schema for parameters (auto-generated for callables)
-            description: Tool description
-        """
-        self._tools[name] = tool
-
-        if isinstance(tool, Tool):
-            self._schemas[name] = tool.get_schema()
-        elif schema:
-            self._schemas[name] = schema
-        else:
-            # Generate schema from callable using inspect.signature()
-            properties = {}
-            required = []
-            if callable(tool):
-                type_map = {
-                    str: "string",
-                    int: "integer",
-                    float: "number",
-                    bool: "boolean",
-                }
-                try:
-                    sig = inspect.signature(tool)
-                    for param_name, param in sig.parameters.items():
-                        prop = {"type": "string"}
-                        if param.annotation != inspect.Parameter.empty:
-                            prop["type"] = type_map.get(param.annotation, "string")
-                        if param.default != inspect.Parameter.empty:
-                            prop["default"] = param.default
-                        properties[param_name] = prop
-                        if param.default == inspect.Parameter.empty:
-                            required.append(param_name)
-                except (ValueError, TypeError):
-                    pass
-
-            self._schemas[name] = {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": description or tool.__doc__ or f"Execute {name}",
-                    "parameters": {
-                        "type": "object",
-                        "properties": properties,
-                        "required": required,
-                    },
-                },
-            }
-
-    def register_from_list(self, tools: list[Tool | Callable]) -> None:
-        """Register multiple tools."""
-        for tool in tools:
-            if isinstance(tool, Tool):
-                self.register(tool.name, tool)
-            elif callable(tool):
-                self.register(tool.__name__, tool)
-
-    def get_schemas(self) -> list[dict[str, Any]]:
-        """Get all tool schemas for LLM."""
-        return list(self._schemas.values())
-
-    def execute(self, name: str, timeout: int = 30, **params) -> Any:
-        """
-        Execute a tool by name.
-
-        Args:
-            name: Tool name
-            timeout: Maximum execution time in seconds (default: 30)
-            **params: Tool parameters
-
-        Returns:
-            Tool execution result
-
-        Raises:
-            ValueError: If tool not found or invalid type
-            TimeoutError: If tool execution exceeds timeout
-        """
-        tool = self._tools.get(name)
-        if not tool:
-            raise ValueError(f"Tool not found: {name}")
-
-        import contextvars
-        from queue import Empty, SimpleQueue
-
-        # Use a queue for thread-safe result passing (one per call).
-        q: SimpleQueue = SimpleQueue()
-
-        def _run():
-            try:
-                if isinstance(tool, Tool):
-                    q.put(("ok", tool.execute(**params)))
-                elif callable(tool):
-                    q.put(("ok", tool(**params)))
-                else:
-                    q.put(("err", ValueError(f"Invalid tool type: {type(tool)}")))
-            except Exception as e:
-                q.put(("err", e))
-
-        # Propagate ContextVar values so tool functions can access
-        # per-request state (e.g. render items, attachments).
-        ctx = contextvars.copy_context()
-        thread = threading.Thread(target=ctx.run, args=(_run,), daemon=True)
-        thread.start()
-        thread.join(timeout=timeout)
-
-        if thread.is_alive():
-            raise TimeoutError(f"Tool '{name}' exceeded {timeout}s timeout")
-
-        try:
-            status, value = q.get_nowait()
-        except Empty:
-            raise TimeoutError(f"Tool '{name}' finished but produced no result") from None
-        if status == "err":
-            raise value
-
-        return value
-
-    def execute_parallel(
-        self, calls: list[dict[str, Any]], timeout: int = 30
-    ) -> list[dict[str, Any]]:
-        """Execute multiple tool calls concurrently.
-
-        Independent tool calls run in separate threads for faster execution.
-        Each call has its own timeout. One failure does not block others.
-
-        Context propagation: each thread receives a copy of the calling
-        context (via ``contextvars.copy_context()``) so that ContextVar
-        values (e.g. per-request render items) are visible to tool functions.
-
-        Args:
-            calls: List of tool call dicts with ``name``, ``arguments``, ``id``.
-            timeout: Maximum execution time per tool in seconds.
-
-        Returns:
-            List of result dicts with ``call``, ``result``, ``error`` keys.
-            Order matches the input ``calls`` order.
-        """
-        import concurrent.futures
-        import contextvars
-
-        results: dict[int, dict[str, Any]] = {}
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(calls)) as pool:
-            future_to_idx = {
-                pool.submit(
-                    contextvars.copy_context().run,
-                    self.execute,
-                    call["name"],
-                    timeout=timeout,
-                    **call["arguments"],
-                ): idx
-                for idx, call in enumerate(calls)
-            }
-            for future in concurrent.futures.as_completed(future_to_idx):
-                idx = future_to_idx[future]
-                try:
-                    result = future.result()
-                    results[idx] = {
-                        "call": calls[idx],
-                        "result": result,
-                        "error": None,
-                    }
-                except Exception as e:
-                    results[idx] = {
-                        "call": calls[idx],
-                        "result": None,
-                        "error": str(e),
-                    }
-
-        # Return in original order
-        return [results[i] for i in range(len(calls))]
-
-    def __contains__(self, name: str) -> bool:
-        return name in self._tools
-
-    def __len__(self) -> int:
-        return len(self._tools)
+    return tc["name"] + "\x00" + json.dumps(
+        tc.get("arguments") or {}, sort_keys=True, default=str
+    )
 
 
-@dataclass
-class AgentConfig:
-    """Configuration for an agent."""
-
-    model: str = field(default_factory=get_default_model)
-    temperature: float = 0.7
-    max_tokens: int | None = None
-    max_iterations: int = 10
-    system_prompt: str | None = None
-    stop_sequences: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ProgressEvent:
-    """Progress update from agent execution.
-
-    Emitted via ``on_progress`` callback during BaseAgent.execute() to report
-    sub-phases (planning, tool use, analysis) for real-time UI indicators.
-    """
-
-    phase: str
-    detail: str = ""
-
-
-class QueryRewriter:
-    """LLM-based query rewriter for improved RAG retrieval.
-
-    Rewrites user queries into multiple optimized search queries
-    to improve semantic search recall.
-
-    Example:
-        >>> rewriter = QueryRewriter(llm_provider)
-        >>> queries = rewriter.rewrite("How does photosynthesis affect climate?")
-        >>> # ["photosynthesis carbon dioxide absorption", "climate change CO2 cycle", ...]
-    """
-
-    def __init__(self, llm: LLMProvider, model: str | None = None):
-        self.llm = llm
-        self.model = model
-
-    def rewrite(self, query: str, context: str = "") -> list[str]:
-        """Rewrite a query into 1-3 optimized search queries.
-
-        Args:
-            query: Original user query.
-            context: Optional additional context to inform rewriting.
-
-        Returns:
-            List of rewritten search queries (1-3 items).
-            Falls back to [query] on failure.
-        """
-        prompt = (
-            "Given the user query below, generate 1 to 3 search queries optimized for "
-            "semantic search over a document knowledge base. Each query should target "
-            "a different aspect of the information need.\n\n"
-            f"User query: {query}\n"
-        )
-        if context:
-            prompt += f"Additional context: {context}\n"
-        prompt += '\nRespond with ONLY a JSON array of strings, e.g. ["query1", "query2"].'
-
-        try:
-            response = self.llm.generate(prompt=prompt, model=self.model, temperature=0.3)
-            text = response.text.strip()
-            # Handle markdown code blocks
-            if "```" in text:
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-                text = text.strip()
-            queries = json.loads(text)
-            if isinstance(queries, list) and queries and all(isinstance(q, str) for q in queries):
-                return queries[:3]  # Cap at 3
-        except Exception as e:
-            logger.warning(f"Query rewriting failed, using original query: {e}")
-
-        return [query]
-
-
-def _emit_progress(
-    on_progress: Callable[[ProgressEvent], None] | None,
-    phase: str,
-    detail: str = "",
-) -> None:
-    """Safely emit a progress event if callback is provided."""
-    if on_progress:
-        on_progress(ProgressEvent(phase=phase, detail=detail))
-
-
-class BaseAgent(Agent):
+class BaseAgent(_AgentRAGMixin, Agent):
     """
     Framework-agnostic base agent implementation.
 
@@ -478,6 +94,8 @@ class BaseAgent(Agent):
         temperature: float = 0.7,
         max_iterations: int = 10,
         system_prompt: str | None = None,
+        persona: Any = None,
+        skills: list[str | Path] | None = None,
         provider_name: str | None = None,
         store: DataStore | None = None,
         retrieval_top_k: int = 5,
@@ -488,6 +106,10 @@ class BaseAgent(Agent):
         parallel_tool_execution: bool = False,
         memory_store: Any = None,
         session_id: str | None = None,
+        scratchpad: Any = None,
+        output_store: Any = None,
+        output_url_base: str | None = None,
+        history_token_budget: int | None = None,
     ):
         """
         Initialize agent.
@@ -498,7 +120,20 @@ class BaseAgent(Agent):
             model: LLM model to use (defaults to config llm.default_model)
             temperature: Model temperature
             max_iterations: Max tool call iterations
-            system_prompt: Custom system prompt (optional)
+            system_prompt: Custom system prompt string (optional, legacy)
+            persona: Agent persona — any of:
+                - Path/str pointing to a ``soul/`` directory (filesystem).
+                - A :class:`Persona` instance (pre-composed).
+                - A :class:`PersonaSource` instance (Drive, HTTP, inline, etc.).
+                When provided, takes precedence over system_prompt= and composes
+                SOUL.md + STYLE.md + AGENTS.md into the system prompt.
+            skills: List of skill names or directory paths. SDK skill names
+                (e.g. "data-visualization") are resolved from
+                src/openbench/skills/. Directory paths (e.g. "skills/ldi-parser")
+                are loaded as project skills and override SDK skills of the
+                same name. Each skill's context is appended to the system
+                prompt after the persona, and its tools.py functions are
+                auto-registered with the agent's ToolExecutor.
             provider_name: Specific provider name (uses default if None)
             store: Optional DataStore for RAG (retrieval-augmented generation)
             retrieval_top_k: Number of results to retrieve from store
@@ -517,6 +152,16 @@ class BaseAgent(Agent):
                 in-memory AgentMemory.
             session_id: Session identifier for persistent memory. Required when
                 memory_store is provided.
+            scratchpad: Optional ScratchpadStore for user-editable markdown
+                memory. When provided, it is injected into any loaded skill
+                whose ``tools.py`` declares a ``bind(scratchpad=...)``
+                function — e.g. the bundled ``memory-scratchpad`` skill.
+            history_token_budget: Optional soft cap (in estimated tokens) on the
+                conversation history sent to the LLM each turn. ``None`` (default)
+                sends the full history. When set, only the system prompt plus the
+                most recent messages that fit the budget are sent — keeping the
+                prompt bounded (and latency/cost flat) on long sessions at the
+                cost of dropping older context.
         """
         self.goal = goal
         self.model = model or get_default_model()
@@ -525,6 +170,11 @@ class BaseAgent(Agent):
         self.provider_name = provider_name
         self.enable_planning = enable_planning
         self.parallel_tool_execution = parallel_tool_execution
+        self._scratchpad = scratchpad
+        # Optional soft cap on prompt tokens. None = send full history (default).
+        # When set, BaseAgent sends only a pairing-safe recent window so the
+        # prompt stays bounded as the conversation grows.
+        self._history_token_budget = history_token_budget
 
         # RAG configuration
         self.store = store
@@ -582,9 +232,130 @@ class BaseAgent(Agent):
         else:
             self.memory = AgentMemory()
 
-        # Set system prompt (only if memory is empty — persistent may already have it)
-        self._system_prompt = system_prompt or self._default_system_prompt()
-        if not self.memory.messages or self.memory.messages[0].role != MessageRole.SYSTEM:
+        # Resolve persona to system_prompt (persona takes precedence)
+        self._persona = None
+        if persona is not None:
+            from pathlib import Path
+
+            from openbench.intelligence.persona import Persona
+            from openbench.intelligence.persona_source import PersonaSource
+
+            if system_prompt:
+                import warnings
+
+                warnings.warn(
+                    "Both persona= and system_prompt= provided. "
+                    "persona= takes precedence; system_prompt= is ignored.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            if isinstance(persona, (str, Path)):
+                self._persona = Persona.from_dir(persona)
+            elif isinstance(persona, Persona):
+                self._persona = persona
+            elif isinstance(persona, PersonaSource):
+                self._persona = Persona.from_source(persona)
+            else:
+                raise TypeError(
+                    f"persona must be str, Path, Persona, or PersonaSource instance, "
+                    f"got {type(persona).__name__}"
+                )
+            # Fix #2: persona= explicitly sets identity — no fallback to default
+            self._system_prompt = self._persona.compose()
+            logger.info(
+                "Persona loaded from %s (SOUL: %d chars, STYLE: %d chars, AGENTS: %d chars)",
+                self._persona.source,
+                len(self._persona.soul),
+                len(self._persona.style),
+                len(self._persona.agents),
+            )
+        elif system_prompt:
+            self._system_prompt = system_prompt
+        else:
+            self._system_prompt = self._default_system_prompt()
+
+        # Resolve skills — composed AFTER persona so skill context appends to
+        # the base identity. SDK skills are auto-discovered; named references
+        # and path references in `skills=` are both supported.
+        self._skill_registry = None
+        if skills:
+            from openbench.intelligence.skill_registry import SkillRegistry
+
+            self._skill_registry = SkillRegistry()
+            self._skill_registry.load_sdk_skills()
+            self._skill_registry.load_user_skills()
+            self._skill_registry.load_skills(skills)
+
+            # Inject agent-scoped runtime state into any skill that declares
+            # a module-level ``bind(**kwargs)`` function in its tools.py.
+            # Skills that do not declare ``bind`` are silently skipped. This
+            # is how the bundled ``memory-scratchpad`` skill learns which
+            # ScratchpadStore to use (see §6 of the storage-layer RFC), and
+            # how ``export-excel`` learns where downloadable artifacts land.
+            bind_kwargs: dict[str, Any] = {}
+            if scratchpad is not None:
+                bind_kwargs["scratchpad"] = scratchpad
+            if output_store is not None:
+                bind_kwargs["output_store"] = output_store
+            if output_url_base is not None:
+                bind_kwargs["output_url_base"] = output_url_base
+            if bind_kwargs:
+                self._skill_registry.bind(**bind_kwargs)
+
+            skill_context = self._skill_registry.compose_context()
+            if skill_context:
+                self._system_prompt = f"{self._system_prompt}\n\n{skill_context}"
+
+            # Register every tool exposed by the loaded skills. Collisions
+            # with existing tools raise — the caller must rename or exclude.
+            for tool_name, tool_fn, tool_schema in self._skill_registry.collect_tools():
+                if tool_name in self.tools._tools:
+                    raise ValueError(
+                        f"Tool '{tool_name}' from skill conflicts with an "
+                        f"existing tool of the same name. Rename one of them."
+                    )
+                self.tools.register(tool_name, tool_fn, schema=tool_schema)
+
+            skill_summary = self._skill_registry.summary()
+            logger.info(
+                "Skills loaded: %d SDK + %d user + %d project (total context: %d chars, tools: %d)",
+                len(skill_summary["sdk_skills"]),
+                len(skill_summary["user_skills"]),
+                len(skill_summary["project_skills"]),
+                skill_summary["context_chars"],
+                skill_summary["total_tools"],
+            )
+
+        # Token budget warning (RFC §8.3, R3: "2K chars warn, non-fatal")
+        _TOKEN_BUDGET_WARNING_CHARS = 8000
+        prompt_len = len(self._system_prompt)
+        if prompt_len > _TOKEN_BUDGET_WARNING_CHARS:
+            logger.warning(
+                "System prompt is %d chars (~%d tokens). Large prompts increase "
+                "latency and cost. Consider reducing persona/skill content or "
+                "using lazy skill loading (Strategy B).",
+                prompt_len,
+                prompt_len // 4,
+            )
+        else:
+            logger.info(
+                "System prompt composed: %d chars (~%d tokens)", prompt_len, prompt_len // 4
+            )
+
+        # Add system message to memory.
+        # Fix #1: when persona= is provided, it represents the authoritative
+        # current identity — replace any existing system message from a
+        # resumed PersistentMemory session, even if persona files have changed.
+        if persona is not None:
+            if self.memory.messages and self.memory.messages[0].role == MessageRole.SYSTEM:
+                # Replace existing system message in-place
+                self.memory.messages[0] = Message(
+                    role=MessageRole.SYSTEM, content=self._system_prompt
+                )
+            else:
+                self.memory.add_system(self._system_prompt)
+        elif not self.memory.messages or self.memory.messages[0].role != MessageRole.SYSTEM:
+            # Legacy path: only add if no system message exists yet
             self.memory.add_system(self._system_prompt)
 
         # LLM provider (lazy loaded)
@@ -660,133 +431,6 @@ Provide clear, actionable responses."""
             return ""
         return "\n".join(reversed(recent))
 
-    def _get_query_rewriter(self) -> QueryRewriter | None:
-        """Get query rewriter, lazily initialized."""
-        if not self._query_rewriter_enabled:
-            return None
-        if self._query_rewriter is None:
-            self._query_rewriter = QueryRewriter(self._get_llm(), self.model)
-        return self._query_rewriter
-
-    def _rag_tool_retrieve(self, query: str) -> str:
-        """Tool function for multi-hop RAG retrieval.
-
-        Called by the agent's reasoning loop via the ``retrieve_knowledge`` tool.
-
-        Args:
-            query: Search query for the knowledge base.
-
-        Returns:
-            Formatted string with retrieved chunks, or a "not found" message.
-        """
-        if not self.store:
-            return "No knowledge base configured."
-
-        results = self._retrieve_context(query)
-        if not results:
-            return "No relevant documents found for this query."
-
-        parts = []
-        for i, item in enumerate(results, 1):
-            parts.append(f"[Source {i}] (relevance: {item['score']:.2f})\n{item['content']}")
-        return "\n\n---\n\n".join(parts)
-
-    def _retrieve_context(self, query_text: str) -> list[dict[str, Any]]:
-        """Retrieve relevant context from store for RAG.
-
-        Supports query rewriting: when enabled, the query is rewritten into
-        1-3 optimized queries and results are deduplicated.
-
-        Args:
-            query_text: Text to search for relevant context.
-
-        Returns:
-            List of retrieved items with content and metadata.
-        """
-        if not self.store:
-            return []
-
-        try:
-            rewriter = self._get_query_rewriter()
-            queries = rewriter.rewrite(query_text) if rewriter else [query_text]
-
-            # Retrieve for each query, deduplicate by content hash
-            all_retrieved: list[dict[str, Any]] = []
-            seen_ids: set[str] = set()
-
-            for q in queries:
-                results = self.store.search(Query(text=q, limit=self.retrieval_top_k))
-
-                for item, score in zip(results.items, results.scores, strict=True):
-                    if score < self.retrieval_threshold:
-                        continue
-                    item_id = item.get("id", item.get("content", "")[:100])
-                    if item_id in seen_ids:
-                        continue
-                    seen_ids.add(item_id)
-                    all_retrieved.append(
-                        {
-                            "content": item.get("content", ""),
-                            "score": score,
-                            "metadata": item.get("metadata", {}),
-                        }
-                    )
-
-            # Sort by score descending, cap at top_k
-            all_retrieved.sort(key=lambda x: x["score"], reverse=True)
-            return all_retrieved[: self.retrieval_top_k]
-
-        except Exception as e:
-            logger.warning(f"Failed to retrieve context from store: {e}")
-            return []
-
-    def _augment_context_with_rag(
-        self, context: ExecutionContext, retrieved: list[dict[str, Any]]
-    ) -> ExecutionContext:
-        """Augment execution context with retrieved RAG context.
-
-        Args:
-            context: Original execution context.
-            retrieved: Retrieved items from store.
-
-        Returns:
-            Augmented execution context.
-        """
-        if not retrieved:
-            return context
-
-        # Build RAG context string
-        rag_context_parts = []
-        for i, item in enumerate(retrieved, 1):
-            rag_context_parts.append(
-                f"[Source {i}] (relevance: {item['score']:.2f})\n{item['content']}"
-            )
-
-        rag_context = "\n\n---\n\n".join(rag_context_parts)
-
-        # Augment context data
-        augmented_data = context.data or {}
-        if isinstance(augmented_data, dict):
-            augmented_data = {
-                **augmented_data,
-                "_rag_context": rag_context,
-                "_rag_sources": len(retrieved),
-            }
-        else:
-            augmented_data = {
-                "original_data": augmented_data,
-                "_rag_context": rag_context,
-                "_rag_sources": len(retrieved),
-            }
-
-        return ExecutionContext(
-            goal=context.goal,
-            data=augmented_data,
-            tools=context.tools,
-            memory=context.memory,
-            constraints=context.constraints,
-        )
-
     def _parse_tool_calls(self, response: Any) -> list[dict[str, Any]]:
         """Parse tool calls from LLM response."""
         if not (hasattr(response, "tool_calls") and response.tool_calls):
@@ -859,7 +503,13 @@ Provide clear, actionable responses."""
 
         # Add user message with context
         user_message = f"Goal: {context.goal}"
+        media_payload: list[MediaContent] | None = None
         if context.data:
+            # Pull provider-neutral media references out before serializing the
+            # rest of the data to text — they travel on the message, not in the
+            # JSON blob. Each LLMProvider decides whether to send them natively.
+            if isinstance(context.data, dict):
+                media_payload = context.data.pop("_media", None) or None
             # Format RAG context specially if present
             data_to_show = context.data
             if isinstance(data_to_show, dict) and "_rag_context" in data_to_show:
@@ -868,11 +518,15 @@ Provide clear, actionable responses."""
                 user_message += f"\n\n## Retrieved Context ({rag_sources} sources):\n{rag_context}"
                 if data_to_show:
                     user_message += f"\n\n## Additional Data:\n{json.dumps(data_to_show, indent=2, default=str)}"
-            else:
+            elif data_to_show:
                 user_message += (
                     f"\n\nContext data:\n{json.dumps(data_to_show, indent=2, default=str)}"
                 )
-        self.memory.add_user(user_message)
+        self.memory.add_user(user_message, media=media_payload)
+        # The user message lives outside the atomic tool turn so it remains in
+        # history if the model/tool loop fails. Everything appended after this
+        # point belongs to the agent's attempt and can be rolled back safely.
+        turn_start_len = len(self.memory.messages)
 
         import time
 
@@ -887,111 +541,264 @@ Provide clear, actionable responses."""
         response = None
         start_time = time.monotonic()
 
+        # Per-request observability: scope a correlation ID over the reasoning
+        # loop and time the LLM + tool calls through the shared MCP metrics
+        # sink. Imported lazily to avoid an import cycle (mcp <-> intelligence).
+        from openbench.mcp.observability import (
+            correlation_context,
+            metrics,
+            timed_operation,
+        )
+
+        # Gemini 3 Confidence Dropout retry: when the model returns
+        # no text and no tool calls (all-thought response), retry up
+        # to this many times before accepting an empty result. Without
+        # this the agent returns a blank answer on the first dropout.
+        _MAX_EMPTY_RETRIES = 2
+        _empty_retries = 0
+
+        # Repeated-tool-call guard: if the model re-emits a tool call with
+        # arguments identical to one already executed THIS turn, we don't run
+        # it again — we feed back a "duplicate" note instead. An iteration that
+        # produces no fresh call is a strike; after this many consecutive
+        # strikes we stop the loop rather than thrash to max_iterations.
+        _MAX_TOOL_REPEATS = 2
+        executed_tool_signatures: set[str] = set()
+        repeat_strikes = 0
+
         # Determine if we can stream
         use_stream = on_chunk is not None
 
         try:
             llm = self._get_llm()
 
-            while iterations < self.max_iterations:
-                iterations += 1
-                iter_start = time.monotonic()
+            # Run the ReAct loop inside an atomic memory turn. If the
+            # process dies or an exception escapes before the assistant
+            # final message is appended, the turn rolls back and the
+            # store never sees a half-written assistant(tool_calls) row
+            # that would poison subsequent requests with Gemini's
+            # "function response turn must come immediately after a
+            # function call turn" 400. The user-message add (line
+            # above) is intentionally OUTSIDE the turn so the user's
+            # own text survives a failed turn.
+            with correlation_context(), self.memory.turn():
+                while iterations < self.max_iterations:
+                    iterations += 1
+                    iter_start = time.monotonic()
 
-                # Emit progress for LLM call phase
-                if iterations == 1:
-                    _emit_progress(on_progress, "Thinking")
-                else:
-                    _emit_progress(on_progress, "Analyzing results")
-
-                gen_kwargs: dict[str, Any] = {
-                    "prompt": self.memory.get_messages(),
-                    "model": self.model,
-                    "tools": self.tools.get_schemas() or None,
-                    "temperature": self.temperature,
-                }
-
-                if use_stream:
-                    # Streaming path: yield deltas via on_chunk
-                    full_text = ""
-                    final_response = None
-                    for chunk in llm.generate_stream(**gen_kwargs):
-                        if chunk.text:
-                            on_chunk(chunk.text)
-                            full_text += chunk.text
-                        final_response = chunk
-
-                    if final_response is None:
-                        response = LLMResponse(text="", model=self.model, tokens_used=0, cost=0.0)
+                    # Emit progress for LLM call phase
+                    if iterations == 1:
+                        _emit_progress(on_progress, "Thinking")
                     else:
-                        response = final_response
-                        # Ensure full accumulated text (stream yields deltas)
-                        if full_text and not getattr(response, "tool_calls", None):
-                            response.text = full_text
-                else:
-                    # Non-streaming path (backward compatible)
-                    response = llm.generate(**gen_kwargs)
+                        _emit_progress(on_progress, "Analyzing results")
 
-                total_tokens += response.tokens_used
-                total_cost += response.cost
+                    gen_kwargs: dict[str, Any] = {
+                        "prompt": self.memory.get_messages(token_budget=self._history_token_budget),
+                        "model": self.model,
+                        "tools": self.tools.get_schemas() or None,
+                        "temperature": self.temperature,
+                    }
 
-                # Track per-iteration token breakdown
-                iter_prompt = response.metadata.get("prompt_tokens", 0)
-                iter_completion = response.metadata.get("completion_tokens", 0)
-                total_prompt_tokens += iter_prompt
-                total_completion_tokens += iter_completion
+                    with timed_operation("agent.llm_generate", iteration=iterations):
+                        if use_stream:
+                            # Streaming path: yield deltas via on_chunk
+                            full_text = ""
+                            final_response = None
+                            for chunk in llm.generate_stream(**gen_kwargs):
+                                if chunk.text:
+                                    on_chunk(chunk.text)
+                                    full_text += chunk.text
+                                final_response = chunk
 
-                # Check for tool calls
-                tool_calls = self._parse_tool_calls(response)
-
-                iter_stat = {
-                    "iteration": iterations,
-                    "prompt_tokens": iter_prompt,
-                    "completion_tokens": iter_completion,
-                    "cost": response.cost,
-                    "tool_calls": [tc["name"] for tc in tool_calls],
-                    "duration_seconds": round(time.monotonic() - iter_start, 3),
-                }
-                iteration_stats.append(iter_stat)
-
-                # Get raw content for replaying (preserves thought_signature)
-                raw_content = getattr(response, "raw_content", None)
-
-                if not tool_calls:
-                    # No tool calls - we're done
-                    self.memory.add_assistant(response.text, raw_content=raw_content)
-                    break
-
-                # Execute tool calls
-                all_tools_used.extend(tc["name"] for tc in tool_calls)
-                self.memory.add_assistant(
-                    response.text, tool_calls=tool_calls, raw_content=raw_content
-                )
-
-                # Emit progress with tool names
-                tool_names = [tc["name"] for tc in tool_calls]
-                _emit_progress(on_progress, f"Running {', '.join(tool_names)}")
-
-                if self.parallel_tool_execution and len(tool_calls) > 1:
-                    # Parallel execution for multiple tool calls
-                    results = self.tools.execute_parallel(tool_calls)
-                    for r in results:
-                        tc = r["call"]
-                        if r["error"] is not None:
-                            result_str = f"Error: {r['error']}"
+                            if final_response is None:
+                                response = LLMResponse(
+                                    text="", model=self.model, tokens_used=0, cost=0.0
+                                )
+                            else:
+                                response = final_response
+                                # Ensure full accumulated text (stream yields deltas)
+                                if full_text and not getattr(response, "tool_calls", None):
+                                    response.text = full_text
                         else:
-                            result_str = json.dumps(r["result"], default=str)
-                        self.memory.add_tool_result(tc["id"], tc["name"], result_str)
-                else:
-                    # Sequential execution (default)
+                            # Non-streaming path (backward compatible)
+                            response = llm.generate(**gen_kwargs)
+
+                    total_tokens += response.tokens_used
+                    total_cost += response.cost
+
+                    # Track per-iteration token breakdown
+                    iter_prompt = response.metadata.get("prompt_tokens", 0)
+                    iter_completion = response.metadata.get("completion_tokens", 0)
+                    total_prompt_tokens += iter_prompt
+                    total_completion_tokens += iter_completion
+
+                    # Check for tool calls
+                    tool_calls = self._parse_tool_calls(response)
+
+                    iter_stat = {
+                        "iteration": iterations,
+                        "prompt_tokens": iter_prompt,
+                        "completion_tokens": iter_completion,
+                        "cost": response.cost,
+                        "tool_calls": [tc["name"] for tc in tool_calls],
+                        "duration_seconds": round(time.monotonic() - iter_start, 3),
+                    }
+                    iteration_stats.append(iter_stat)
+
+                    # Get raw content for replaying (preserves thought_signature)
+                    raw_content = getattr(response, "raw_content", None)
+
+                    if not tool_calls:
+                        # No tool calls. If the model also produced no text this
+                        # is a Gemini 3 "Confidence Dropout" — the model spent
+                        # thinking tokens but didn't commit to an answer. Retry
+                        # instead of accepting a blank result, up to a cap — BUT
+                        # only for a genuine transient dropout. A MAX_TOKENS
+                        # finish is deterministic (the prompt + reasoning simply
+                        # exceeded the output budget); retrying the identical
+                        # request just burns another full call and dropouts again,
+                        # so don't retry that case.
+                        if not response.text.strip():
+                            diagnostics = response.metadata.get("empty_response_diagnostics") or {}
+                            finish_reason = str(diagnostics.get("finish_reason") or "")
+                            is_max_tokens = "MAX_TOKENS" in finish_reason
+
+                            if not is_max_tokens and _empty_retries < _MAX_EMPTY_RETRIES:
+                                _empty_retries += 1
+                                logger.warning(
+                                    "Empty response on iteration %d (retry %d/%d, diagnostics=%s). "
+                                    "Retrying — NOT adding empty turn to memory.",
+                                    iterations,
+                                    _empty_retries,
+                                    _MAX_EMPTY_RETRIES,
+                                    diagnostics,
+                                )
+                                # Do NOT add the empty response to memory — that
+                                # would poison the conversation with a blank
+                                # assistant turn and Gemini might follow the
+                                # pattern. Just retry.
+                                continue
+
+                            if is_max_tokens:
+                                logger.warning(
+                                    "Empty response on iteration %d hit MAX_TOKENS "
+                                    "(prompt too large for the output budget) — not "
+                                    "retrying; raise max_output_tokens or trim history. "
+                                    "diagnostics=%s",
+                                    iterations,
+                                    diagnostics,
+                                )
+                            else:
+                                logger.warning(
+                                    "Empty response persists after %d retries. Accepting empty result.",
+                                    _MAX_EMPTY_RETRIES,
+                                )
+                        self.memory.add_assistant(response.text, raw_content=raw_content)
+                        break
+
+                    # Execute tool calls.
+                    # Snapshot memory length so we can roll back on failure —
+                    # without this, a mid-loop exception leaves an orphaned
+                    # assistant(tool_calls) message in persistent memory that
+                    # Gemini will reject ("function response turn must come
+                    # immediately after a function call turn") on every
+                    # subsequent request in the same session.
+                    all_tools_used.extend(tc["name"] for tc in tool_calls)
+                    pre_tools_len = len(self.memory.messages)
+                    self.memory.add_assistant(
+                        response.text, tool_calls=tool_calls, raw_content=raw_content
+                    )
+
+                    # Emit progress with tool names
+                    tool_names = [tc["name"] for tc in tool_calls]
+                    _emit_progress(on_progress, f"Running {', '.join(tool_names)}")
+
+                    # Partition into fresh calls (not yet run this turn) and
+                    # duplicates (identical name+args already executed). Duplicates
+                    # are NOT re-executed — they get a "duplicate" note so the model
+                    # stops repeating instead of thrashing to max_iterations.
+                    duplicate_note = _tool_result_to_json(
+                        {
+                            "duplicate_call_skipped": True,
+                            "note": (
+                                "You already called this tool with identical "
+                                "arguments this turn; the result is unchanged. Do "
+                                "not repeat it — use the previous result or give "
+                                "your final answer."
+                            ),
+                        }
+                    )
+                    fresh_calls: list[dict[str, Any]] = []
+                    is_duplicate: dict[str, bool] = {}
                     for tc in tool_calls:
-                        try:
-                            result = self.tools.execute(tc["name"], **tc["arguments"])
-                            result_str = json.dumps(result, default=str)
-                        except Exception as e:
-                            result_str = f"Error: {e!s}"
-                        self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                        signature = _tool_call_signature(tc)
+                        if signature in executed_tool_signatures:
+                            is_duplicate[tc["id"]] = True
+                        else:
+                            executed_tool_signatures.add(signature)
+                            is_duplicate[tc["id"]] = False
+                            fresh_calls.append(tc)
+
+                    try:
+                        results_by_id: dict[str, str] = {}
+                        if self.parallel_tool_execution and len(fresh_calls) > 1:
+                            # Parallel execution for multiple fresh tool calls
+                            results = self.tools.execute_parallel(fresh_calls)
+                            for r in results:
+                                tc = r["call"]
+                                if r["error"] is not None:
+                                    results_by_id[tc["id"]] = f"Error: {r['error']}"
+                                else:
+                                    results_by_id[tc["id"]] = _tool_result_to_json(r["result"])
+                        else:
+                            # Sequential execution (default)
+                            for tc in fresh_calls:
+                                try:
+                                    result = self.tools.execute(
+                                        tc["name"], arguments=tc["arguments"]
+                                    )
+                                    results_by_id[tc["id"]] = _tool_result_to_json(result)
+                                except Exception as e:
+                                    results_by_id[tc["id"]] = f"Error: {e!s}"
+                        # Append a result for EVERY call id (fresh + duplicate) in
+                        # order — Gemini requires one response per function call.
+                        for tc in tool_calls:
+                            result_str = (
+                                duplicate_note
+                                if is_duplicate[tc["id"]]
+                                else results_by_id.get(tc["id"], duplicate_note)
+                            )
+                            self.memory.add_tool_result(tc["id"], tc["name"], result_str)
+                    except Exception:
+                        # Tool execution loop itself blew up (e.g. memory.add_tool_result
+                        # raised on SQLite error). Roll back the half-written turn so
+                        # memory stays in a Gemini-acceptable state, then propagate.
+                        # NOTE: use truncate_to(), not direct list slicing, so
+                        # PersistentMemory can also delete the orphaned rows from
+                        # its backing store. A plain slice would leave the assistant
+                        # (tool_calls=...) message in SQLite where it resurrects on
+                        # the next session load and retriggers the same Gemini error.
+                        self.memory.truncate_to(pre_tools_len)
+                        raise
+
+                    # Thrash guard: an iteration that ran no fresh call means the
+                    # model only repeated calls it already made. Count consecutive
+                    # strikes and stop rather than loop to max_iterations.
+                    if fresh_calls:
+                        repeat_strikes = 0
+                    else:
+                        repeat_strikes += 1
+                        if repeat_strikes >= _MAX_TOOL_REPEATS:
+                            logger.warning(
+                                "Agent stopped after %d consecutive iterations with "
+                                "only duplicate tool calls (no progress).",
+                                repeat_strikes,
+                            )
+                            break
 
             total_duration = round(time.monotonic() - start_time, 3)
+            metrics.inc("agent.execute")
+            metrics.observe_ms("agent.total_ms", total_duration * 1000)
 
             # Determine completion status
             if response is None:
@@ -1001,6 +808,7 @@ Provide clear, actionable responses."""
                 logger.warning(
                     f"Agent reached max_iterations ({self.max_iterations}) with pending tool calls"
                 )
+                self.memory.truncate_to(turn_start_len)
             else:
                 status = "completed"
 
@@ -1022,7 +830,10 @@ Provide clear, actionable responses."""
 
         except Exception as e:
             total_duration = round(time.monotonic() - start_time, 3)
+            metrics.inc("agent.execute_failed")
+            metrics.observe_ms("agent.total_ms", total_duration * 1000)
             logger.error(f"Agent execution failed: {e}")
+            self.memory.truncate_to(turn_start_len)
             return ExecutionResult(
                 output=None,
                 status="failed",
@@ -1091,7 +902,7 @@ class SimpleAgent(BaseAgent):
         try:
             llm = self._get_llm()
             gen_kwargs: dict[str, Any] = {
-                "prompt": self.memory.get_messages(),
+                "prompt": self.memory.get_messages(token_budget=self._history_token_budget),
                 "model": self.model,
                 "temperature": self.temperature,
             }

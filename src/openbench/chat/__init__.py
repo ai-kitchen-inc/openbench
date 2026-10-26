@@ -10,6 +10,7 @@ Public API:
     from openbench.chat import ContentRenderer, ContentRendererRegistry
 """
 
+from openbench.chat import render_queue
 from openbench.chat.a2ui import (
     A2UI_VERSION,
     OPENBENCH_CATALOG_ID,
@@ -25,6 +26,7 @@ from openbench.chat.renderers import (
     CodeRenderer,
     ContentRenderer,
     ContentRendererRegistry,
+    DashboardRenderer,
     FileRenderer,
     FormRenderer,
     ListRenderer,
@@ -40,17 +42,22 @@ from openbench.chat.session import (
     ChatSession,
     MessageRole,
 )
+from openbench.chat.session_store import SessionStore, SessionSummary
 
 __all__ = [
     # Engine + Layer
     "ChatEngine",
     "ChatLayer",
     "ChatFactory",
+    # Shared render-items queue for SDK skills
+    "render_queue",
     # Session
     "ChatSession",
     "ChatMessage",
     "MessageRole",
     "Attachment",
+    "SessionStore",
+    "SessionSummary",
     # A2UI
     "A2UI_VERSION",
     "A2UIComponent",
@@ -63,6 +70,7 @@ __all__ = [
     "TextRenderer",
     "ChartRenderer",
     "CodeRenderer",
+    "DashboardRenderer",
     "FormRenderer",
     "FileRenderer",
     "MediaRenderer",

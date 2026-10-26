@@ -7,11 +7,10 @@ Each tab has a label and markdown content rendered as a child panel.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from openbench.chat.a2ui.schema import A2UIComponent
-from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry
+from openbench.chat.renderers.base import ContentRenderer, ContentRendererRegistry, gen_id
 
 
 @ContentRendererRegistry.register("tabs", "default", description="Tabbed content renderer")
@@ -59,7 +58,7 @@ class TabsRenderer(ContentRenderer):
         if title:
             components.append(
                 A2UIComponent(
-                    id=_gen_id("tabs-title"),
+                    id=gen_id("tabs-title"),
                     component="Text",
                     properties={"text": title, "variant": "h4"},
                 )
@@ -71,7 +70,7 @@ class TabsRenderer(ContentRenderer):
 
         for tab in tabs:
             tab_content = tab.get("content", "")
-            child_id = _gen_id("tab-panel")
+            child_id = gen_id("tab-panel")
             child_ids.append(child_id)
             child_components.append(
                 A2UIComponent(
@@ -82,7 +81,7 @@ class TabsRenderer(ContentRenderer):
             )
 
         # Tabs component
-        tabs_id = _gen_id("tabs")
+        tabs_id = gen_id("tabs")
         tab_defs = [{"label": t["label"]} for t in tabs]
 
         components.append(
@@ -98,8 +97,3 @@ class TabsRenderer(ContentRenderer):
         components.extend(child_components)
 
         return components
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short unique ID with prefix."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"

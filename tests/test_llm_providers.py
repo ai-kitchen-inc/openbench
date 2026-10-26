@@ -1,5 +1,6 @@
 """Tests for GeminiLLMProvider."""
 
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +18,7 @@ class TestGeminiLLMProviderInit(unittest.TestCase):
         self.assertEqual(provider.api_key, "test-key")
         self.assertEqual(provider.model, "gemini-2.5-flash")
         self.assertEqual(provider.temperature, 0.7)
-        self.assertEqual(provider.max_output_tokens, 8192)
+        self.assertEqual(provider.max_output_tokens, 32768)
 
     def test_custom_init(self):
         """Test initialization with custom values."""
@@ -75,6 +76,20 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
 
         self.provider = GeminiLLMProvider(api_key="test")
 
+    def _raw_tool_content(self, name: str, args: dict):
+        fc = MagicMock()
+        fc.name = name
+        fc.args = args
+        part = MagicMock()
+        part.function_call = fc
+        raw_content = MagicMock()
+        # Replayed assistant raw_content comes back from Gemini already tagged
+        # as the model turn; the provider appends it verbatim, so the mock must
+        # carry a real role string (not an auto-generated MagicMock attribute).
+        raw_content.role = "model"
+        raw_content.parts = [part]
+        return raw_content
+
     @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
     def test_system_message_extracted(self, mock_client):
         """Test system message becomes system_instruction."""
@@ -105,8 +120,16 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
 
     @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
     def test_tool_message_converted(self, mock_client):
-        """Test tool result message becomes function_response."""
+        """Test tool result message becomes function_response when paired
+        with a preceding assistant tool_call (memory validator requires
+        both sides of the pair)."""
         messages = [
+            {
+                "role": "assistant",
+                "content": "",
+                "raw_content": self._raw_tool_content("calc", {}),
+                "tool_calls": [{"id": "c0", "name": "calc", "arguments": {}}],
+            },
             {
                 "role": "tool",
                 "content": '{"result": "42"}',
@@ -115,9 +138,11 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
             },
         ]
         _system, contents = self.provider._convert_messages(messages)
-        self.assertEqual(len(contents), 1)
-        # Tool results go as user role in Gemini
-        self.assertEqual(contents[0].role, "user")
+        self.assertEqual(len(contents), 2)
+        # Assistant with function_call
+        self.assertEqual(contents[0].role, "model")
+        # Tool result goes as user role in Gemini
+        self.assertEqual(contents[1].role, "user")
 
     @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
     def test_assistant_with_tool_calls(self, mock_client):
@@ -126,29 +151,149 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
             {
                 "role": "assistant",
                 "content": "",
+                "raw_content": self._raw_tool_content("search", {"query": "test"}),
                 "tool_calls": [
-                    {"name": "search", "arguments": {"query": "test"}},
+                    {"id": "call_0", "name": "search", "arguments": {"query": "test"}},
                 ],
-            }
+            },
+            {
+                "role": "tool",
+                "content": '{"results": []}',
+                "name": "search",
+                "tool_call_id": "call_0",
+            },
         ]
         _system, contents = self.provider._convert_messages(messages)
-        self.assertEqual(len(contents), 1)
+        self.assertEqual(len(contents), 2)
         self.assertEqual(contents[0].role, "model")
         # Should have function_call part
         parts = contents[0].parts
         self.assertTrue(len(parts) >= 1)
 
     @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
+    def test_raw_content_match_normalizes_mapping_like_args(self, mock_client):
+        """Gemini SDK arg containers should still match parsed tool_calls."""
+
+        class ArgsContainer:
+            def items(self):
+                return {
+                    "path": "C:/data/Coffe_sales.xlsx",
+                    "sample_rows": 5,
+                    "nested": {"columns": ("Tanggal", "Pendapatan")},
+                }.items()
+
+        raw_content = self._raw_tool_content(
+            "dashboard_generator_extract_metadata",
+            ArgsContainer(),
+        )
+        messages = [
+            {
+                "role": "assistant",
+                "content": "",
+                "raw_content": raw_content,
+                "tool_calls": [
+                    {
+                        "id": "call_0",
+                        "name": "dashboard_generator_extract_metadata",
+                        "arguments": json.dumps(
+                            {
+                                "path": "C:/data/Coffe_sales.xlsx",
+                                "sample_rows": 5,
+                                "nested": {"columns": ["Tanggal", "Pendapatan"]},
+                            }
+                        ),
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "content": '{"row_count": 3636}',
+                "name": "dashboard_generator_extract_metadata",
+                "tool_call_id": "call_0",
+            },
+        ]
+
+        _system, contents = self.provider._convert_messages(messages)
+
+        self.assertEqual(len(contents), 2)
+        self.assertIs(contents[0], raw_content)
+
+    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
+    def test_mismatched_raw_content_skips_tool_exchange(self, mock_client):
+        """Partial raw Gemini content must not be replayed or reconstructed.
+
+        Reconstructing function_call parts from generic persisted tool_calls
+        drops Gemini thought_signature metadata and triggers intermittent 400s.
+        """
+        messages = [
+            {
+                "role": "assistant",
+                "content": "",
+                "raw_content": self._raw_tool_content("search", {"query": "test"}),
+                "tool_calls": [
+                    {"id": "call_0", "name": "search", "arguments": {"query": "test"}},
+                    {"id": "call_1", "name": "calculate", "arguments": {"expr": "1+1"}},
+                ],
+            },
+            {
+                "role": "tool",
+                "content": '{"results": []}',
+                "name": "search",
+                "tool_call_id": "call_0",
+            },
+            {
+                "role": "tool",
+                "content": '{"result": 2}',
+                "name": "calculate",
+                "tool_call_id": "call_1",
+            },
+        ]
+
+        _system, contents = self.provider._convert_messages(messages)
+
+        self.assertEqual(contents, [])
+
+    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
+    def test_missing_raw_content_skips_tool_exchange(self, mock_client):
+        """Persisted Gemini tool-call turns without raw_content are unsafe to replay."""
+        messages = [
+            {"role": "user", "content": "Find info about X."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call_0", "name": "search", "arguments": {"query": "X"}},
+                ],
+            },
+            {
+                "role": "tool",
+                "content": '{"results": ["item1"]}',
+                "name": "search",
+                "tool_call_id": "call_0",
+            },
+            {"role": "assistant", "content": "Here is what I found about X."},
+        ]
+
+        _system, contents = self.provider._convert_messages(messages)
+
+        self.assertEqual(len(contents), 2)
+        self.assertEqual(contents[0].role, "user")
+        self.assertEqual(contents[1].role, "model")
+        self.assertEqual(contents[1].parts[0].text, "Here is what I found about X.")
+
+    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
     def test_full_conversation_flow(self, mock_client):
         """Test converting a full multi-turn conversation."""
+        raw_content = self._raw_tool_content("search", {"query": "X"})
         messages = [
             {"role": "system", "content": "You are an agent."},
             {"role": "user", "content": "Find info about X."},
             {
                 "role": "assistant",
                 "content": "I'll search for X.",
+                "raw_content": raw_content,
                 "tool_calls": [
-                    {"name": "search", "arguments": {"query": "X"}},
+                    {"id": "call_0", "name": "search", "arguments": {"query": "X"}},
                 ],
             },
             {
@@ -163,6 +308,7 @@ class TestGeminiLLMProviderConvertMessages(unittest.TestCase):
         self.assertEqual(system, "You are an agent.")
         # user + assistant(tool_call) + tool_result + assistant
         self.assertEqual(len(contents), 4)
+        self.assertIs(contents[1], raw_content)
 
     @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
     def test_empty_assistant_no_content(self, mock_client):
@@ -227,6 +373,104 @@ class TestGeminiLLMProviderConvertTools(unittest.TestCase):
         ]
         result = self.provider._convert_tools(tools)
         self.assertEqual(len(result), 1)
+
+    def test_playwright_schema_keywords_are_sanitized(self):
+        """Playwright MCP schemas should not trip Gemini FunctionDeclaration validation."""
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "playwright_browser_drop",
+                    "description": "Drop files or MIME-typed data",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target": {"type": "string"},
+                            "data": {
+                                "type": "object",
+                                "propertyNames": {"type": "string"},
+                                "additionalProperties": {"type": "string"},
+                            },
+                        },
+                        "required": ["target"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        ]
+
+        result = self.provider._convert_tools(tools)
+
+        self.assertEqual(len(result), 1)
+        declaration = result[0].function_declarations[0]
+        params = declaration.parameters.model_dump(by_alias=True, exclude_none=True)
+        self.assertNotIn("propertyNames", params["properties"]["data"])
+        self.assertNotIn("additionalProperties", params)
+        self.assertNotIn("additionalProperties", params["properties"]["data"])
+        self.assertNotIn("additional_properties", str(declaration.model_dump(exclude_none=True)))
+
+    def test_playwright_additional_properties_are_not_serialized(self):
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "playwright_browser_fill_form",
+                    "description": "Fill multiple form fields",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "fields": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "target": {"type": "string"},
+                                        "value": {
+                                            "type": "object",
+                                            "additionalProperties": {"type": "string"},
+                                        },
+                                    },
+                                    "required": ["target"],
+                                    "additionalProperties": False,
+                                },
+                            }
+                        },
+                        "required": ["fields"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        ]
+
+        result = self.provider._convert_tools(tools)
+
+        declaration = result[0].function_declarations[0]
+        serialized = declaration.model_dump(exclude_none=True)
+        params = declaration.parameters.model_dump(by_alias=True, exclude_none=True)
+        item_schema = params["properties"]["fields"]["items"]
+        self.assertNotIn("additionalProperties", params)
+        self.assertNotIn("additionalProperties", item_schema)
+        self.assertNotIn("additionalProperties", item_schema["properties"]["value"])
+        self.assertNotIn("additional_properties", str(serialized))
+
+    def test_invalid_tool_schema_is_skipped_with_warning(self):
+        tools = [
+            {"type": "function", "function": {"name": "bad_tool", "parameters": {}}},
+            {"type": "function", "function": {"name": "good_tool", "parameters": {}}},
+        ]
+
+        with (
+            patch("google.genai.types.FunctionDeclaration") as declaration,
+            patch("google.genai.types.Tool") as tool_cls,
+            self.assertLogs("openbench.intelligence.llm_providers", level="WARNING") as logs,
+        ):
+            declaration.side_effect = [ValueError("bad schema"), "valid-declaration"]
+            tool_cls.return_value = "tool"
+            result = self.provider._convert_tools(tools)
+
+        self.assertEqual(result, ["tool"])
+        tool_cls.assert_called_once_with(function_declarations=["valid-declaration"])
+        self.assertIn("bad_tool", "\n".join(logs.output))
 
 
 class TestGeminiLLMProviderExtractToolCalls(unittest.TestCase):
@@ -690,7 +934,11 @@ class TestGeminiLLMProviderGenerateStream(unittest.TestCase):
 
         results = list(self.provider.generate_stream("test", model="gemini-2.5-flash"))
         texts = [r.text for r in results]
-        self.assertEqual(texts, ["Hello ", "world!"])
+        # Text deltas plus a trailing usage-bearing final (empty text).
+        self.assertEqual(texts, ["Hello ", "world!", ""])
+        self.assertEqual(results[-1].tokens_used, 15)
+        self.assertEqual(results[-1].metadata["prompt_tokens"], 10)
+        self.assertEqual(results[-1].metadata["completion_tokens"], 5)
 
     @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
     def test_stream_filters_thought_parts(self, mock_get_client):
@@ -711,7 +959,36 @@ class TestGeminiLLMProviderGenerateStream(unittest.TestCase):
 
         results = list(self.provider.generate_stream("test", model="gemini-3-flash-preview"))
         texts = [r.text for r in results]
-        self.assertEqual(texts, ["The answer is 42."])
+        self.assertEqual(texts, ["The answer is 42.", ""])
+        self.assertEqual(results[-1].tokens_used, 30)
+
+    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
+    def test_stream_text_only_ends_with_usage_response(self, mock_get_client):
+        """A text-only stream must end with a usage-bearing final response.
+
+        Without it, streamed turns meter as zero tokens (the deltas all
+        carry tokens_used=0) — the final response is what usage metering
+        and BaseAgent's per-turn accounting read.
+        """
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        chunks = [
+            self._make_chunk(text="Halo"),
+            self._make_chunk(text=" dunia", usage={"prompt": 7, "completion": 3, "total": 10}),
+        ]
+        mock_client.models.generate_content_stream.return_value = iter(chunks)
+
+        results = list(self.provider.generate_stream("test", model="gemini-3.5-flash"))
+
+        final = results[-1]
+        self.assertEqual(final.text, "")
+        self.assertEqual(final.tokens_used, 10)
+        self.assertEqual(final.metadata["prompt_tokens"], 7)
+        self.assertEqual(final.metadata["completion_tokens"], 3)
+        self.assertIsNone(getattr(final, "tool_calls", None))
+        # Accumulated visible text is unchanged by the trailing response.
+        self.assertEqual("".join(r.text for r in results), "Halo dunia")
 
     @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
     def test_stream_empty_response_yields_final(self, mock_get_client):
@@ -757,6 +1034,189 @@ class TestGeminiLLMProviderGenerateStream(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertTrue(hasattr(results[0], "tool_calls"))
         self.assertEqual(results[0].tool_calls[0]["name"], "search")
+
+    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
+    def test_stream_tool_calls_in_earlier_chunk_not_last(self, mock_get_client):
+        """Regression: function_call parts emitted in an EARLIER chunk must
+        still be captured. Before the fix, generate_stream only looked at
+        the last chunk, so function calls that arrived mid-stream silently
+        vanished and the caller saw "Model returned no text output".
+        """
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        fc = MagicMock()
+        fc.name = "do_thing"
+        fc.args = {"x": 1}
+
+        chunks = [
+            # Tool call arrives on the first chunk...
+            self._make_chunk(function_call=fc),
+            # ...but a later usage-only chunk is the LAST one.
+            self._make_chunk(usage={"prompt": 11000, "completion": 24, "total": 11024}),
+        ]
+        # Ensure the last chunk has no parts at all
+        chunks[-1].candidates[0].content.parts = []
+        mock_client.models.generate_content_stream.return_value = iter(chunks)
+
+        results = list(self.provider.generate_stream("test", model="gemini-3-flash-preview"))
+
+        # Exactly one final response with the tool call attached
+        self.assertEqual(len(results), 1)
+        self.assertTrue(hasattr(results[0], "tool_calls"))
+        self.assertEqual(len(results[0].tool_calls), 1)
+        self.assertEqual(results[0].tool_calls[0]["name"], "do_thing")
+        self.assertEqual(results[0].tool_calls[0]["arguments"], {"x": 1})
+        # Usage from the last chunk still propagates
+        self.assertEqual(results[0].tokens_used, 11024)
+
+    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
+    def test_stream_multiple_tool_calls_across_chunks(self, mock_get_client):
+        """Multiple function_call parts split across chunks are all captured
+        with unique call ids and merged raw_content for Gemini replay."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        fc1 = MagicMock(name="fc1")
+        fc1.name = "search"
+        fc1.args = {"q": "a"}
+        fc2 = MagicMock(name="fc2")
+        fc2.name = "calculate"
+        fc2.args = {"expr": "1+1"}
+
+        chunks = [
+            self._make_chunk(function_call=fc1),
+            self._make_chunk(function_call=fc2),
+            self._make_chunk(usage={"prompt": 10, "completion": 30, "total": 40}),
+        ]
+        chunks[-1].candidates[0].content.parts = []
+        mock_client.models.generate_content_stream.return_value = iter(chunks)
+
+        results = list(self.provider.generate_stream("test", model="gemini-2.5-flash"))
+
+        self.assertEqual(len(results), 1)
+        tool_calls = results[0].tool_calls
+        self.assertEqual(len(tool_calls), 2)
+        self.assertEqual({tc["name"] for tc in tool_calls}, {"search", "calculate"})
+        # Unique ids (no collisions from restarting the counter per chunk)
+        self.assertEqual(len({tc["id"] for tc in tool_calls}), 2)
+        self.assertTrue(hasattr(results[0], "raw_content"))
+        raw_parts = results[0].raw_content.parts
+        self.assertEqual(len(raw_parts), 2)
+        self.assertIs(raw_parts[0].function_call, fc1)
+        self.assertIs(raw_parts[1].function_call, fc2)
+
+    @patch("openbench.intelligence.llm_providers.GeminiLLMProvider._get_client")
+    def test_stream_empty_response_includes_diagnostics(self, mock_get_client):
+        """Empty response must surface diagnostics in metadata so the caller
+        can see WHY the model returned nothing."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        chunks = [
+            self._make_chunk(
+                text="Internal reasoning…",
+                thought=True,
+                usage={"prompt": 11000, "completion": 14, "total": 11014},
+            ),
+        ]
+        # Simulate finish_reason = "MAX_TOKENS" on the final chunk
+        chunks[-1].candidates[0].finish_reason = "MAX_TOKENS"
+        mock_client.models.generate_content_stream.return_value = iter(chunks)
+
+        results = list(self.provider.generate_stream("test", model="gemini-3-flash-preview"))
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].text, "")
+        diagnostics = results[0].metadata.get("empty_response_diagnostics")
+        self.assertIsNotNone(diagnostics, "metadata must carry diagnostics")
+        self.assertEqual(diagnostics["finish_reason"], "MAX_TOKENS")
+        self.assertEqual(diagnostics["part_types"]["thought"], 1)
+        self.assertEqual(diagnostics["part_types"]["text"], 0)
+
+
+class TestGeminiLLMProviderDescribeResponseParts(unittest.TestCase):
+    """Tests for the _describe_response_parts diagnostic helper."""
+
+    def setUp(self):
+        from openbench.intelligence.llm_providers import GeminiLLMProvider
+
+        self.provider = GeminiLLMProvider(api_key="test")
+
+    def _make_part(
+        self,
+        text=None,
+        thought=False,
+        function_call=None,
+        inline_data=None,
+        thought_signature=None,
+    ):
+        part = MagicMock(
+            spec=[
+                "text",
+                "thought",
+                "function_call",
+                "inline_data",
+                "thought_signature",
+                "executable_code",
+            ]
+        )
+        part.text = text
+        part.thought = thought
+        part.function_call = function_call
+        part.inline_data = inline_data
+        part.thought_signature = thought_signature
+        part.executable_code = None
+        return part
+
+    def _make_response(self, parts, finish_reason=None, block_reason=None):
+        candidate = MagicMock()
+        candidate.content.parts = parts
+        candidate.finish_reason = finish_reason
+        response = MagicMock()
+        response.candidates = [candidate]
+        if block_reason is not None:
+            response.prompt_feedback.block_reason = block_reason
+        else:
+            response.prompt_feedback = None
+        return response
+
+    def test_counts_mixed_part_types(self):
+        fc = MagicMock()
+        fc.name = "x"
+        parts = [
+            self._make_part(text="Hello"),
+            self._make_part(text="Thinking", thought=True),
+            self._make_part(function_call=fc),
+        ]
+        result = self.provider._describe_response_parts(
+            self._make_response(parts, finish_reason="STOP")
+        )
+        self.assertEqual(result["part_types"]["text"], 1)
+        self.assertEqual(result["part_types"]["thought"], 1)
+        self.assertEqual(result["part_types"]["function_call"], 1)
+        self.assertEqual(result["finish_reason"], "STOP")
+
+    def test_detects_thought_signature(self):
+        parts = [
+            self._make_part(text="Thinking", thought=True, thought_signature=b"sig"),
+        ]
+        result = self.provider._describe_response_parts(self._make_response(parts))
+        self.assertTrue(result["has_thought_signature"])
+
+    def test_surfaces_block_reason(self):
+        result = self.provider._describe_response_parts(
+            self._make_response([], block_reason="SAFETY")
+        )
+        self.assertEqual(result["block_reason"], "SAFETY")
+
+    def test_empty_response_is_safe(self):
+        response = MagicMock()
+        response.candidates = []
+        response.prompt_feedback = None
+        result = self.provider._describe_response_parts(response)
+        self.assertEqual(result["finish_reason"], None)
+        self.assertEqual(result["part_types"]["text"], 0)
 
 
 if __name__ == "__main__":
