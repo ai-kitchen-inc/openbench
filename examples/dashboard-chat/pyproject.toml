@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dashboard-chat"
+version = "0.1.0"
+description = "Dashboard-first chat demo: connect a database, get an LLM-generated dashboard, refine it via chat"
+requires-python = ">=3.10"
+dependencies = [
+    "openbench",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-dotenv>=1.0",
+    "google-genai>=1.0.0",
+    "sqlalchemy>=2.0",
+]
+
+# Postgres/MySQL are optional: SQLite works out of the box. Install a driver
+# to connect to other databases, e.g.:
+#   pip install psycopg2-binary   # postgresql://...
+#   pip install pymysql           # mysql+pymysql://...
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dashboard_chat"]
