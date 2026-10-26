@@ -19,6 +19,17 @@ export {
   resolveValue,
   setAtPath,
 } from "./a2ui/data-binding";
+export {
+  CUSTOM_CATALOG,
+  ObCallout,
+  ObChart,
+  ObCodeBlock,
+  ObDashboardFrame,
+  ObFileCard,
+  ObMarkdown,
+  ObTable,
+} from "./a2ui/custom";
+export { STANDARD_CATALOG } from "./a2ui/standard";
 export type { SurfaceRendererProps } from "./a2ui/surface-renderer";
 // ── A2UI (rendering layer) ──
 export { SurfaceRenderer } from "./a2ui/surface-renderer";
@@ -30,8 +41,8 @@ export type { ChatPanelProps } from "./components/ChatPanel";
 export { ChatPanel } from "./components/ChatPanel";
 export type { ChatProviderProps } from "./components/ChatProvider";
 // ── Components (drop-in ready) ──
-export { ChatProvider, useChatContext } from "./components/ChatProvider";
-export type { MessageBubbleProps } from "./components/MessageBubble";
+export { ChatProvider, useChatContext, useChatContextOptional } from "./components/ChatProvider";
+export type { MessageBubbleProps, SurfaceFooterRenderer } from "./components/MessageBubble";
 export { MessageBubble } from "./components/MessageBubble";
 export type { MessageListProps } from "./components/MessageList";
 export { MessageList } from "./components/MessageList";
@@ -40,6 +51,8 @@ export { SessionSidebar } from "./components/SessionSidebar";
 export type { StepIndicatorProps } from "./components/StepIndicator";
 export { StepIndicator } from "./components/StepIndicator";
 export { StreamingIndicator } from "./components/StreamingIndicator";
+export type { VoiceRecorderProps } from "./components/VoiceRecorder";
+export { VoiceRecorder } from "./components/VoiceRecorder";
 export type { WelcomeScreenProps } from "./components/WelcomeScreen";
 export { WelcomeScreen } from "./components/WelcomeScreen";
 export type { ChatActions, ChatState, ChatStore } from "./core/chat-store";
@@ -52,6 +65,7 @@ export { StreamManager } from "./core/stream-manager";
 export type { AGUIEventListener, StatusListener } from "./core/transport";
 // ── Core (headless / framework-agnostic) ──
 export { AGUITransport } from "./core/transport";
+export { runWithConcurrency } from "./core/upload-queue";
 export {
   formatFileSize,
   formatRelativeTime,
@@ -78,6 +92,7 @@ export type {
   A2UISurface,
   A2UITheme,
   Attachment,
+  AttachmentUploadOptions,
   // Config
   ChatConfig,
   // Chat
@@ -87,6 +102,10 @@ export type {
   ComponentCatalog,
   // A2UI Server Messages
   CreateSurfacePayload,
+  DashboardActionOptions,
+  DashboardActions,
+  LiveDashboardEvent,
+  LiveDashboardLabels,
   DataBinding,
   DeleteSurfacePayload,
   DynamicBoolean,
@@ -97,6 +116,7 @@ export type {
   FunctionCall,
   MessageMetadata,
   // Step Info
+  SessionSummary,
   StepInfo,
   ToolCallInfo,
   TransportStatus,

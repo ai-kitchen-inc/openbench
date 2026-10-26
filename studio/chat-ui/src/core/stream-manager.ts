@@ -19,12 +19,15 @@ export interface StreamManagerConfig {
   streamUrl: string;
   store: Store;
   maxConcurrent?: number;
+  /** Optional async hook that returns the current ID token. */
+  getAuthToken?: () => Promise<string | null>;
 }
 
 export class StreamManager {
   private streamUrl: string;
   private store: Store;
   private maxConcurrent: number;
+  private getAuthToken?: () => Promise<string | null>;
 
   /** Active streams (currently receiving SSE events). */
   private activeStreams: Map<string, StreamContext> = new Map();
@@ -39,6 +42,7 @@ export class StreamManager {
     this.streamUrl = config.streamUrl;
     this.store = config.store;
     this.maxConcurrent = config.maxConcurrent ?? 3;
+    this.getAuthToken = config.getAuthToken;
   }
 
   get lastSentMessageId(): string | null {
@@ -72,6 +76,7 @@ export class StreamManager {
       messageId,
       streamUrl: this.streamUrl,
       store: this.store,
+      getAuthToken: this.getAuthToken,
     });
 
     this.activeStreams.set(messageId, context);

@@ -176,6 +176,25 @@ function PaperclipIcon() {
   );
 }
 
+function BookIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </svg>
+  );
+}
+
 function DownloadIcon() {
   return (
     <svg
@@ -200,8 +219,12 @@ type MimeEntry = { prefix: string; icon: () => React.JSX.Element };
 
 const MIME_ICONS: MimeEntry[] = [
   { prefix: "application/pdf", icon: FileTextIcon },
+  { prefix: "application/epub+zip", icon: BookIcon },
   { prefix: "text/plain", icon: FileTextIcon },
   { prefix: "text/csv", icon: SheetIcon },
+  { prefix: "text/markdown", icon: FileTextIcon },
+  { prefix: "application/vnd.openxmlformats-officedocument.spreadsheetml", icon: SheetIcon },
+  { prefix: "application/vnd.ms-excel", icon: SheetIcon },
   { prefix: "application/json", icon: FileJsonIcon },
   { prefix: "image/", icon: ImageIcon },
   { prefix: "audio/", icon: MusicIcon },
@@ -225,6 +248,10 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
   const previewUrl = component.previewUrl
     ? resolveString(component.previewUrl, surface)
     : undefined;
+  // When the producer sets ``external`` (e.g. Drive webViewLink), open
+  // the URL in a new tab as-is instead of triggering a download —
+  // the user's authenticated cloud UI handles preview.
+  const external = Boolean(component.external);
 
   const IconComponent = getFileIcon(mimeType);
 
@@ -272,7 +299,13 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
       </div>
       <a
         href={fileUrl}
-        download={fileName}
+        target="_blank"
+        rel="noopener noreferrer"
+        // Local / backend-proxied files: force the browser to save.
+        // External (Drive / cloud viewer): let the cloud UI open in
+        // a new tab — no ``download`` attribute so the browser
+        // navigates instead of triggering save-as on an HTML page.
+        {...(external ? {} : { download: fileName })}
         className="ob-file-card__download"
         style={{
           display: "inline-flex",
@@ -287,7 +320,7 @@ export const ObFileCard: A2UIComponentRenderer = ({ component, surface }) => {
         }}
       >
         <DownloadIcon />
-        Download
+        {external ? "Open" : "Download"}
       </a>
     </div>
   );

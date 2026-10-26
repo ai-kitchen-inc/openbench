@@ -2,7 +2,8 @@
  * A2UI component catalog — maps component type strings to React renderers.
  *
  * Standard catalog (A2UI v0.10 spec): 18 components.
- * Custom catalog (OpenBench): ObChart, ObFileCard, ObCodeBlock, ObMarkdown.
+ * Custom catalog (OpenBench): ObChart, ObDashboardFrame, ObFileCard,
+ * ObCodeBlock, ObMarkdown, ObTable, ObCallout.
  *
  * Use `registerCustomComponent()` to add your own.
  */

@@ -56,6 +56,24 @@ describe("SurfaceRenderer", () => {
       expect(screen.getByText("Hello World")).toBeDefined();
     });
 
+    it("renders legacy nested component properties", () => {
+      const surface = makeSurface([
+        {
+          id: "root",
+          component: "Column",
+          properties: { children: ["text1"] },
+        },
+        {
+          id: "text1",
+          component: "Text",
+          properties: { text: "Nested properties" },
+        },
+      ]);
+
+      render(<SurfaceRenderer surface={surface} />);
+      expect(screen.getByText("Nested properties")).toBeDefined();
+    });
+
     it("renders nested tree", () => {
       const surface = makeSurface([
         { id: "root", component: "Column", children: ["card1"] },
@@ -426,6 +444,29 @@ describe("SurfaceRenderer", () => {
 
       const { container } = render(<SurfaceRenderer surface={surface} />);
       expect(container.querySelector('[data-component-id="root"]')).not.toBeNull();
+    });
+  });
+
+  // ── Defensive guards for server-persisted surface shapes ──
+
+  describe("defensive rendering", () => {
+    it("returns null when surface.components is missing entirely", () => {
+      // Historical sessions persist only {surfaceId} — no components tree.
+      const bareSurface = { surfaceId: "s-persisted" } as unknown as A2UISurface;
+      const { container } = render(<SurfaceRenderer surface={bareSurface} />);
+      expect(container.firstChild).toBeNull();
+    });
+
+    it("returns null when surface.components is a plain object (JSON round-trip)", () => {
+      // If the Map got JSON-serialized and re-parsed without revival,
+      // components becomes {} which has no .get(). Must not throw.
+      const plainObj = {
+        surfaceId: "s-json",
+        catalogId: "openbench",
+        components: {} as unknown as Map<string, A2UIComponent>,
+      };
+      const { container } = render(<SurfaceRenderer surface={plainObj} />);
+      expect(container.firstChild).toBeNull();
     });
   });
 });

@@ -30,6 +30,25 @@ export interface MessageMetadata {
   cost?: number;
   latencyMs?: number;
   toolCalls?: ToolCallInfo[];
+  /** Id of the specialist agent that produced this message. */
+  agentId?: string;
+  /** Display name of that agent, rendered as a badge on the message. */
+  agentName?: string;
+  /**
+   * True when the answer came from an escalation fallback (the primary
+   * agent self-reported low confidence and a stronger agent answered).
+   */
+  escalated?: boolean;
+  /**
+   * True when the assistant turn never completed — the backend caught a
+   * mid-turn exception (Gemini 500, tool crash, process signal) and
+   * wrote a placeholder so the session doesn't dead-end on a bare user
+   * message. Paired with {@link error} for a short-form reason. The UI
+   * uses this flag to render a retry affordance on the message.
+   */
+  aborted?: boolean;
+  /** Short-form reason string written alongside {@link aborted}. */
+  error?: string;
 }
 
 export interface ToolCallInfo {
@@ -49,6 +68,8 @@ export interface Attachment {
   mimeType: string;
   sizeBytes?: number;
   file?: File; // Browser File reference (never serialized to server)
+  path?: string; // Server-side path for tools, when available
+  extractedText?: string; // Full server-side extracted context
   extractedPreview?: string; // Text preview from server extraction
 }
 
@@ -60,6 +81,21 @@ export interface ChatSession {
   messages: ChatMessage[];
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Lightweight session metadata returned by GET /sessions.
+ *
+ * Uses wire-format field names (sessionId, createdAt) to match the
+ * Python SessionSummary.to_dict() payload exactly.
+ */
+export interface SessionSummary {
+  sessionId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  preview: string;
 }
 
 // ── A2UI v0.10 Types ──
@@ -152,12 +188,152 @@ export type A2UIServerMessage =
 
 // ── Configuration ──
 
+export interface TableExportOption {
+  /** Stable key — also used as the React key. */
+  id: string;
+  /** Button label. */
+  label: string;
+  /** User message sent when the button is clicked. */
+  prompt: string;
+}
+
+export interface TableExportConfig {
+  /** Defaults to true when ``tableExport`` is supplied at all. */
+  enabled?: boolean;
+  /** Row label shown before the buttons. Defaults to "Export:". */
+  label?: string;
+  /** Defaults to Excel / PDF / Markdown with English prompts. */
+  formats?: TableExportOption[];
+}
+
 export interface ChatConfig {
   streamUrl: string; // POST → SSE AG-UI endpoint (e.g., "/awp")
   actionUrl?: string; // POST → JSON (defaults to "/chat/action")
   uploadUrl?: string; // POST → JSON (defaults to "/chat/upload")
+  uploadFile?: (file: File, options: AttachmentUploadOptions) => Promise<Attachment>;
+  sessionsUrl?: string; // REST CRUD endpoint (defaults to "/sessions")
   theme?: "light" | "dark" | "auto";
   maxConcurrentStreams?: number; // Max parallel SSE streams (default: 3)
+  /**
+   * Max attachment uploads in flight at once when a message carries
+   * several files (default: 3). Uploads settle independently — a failed
+   * file is reported via ``onUploadError`` and dropped from the turn
+   * rather than aborting the whole send.
+   */
+  uploadConcurrency?: number;
+  /**
+   * Export shortcuts rendered under every ObTable. Clicking one sends a
+   * normal user turn asking for that file, so the agent's export tools
+   * do the work. Set ``enabled: false`` to hide the row; override
+   * ``formats`` to localize the labels and prompts (the defaults are
+   * English).
+   */
+  tableExport?: TableExportConfig;
+  /**
+   * Optional hook called before every authenticated request. Wire it
+   * to Firebase Auth's getIdToken() (or any equivalent) to have the
+   * transport attach ``Authorization: Bearer <token>`` headers.
+   *
+   * Returning ``null`` or leaving this unset omits the header — the
+   * backend's auth dependency then decides whether to reject (401)
+   * or allow anonymous access.
+   */
+  getAuthToken?: () => Promise<string | null>;
+  /**
+   * Fires when an uploaded attachment successfully round-trips to the
+   * server. ``localId`` is the pre-upload id the user's ChatInput
+   * assigned; ``attachment`` is the server-shaped response. Use to
+   * surface a success toast or analytics event.
+   */
+  onUploadSuccess?: (localId: string, attachment: Attachment) => void;
+  /**
+   * Fires when an upload fails. ``file`` is the original ``File`` the
+   * user picked (filename, size, etc. still readable); ``error`` is
+   * whatever the transport threw. Use to surface a failure toast.
+   */
+  onUploadError?: (file: File, error: unknown) => void;
+  /**
+   * Optional host-provided actions for dashboard artifacts. When supplied,
+   * the dashboard renderer shows Publish / Export buttons that call these.
+   * The host wires them to its own authenticated API client, keeping the
+   * SDK decoupled from any specific backend.
+   */
+  dashboardActions?: DashboardActions;
+}
+
+/**
+ * Context passed with publish/export/deploy. `dashboardId` is set when the
+ * frame renders a live (database-bound) dashboard, so the host can act on
+ * the stored record (live SQL panels, public toggle) instead of the snapshot.
+ */
+export interface DashboardActionOptions {
+  dashboardId?: string;
+}
+
+export interface DashboardActions {
+  /** Persist the ViewModel and return a public, shareable URL. */
+  publish?: (viewModel: unknown, options?: DashboardActionOptions) => Promise<{ url: string }>;
+  /** Convert the ViewModel to a Grafana dashboard JSON model. */
+  exportGrafana?: (viewModel: unknown, options?: DashboardActionOptions) => Promise<unknown>;
+  /** Push the ViewModel to a hosted Grafana; resolves to the dashboard URL. */
+  deployGrafana?: (
+    viewModel: unknown,
+    options?: DashboardActionOptions,
+  ) => Promise<{ url: string }>;
+  /** Render the ViewModel to a PDF document (charts included) for download. */
+  exportPdf?: (viewModel: unknown) => Promise<Blob>;
+  /**
+   * Fetch a dashboard's standalone HTML through the host's authenticated
+   * client. Lets the renderer preview an auth-protected artifact URL via a
+   * sandboxed ``srcDoc`` iframe instead of a bare ``src`` the browser can't
+   * authenticate. Returns the raw HTML text.
+   */
+  loadHtml?: (url: string) => Promise<string>;
+  /**
+   * Subscribe to server pushes for a live (database-bound) dashboard. The
+   * callback receives a `snapshot` on connect, then `update`/`error`
+   * events; `closed` means the dashboard was deleted or unpublished and no
+   * reconnect should follow. Returns an unsubscribe function. The host owns
+   * the transport (fetch-based SSE with its auth header, EventSource, ...).
+   */
+  subscribeLive?: (
+    dashboardId: string,
+    onEvent: (event: LiveDashboardEvent) => void,
+  ) => () => void;
+  /** Ask the server to re-run a live dashboard's queries now. */
+  refreshLive?: (dashboardId: string) => Promise<void>;
+  /** Localized labels for the live badge (defaults are English). */
+  liveLabels?: Partial<LiveDashboardLabels>;
+}
+
+/** Event delivered to a live dashboard subscriber. */
+export type LiveDashboardEvent =
+  | {
+      type: "snapshot" | "update";
+      version: number;
+      viewModel: unknown;
+      refreshedAt?: string | null;
+      errors?: Record<string, string>;
+    }
+  | { type: "error"; error: string; refreshedAt?: string | null }
+  | { type: "closed"; reason: string }
+  | { type: "status"; status: "connecting" | "live" | "offline" };
+
+/** Text shown by the live dashboard badge; hosts override for i18n. */
+export interface LiveDashboardLabels {
+  live: string;
+  connecting: string;
+  offline: string;
+  unavailable: string;
+  /** Prefix before the HH:MM of the last refresh, e.g. "updated". */
+  updated: string;
+  /** Accessible label of the manual refresh button. */
+  refresh: string;
+}
+
+export interface AttachmentUploadOptions {
+  sessionId?: string | null;
+  onProgress?: (fraction: number) => void;
 }
 
 export type TransportStatus = "connected" | "disconnected" | "error";

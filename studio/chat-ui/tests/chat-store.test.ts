@@ -678,4 +678,147 @@ describe("ChatStore", () => {
       expect(state().messages.map((m) => m.content)).toEqual(["1", "2", "3"]);
     });
   });
+
+  // ── Hydration (server-backed) ──
+
+  describe("hydrateSessions", () => {
+    const s1: import("../src/types").ChatSession = {
+      id: "srv-1",
+      title: "From server",
+      messages: [],
+      createdAt: "2026-04-17T10:00:00Z",
+      updatedAt: "2026-04-17T10:05:00Z",
+    };
+    const s2: import("../src/types").ChatSession = {
+      id: "srv-2",
+      title: "Another",
+      messages: [],
+      createdAt: "2026-04-16T10:00:00Z",
+      updatedAt: "2026-04-16T10:05:00Z",
+    };
+
+    it("populates the sidebar without auto-selecting an active session", () => {
+      state().hydrateSessions([s1, s2]);
+      expect(state().sessions.map((s) => s.id)).toEqual(["srv-1", "srv-2"]);
+      // History hydration must NOT hijack the active session — the app opens
+      // on a fresh session so the first message starts a new chat.
+      expect(state().activeSessionId).toBeNull();
+    });
+
+    it("preserves local-only sessions alongside server sessions", () => {
+      const localId = state().createSession();
+      state().hydrateSessions([s1]);
+
+      const ids = state().sessions.map((s) => s.id);
+      expect(ids).toContain("srv-1");
+      expect(ids).toContain(localId);
+    });
+
+    it("does not override existing active session", () => {
+      const localId = state().createSession();
+      state().hydrateSessions([s1]);
+      expect(state().activeSessionId).toBe(localId);
+    });
+
+    it("is a no-op when passed empty array", () => {
+      const localId = state().createSession();
+      state().hydrateSessions([]);
+      expect(state().sessions).toHaveLength(1);
+      expect(state().activeSessionId).toBe(localId);
+    });
+  });
+
+  describe("hydrateSessionMessages", () => {
+    const msg: ChatMessage = {
+      id: "m-1",
+      role: "user",
+      content: "hello",
+      timestamp: "2026-04-17T10:00:00Z",
+      status: "complete",
+    };
+
+    it("attaches messages to the right session", () => {
+      const s: import("../src/types").ChatSession = {
+        id: "srv-1",
+        title: "T",
+        messages: [],
+        createdAt: "2026-04-17T10:00:00Z",
+        updatedAt: "2026-04-17T10:00:00Z",
+      };
+      state().hydrateSessions([s]);
+      state().hydrateSessionMessages("srv-1", [msg]);
+
+      expect(state().sessions[0].messages).toHaveLength(1);
+    });
+
+    it("updates active view when messages are for the active session", () => {
+      const s: import("../src/types").ChatSession = {
+        id: "srv-1",
+        title: "T",
+        messages: [],
+        createdAt: "2026-04-17T10:00:00Z",
+        updatedAt: "2026-04-17T10:00:00Z",
+      };
+      state().hydrateSessions([s]);
+      state().switchSession("srv-1"); // make srv-1 the active view
+      state().hydrateSessionMessages("srv-1", [msg]);
+      expect(state().messages).toHaveLength(1);
+    });
+
+    it("does not touch active view when messages are for a different session", () => {
+      const s1hyd: import("../src/types").ChatSession = {
+        id: "srv-1",
+        title: "One",
+        messages: [],
+        createdAt: "2026-04-17T10:00:00Z",
+        updatedAt: "2026-04-17T10:00:00Z",
+      };
+      const s2hyd: import("../src/types").ChatSession = {
+        id: "srv-2",
+        title: "Two",
+        messages: [],
+        createdAt: "2026-04-16T10:00:00Z",
+        updatedAt: "2026-04-16T10:00:00Z",
+      };
+      state().hydrateSessions([s1hyd, s2hyd]);
+      state().switchSession("srv-1"); // make srv-1 the active view
+      state().hydrateSessionMessages("srv-2", [msg]);
+      expect(state().messages).toHaveLength(0); // srv-1 is active, unaffected
+    });
+  });
+
+  // ── Loading state ──
+
+  describe("setSessionLoading", () => {
+    it("starts with empty loadingSessionIds", () => {
+      expect(state().loadingSessionIds).toEqual({});
+    });
+
+    it("marks a session as loading", () => {
+      state().setSessionLoading("sess-a", true);
+      expect(state().loadingSessionIds).toEqual({ "sess-a": true });
+    });
+
+    it("clears the loading flag when loading=false", () => {
+      state().setSessionLoading("sess-a", true);
+      state().setSessionLoading("sess-a", false);
+      expect(state().loadingSessionIds).toEqual({});
+    });
+
+    it("tracks multiple sessions independently", () => {
+      state().setSessionLoading("sess-a", true);
+      state().setSessionLoading("sess-b", true);
+      expect(state().loadingSessionIds).toEqual({
+        "sess-a": true,
+        "sess-b": true,
+      });
+      state().setSessionLoading("sess-a", false);
+      expect(state().loadingSessionIds).toEqual({ "sess-b": true });
+    });
+
+    it("clearing an unknown session is a no-op", () => {
+      state().setSessionLoading("never-loaded", false);
+      expect(state().loadingSessionIds).toEqual({});
+    });
+  });
 });

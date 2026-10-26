@@ -30,6 +30,21 @@ export interface ChatState {
   // Parallel streaming: messageId -> sessionId
   streamingMessages: Record<string, string>;
 
+  /**
+   * Session ids currently hydrating from the server. Keyed so switching
+   * between sessions while one is still loading each shows its own
+   * spinner. Entries are removed on success or error.
+   */
+  loadingSessionIds: Record<string, true>;
+
+  /**
+   * Per-attachment upload progress, keyed by the local (pre-upload)
+   * attachment id. Progress is a float in ``[0, 1]``. Entries are
+   * removed once the upload completes or fails so the UI can react to
+   * "any upload in flight?" cheaply via ``Object.keys`` length.
+   */
+  uploadProgress: Record<string, number>;
+
   // UI
   sidebarOpen: boolean;
 }
@@ -61,6 +76,15 @@ export interface ChatActions {
   deleteSession: (id: string) => void;
   renameSession: (id: string, newTitle: string) => void;
 
+  // Server-backed session hydration
+  hydrateSessions: (sessions: ChatSession[]) => void;
+  hydrateSessionMessages: (sessionId: string, messages: ChatMessage[]) => void;
+  setSessionLoading: (sessionId: string, loading: boolean) => void;
+
+  // Upload progress tracking (see ChatState.uploadProgress)
+  setUploadProgress: (attachmentId: string, fraction: number) => void;
+  clearUploadProgress: (attachmentId: string) => void;
+
   // State actions
   setStreaming: (streaming: boolean) => void;
   setConnectionStatus: (status: TransportStatus) => void;
@@ -90,6 +114,8 @@ export function createChatStore() {
     isStreaming: false,
     connectionStatus: "disconnected",
     streamingMessages: {},
+    loadingSessionIds: {},
+    uploadProgress: {},
     sidebarOpen: true,
 
     // ── Message actions (active session) ──
@@ -357,6 +383,61 @@ export function createChatStore() {
           s.id === id ? { ...s, title: newTitle, updatedAt: nowISO() } : s,
         ),
       }));
+    },
+
+    // ── Server-backed hydration ──
+
+    hydrateSessions: (incoming: ChatSession[]) => {
+      set((state) => {
+        if (incoming.length === 0) return state;
+        // Preserve local-only sessions (e.g. just-created, not yet persisted)
+        const serverIds = new Set(incoming.map((s) => s.id));
+        const localOnly = state.sessions.filter((s) => !serverIds.has(s.id));
+        const merged = [...incoming, ...localOnly];
+        // Populate the sidebar with history but do NOT auto-activate an old
+        // session — the app opens on a fresh session (see use-chat mount).
+        const activeId = state.activeSessionId ?? null;
+        const active = merged.find((s) => s.id === activeId);
+        return {
+          sessions: merged,
+          activeSessionId: activeId,
+          messages: active ? [...active.messages] : state.messages,
+        };
+      });
+    },
+
+    hydrateSessionMessages: (sessionId: string, messages: ChatMessage[]) => {
+      set((state) => ({
+        sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, messages } : s)),
+        messages: state.activeSessionId === sessionId ? [...messages] : state.messages,
+      }));
+    },
+
+    setSessionLoading: (sessionId: string, loading: boolean) => {
+      set((state) => {
+        const next = { ...state.loadingSessionIds };
+        if (loading) {
+          next[sessionId] = true;
+        } else {
+          delete next[sessionId];
+        }
+        return { loadingSessionIds: next };
+      });
+    },
+
+    setUploadProgress: (attachmentId: string, fraction: number) => {
+      set((state) => ({
+        uploadProgress: { ...state.uploadProgress, [attachmentId]: fraction },
+      }));
+    },
+
+    clearUploadProgress: (attachmentId: string) => {
+      set((state) => {
+        if (!(attachmentId in state.uploadProgress)) return state;
+        const next = { ...state.uploadProgress };
+        delete next[attachmentId];
+        return { uploadProgress: next };
+      });
     },
 
     // ── State actions ──
