@@ -1,0 +1,58 @@
+REQUEST FOR TENANCY APPROVAL (RFTA)
+U.S. Department of Housing and Urban Development
+Office of Public and Indian Housing
+OMB Approval No. 2577-0169
+
+===============================================================
+
+Section 1 - Type of Request
+[X] New Admission    [ ] Portability Move-In
+[ ] Transfer         [ ] Other
+
+Section 2 - Tenant Information
+Name: Maria Santos
+Voucher Number: V-2024-001
+Date of Birth: 03/15/1988
+Phone: (555) 234-5678
+Current Address: 890 Temporary Ave, Apt 2C
+Household Members: 4 (Head, Spouse, 2 children ages 5 and 8)
+
+Section 3 - Proposed Unit Information
+Address: 1250 Market St, Apt 4B
+City: Metroville    State: CA    ZIP: 90210
+Number of Bedrooms: 2
+Type: [X] Apartment  [ ] House  [ ] Townhouse  [ ] Other
+
+Section 4 - Owner Information
+Name: Market Street Properties LLC
+Address: 500 Business Park Dr, Suite 200
+Phone: (555) 987-6543
+EIN: 12-3456789
+
+Section 5 - Proposed Lease Terms
+Proposed Contract Rent: $1,400/month
+Utility Allowance: $125/month
+Security Deposit: $1,400
+Lease Start Date: 03/01/2024
+Lease Term: 12 months
+
+Section 6 - Unit Condition
+[X] Unit passed HQS inspection on: 02/15/2024
+[ ] Unit has not yet been inspected
+
+Section 7 - Lead-Based Paint Disclosure
+Year Built: 2005
+[X] Unit was built after 1978 - no lead paint disclosure required
+
+Section 8 - Owner Certification
+I certify that the proposed rent is reasonable compared to
+comparable unassisted units in the area and that I have not
+and will not charge more for assisted tenants.
+
+Owner Signature: _____________________  Date: 02/20/2024
+
+Section 9 - Tenant Certification
+I understand that my portion of rent is based on my income
+and that I must report changes in income or family composition.
+
+Tenant Signature: ____________________  Date: 02/20/2024

@@ -1,0 +1,65 @@
+rules_version = '2';
+
+// Firestore security rules for lci-mini.
+//
+// Threat model
+// ------------
+//   - Drive refresh tokens (encrypted with AES-GCM at the app layer, but
+//     still sensitive) live under /drive_tokens/{uid}.
+//   - Chat session summaries live under /chat_sessions/{uid}/threads/{tid}.
+//   - Per-user profile (email, display name) lives under /users/{uid}.
+//
+// Policy
+// ------
+//   - Every document is scoped under a uid. Only the owning user may read
+//     their own documents.
+//   - No client is allowed to WRITE any of these collections. Writes go
+//     through the FastAPI backend, which holds a Firebase Admin SDK
+//     service account and bypasses these rules.
+//   - Default-deny: anything not explicitly matched below is rejected.
+//
+// Deploy
+// ------
+//   firebase deploy --only firestore:rules
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- Drive OAuth tokens ------------------------------------------------
+    // Admin SDK writes; clients never touch these.
+    match /drive_tokens/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // --- Chat session summaries -------------------------------------------
+    // Backend writes summaries; client reads its own list of threads.
+    match /chat_sessions/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+
+      match /threads/{threadId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow write: if false;
+      }
+    }
+
+    // --- User profile -----------------------------------------------------
+    // Populated by the backend on first sign-in (registration hook).
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // --- Audit log --------------------------------------------------------
+    // Admin-only; clients must never read or write directly.
+    match /audit_log/{entryId} {
+      allow read, write: if false;
+    }
+
+    // --- Default deny -----------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

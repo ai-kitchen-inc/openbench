@@ -1,0 +1,61 @@
+# Logical column aliases -> list of physical column names.
+# Every XQL operation uses aliases (e.g. "category"); the resolver looks
+# up the concrete column name per-table so queries are portable across
+# Excel files with different headers.
+#
+# ONLY universal LCI column names belong here — names that are the same
+# across ALL clients (Pertamina, Holcim, PLN, etc.). Site-specific
+# column names (e.g. "Semberah EP", "Cirebon Plant", "FU - Clinker")
+# are NOT listed here — the LLM infers them from xql_describe_table
+# output and the column profile system (save_column_profile in the
+# data-context-extractor SDK skill) caches the mapping to disk.
+#
+# If you find yourself adding a client-specific column name here,
+# STOP — that's a sign the LLM should be mapping it dynamically.
+
+aliases:
+  process:
+    - Proses
+    - Process Title
+    - Process
+  category:
+    - Kategori
+    - LDI Category
+    - Category
+  material:
+    - Nama Bahan/Alat
+    - Material Title
+    - Material
+    - Nama Material
+  io:
+    - I/O
+    - Input or Output
+    - Input/Output
+  unit:
+    - Unit
+    - Satuan
+    - UOM
+  data_source:
+    - Sumber Data
+    - Data Source
+  amount:
+    # Generic amount column names only — NO site-specific names.
+    # Site columns ("Semberah EP", "Cirebon Plant", etc.) are
+    # identified by the LLM via dtype (float64) + column name context.
+    - Amount
+    - Total
+    - Total Bulk
+    - Quantity
+    - Value
+  total:
+    - Total Bulk
+    - Total
+    - Grand Total
+  produced_from:
+    - Produced From
+    - Source
+    - Sumber
+  notes:
+    - Keterangan
+    - Notes
+    - Remarks

@@ -1,0 +1,324 @@
+/**
+ * LCI Mini — Persona Layer demo frontend.
+ *
+ * Minimal chat UI for Lici, an LCI/LCA consultant assistant whose identity
+ * is loaded from soul/SOUL.md + soul/STYLE.md + soul/AGENTS.md at the
+ * server. The sidebar panel below the session list shows what was loaded.
+ */
+
+import { ChatPanel, ChatProvider, SessionSidebar, useChatContext } from "@openbench/chat-ui";
+import { useEffect, useMemo, useState } from "react";
+import "@openbench/chat-ui/styles/chat-ui.css";
+import "@openbench/chat-ui/styles/bundle.css";
+import { AuthGate } from "./auth/AuthGate";
+import { ToastProvider, useToast } from "./auth/Toast";
+import { UserBadge } from "./auth/UserBadge";
+import { ErrorBoundary } from "./ErrorBoundary";
+import { type UseAuthReturn, useAuth } from "./auth/useAuth";
+import "./global.css";
+
+const STREAM_URL = "/awp";
+
+const SUGGESTIONS = [
+  "Jelaskan perbedaan cradle-to-gate dan cradle-to-grave",
+  "Bagaimana memilih functional unit untuk pabrik semen?",
+  "Apa saja kriteria PROPER Emas untuk LCA?",
+  "Kenapa CO2 biasanya jadi hotspot utama di kilang minyak?",
+  "Bedanya mass allocation vs economic allocation?",
+];
+
+// ── Shared skeleton shown while a sidebar badge is loading ──
+
+function BadgeSkeleton({ title, rows }: { title: string; rows: number }) {
+  return (
+    <div className="badge-skeleton" aria-busy="true" aria-label={`${title} loading`}>
+      <div className="badge-skeleton__title">{title}</div>
+      {Array.from({ length: rows }, (_, i) => (
+        <div
+          key={i}
+          className="badge-skeleton__row"
+          style={{ width: `${60 + ((i * 13) % 30)}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+
+// ── Persona summary (fetched from /persona) ──
+
+type PersonaSummary = {
+  loaded: boolean;
+  source?: string;
+  soul_chars?: number;
+  style_chars?: number;
+  agents_chars?: number;
+  total_chars?: number;
+};
+
+function PersonaBadge({ auth }: { auth: UseAuthReturn }) {
+  const [persona, setPersona] = useState<PersonaSummary | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    (async () => {
+      try {
+        const token = await auth.getIdToken();
+        const headers: Record<string, string> = {};
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const resp = await fetch("/persona", { headers });
+        if (cancelled) return;
+        if (!resp.ok) {
+          setPersona({ loaded: false });
+          return;
+        }
+        setPersona(await resp.json());
+      } catch {
+        if (!cancelled) setPersona({ loaded: false });
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.getIdToken]);
+
+  if (isLoading) return <BadgeSkeleton rows={4} title="Persona" />;
+  if (!persona) return null;
+  if (!persona.loaded) {
+    return <div className="persona-badge persona-badge--empty">No persona loaded</div>;
+  }
+
+  return (
+    <div className="persona-badge">
+      <div className="persona-badge__title">Persona loaded from soul/</div>
+      <div className="persona-badge__row">
+        <span>SOUL.md</span>
+        <span>{persona.soul_chars} chars</span>
+      </div>
+      <div className="persona-badge__row">
+        <span>STYLE.md</span>
+        <span>{persona.style_chars} chars</span>
+      </div>
+      <div className="persona-badge__row">
+        <span>AGENTS.md</span>
+        <span>{persona.agents_chars} chars</span>
+      </div>
+      <div className="persona-badge__row persona-badge__row--total">
+        <span>Total prompt</span>
+        <span>{persona.total_chars} chars</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Skill summary (fetched from /skills) ──
+
+type SkillItem = {
+  name: string;
+  version: string;
+  description: string;
+  has_tools: boolean;
+  tools: string[];
+  references: string[];
+  context_chars: number;
+};
+
+type SkillsResponse = {
+  loaded: boolean;
+  summary?: { total: number; total_tools: number; context_chars: number };
+  skills: SkillItem[];
+};
+
+function SkillBadge({ auth }: { auth: UseAuthReturn }) {
+  const [data, setData] = useState<SkillsResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    (async () => {
+      try {
+        const token = await auth.getIdToken();
+        const headers: Record<string, string> = {};
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const resp = await fetch("/skills", { headers });
+        if (cancelled) return;
+        if (!resp.ok) {
+          setData({ loaded: false, skills: [] });
+          return;
+        }
+        setData(await resp.json());
+      } catch {
+        if (!cancelled) setData({ loaded: false, skills: [] });
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.getIdToken]);
+
+  if (isLoading) return <BadgeSkeleton rows={3} title="Skills" />;
+  if (!data) return null;
+  if (!data.loaded || data.skills.length === 0) {
+    return <div className="skill-badge skill-badge--empty">No skills loaded</div>;
+  }
+
+  return (
+    <div className="skill-badge">
+      <div className="skill-badge__title">Skills loaded ({data.skills.length})</div>
+      {data.skills.map((s) => (
+        <div key={s.name} className="skill-badge__item">
+          <div className="skill-badge__name">
+            {s.name} <span className="skill-badge__version">v{s.version}</span>
+          </div>
+        </div>
+      ))}
+      {data.summary && (
+        <div className="persona-badge__row persona-badge__row--total">
+          <span>Skill context</span>
+          <span>{data.summary.context_chars} chars</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Dark mode hook ──
+
+function useDarkMode() {
+  const [dark, setDark] = useState(() => {
+    if (typeof window !== "undefined") {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  }, [dark]);
+
+  return [dark, () => setDark((d) => !d)] as const;
+}
+
+function ThemeIcon({ dark }: { dark: boolean }) {
+  if (dark) {
+    return (
+      <svg
+        aria-hidden="true"
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      aria-hidden="true"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+    </svg>
+  );
+}
+
+function ChatLayout({ auth }: { auth: UseAuthReturn }) {
+  const { sidebarOpen } = useChatContext();
+  const [dark, toggleDark] = useDarkMode();
+
+  return (
+    <div className="chat-layout">
+      {sidebarOpen && (
+        <div className="lci-mini-sidebar">
+          <SessionSidebar />
+          <PersonaBadge auth={auth} />
+          <SkillBadge auth={auth} />
+        </div>
+      )}
+      <ChatPanel
+        title="LCI Mini"
+        suggestions={SUGGESTIONS}
+        placeholder="Tanya apa saja tentang LCI/LCA atau PROPER 2025..."
+        greeting="Halo, saya Lici — LCI Consultant Assistant"
+        headerRight={
+          <div className="chat-header-right">
+            <UserBadge auth={auth} />
+            <button
+              type="button"
+              className="theme-toggle"
+              onClick={toggleDark}
+              title={dark ? "Switch to light mode" : "Switch to dark mode"}
+              aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              <ThemeIcon dark={dark} />
+            </button>
+          </div>
+        }
+      />
+    </div>
+  );
+}
+
+/**
+ * Inner shell with access to useToast — owns ChatProvider so upload
+ * callbacks can surface success/failure toasts. Separated from
+ * ``App`` because ``useToast`` requires a ToastProvider ancestor.
+ */
+function AuthedShell({ auth }: { auth: UseAuthReturn }) {
+  const toast = useToast();
+
+  const chatConfig = useMemo(
+    () => ({
+      streamUrl: STREAM_URL,
+      getAuthToken: auth.configured ? auth.getIdToken : undefined,
+      onUploadSuccess: (_localId: string, attachment: { name: string }) => {
+        toast.show(`Uploaded: ${attachment.name}`, "success");
+      },
+      onUploadError: (file: { name: string }, error: unknown) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        toast.show(`Upload failed for ${file.name}: ${msg}`, "error");
+      },
+    }),
+    [auth.configured, auth.getIdToken, toast],
+  );
+
+  return (
+    <ChatProvider config={chatConfig}>
+      <ErrorBoundary region="chat">
+        <ChatLayout auth={auth} />
+      </ErrorBoundary>
+    </ChatProvider>
+  );
+}
+
+export default function App() {
+  const auth = useAuth();
+
+  return (
+    <ToastProvider>
+      <AuthGate auth={auth}>
+        <AuthedShell auth={auth} />
+      </AuthGate>
+    </ToastProvider>
+  );
+}
