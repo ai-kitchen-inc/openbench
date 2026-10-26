@@ -1,0 +1,17 @@
+mcp:
+  policy:
+    allow_remote_servers: false
+    allowed_servers:
+      - filesystem
+
+  servers:
+    filesystem:
+      transport: stdio
+      command: npx
+      args:
+        - "-y"
+        - "@modelcontextprotocol/server-filesystem"
+        - "${GENERAL_CHAT_MCP_SANDBOX}"
+      namespace: filesystem
+      allowed: true
+      timeout_seconds: 30

@@ -1,0 +1,46 @@
+mcp:
+  policy:
+    allow_remote_servers: false
+    allowed_servers:
+      - image_search
+    max_timeout_seconds: 3600
+
+  servers:
+    image_search:
+      transport: stdio
+      command: docker
+      args:
+        - run
+        - "-i"
+        - "--rm"
+        - "-v"
+        - "${IMAGE_SEARCH_MCP_DATA_PATH}:/data"
+        - "-v"
+        - "${IMAGE_SEARCH_MCP_MODELS_PATH}:/models"
+        - "-v"
+        - "${IMAGE_SEARCH_MCP_UPLOADS_PATH}:/general-chat/uploads:ro"
+        - "-v"
+        - "${IMAGE_SEARCH_MCP_HF_CACHE_PATH}:/home/image-search/.cache/huggingface:ro"
+        - "-e"
+        - DATA_PATH=/data
+        - "-e"
+        - INDEX_PATH=/data/index
+        - "-e"
+        - MODEL_CACHE_PATH=/models
+        - "-e"
+        - DEVICE=cpu
+        - "-e"
+        - TOP_K_MAX=50
+        - "-e"
+        - PREVIEW_URL_BASE=/image-search/previews
+        - "-e"
+        - HF_HOME=/home/image-search/.cache/huggingface
+        - "-e"
+        - HF_HUB_DISABLE_PROGRESS_BARS=1
+        - "-e"
+        - TRANSFORMERS_VERBOSITY=error
+        - openbench/image-search-mcp:cpu
+      namespace: image_search
+      allowed: true
+      discovery_timeout_seconds: 15
+      timeout_seconds: 3600

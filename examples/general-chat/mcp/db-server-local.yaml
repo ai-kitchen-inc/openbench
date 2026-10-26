@@ -1,0 +1,39 @@
+# Local-dev twin of db-server-docker.yaml: runs the vendored fork directly with
+# python (stdio) instead of the Artifact Registry image, so live dashboards can
+# be exercised against a sqlite file without docker.
+#
+# Select it with GENERAL_CHAT_MCP_DB_SERVER_CONFIG=db-server-local.yaml. It
+# registers the same server name as the docker yaml (same registry id), so the
+# two replace each other -- never seed both in one process.
+#
+# The fork needs its own venv (mcp<2, fastmcp<4, aiosqlite, sqlalchemy):
+#   python -m venv .venv-dbserver
+#   .venv-dbserver/Scripts/pip install -r examples/general-chat/mcp/db-server/requirements.txt
+#   DB_SERVER_MCP_PYTHON=<abs path to that venv's python>
+#   MCP_DB_DATABASE_URL=sqlite+aiosqlite:////<abs path>/live-demo.db
+#   DB_SERVER_MCP_CWD=<abs path>/examples/general-chat/mcp/db-server  (only when the API cwd is not examples/general-chat)
+mcp:
+  policy:
+    allow_remote_servers: false
+    allowed_servers:
+      - db_server
+    denied_tools:
+      - db_server.connect_to_database
+    max_timeout_seconds: 60
+
+  servers:
+    db_server:
+      transport: stdio
+      command: ${DB_SERVER_MCP_PYTHON:-python}
+      args:
+        - mcp_server.py
+      cwd: ${DB_SERVER_MCP_CWD:-mcp/db-server}
+      env:
+        DATABASE_URL: ${MCP_DB_DATABASE_URL}
+        MCP_ALLOW_WRITES: ${MCP_ALLOW_WRITES:-0}
+        MCP_MAX_ROWS: ${MCP_MAX_ROWS:-1000}
+      namespace: db_server
+      allowed: true
+      discovery_timeout_seconds: 20
+      timeout_seconds: 60
+      retries: 0
