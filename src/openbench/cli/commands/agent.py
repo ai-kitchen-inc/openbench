@@ -10,6 +10,8 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
+from openbench.core.config import get_default_model
+
 console = Console()
 
 
@@ -27,10 +29,16 @@ def agent() -> None:
     default="research",
     help="Type of agent to create",
 )
-@click.option("--model", default="gpt-4", help="LLM model to use")
+@click.option(
+    "--model",
+    default=None,
+    help="LLM model to use (defaults to the configured default model)",
+)
 @click.option("--tools", multiple=True, help="Tools available to the agent")
-def create(name: str, agent_type: str, model: str, tools: tuple[str, ...]) -> None:
+def create(name: str, agent_type: str, model: str | None, tools: tuple[str, ...]) -> None:
     """Create a new AI agent."""
+
+    model = model or get_default_model()
 
     console.print(f"\n[bold cyan]Creating Agent: {name}[/bold cyan]\n")
 
