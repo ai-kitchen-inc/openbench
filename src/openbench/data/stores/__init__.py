@@ -7,6 +7,14 @@ from openbench.data.stores.base import (
     chunk_raw_data,
     chunk_text,
 )
+from openbench.data.stores.document_index import (
+    ChunkRow,
+    DocumentIndexBackend,
+    DocumentIndexStore,
+    PgVectorBackend,
+    SQLiteDocumentBackend,
+    build_document_index,
+)
 from openbench.data.stores.exceptions import (
     DimensionMismatchError,
     EmbeddingError,
@@ -28,9 +36,13 @@ def __getattr__(name: str):
             return PineconeStore
         except ImportError:
             raise ImportError(
-                "PineconeStore requires pinecone-client. "
+                "PineconeStore requires the pinecone package. "
                 "Install with: pip install openbench[vector]"
             ) from None
+    if name == "PineconeDocumentBackend":
+        from openbench.data.stores.pinecone_document import PineconeDocumentBackend
+
+        return PineconeDocumentBackend
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -43,6 +55,13 @@ __all__ = [
     "chunk_raw_data",
     # Stores
     "PineconeStore",
+    "PineconeDocumentBackend",
+    "ChunkRow",
+    "DocumentIndexBackend",
+    "DocumentIndexStore",
+    "PgVectorBackend",
+    "SQLiteDocumentBackend",
+    "build_document_index",
     # Exceptions
     "StoreError",
     "IndexNotFoundError",

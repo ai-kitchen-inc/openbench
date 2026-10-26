@@ -409,7 +409,7 @@ class TestHybridSearchMixin(unittest.TestCase):
         ]
         vector_scores = [0.9, 0.7]  # First has higher vector score
 
-        reranked_items, reranked_scores = HybridSearchMixin.hybrid_rerank(
+        reranked_items, _reranked_scores = HybridSearchMixin.hybrid_rerank(
             items,
             vector_scores,
             "python programming",
@@ -459,7 +459,7 @@ class TestHybridSearchMixin(unittest.TestCase):
         ]
         scores = [0.0, 0.0]
 
-        reranked_items, reranked_scores = HybridSearchMixin.hybrid_rerank(items, scores, "python")
+        reranked_items, _reranked_scores = HybridSearchMixin.hybrid_rerank(items, scores, "python")
 
         # Should still work, keyword score determines ranking
         self.assertEqual(len(reranked_items), 2)
