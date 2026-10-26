@@ -1,0 +1,7 @@
+# Funding configuration for OpenBench.
+# Uncomment and fill in the platforms the project actually uses.
+# See https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+# github: [ai-kitchen-inc]
+# open_collective: openbench
+# custom: ["https://openbench.example/donate"]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openbench"
-version = "0.1.0"
+dynamic = ["version"]
 description = "The Open Source Agentic AI Workbench - Build. Orchestrate. Export. Scale."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -54,6 +54,7 @@ dev = [
 data = [
     "pandas>=2.0.0",
     "numpy>=1.24.0",
+    "openpyxl>=3.1.0",
     "sqlalchemy>=2.0.0",
     "chromadb>=0.4.0",
     "pypdf>=4.0.0",
@@ -82,6 +83,7 @@ output = [
     "plotly>=5.17.0",
     "python-pptx>=0.6.21",
     "reportlab>=4.0.0",
+    "pdfplumber>=0.10.0",
 ]
 
 security = [
@@ -89,11 +91,53 @@ security = [
 ]
 
 vector = [
-    "pinecone-client>=3.0.0",
+    # The SDK was renamed: `pinecone-client` is now a tombstone package
+    # whose import raises. `pinecone` >=5 keeps the same v3-style API.
+    "pinecone>=5.0.0",
+]
+
+# Parquet-backed tables + guarded DuckDB SQL over uploaded spreadsheets.
+tabular = [
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+    # Legacy .xls (pre-2007). Common in Indonesian government RAB files;
+    # pandas raises ImportError without it and the whole sheet is lost.
+    "xlrd>=2.0.1",
+    "pyarrow>=15.0.0",
+    # >=1.2 for allowed_directories, which scopes on-disk view reads
+    # while enable_external_access stays off (query.py lockdown).
+    "duckdb>=1.2.0",
+]
+
+gdrive = [
+    "google-api-python-client>=2.100.0",
+    "google-auth>=2.25.0",
+]
+
+gcp = [
+    "google-cloud-storage>=2.16.0",
+    "google-cloud-pubsub>=2.20.0",
+    "psycopg[binary]>=3.1.0",
+]
+
+firebase = [
+    "firebase-admin>=6.0.0",
 ]
 
 extraction = [
     "langextract>=1.0.0",
+]
+
+epub = [
+    "ebooklib>=0.18",
+    "beautifulsoup4>=4.12.0",
+]
+
+media = [
+    "pillow>=10.0.0",
+    "pillow-heif>=0.16.0",
+    "cairosvg>=2.7.0",
+    "imageio-ffmpeg>=0.5.0",
 ]
 
 chat = [
@@ -102,8 +146,14 @@ chat = [
     "ag-ui-protocol>=0.1.0",
 ]
 
+mcp = [
+    "mcp[cli]>=1,<2",
+    "httpx>=0.27",
+    "opentelemetry-api>=1.24",
+]
+
 all = [
-    "openbench[dev,data,intelligence,output,security,google,vector,search,extraction,chat]"
+    "openbench[dev,data,intelligence,output,security,google,vector,tabular,search,extraction,epub,media,chat,mcp,gcp]"
 ]
 
 [project.urls]
@@ -115,8 +165,19 @@ Issues = "https://github.com/ai-kitchen-inc/openbench/issues"
 [project.scripts]
 openbench = "openbench.cli.main:cli"
 
+[tool.setuptools.dynamic]
+version = {attr = "openbench._version.__version__"}
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+openbench = [
+    "py.typed",
+    "skills/*/SKILL.md",
+    "skills/*/tools.py",
+    "skills/*/references/*.md",
+]
 
 [tool.black]
 line-length = 100
@@ -163,6 +224,12 @@ warn_return_any = false
 disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = false
+# SDK skills are loaded at runtime via importlib.util.spec_from_file_location
+# with unique module names. mypy's static module resolver sees the multiple
+# `tools.py` files as duplicates, which isn't meaningful for runtime behavior.
+exclude = [
+    "src/openbench/skills/",
+]
 
 [[tool.mypy.overrides]]
 module = [
@@ -174,7 +241,11 @@ module = [
     "langextract.*",
     "tavily.*",
     "ag_ui.*",
+    "mcp.*",
     "yaml.*",
+    "pandas.*",
+    "pyarrow.*",
+    "duckdb.*",
 ]
 ignore_missing_imports = true
 
@@ -199,16 +270,19 @@ module = [
 ]
 disable_error_code = ["attr-defined", "arg-type", "assignment"]
 
-# Intelligence modules: lazy-init clients, execute() signature evolution, dynamic attrs
+# Intelligence modules: lazy-init clients, execute() signature evolution, dynamic
+# attrs, and mixins whose self.* attributes are supplied by the host class.
 [[tool.mypy.overrides]]
 module = [
     "openbench.intelligence.base",
+    "openbench.intelligence.agent_config",
+    "openbench.intelligence.agent_rag",
     "openbench.intelligence.agents",
-    "openbench.intelligence.llm_providers",
+    "openbench.intelligence.llm_providers.*",
     "openbench.intelligence.embeddings",
     "openbench.intelligence.planning",
 ]
-disable_error_code = ["assignment", "override", "attr-defined", "arg-type", "misc"]
+disable_error_code = ["assignment", "override", "attr-defined", "arg-type", "misc", "has-type"]
 
 # Data sources: optional model params (str | None), lazy clients
 [[tool.mypy.overrides]]
@@ -218,14 +292,46 @@ module = [
 ]
 disable_error_code = ["arg-type", "union-attr", "misc"]
 
-# Lazy-init pattern in core providers and chat transport
+# Lazy-init pattern in core providers
 [[tool.mypy.overrides]]
 module = [
     "openbench.core.providers",
-    "openbench.chat.transport.agui",
 ]
 disable_error_code = ["assignment"]
+
+# Chat engine and AG-UI transport are split into mixins whose self.* attributes
+# (engine, session, store callbacks, ...) are provided by the assembled class,
+# which mypy can't resolve from the mixin in isolation.
+[[tool.mypy.overrides]]
+module = [
+    "openbench.chat.engine.*",
+    "openbench.chat.transport.agui.*",
+]
+disable_error_code = ["assignment", "attr-defined", "arg-type"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
+markers = [
+    "integration: end-to-end tests that exercise the full FastAPI/agent stack (slower)",
+    "slow: tests that take a noticeable amount of wall-clock time",
+    "unit: fast, isolated unit tests (the default; marker is optional)",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["openbench"]
+omit = [
+    "*/tests/*",
+    "*/examples/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
