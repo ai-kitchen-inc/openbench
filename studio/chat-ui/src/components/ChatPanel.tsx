@@ -3,9 +3,12 @@
  */
 
 import { ChatInput } from "./ChatInput";
+import type { ChatInputProps } from "./ChatInput";
 import { useChatContext } from "./ChatProvider";
 import { MessageList } from "./MessageList";
+import type { SurfaceFooterRenderer } from "./MessageBubble";
 import { WelcomeScreen } from "./WelcomeScreen";
+import type { Attachment } from "../types";
 
 export interface ChatPanelProps {
   /** Additional CSS class. */
@@ -20,6 +23,30 @@ export interface ChatPanelProps {
   title?: string;
   /** Extra content rendered in the header-right area (e.g. theme toggle). */
   headerRight?: React.ReactNode;
+  /** Extra content rendered in the header-left area after the title
+   * (e.g. an agent/model picker, ChatGPT-style). */
+  headerLeft?: React.ReactNode;
+  /** Host control rendered inside the composer row between the textarea
+   * and the send button (e.g. an agent picker that drops upward). */
+  composerAccessory?: React.ReactNode;
+  /** Attachments that should be included with every sent message. */
+  persistentAttachments?: Attachment[];
+  /** Comma-separated accept policy forwarded to the composer file input/drop zone. */
+  acceptedFileTypes?: string;
+  /** Called when the composer rejects selected or dropped files. */
+  onAttachmentError?: (message: string, files: File[]) => void;
+  /** Max size per file in bytes, forwarded to the composer. */
+  maxUploadSize?: number;
+  /** Max files per message, forwarded to the composer. */
+  maxAttachments?: number;
+  /** Localized composer rejection messages, forwarded to the composer. */
+  attachmentMessages?: ChatInputProps["attachmentMessages"];
+  /** Whether the composer accepts file attachments (default true). */
+  allowAttachments?: boolean;
+  /** Fallback audio transcriber for browsers without the Web Speech API. */
+  onTranscribe?: (audio: Blob) => Promise<string>;
+  /** Optional host-rendered footer shown below each A2UI surface. */
+  renderSurfaceFooter?: SurfaceFooterRenderer;
 }
 
 export function ChatPanel({
@@ -29,11 +56,25 @@ export function ChatPanel({
   suggestions,
   title,
   headerRight,
+  headerLeft,
+  composerAccessory,
+  persistentAttachments,
+  acceptedFileTypes,
+  onAttachmentError,
+  maxUploadSize,
+  maxAttachments,
+  attachmentMessages,
+  allowAttachments,
+  onTranscribe,
+  renderSurfaceFooter,
 }: ChatPanelProps) {
   const {
     messages,
     sendMessage,
+    retryMessage,
     isStreaming,
+    isLoadingSession,
+    uploadProgress,
     connectionStatus,
     sendAction,
     sidebarOpen,
@@ -42,6 +83,10 @@ export function ChatPanel({
 
   const isEmpty = messages.length === 0;
   const headerTitle = title || (isEmpty ? "New Chat" : "Chat");
+  const sendWithPersistentAttachments = (content: string, attachments?: Attachment[]) => {
+    const merged = [...(attachments ?? []), ...(persistentAttachments ?? [])];
+    sendMessage(content, merged.length > 0 ? merged : undefined);
+  };
 
   return (
     <div className={`chat-panel ${className}`}>
@@ -72,6 +117,7 @@ export function ChatPanel({
             </button>
           )}
           <span className="chat-panel__title">{headerTitle}</span>
+          {headerLeft}
         </div>
         <div className="chat-panel__header-right">
           {connectionStatus === "error" && (
@@ -100,20 +146,64 @@ export function ChatPanel({
 
       {/* Messages or Welcome */}
       <div className="chat-panel__body">
-        {isEmpty ? (
+        {isLoadingSession && isEmpty ? (
+          <SessionLoading />
+        ) : isEmpty ? (
           <WelcomeScreen
             greeting={greeting}
             suggestions={suggestions}
-            onSuggestionClick={(s) => sendMessage(s)}
+            onSuggestionClick={(s) => sendWithPersistentAttachments(s)}
           />
         ) : (
-          <MessageList messages={messages} isStreaming={isStreaming} onAction={sendAction} />
+          <MessageList
+            messages={messages}
+            isStreaming={isStreaming}
+            onAction={sendAction}
+            uploadProgress={uploadProgress}
+            onRetry={retryMessage}
+            renderSurfaceFooter={renderSurfaceFooter}
+          />
         )}
       </div>
 
       {/* Input */}
       <div className="chat-panel__footer">
-        <ChatInput onSend={sendMessage} placeholder={placeholder} />
+        <ChatInput
+          onSend={sendWithPersistentAttachments}
+          placeholder={placeholder}
+          acceptedFileTypes={acceptedFileTypes}
+          onAttachmentError={onAttachmentError}
+          maxUploadSize={maxUploadSize}
+          maxAttachments={maxAttachments}
+          attachmentMessages={attachmentMessages}
+          allowAttachments={allowAttachments}
+          onTranscribe={onTranscribe}
+          accessoryRight={composerAccessory}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Three shimmering message-shaped placeholders. Shown while a session
+ * is hydrating from the server so the user knows something is in
+ * flight instead of staring at an empty panel.
+ */
+function SessionLoading() {
+  return (
+    <div className="chat-loading" role="status" aria-live="polite" aria-busy="true">
+      <span className="chat-loading__sr">Loading chat history…</span>
+      <div className="chat-loading__bubble chat-loading__bubble--user">
+        <div className="chat-loading__line" style={{ width: "42%" }} />
+      </div>
+      <div className="chat-loading__bubble chat-loading__bubble--assistant">
+        <div className="chat-loading__line" style={{ width: "85%" }} />
+        <div className="chat-loading__line" style={{ width: "70%" }} />
+        <div className="chat-loading__line" style={{ width: "45%" }} />
+      </div>
+      <div className="chat-loading__bubble chat-loading__bubble--user">
+        <div className="chat-loading__line" style={{ width: "55%" }} />
       </div>
     </div>
   );

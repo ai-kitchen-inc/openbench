@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentPreview } from "../src/components/AttachmentPreview";
 import { ChatInput } from "../src/components/ChatInput";
+import { ChatPanel } from "../src/components/ChatPanel";
 import { MessageBubble } from "../src/components/MessageBubble";
 import { MessageList } from "../src/components/MessageList";
 import { SessionSidebar } from "../src/components/SessionSidebar";
@@ -31,6 +32,7 @@ const mockChatContext = {
   messages: [],
   sendMessage: vi.fn(),
   isStreaming: false,
+  isLoadingSession: false,
   connectionStatus: "disconnected" as const,
   surfaces: [],
   sendAction: vi.fn(),
@@ -39,6 +41,27 @@ const mockChatContext = {
 vi.mock("../src/components/ChatProvider", () => ({
   useChatContext: () => mockChatContext,
 }));
+
+beforeEach(() => {
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn((file: File) => `blob:${file.name}`),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
+
+function fileDrag(files: File[]) {
+  return {
+    dataTransfer: {
+      types: ["Files"],
+      files,
+      dropEffect: "none",
+    },
+  };
+}
 
 // ── WelcomeScreen ──
 
@@ -132,6 +155,53 @@ describe("AttachmentPreview", () => {
 
 // ── ChatInput ──
 
+// jsdom has no media stack — mock getUserMedia + MediaRecorder + AudioContext
+// so the voice recorder logic is exercisable. Returns a restore function.
+class FakeMediaRecorder {
+  state = "inactive";
+  mimeType = "audio/webm";
+  ondataavailable: ((e: { data: Blob }) => void) | null = null;
+  onstop: (() => void) | null = null;
+  start() {
+    this.state = "recording";
+  }
+  stop() {
+    this.state = "inactive";
+    this.ondataavailable?.({ data: new Blob(["x"]) });
+    this.onstop?.();
+  }
+}
+
+class FakeAudioContext {
+  state = "running";
+  createAnalyser() {
+    return { fftSize: 0, getByteTimeDomainData: () => {} };
+  }
+  createMediaStreamSource() {
+    return { connect: () => {} };
+  }
+  close() {
+    this.state = "closed";
+    return Promise.resolve();
+  }
+}
+
+function installVoiceMocks(): () => void {
+  const nav = navigator as unknown as { mediaDevices?: unknown };
+  const w = window as unknown as Record<string, unknown>;
+  const prev = { md: nav.mediaDevices, mr: w.MediaRecorder, ac: w.AudioContext };
+  nav.mediaDevices = {
+    getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: vi.fn() }] })),
+  };
+  w.MediaRecorder = FakeMediaRecorder;
+  w.AudioContext = FakeAudioContext;
+  return () => {
+    nav.mediaDevices = prev.md;
+    w.MediaRecorder = prev.mr;
+    w.AudioContext = prev.ac;
+  };
+}
+
 describe("ChatInput", () => {
   it("renders textarea and send button", () => {
     render(<ChatInput onSend={vi.fn()} />);
@@ -184,6 +254,216 @@ describe("ChatInput", () => {
     render(<ChatInput onSend={vi.fn()} disabled />);
     const textarea = screen.getByPlaceholderText("Type a message...");
     expect(textarea.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("sets accepted file types on the picker", () => {
+    const { container } = render(<ChatInput onSend={vi.fn()} acceptedFileTypes=".pdf,image/*" />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(input?.getAttribute("accept")).toBe(".pdf,image/*");
+  });
+
+  it("rejects files over maxUploadSize via onAttachmentError", () => {
+    const onAttachmentError = vi.fn();
+    const big = new File([new Uint8Array(10)], "clip.mp4", { type: "video/mp4" });
+    Object.defineProperty(big, "size", { value: 50 * 1024 * 1024 });
+    const { container } = render(
+      <ChatInput onSend={vi.fn()} maxUploadSize={20 * 1024 * 1024} onAttachmentError={onAttachmentError} />,
+    );
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [big] } });
+    expect(onAttachmentError).toHaveBeenCalled();
+    expect(onAttachmentError.mock.calls[0][0]).toMatch(/too large/i);
+  });
+
+  it("accepts audio/video by mime wildcard", () => {
+    const onAttachmentError = vi.fn();
+    const audio = new File(["x"], "note.mp3", { type: "audio/mpeg" });
+    const { container } = render(
+      <ChatInput
+        onSend={vi.fn()}
+        acceptedFileTypes="audio/*,video/*,.epub"
+        onAttachmentError={onAttachmentError}
+      />,
+    );
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [audio] } });
+    expect(onAttachmentError).not.toHaveBeenCalled();
+    expect(screen.getByText("note.mp3")).toBeTruthy();
+  });
+
+  it("hides the mic button when no onTranscribe is provided", () => {
+    const restore = installVoiceMocks();
+    render(<ChatInput onSend={vi.fn()} />);
+    expect(screen.queryByLabelText("Start voice input")).toBeNull();
+    restore();
+  });
+
+  it("hides the mic button when getUserMedia is unavailable", () => {
+    const nav = navigator as unknown as { mediaDevices?: unknown };
+    const prev = nav.mediaDevices;
+    delete nav.mediaDevices;
+    render(<ChatInput onSend={vi.fn()} onTranscribe={vi.fn(async () => "hi")} />);
+    expect(screen.queryByLabelText("Start voice input")).toBeNull();
+    nav.mediaDevices = prev;
+  });
+
+  it("shows the mic and enters recording mode on click", async () => {
+    const restore = installVoiceMocks();
+    render(<ChatInput onSend={vi.fn()} onTranscribe={vi.fn(async () => "hi")} />);
+    const mic = screen.getByLabelText("Start voice input");
+    await act(async () => {
+      fireEvent.click(mic);
+    });
+    expect(screen.getByLabelText("Cancel voice input")).toBeTruthy();
+    expect(screen.getByLabelText("Confirm voice input")).toBeTruthy();
+    restore();
+  });
+
+  it("confirm transcribes and inserts the text", async () => {
+    const restore = installVoiceMocks();
+    const onTranscribe = vi.fn(async () => "hello from voice");
+    render(<ChatInput onSend={vi.fn()} onTranscribe={onTranscribe} />);
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Start voice input"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Confirm voice input"));
+    });
+    expect(onTranscribe).toHaveBeenCalledTimes(1);
+    const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
+    expect(textarea.value).toBe("hello from voice");
+    restore();
+  });
+
+  it("cancel discards without transcribing", async () => {
+    const restore = installVoiceMocks();
+    const onTranscribe = vi.fn(async () => "should not appear");
+    render(<ChatInput onSend={vi.fn()} onTranscribe={onTranscribe} />);
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Start voice input"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Cancel voice input"));
+    });
+    expect(onTranscribe).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Start voice input")).toBeTruthy();
+    restore();
+  });
+
+  it("shows and clears a drag-over state for file drags", () => {
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    const { container } = render(<ChatInput onSend={vi.fn()} />);
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.dragEnter(input, fileDrag([file]));
+    expect(screen.getByText("Drop files to attach")).toBeDefined();
+    expect(input.classList.contains("chat-input--dragging")).toBe(true);
+
+    fireEvent.dragLeave(input, fileDrag([file]));
+    expect(screen.queryByText("Drop files to attach")).toBeNull();
+    expect(input.classList.contains("chat-input--dragging")).toBe(false);
+  });
+
+  it("ignores plain text drags", () => {
+    const { container } = render(<ChatInput onSend={vi.fn()} />);
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.dragEnter(input, {
+      dataTransfer: {
+        types: ["text/plain"],
+        files: [],
+        dropEffect: "none",
+      },
+    });
+
+    expect(screen.queryByText("Drop files to attach")).toBeNull();
+    expect(input.classList.contains("chat-input--dragging")).toBe(false);
+  });
+
+  it("adds supported document, spreadsheet, and text files from a drop", () => {
+    const files = [
+      new File(["pdf"], "report.pdf", { type: "application/pdf" }),
+      new File(["sheet"], "data.xlsx", {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      new File(["notes"], "notes.txt", { type: "text/plain" }),
+    ];
+    const { container } = render(
+      <ChatInput onSend={vi.fn()} acceptedFileTypes=".pdf,.xlsx,.txt" />,
+    );
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.drop(input, fileDrag(files));
+
+    expect(screen.getByText("report.pdf")).toBeDefined();
+    expect(screen.getByText("data.xlsx")).toBeDefined();
+    expect(screen.getByText("notes.txt")).toBeDefined();
+  });
+
+  it("adds supported image files from a drop", () => {
+    const file = new File(["png"], "diagram.png", { type: "image/png" });
+    const { container } = render(<ChatInput onSend={vi.fn()} acceptedFileTypes="image/*" />);
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.drop(input, fileDrag([file]));
+
+    expect(screen.getByText("diagram.png")).toBeDefined();
+  });
+
+  it("supports multiple dropped files when multiple is enabled", () => {
+    const files = [
+      new File(["a"], "a.md", { type: "text/markdown" }),
+      new File(["b"], "b.csv", { type: "text/csv" }),
+    ];
+    const { container } = render(<ChatInput onSend={vi.fn()} acceptedFileTypes=".md,.csv" />);
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.drop(input, fileDrag(files));
+
+    expect(screen.getByText("a.md")).toBeDefined();
+    expect(screen.getByText("b.csv")).toBeDefined();
+  });
+
+  it("rejects unsupported dropped files with an attachment error", () => {
+    const onAttachmentError = vi.fn();
+    const file = new File(["zip"], "archive.zip", { type: "application/zip" });
+    const { container } = render(
+      <ChatInput
+        onSend={vi.fn()}
+        acceptedFileTypes=".pdf,.txt"
+        onAttachmentError={onAttachmentError}
+      />,
+    );
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.drop(input, fileDrag([file]));
+
+    expect(screen.queryByText("archive.zip")).toBeNull();
+    expect(onAttachmentError).toHaveBeenCalledWith(
+      "Unsupported file type: archive.zip",
+      [file],
+    );
+  });
+
+  it("sends dropped files as message attachments", async () => {
+    const onSend = vi.fn();
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    const { container } = render(<ChatInput onSend={onSend} acceptedFileTypes=".txt" />);
+    const input = container.querySelector(".chat-input") as HTMLElement;
+
+    fireEvent.drop(input, fileDrag([file]));
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    const [, attachments] = onSend.mock.calls[0] as [string, Attachment[]];
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]).toMatchObject({
+      type: "file",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: file.size,
+      file,
+    });
   });
 });
 
@@ -252,6 +532,76 @@ describe("MessageBubble", () => {
   it("sets data-message-id", () => {
     const { container } = render(<MessageBubble message={userMessage} />);
     expect(container.querySelector('[data-message-id="msg-1"]')).not.toBeNull();
+  });
+
+  // ── Aborted placeholder + retry button ──
+
+  const abortedMessage: ChatMessage = {
+    id: "msg-aborted",
+    role: "assistant",
+    content: "⚠️ Turn interrupted. Please retry.",
+    timestamp: new Date().toISOString(),
+    status: "error",
+    metadata: { aborted: true, error: "Gemini 500" },
+  };
+
+  it("renders retry button when metadata.aborted is true and onRetry is provided", () => {
+    const onRetry = vi.fn();
+    render(<MessageBubble message={abortedMessage} onRetry={onRetry} />);
+    const retryBtn = screen.getByRole("button", { name: /retry/i });
+    expect(retryBtn).toBeDefined();
+    retryBtn.click();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRetry).toHaveBeenCalledWith(abortedMessage);
+  });
+
+  it("hides retry button when onRetry is not provided", () => {
+    render(<MessageBubble message={abortedMessage} />);
+    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+  });
+
+  it("hides retry button when metadata.aborted is not true", () => {
+    const onRetry = vi.fn();
+    render(<MessageBubble message={assistantMessage} onRetry={onRetry} />);
+    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+  });
+
+  it("applies aborted CSS class when metadata.aborted is true", () => {
+    const { container } = render(<MessageBubble message={abortedMessage} />);
+    expect(container.querySelector(".chat-message--aborted")).not.toBeNull();
+  });
+
+  it("uses the error string as the retry button title for debugging", () => {
+    const onRetry = vi.fn();
+    render(<MessageBubble message={abortedMessage} onRetry={onRetry} />);
+    const retryBtn = screen.getByRole("button", { name: /retry/i });
+    expect(retryBtn.getAttribute("title")).toBe("Gemini 500");
+  });
+
+  it("renders a host-provided footer below A2UI surfaces", () => {
+    const surfaceMessage: ChatMessage = {
+      ...assistantMessage,
+      id: "msg-surface",
+      surfaces: [
+        {
+          surfaceId: "surface-1",
+          catalogId: "openbench",
+          components: new Map([["root", { id: "root", component: "Text", text: "Rich surface" }]]),
+          dataModel: {},
+        },
+      ],
+    };
+
+    render(
+      <MessageBubble
+        message={surfaceMessage}
+        renderSurfaceFooter={({ message, surface }) => (
+          <button type="button">{`${message.id}:${surface.surfaceId}:Open`}</button>
+        )}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "msg-surface:surface-1:Open" })).toBeDefined();
   });
 });
 
@@ -376,6 +726,16 @@ describe("SessionSidebar", () => {
     expect(input.value).toBe("New Chat");
   });
 
+  it("rename icon shows input with current title", async () => {
+    render(<SessionSidebar />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Rename New Chat" }));
+
+    const input = screen.getByLabelText("Rename session") as HTMLInputElement;
+    expect(input).toBeDefined();
+    expect(input.value).toBe("New Chat");
+  });
+
   it("Enter commits rename", async () => {
     render(<SessionSidebar />);
 
@@ -416,5 +776,92 @@ describe("SessionSidebar", () => {
     expect(mockChatContext.renameSession).not.toHaveBeenCalled();
     // Input should be gone, title should be back
     expect(screen.getByText("New Chat")).toBeDefined();
+  });
+});
+
+// ── ChatPanel: loading skeleton ──
+
+describe("ChatPanel — session loading state", () => {
+  beforeEach(() => {
+    mockChatContext.messages = [];
+    mockChatContext.isLoadingSession = false;
+  });
+
+  it("renders WelcomeScreen when empty and not loading", () => {
+    render(<ChatPanel greeting="Hi" />);
+    expect(screen.getByText("Hi")).toBeDefined();
+    expect(document.querySelector(".chat-loading")).toBeNull();
+  });
+
+  it("renders loading skeleton when empty + isLoadingSession=true", () => {
+    mockChatContext.isLoadingSession = true;
+    render(<ChatPanel greeting="Hi" />);
+    expect(document.querySelector(".chat-loading")).toBeDefined();
+    // Skeleton replaces the welcome greeting to avoid double-render.
+    expect(screen.queryByText("Hi")).toBeNull();
+    // A screen-reader-only status announces the load.
+    expect(screen.getByRole("status")).toBeDefined();
+  });
+
+  it("skeleton exposes aria-busy=true for a11y", () => {
+    mockChatContext.isLoadingSession = true;
+    render(<ChatPanel />);
+    const region = document.querySelector(".chat-loading") as HTMLElement | null;
+    expect(region?.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("shows existing messages even while isLoadingSession=true (subsequent refresh)", () => {
+    // Once a session has messages, a background refresh shouldn't
+    // blank the conversation; skeleton is only for empty sessions.
+    mockChatContext.messages = [
+      {
+        id: "m1",
+        role: "user",
+        content: "hello",
+        timestamp: new Date().toISOString(),
+        status: "complete",
+      },
+    ];
+    mockChatContext.isLoadingSession = true;
+    render(<ChatPanel />);
+    expect(screen.getByText("hello")).toBeDefined();
+    expect(document.querySelector(".chat-loading")).toBeNull();
+  });
+
+  it("forwards accepted file types to the composer", () => {
+    const { container } = render(<ChatPanel acceptedFileTypes=".pdf,.png" />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(input?.getAttribute("accept")).toBe(".pdf,.png");
+  });
+
+  it("renders headerLeft content after the title", () => {
+    const { container } = render(
+      <ChatPanel title="Chat" headerLeft={<button type="button">Pick agent</button>} />,
+    );
+    const headerLeft = container.querySelector(".chat-panel__header-left") as HTMLElement;
+    expect(headerLeft.textContent).toContain("Chat");
+    expect(headerLeft.textContent).toContain("Pick agent");
+    // Title precedes the injected slot content.
+    const title = headerLeft.querySelector(".chat-panel__title") as HTMLElement;
+    const slotButton = screen.getByText("Pick agent");
+    expect(
+      title.compareDocumentPosition(slotButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("renders composerAccessory inside the input row before the send button", () => {
+    const { container, rerender } = render(<ChatPanel />);
+    expect(container.querySelector(".chat-input__accessory")).toBeNull();
+
+    rerender(<ChatPanel composerAccessory={<button type="button">Pick agent</button>} />);
+    const accessory = container.querySelector(
+      ".chat-input__row .chat-input__accessory",
+    ) as HTMLElement;
+    expect(accessory.textContent).toContain("Pick agent");
+    // Accessory precedes the send button in the row.
+    const send = container.querySelector(".chat-input__send-btn") as HTMLElement;
+    expect(
+      accessory.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });

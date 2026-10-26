@@ -38,6 +38,49 @@ function createMockAgent(events: Record<string, unknown>[]) {
   }));
 }
 
+/** Installs a fake ``XMLHttpRequest`` on ``globalThis`` that resolves
+ *  to the given status/body. Returns an inspection handle so tests can
+ *  assert on headers, open() args, and the request body.
+ */
+interface MockXHRHandle {
+  openCalls: [string, string, boolean][];
+  headers: Map<string, string>;
+  lastBody: unknown;
+}
+
+function installMockXHR(response: { status: number; responseText: string }): MockXHRHandle {
+  const handle: MockXHRHandle = {
+    openCalls: [],
+    headers: new Map(),
+    lastBody: null,
+  };
+  class FakeXHR {
+    upload = { onprogress: null as ((ev: ProgressEvent) => void) | null };
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    status = 0;
+    responseText = "";
+    open(method: string, url: string, async: boolean) {
+      handle.openCalls.push([method, url, async]);
+    }
+    setRequestHeader(k: string, v: string) {
+      handle.headers.set(k, v);
+    }
+    send(body: unknown) {
+      handle.lastBody = body;
+      // Resolve on next microtask so the caller can attach listeners.
+      queueMicrotask(() => {
+        this.status = response.status;
+        this.responseText = response.responseText;
+        this.onload?.();
+      });
+    }
+  }
+  vi.stubGlobal("XMLHttpRequest", FakeXHR as unknown as typeof XMLHttpRequest);
+  return handle;
+}
+
 function createMockAgentError(error: Error) {
   const MockedHttpAgent = HttpAgent as unknown as ReturnType<typeof vi.fn>;
   MockedHttpAgent.mockImplementation(() => ({
@@ -147,7 +190,7 @@ describe("AGUITransport events", () => {
     const t = new AGUITransport(config);
     await t.run("Hello");
 
-    expect(HttpAgent).toHaveBeenCalledWith({ url: "/awp" });
+    expect(HttpAgent).toHaveBeenCalledWith(expect.objectContaining({ url: "/awp" }));
 
     t.dispose();
   });
@@ -166,10 +209,14 @@ describe("AGUITransport events", () => {
 
     const t = new AGUITransport(config);
 
-    // Start stream (don't await — it would hang)
+    // Start stream (don't await the long-running run — it would hang).
+    // We DO await a microtask so the transport's internal getAuthToken()
+    // promise resolves and subscribe() runs before we cancel.
     const _runPromise = t.run("Hello");
+    await Promise.resolve();
+    await Promise.resolve();
 
-    // Cancel immediately
+    // Cancel
     t.cancel();
 
     expect(unsubMock).toHaveBeenCalled();
@@ -332,9 +379,7 @@ describe("AGUITransport upload", () => {
       sizeBytes: 1024,
     };
 
-    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse(serverResponse));
-    vi.stubGlobal("fetch", fetchMock);
-
+    const xhr = installMockXHR({ status: 200, responseText: JSON.stringify(serverResponse) });
     const t = new AGUITransport(config);
     const file = new File(["test content"], "report.pdf", { type: "application/pdf" });
 
@@ -342,19 +387,97 @@ describe("AGUITransport upload", () => {
 
     expect(result.id).toBe("file-abc123");
     expect(result.name).toBe("report.pdf");
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/chat/upload");
-    expect(init.method).toBe("POST");
-    expect(init.body).toBeInstanceOf(FormData);
+    expect(xhr.openCalls).toEqual([["POST", "/chat/upload", true]]);
+    expect(xhr.lastBody).toBeInstanceOf(FormData);
 
     t.dispose();
   });
 
+  it("upload() includes session id and preserves returned MCP path", async () => {
+    createMockAgent([]);
+    const serverResponse = {
+      id: "file-image",
+      type: "image",
+      name: "cats.png",
+      url: "/uploads/file-image/cats.png",
+      mimeType: "image/png",
+      sizeBytes: 9,
+      path: "/general-chat/uploads/file-image/cats.png",
+      extractedText: "sam_segmentation.count_objects_with_sam3 image_path",
+    };
+
+    const xhr = installMockXHR({ status: 200, responseText: JSON.stringify(serverResponse) });
+    const t = new AGUITransport({ ...config, uploadUrl: "/chat/attachments/upload" });
+    const file = new File(["png-bytes"], "cats.png", { type: "image/png" });
+
+    const result = await t.upload(file, { sessionId: "session-1" });
+
+    expect(result.path).toBe("/general-chat/uploads/file-image/cats.png");
+    expect(result.extractedText).toContain("sam_segmentation");
+    expect(xhr.openCalls).toEqual([["POST", "/chat/attachments/upload", true]]);
+    const entries = Array.from((xhr.lastBody as FormData).entries());
+    expect(entries.some(([key]) => key === "file")).toBe(true);
+    expect(entries).toContainEqual(["sessionId", "session-1"]);
+
+    t.dispose();
+  });
+
+  it("upload() fires onProgress callback with normalized fractions", async () => {
+    createMockAgent([]);
+    // A custom XHR fake so we can drive the progress events explicitly.
+    const progressFns: ((ev: ProgressEvent) => void)[] = [];
+    let resolveLoad: (() => void) | null = null;
+    class ProgressXHR {
+      upload = {
+        set onprogress(fn: (ev: ProgressEvent) => void) {
+          progressFns.push(fn);
+        },
+      };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      status = 0;
+      responseText = "";
+      open() {}
+      setRequestHeader() {}
+      send() {
+        resolveLoad = () => {
+          this.status = 200;
+          this.responseText = JSON.stringify({
+            id: "a",
+            type: "file",
+            name: "f",
+            url: "/u/f",
+            mimeType: "text/plain",
+          });
+          this.onload?.();
+        };
+      }
+    }
+    vi.stubGlobal("XMLHttpRequest", ProgressXHR as unknown as typeof XMLHttpRequest);
+
+    const seen: number[] = [];
+    const t = new AGUITransport(config);
+    const promise = t.upload(new File(["x"], "f.txt", { type: "text/plain" }), {
+      onProgress: (frac) => seen.push(frac),
+    });
+    // Fire two progress events + completion.
+    await Promise.resolve();
+    const fn = progressFns[0];
+    fn({ lengthComputable: true, loaded: 50, total: 200 } as ProgressEvent);
+    fn({ lengthComputable: true, loaded: 120, total: 200 } as ProgressEvent);
+    // Non-computable should be ignored.
+    fn({ lengthComputable: false, loaded: 999, total: 0 } as ProgressEvent);
+    resolveLoad?.();
+    await promise;
+
+    // Two real events + the explicit 1.0 at completion.
+    expect(seen).toEqual([0.25, 0.6, 1]);
+  });
+
   it("upload() throws on server error", async () => {
     createMockAgent([]);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 500 })));
-
+    installMockXHR({ status: 500, responseText: "" });
     const t = new AGUITransport(config);
     const file = new File(["data"], "f.txt", { type: "text/plain" });
 
@@ -404,6 +527,400 @@ describe("AGUITransport listeners", () => {
 });
 
 // ── Dispose ──
+
+// ── Sessions REST ──
+
+describe("AGUITransport sessions", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("listSessions returns parsed summaries", async () => {
+    const summaries = [
+      {
+        sessionId: "s-1",
+        title: "Q1 review",
+        createdAt: "2026-04-17T10:00:00Z",
+        updatedAt: "2026-04-17T10:00:00Z",
+        messageCount: 4,
+        preview: "tell me about q1",
+      },
+    ];
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse(summaries));
+    const t = new AGUITransport(config);
+    const result = await t.listSessions(10, 0);
+    expect(result).toEqual(summaries);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/sessions?limit=10&offset=0",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("listSessions returns empty array on 501", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 501));
+    const t = new AGUITransport(config);
+    expect(await t.listSessions()).toEqual([]);
+  });
+
+  it("listSessions returns empty array on fetch error", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("network down"));
+    const t = new AGUITransport(config);
+    expect(await t.listSessions()).toEqual([]);
+  });
+
+  it("listSessions uses custom sessionsUrl", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse([]));
+    const t = new AGUITransport({ ...config, sessionsUrl: "/api/v2/sessions" });
+    await t.listSessions(5, 2);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/v2/sessions?limit=5&offset=2",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("loadSession returns a ChatSession with normalized fields", async () => {
+    const wire = {
+      sessionId: "s-42",
+      title: "Saved",
+      createdAt: "2026-04-17T10:00:00Z",
+      updatedAt: "2026-04-17T10:05:00Z",
+      messages: [
+        {
+          id: "m-1",
+          role: "user",
+          content: "hello",
+          timestamp: "2026-04-17T10:00:00Z",
+        },
+        {
+          id: "m-2",
+          role: "assistant",
+          content: "hi back",
+          timestamp: "2026-04-17T10:00:30Z",
+        },
+      ],
+    };
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse(wire));
+    const t = new AGUITransport(config);
+    const session = await t.loadSession("s-42");
+    expect(session).not.toBeNull();
+    expect(session?.id).toBe("s-42");
+    expect(session?.messages).toHaveLength(2);
+    expect(session?.messages[0].status).toBe("complete");
+  });
+
+  it("loadSession returns null on 404", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 404));
+    const t = new AGUITransport(config);
+    expect(await t.loadSession("missing")).toBeNull();
+  });
+
+  it("loadSession hydrates persisted surfaces into Maps", async () => {
+    const wire = {
+      sessionId: "s-rich",
+      title: "Dashboard chat",
+      createdAt: "2026-07-08T10:00:00Z",
+      updatedAt: "2026-07-08T10:05:00Z",
+      messages: [
+        {
+          id: "m-1",
+          role: "assistant",
+          content: "Here is your dashboard.",
+          timestamp: "2026-07-08T10:00:30Z",
+          surfaces: [
+            {
+              surfaceId: "s-abc123",
+              catalogId: "https://openbench.dev/catalog/v1",
+              components: [
+                { id: "root", component: "Column", children: ["chart-0"] },
+                { id: "chart-0", component: "ObChart", title: "Sales" },
+              ],
+              dataModel: { "/form": { email: "" } },
+            },
+          ],
+        },
+      ],
+    };
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse(wire));
+    const t = new AGUITransport(config);
+    const session = await t.loadSession("s-rich");
+
+    const surfaces = session?.messages[0].surfaces;
+    expect(surfaces).toHaveLength(1);
+    const surface = surfaces![0];
+    expect(surface.components).toBeInstanceOf(Map);
+    expect(surface.components.get("root")?.component).toBe("Column");
+    expect(surface.components.get("chart-0")?.component).toBe("ObChart");
+    expect(surface.catalogId).toBe("https://openbench.dev/catalog/v1");
+    expect(surface.dataModel).toEqual({ "/form": { email: "" } });
+  });
+
+  it("loadSession drops legacy id-only surface stubs without throwing", async () => {
+    const wire = {
+      sessionId: "s-legacy",
+      title: "Old chat",
+      createdAt: "2026-07-08T10:00:00Z",
+      updatedAt: "2026-07-08T10:05:00Z",
+      messages: [
+        {
+          id: "m-1",
+          role: "assistant",
+          content: "Old rich reply.",
+          timestamp: "2026-07-08T10:00:30Z",
+          surfaces: [{ surfaceId: "s-stub" }],
+        },
+      ],
+    };
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse(wire));
+    const t = new AGUITransport(config);
+    const session = await t.loadSession("s-legacy");
+
+    expect(session?.messages[0].surfaces).toBeUndefined();
+  });
+
+  it("loadSession skips malformed component entries", async () => {
+    const wire = {
+      sessionId: "s-mixed",
+      title: "Mixed",
+      createdAt: "2026-07-08T10:00:00Z",
+      updatedAt: "2026-07-08T10:05:00Z",
+      messages: [
+        {
+          id: "m-1",
+          role: "assistant",
+          content: "Partly valid.",
+          timestamp: "2026-07-08T10:00:30Z",
+          surfaces: [
+            {
+              surfaceId: "s-ok",
+              components: [
+                null,
+                "junk",
+                { id: "root", component: "Text", text: "hi" },
+                { component: "MissingId" },
+              ],
+            },
+            { surfaceId: "s-empty", components: [null] },
+          ],
+        },
+      ],
+    };
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse(wire));
+    const t = new AGUITransport(config);
+    const session = await t.loadSession("s-mixed");
+
+    const surfaces = session?.messages[0].surfaces;
+    expect(surfaces).toHaveLength(1);
+    expect(surfaces![0].surfaceId).toBe("s-ok");
+    expect(surfaces![0].components.size).toBe(1);
+    expect(surfaces![0].dataModel).toEqual({});
+  });
+
+  it("deleteSession issues DELETE request", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 200));
+    const t = new AGUITransport(config);
+    await t.deleteSession("s-1");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/sessions/s-1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("deleteSession swallows 404", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 404));
+    const t = new AGUITransport(config);
+    await expect(t.deleteSession("missing")).resolves.toBeUndefined();
+  });
+
+  it("deleteSession encodes session id", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 200));
+    const t = new AGUITransport(config);
+    await t.deleteSession("id with/slash");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/sessions/id%20with%2Fslash",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("deleteSession throws on 500", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 500));
+    const t = new AGUITransport(config);
+    await expect(t.deleteSession("x")).rejects.toThrow();
+  });
+
+  it("renameSession issues PATCH request", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 200));
+    const t = new AGUITransport(config);
+    await t.renameSession("s-1", "Book Dashboard Generation");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/sessions/s-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ title: "Book Dashboard Generation" }),
+      }),
+    );
+  });
+
+  it("renameSession swallows 501", async () => {
+    global.fetch = vi.fn().mockResolvedValue(createJSONResponse({}, 501));
+    const t = new AGUITransport(config);
+    await expect(t.renameSession("s-1", "Local Only")).resolves.toBeUndefined();
+  });
+});
+
+// ── Authorization header (Firebase ID token) ──
+
+describe("AGUITransport Authorization header", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("listSessions attaches Bearer token when getAuthToken is wired", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse([]));
+    global.fetch = fetchMock;
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "fake-id-token",
+    });
+    await t.listSessions();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ Authorization: "Bearer fake-id-token" }),
+      }),
+    );
+  });
+
+  it("loadSession attaches Bearer token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createJSONResponse({
+        sessionId: "s-1",
+        title: "t",
+        createdAt: "2026-04-18T00:00:00Z",
+        updatedAt: "2026-04-18T00:00:00Z",
+        messages: [],
+      }),
+    );
+    global.fetch = fetchMock;
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "tok-1",
+    });
+    await t.loadSession("s-1");
+    const call = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = call.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer tok-1");
+  });
+
+  it("deleteSession attaches Bearer token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse({}, 200));
+    global.fetch = fetchMock;
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "tok-del",
+    });
+    await t.deleteSession("s-1");
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer tok-del");
+  });
+
+  it("sendAction attaches Bearer token alongside Content-Type", async () => {
+    createMockAgent([]);
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "tok-act",
+    });
+    await t.sendAction({
+      name: "click",
+      surfaceId: "s1",
+      sourceComponentId: "btn-1",
+      timestamp: "2026-04-18T00:00:00Z",
+      context: {},
+    });
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer tok-act");
+    expect(headers["Content-Type"]).toBe("application/json");
+    t.dispose();
+  });
+
+  it("upload attaches Bearer token without setting Content-Type", async () => {
+    const xhr = installMockXHR({
+      status: 200,
+      responseText: JSON.stringify({
+        id: "att-1",
+        type: "file",
+        name: "x",
+        url: "/u/x",
+        mimeType: "text/plain",
+      }),
+    });
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "tok-up",
+    });
+    await t.upload(new File(["hello"], "hello.txt", { type: "text/plain" }));
+    // XHR's setRequestHeader calls — pluck what upload() set.
+    const headers = Object.fromEntries(xhr.headers);
+    expect(headers.Authorization).toBe("Bearer tok-up");
+    // Content-Type must NOT be set manually — XHR infers multipart/form-data
+    // with boundary when the body is FormData.
+    expect(headers["Content-Type"]).toBeUndefined();
+  });
+
+  it("run passes Bearer token into HttpAgent headers", async () => {
+    createMockAgent([]);
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => "tok-sse",
+    });
+    await t.run("hi");
+    expect(HttpAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "/awp",
+        headers: expect.objectContaining({ Authorization: "Bearer tok-sse" }),
+      }),
+    );
+    t.dispose();
+  });
+
+  it("no header attached when getAuthToken is unset", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse([]));
+    global.fetch = fetchMock;
+    const t = new AGUITransport(config); // no getAuthToken
+    await t.listSessions();
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers?.Authorization).toBeUndefined();
+  });
+
+  it("no header attached when getAuthToken returns null", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse([]));
+    global.fetch = fetchMock;
+    const t = new AGUITransport({ ...config, getAuthToken: async () => null });
+    await t.listSessions();
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers?.Authorization).toBeUndefined();
+  });
+
+  it("getAuthToken error is swallowed — request still runs without auth", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(createJSONResponse([]));
+    global.fetch = fetchMock;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const t = new AGUITransport({
+      ...config,
+      getAuthToken: async () => {
+        throw new Error("token fetch failed");
+      },
+    });
+    const result = await t.listSessions();
+    expect(result).toEqual([]);
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers?.Authorization).toBeUndefined();
+    errSpy.mockRestore();
+  });
+});
 
 describe("AGUITransport dispose", () => {
   it("clears all listeners and sets disconnected", async () => {

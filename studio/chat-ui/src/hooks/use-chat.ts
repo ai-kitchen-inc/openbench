@@ -14,6 +14,7 @@ import type { ChatStore } from "../core/chat-store";
 import { createChatStore } from "../core/chat-store";
 import { StreamManager } from "../core/stream-manager";
 import { AGUITransport } from "../core/transport";
+import { runWithConcurrency } from "../core/upload-queue";
 import { generateId, nowISO } from "../core/utils";
 import type {
   A2UIAction,
@@ -21,6 +22,8 @@ import type {
   Attachment,
   ChatConfig,
   ChatMessage,
+  DashboardActions,
+  TableExportConfig,
   TransportStatus,
 } from "../types";
 
@@ -28,7 +31,32 @@ export interface UseChatReturn {
   // Messages
   messages: ChatMessage[];
   sendMessage: (content: string, attachments?: Attachment[]) => void;
+  /**
+   * Re-send the user turn that preceded ``message`` — intended to be
+   * wired to the retry button on aborted placeholder messages
+   * (``metadata.aborted === true``). Walks backward from ``message``
+   * to the nearest user message and calls ``sendMessage`` with its
+   * content + attachments. No-op if no preceding user turn is found.
+   */
+  retryMessage: (message: ChatMessage) => void;
   isStreaming: boolean;
+  /**
+   * True while the active session is being hydrated from the server
+   * (switchSession fetches the full message list on demand). UI can
+   * surface a spinner to avoid "nothing happened" perception.
+   */
+  isLoadingSession: boolean;
+  /**
+   * True while at least one upload is in flight. Use to disable the
+   * send button or show a top-level indicator.
+   */
+  isUploading: boolean;
+  /**
+   * Per-attachment upload progress map, keyed by local attachment id.
+   * Values are ``[0, 1]``. Entries disappear when the upload
+   * completes or fails.
+   */
+  uploadProgress: Record<string, number>;
 
   // Connection
   connectionStatus: TransportStatus;
@@ -44,6 +72,11 @@ export interface UseChatReturn {
   // A2UI surfaces (kept for backward compat — per-message surfaces are in message.surfaces)
   surfaces: A2UISurface[];
   sendAction: (action: A2UIAction) => Promise<void>;
+
+  // Host-provided dashboard actions (publish / export), if configured.
+  dashboardActions?: DashboardActions;
+  /** Export shortcut config for table renderers (see ChatConfig.tableExport). */
+  tableExport?: TableExportConfig;
 
   // UI
   sidebarOpen: boolean;
@@ -68,6 +101,10 @@ export function useChat(config: ChatConfig): UseChatReturn {
   const isStreaming = useStore(store, (s) => s.isStreaming);
   const sessions = useStore(store, (s) => s.sessions);
   const activeSessionId = useStore(store, (s) => s.activeSessionId);
+  const loadingSessionIds = useStore(store, (s) => s.loadingSessionIds);
+  const isLoadingSession = activeSessionId !== null && !!loadingSessionIds[activeSessionId];
+  const uploadProgress = useStore(store, (s) => s.uploadProgress);
+  const isUploading = Object.keys(uploadProgress).length > 0;
   const sidebarOpen = useStore(store, (s) => s.sidebarOpen);
 
   // Create stable transport instance (for upload + sendAction + status)
@@ -84,6 +121,7 @@ export function useChat(config: ChatConfig): UseChatReturn {
       streamUrl: config.streamUrl,
       store,
       maxConcurrent: config.maxConcurrentStreams ?? 3,
+      getAuthToken: config.getAuthToken,
     });
   }
   const streamManager = streamManagerRef.current;
@@ -103,12 +141,34 @@ export function useChat(config: ChatConfig): UseChatReturn {
     };
   }, [transport, streamManager, store]);
 
-  // Create initial session if none exists
+  // Hydrate sessions from the backend on mount.
+  // Server sessions populate the sidebar as history, but the app always
+  // opens on a fresh session so the first message starts a new chat tab
+  // instead of appending to the most recent persisted session.
   useEffect(() => {
-    if (store.getState().sessions.length === 0) {
-      store.getState().createSession();
-    }
-  }, [store]);
+    let cancelled = false;
+    (async () => {
+      const summaries = await transport.listSessions();
+      if (cancelled) return;
+      if (summaries.length > 0) {
+        const placeholders = summaries.map((s) => ({
+          id: s.sessionId,
+          title: s.title,
+          messages: [],
+          createdAt: s.createdAt,
+          updatedAt: s.updatedAt,
+        }));
+        store.getState().hydrateSessions(placeholders);
+      }
+      // Always ensure a fresh active session to type into.
+      if (store.getState().activeSessionId == null) {
+        store.getState().createSession();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [store, transport]);
 
   // Send message — creates independent parallel stream via StreamManager
   const sendMessage = useCallback(
@@ -132,34 +192,105 @@ export function useChat(config: ChatConfig): UseChatReturn {
       };
       store.getState().addMessageToSession(sessionId, assistantMsg);
 
+      const failPlaceholder = () => {
+        store.getState().updateMessageInSession(sessionId, assistantId, (m) =>
+          m.status === "streaming" ? { ...m, status: "error" as const } : m,
+        );
+      };
+
       // Upload files then start parallel stream (async, fire-and-forget)
       (async () => {
         try {
           let serverAttachments: Attachment[] | undefined;
+          let uploadFailures = 0;
 
           if (attachments?.length) {
-            serverAttachments = await Promise.all(
-              attachments.map(async (att) => {
-                if (att.file) {
-                  const uploaded = await transport.upload(att.file);
-                  URL.revokeObjectURL(att.url);
+            // Bounded concurrency, and each file settles on its own: one
+            // failed upload must not discard the files that succeeded nor
+            // prevent the turn from being sent.
+            const outcomes = await runWithConcurrency(
+              attachments,
+              config.uploadConcurrency ?? 3,
+              async (att) => {
+                if (!att.file) return att;
+                // Seed a 0% entry so the UI paints a progress bar
+                // immediately — otherwise a fast XHR on localhost
+                // can complete before the first progress event
+                // fires and the bar never renders.
+                store.getState().setUploadProgress(att.id, 0);
+                const localFile = att.file;
+                try {
+                  const uploaded = await (config.uploadFile ?? transport.upload.bind(transport))(
+                    localFile,
+                    {
+                      sessionId,
+                      onProgress: (frac) => store.getState().setUploadProgress(att.id, frac),
+                    },
+                  );
+                  config.onUploadSuccess?.(att.id, uploaded);
                   return { ...uploaded, file: undefined };
+                } catch (err) {
+                  config.onUploadError?.(localFile, err);
+                  return null;
+                } finally {
+                  // The local preview URL is dead either way: a success
+                  // switches to the server attachment, a failure drops
+                  // the file from the turn. Failing to revoke here
+                  // leaked one blob per failed upload.
+                  if (att.url.startsWith("blob:")) URL.revokeObjectURL(att.url);
+                  store.getState().clearUploadProgress(att.id);
                 }
-                return att;
-              }),
+              },
             );
+            serverAttachments = outcomes.filter((a): a is Attachment => a != null);
+            uploadFailures = outcomes.length - serverAttachments.length;
+          }
+
+          // Only give up when there is nothing left to say: every
+          // attachment failed and the user typed no text. Otherwise the
+          // turn goes out with whatever survived.
+          if (uploadFailures > 0 && !serverAttachments?.length && !content.trim()) {
+            failPlaceholder();
+            return;
           }
 
           // Start independent stream — does NOT cancel other active streams
           await streamManager.startStream(sessionId, assistantId, content, serverAttachments);
+          const loaded = await transport.loadSession(sessionId);
+          const currentTitle = store.getState().sessions.find((s) => s.id === sessionId)?.title;
+          if (loaded?.title && loaded.title !== currentTitle) {
+            store.getState().renameSession(sessionId, loaded.title);
+          }
         } catch (err) {
           console.error("[useChat] Upload/stream error:", err);
+          // Never leave the placeholder spinning forever.
+          failPlaceholder();
         }
       })();
 
       return msg;
     },
-    [store, transport, streamManager],
+    [config, store, transport, streamManager],
+  );
+
+  // Retry — walk backward from the given message to the nearest user
+  // turn and re-send its content + attachments. Used by the retry
+  // button that appears on aborted placeholder messages.
+  const retryMessage = useCallback(
+    (message: ChatMessage) => {
+      const state = store.getState();
+      const allMessages = state.messages;
+      const idx = allMessages.findIndex((m) => m.id === message.id);
+      if (idx <= 0) return;
+      for (let i = idx - 1; i >= 0; i--) {
+        const prior = allMessages[i];
+        if (prior && prior.role === "user") {
+          sendMessage(prior.content, prior.attachments);
+          return;
+        }
+      }
+    },
+    [store, sendMessage],
   );
 
   // Send A2UI action — routes response to correct message's processor
@@ -212,17 +343,54 @@ export function useChat(config: ChatConfig): UseChatReturn {
 
   // Session actions (delegate to store)
   const createSession = useCallback(() => store.getState().createSession(), [store]);
-  const switchSession = useCallback((id: string) => store.getState().switchSession(id), [store]);
+
+  // Switch session; if the session is a hydration placeholder with no
+  // messages yet, lazy-load its full content from the server.
+  const switchSession = useCallback(
+    (id: string) => {
+      store.getState().switchSession(id);
+      const session = store.getState().sessions.find((s) => s.id === id);
+      if (session && session.messages.length === 0) {
+        (async () => {
+          store.getState().setSessionLoading(id, true);
+          try {
+            const loaded = await transport.loadSession(id);
+            if (loaded) {
+              store.getState().hydrateSessionMessages(id, loaded.messages);
+            }
+          } catch (err) {
+            console.error("[useChat] loadSession failed:", err);
+          } finally {
+            store.getState().setSessionLoading(id, false);
+          }
+        })();
+      }
+    },
+    [store, transport],
+  );
+
+  // Delete session both locally and on the server (fire-and-forget);
+  // a server failure does not block the UI — the user will see it
+  // come back on the next reload, which is acceptable.
   const deleteSession = useCallback(
     (id: string) => {
       streamManager.removeProcessor(id);
       store.getState().deleteSession(id);
+      transport.deleteSession(id).catch((err) => {
+        console.error("[useChat] deleteSession server sync failed:", err);
+      });
     },
-    [store, streamManager],
+    [store, streamManager, transport],
   );
+
   const renameSession = useCallback(
-    (id: string, newTitle: string) => store.getState().renameSession(id, newTitle),
-    [store],
+    (id: string, newTitle: string) => {
+      store.getState().renameSession(id, newTitle);
+      transport.renameSession(id, newTitle).catch((err) => {
+        console.error("[useChat] renameSession server sync failed:", err);
+      });
+    },
+    [store, transport],
   );
   const setSidebarOpen = useCallback(
     (open: boolean) => store.getState().setSidebarOpen(open),
@@ -235,7 +403,11 @@ export function useChat(config: ChatConfig): UseChatReturn {
   return {
     messages,
     sendMessage,
+    retryMessage,
     isStreaming,
+    isLoadingSession,
+    isUploading,
+    uploadProgress,
     connectionStatus,
     sessions,
     activeSessionId,
@@ -245,6 +417,8 @@ export function useChat(config: ChatConfig): UseChatReturn {
     renameSession,
     surfaces: [], // Deprecated at hook level — use message.surfaces instead
     sendAction,
+    dashboardActions: config.dashboardActions,
+    tableExport: config.tableExport,
     sidebarOpen,
     setSidebarOpen,
   };

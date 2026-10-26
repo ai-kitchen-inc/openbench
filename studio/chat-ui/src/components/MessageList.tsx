@@ -8,15 +8,28 @@
 
 import { useEffect, useRef } from "react";
 import type { A2UIAction, ChatMessage } from "../types";
-import { MessageBubble } from "./MessageBubble";
+import { MessageBubble, type SurfaceFooterRenderer } from "./MessageBubble";
 
 export interface MessageListProps {
   messages: ChatMessage[];
   isStreaming?: boolean;
   onAction?: (action: A2UIAction) => void;
+  /** Per-attachment upload progress; forwarded to each MessageBubble. */
+  uploadProgress?: Record<string, number>;
+  /** Retry handler forwarded to aborted placeholder messages. */
+  onRetry?: (message: ChatMessage) => void;
+  /** Optional host-rendered footer shown below each A2UI surface. */
+  renderSurfaceFooter?: SurfaceFooterRenderer;
 }
 
-export function MessageList({ messages, isStreaming, onAction }: MessageListProps) {
+export function MessageList({
+  messages,
+  isStreaming,
+  onAction,
+  uploadProgress,
+  onRetry,
+  renderSurfaceFooter,
+}: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Track content changes for scroll trigger.
@@ -49,7 +62,14 @@ export function MessageList({ messages, isStreaming, onAction }: MessageListProp
   return (
     <div className="chat-message-list" ref={containerRef}>
       {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} onAction={onAction} />
+        <MessageBubble
+          key={msg.id}
+          message={msg}
+          onAction={onAction}
+          uploadProgress={uploadProgress}
+          onRetry={onRetry}
+          renderSurfaceFooter={renderSurfaceFooter}
+        />
       ))}
     </div>
   );
