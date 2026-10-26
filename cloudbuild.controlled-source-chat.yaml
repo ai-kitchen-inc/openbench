@@ -1,0 +1,14 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.controlled-source-chat
+      - -t
+      - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/controlled-source-chat:latest
+      - .
+images:
+  - us-central1-docker.pkg.dev/sss-poc1-corporate/openbench/controlled-source-chat:latest
+timeout: 2400s
+options:
+  machineType: E2_HIGHCPU_8

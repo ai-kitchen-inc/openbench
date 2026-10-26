@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "controlled-source-chat"
+version = "0.1.0"
+description = "Admin-curated, strictly source-grounded chat (OpenBench example)"
+requires-python = ">=3.10"
+# Mirrors general-chat's dependency list: this example imports the
+# general_chat package from the sibling example via sys.path (path
+# dependencies are not portable in pyproject metadata).
+dependencies = [
+    "openbench",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-dotenv>=1.0",
+    "docling>=2.0",
+    "pypdf>=4.0.0",
+    "python-docx>=1.0",
+    "google-genai>=1.0.0",
+    "requests>=2.31.0",
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "tavily-python>=0.3.0",
+    "python-multipart>=0.0.9",
+    "playwright>=1.40",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/controlled_source_chat"]
