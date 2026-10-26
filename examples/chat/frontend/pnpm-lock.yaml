@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@openbench/chat-ui':
-        specifier: file:../../../packages/chat-ui
-        version: file:../../../packages/chat-ui(@types/react@19.2.14)(immer@11.1.4)(react-dom@19.2.4(react@19.2.4))(react-is@19.2.4)(react@19.2.4)(redux@5.0.1)(use-sync-external-store@1.6.0(react@19.2.4))
+        specifier: file:../../../studio/chat-ui
+        version: file:../../../studio/chat-ui(@types/react@19.2.14)(immer@11.1.4)(react-dom@19.2.4(react@19.2.4))(react-is@19.2.4)(react@19.2.4)(redux@5.0.1)(use-sync-external-store@1.6.0(react@19.2.4))
       react:
         specifier: ^19.0.0
         version: 19.2.4
@@ -207,8 +207,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@openbench/chat-ui@file:../../../packages/chat-ui':
-    resolution: {directory: ../../../packages/chat-ui, type: directory}
+  '@openbench/chat-ui@file:../../../studio/chat-ui':
+    resolution: {directory: ../../../studio/chat-ui, type: directory}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -1293,7 +1293,7 @@ snapshots:
   '@esbuild/win32-x64@0.25.12':
     optional: true
 
-  '@openbench/chat-ui@file:../../../packages/chat-ui(@types/react@19.2.14)(immer@11.1.4)(react-dom@19.2.4(react@19.2.4))(react-is@19.2.4)(react@19.2.4)(redux@5.0.1)(use-sync-external-store@1.6.0(react@19.2.4))':
+  '@openbench/chat-ui@file:../../../studio/chat-ui(@types/react@19.2.14)(immer@11.1.4)(react-dom@19.2.4(react@19.2.4))(react-is@19.2.4)(react@19.2.4)(redux@5.0.1)(use-sync-external-store@1.6.0(react@19.2.4))':
     dependencies:
       '@ag-ui/client': 0.0.45
       '@ag-ui/core': 0.0.45

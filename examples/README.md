@@ -44,6 +44,11 @@ examples/
 │   └── reports/                 # End-to-end report generation
 │       ├── sustainability_report.py
 │       └── knowledge_base_workflow.py
+├── lci-ignite-x/                  # Full-stack LCA analysis platform
+│   ├── server.py                  # Demo entry point (:8003)
+│   ├── frontend/                  # React app (@openbench/chat-ui)
+│   ├── src/lci_ignite/            # Python package
+│   └── README.md
 └── README.md
 ```
 
@@ -161,6 +166,33 @@ pnpm dev
 ```
 
 See [chat/README.md](chat/README.md) for full details.
+
+### 5b. General Chat (`general-chat/`)
+
+General-purpose chat application using the `lci-mini` persona-file pattern with
+a two-pane frontend:
+
+- **Source pane** -- upload files once and keep them attached as active sources
+- **Main chat pane** -- ask normal chat questions with active source context
+- **Persona files** -- `soul/SOUL.md`, `soul/STYLE.md`, and `soul/AGENTS.md`
+- **Persistent sessions** -- SQLite-backed chat and agent memory
+
+**Requires:** `GOOGLE_API_KEY`
+
+```bash
+openbench demo run general-chat
+```
+
+To debug the exact prompt sent to the model, enable prompt dumps before starting
+the server:
+
+```bash
+GENERAL_CHAT_DEBUG_PROMPT=1 openbench demo run general-chat
+```
+
+Set `GENERAL_CHAT_DEBUG_PROMPT_DIR=path/to/dir` to choose the dump directory.
+Each request writes a JSON file containing the model, parameters, and full
+message list passed to the LLM provider.
 
 ---
 
@@ -525,6 +557,27 @@ python examples/workflows/reports/knowledge_base_workflow.py pipeline doc.pdf "S
 
 ---
 
+## LCI Ignite X (`lci-ignite-x/`)
+
+### 24. LCI Ignite X (`lci-ignite-x/`)
+
+Full-stack LCA (Life Cycle Assessment) analysis platform:
+- **Backend**: FastAPI with AG-UI SSE streaming, file upload, persistent memory
+- **Frontend**: React app with @openbench/chat-ui (ChatPanel, SessionSidebar, dark mode)
+- **Intelligence**: Coordinator agent with 11 domain tools (IO table, Pareto hotspot, narrative, DOCX export)
+- **Data**: easyLCA and SimaPro CSV parsers
+- **RAG**: PROPER 2025 document retrieval via Pinecone
+
+**Requires:** Python >= 3.10, Node.js >= 18, pnpm, `GOOGLE_API_KEY`, optionally `PINECONE_API_KEY`
+
+```bash
+openbench demo run lci-ignite-x    # Auto-installs deps, builds chat-ui, starts :8003 + :5173
+```
+
+See [lci-ignite-x/README.md](lci-ignite-x/README.md) for full details.
+
+---
+
 ## Summary
 
 | # | Example | API Keys | What it demonstrates |
@@ -534,6 +587,7 @@ python examples/workflows/reports/knowledge_base_workflow.py pipeline doc.pdf "S
 | 3 | `core/agent_registry_demo.py` | None | AgentFactory, dynamic registration |
 | 4 | `adapters/framework_adapters_demo.py` | None | Multi-framework orchestration |
 | 5 | `chat/` | Google | AG-UI streaming, A2UI rich UI, file upload, planning, parallel tools, persistent memory |
+| 5b | `general-chat/` | Google | General chat with persona files and a two-pane source upload UI |
 | 6a | `embeddings/embedding_providers_demo.py` | Google | Vector embeddings |
 | 6b | `embeddings/dynamic_registration_demo.py` | None | Dynamic model/provider registration |
 | 7 | `intelligence/gemini_agent_demo.py` | Google | BaseAgent reasoning loop + tools |
@@ -553,6 +607,7 @@ python examples/workflows/reports/knowledge_base_workflow.py pipeline doc.pdf "S
 | 21 | `workflows/research/hybrid_research_agent.py` | Google + Pinecone | Multi-mode research, openclaw |
 | 22 | `workflows/reports/sustainability_report.py` | None | Full E2E report (mock data) |
 | 23 | `workflows/reports/knowledge_base_workflow.py` | Google + Pinecone | Index → Query RAG pipeline |
+| 24 | `lci-ignite-x/` | Google (+Pinecone) | Full-stack LCA analysis: IO tables, Pareto hotspots, DOCX export, AG-UI streaming |
 
 ## Common Patterns
 

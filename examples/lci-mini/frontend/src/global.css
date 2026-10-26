@@ -1,0 +1,813 @@
+/* Reset defaults for fullscreen chat layout */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Fullscreen layout: sidebar + chat panel */
+.chat-layout {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+
+.chat-layout .chat-panel {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+/* Sidebar wraps SessionSidebar + PersonaBadge + SkillBadge.
+   Explicit width + flex-shrink: 0 is critical: without it, the
+   SkillBadge's long tool-list text ("extract_file_context,
+   list_excel_sheets, read_csv_file, read_excel_file") contributes
+   to the wrapper's max-content width, which in turn pushes the
+   whole sidebar to ~700-800px wide and leaves the chat panel
+   squeezed to the right edge with a huge empty gap. */
+.lci-mini-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  flex-shrink: 0;
+  min-width: 0;
+  border-right: 1px solid var(--ob-border);
+  background: var(--ob-bg);
+  overflow: hidden;
+}
+
+.lci-mini-sidebar .chat-sidebar {
+  /* SessionSidebar renders as <aside class="chat-sidebar"> which
+     defaults to width: var(--ob-sidebar-width) = 260px. Override to
+     fill the wrapper width and shrink when the persona/skill badges
+     need vertical room. */
+  width: 100%;
+  border-right: none;
+  flex-shrink: 1;
+  min-height: 0;
+}
+
+/* ── Persona Badge (footer of sidebar) ── */
+
+.persona-badge {
+  padding: 12px 16px;
+  border-top: 1px solid var(--ob-border);
+  font-size: 12px;
+  color: var(--ob-text-secondary);
+  background: var(--ob-bg);
+}
+
+.persona-badge__title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--ob-text);
+  letter-spacing: 0.01em;
+}
+
+.persona-badge__row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.persona-badge__row--total {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--ob-border);
+  color: var(--ob-text);
+  font-weight: 500;
+}
+
+.persona-badge--empty {
+  text-align: center;
+  color: var(--ob-text-muted, var(--ob-text-secondary));
+  font-style: italic;
+}
+
+/* ── Theme Toggle Button ── */
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--ob-text-secondary);
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.theme-toggle:hover {
+  background: var(--ob-border);
+  color: var(--ob-text);
+}
+
+
+/* ── Skill Badge (below Persona Badge) ── */
+
+.skill-badge {
+  padding: 12px 16px;
+  border-top: 1px solid var(--ob-border);
+  font-size: 12px;
+  color: var(--ob-text-secondary);
+  background: var(--ob-bg);
+}
+
+.skill-badge__title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--ob-text);
+  letter-spacing: 0.01em;
+}
+
+.skill-badge__item {
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--ob-border);
+}
+
+.skill-badge__item:last-of-type {
+  border-bottom: none;
+}
+
+.skill-badge__name {
+  color: var(--ob-text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.skill-badge__version {
+  color: var(--ob-text-secondary);
+  font-weight: 400;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.skill-badge__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ob-text-secondary);
+  /* Wrap long tool lists so they don't force the sidebar wider
+     (e.g. "extract_file_context, list_excel_sheets, read_csv_file,
+     read_excel_file" is ~700px unwrapped). */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.skill-badge--empty {
+  text-align: center;
+  color: var(--ob-text-muted, var(--ob-text-secondary));
+  font-style: italic;
+}
+
+/* ── Auth gate (pre-sign-in) ─────────────────────────────────── */
+
+.auth-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  padding: 24px;
+}
+
+.auth-gate__panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px 32px;
+  max-width: 420px;
+  width: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  background: var(--ob-bg-primary, #fff);
+  text-align: center;
+}
+
+.auth-gate__icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ob-bg-tertiary, rgba(0, 0, 0, 0.04));
+  color: var(--ob-text-primary, #1a1a1a);
+}
+
+.auth-gate__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ob-text-primary, #1a1a1a);
+}
+
+.auth-gate__blurb {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.64));
+}
+
+.auth-gate__signin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  background: var(--ob-bg-primary, #fff);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+  width: 100%;
+}
+
+.auth-gate__signin:hover:not(:disabled) {
+  border-color: rgba(0, 0, 0, 0.24);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.auth-gate__signin:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Email/password form ─────────────────────────────────────── */
+
+.auth-gate__form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.auth-gate__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.64));
+}
+
+.auth-gate__field > span {
+  font-weight: 500;
+}
+
+.auth-gate__field input {
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  background: var(--ob-bg-primary, #fff);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 14px;
+  font-family: inherit;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.auth-gate__field input:focus {
+  outline: none;
+  border-color: rgba(0, 0, 0, 0.36);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06);
+}
+
+.auth-gate__field input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-gate__primary {
+  padding: 10px 20px;
+  border: 1px solid var(--ob-text-primary, #1a1a1a);
+  border-radius: 8px;
+  background: var(--ob-text-primary, #1a1a1a);
+  color: var(--ob-bg-primary, #fff);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 150ms ease;
+}
+
+.auth-gate__primary:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.auth-gate__primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auth-gate__error {
+  padding: 8px 12px;
+  border: 1px solid rgba(200, 40, 40, 0.24);
+  border-radius: 6px;
+  background: rgba(200, 40, 40, 0.04);
+  color: #b02020;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.auth-gate__code {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre;
+  overflow-x: auto;
+  margin: 4px 0;
+}
+
+.auth-gate__info {
+  padding: 8px 12px;
+  border: 1px solid rgba(16, 163, 127, 0.28);
+  border-radius: 6px;
+  background: rgba(16, 163, 127, 0.04);
+  color: #0f8268;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.auth-gate__inline-links {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.auth-gate__inline-links--center {
+  justify-content: center;
+}
+
+.auth-gate__link {
+  border: none;
+  background: transparent;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.64));
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.auth-gate__link:hover:not(:disabled) {
+  color: var(--ob-text-primary, #1a1a1a);
+}
+
+.auth-gate__link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auth-gate__link--center {
+  display: block;
+  margin: 0 auto;
+}
+
+.auth-gate__divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.64));
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.auth-gate__divider::before,
+.auth-gate__divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* ── Verification banner ─────────────────────────────────────── */
+
+.auth-verify-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(255, 196, 0, 0.1);
+  border-bottom: 1px solid rgba(255, 196, 0, 0.32);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.auth-verify-banner__btn {
+  padding: 4px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 6px;
+  background: var(--ob-bg-primary, #fff);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.auth-verify-banner__btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.auth-verify-banner__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+[data-theme="dark"] .auth-gate__field input,
+[data-theme="dark"] .auth-verify-banner__btn {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="dark"] .auth-gate__primary {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.auth-gate--loading {
+  flex-direction: column;
+  gap: 12px;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.64));
+  font-size: 14px;
+}
+
+.auth-gate__spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(0, 0, 0, 0.12);
+  border-top-color: var(--ob-text-primary, #1a1a1a);
+  border-radius: 50%;
+  animation: auth-spin 800ms linear infinite;
+}
+
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── User badge (in header) ──────────────────────────────────── */
+
+.chat-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-badge {
+  position: relative;
+}
+
+.user-badge__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+  background: var(--ob-bg-primary, #fff);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 13px;
+  cursor: pointer;
+  max-width: 240px;
+}
+
+.user-badge__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--ob-bg-tertiary, rgba(0, 0, 0, 0.06));
+  color: var(--ob-text-primary, #1a1a1a);
+  font-weight: 600;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.user-badge__avatar--fallback {
+  /* Deterministic neutral hue — don't randomise, keeps UI predictable. */
+  background: linear-gradient(135deg, #5a6268, #343a40);
+  color: #fff;
+  letter-spacing: 0;
+}
+
+[data-theme="dark"] .user-badge__avatar--fallback {
+  background: linear-gradient(135deg, #495057, #212529);
+}
+
+.user-badge__menu-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.user-badge__menu-header .user-badge__menu-email {
+  padding: 0;
+}
+
+.user-badge__trigger:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.user-badge__email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-badge__drive-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10a37f;
+  flex-shrink: 0;
+}
+
+.user-badge__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 220px;
+  padding: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  background: var(--ob-bg-primary, #fff);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  z-index: 100;
+}
+
+.user-badge__menu-email {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.64));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-badge__menu-sep {
+  height: 1px;
+  background: rgba(0, 0, 0, 0.06);
+  margin: 4px 0;
+}
+
+.user-badge__menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.user-badge__menu-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] .auth-gate__panel,
+[data-theme="dark"] .user-badge__trigger,
+[data-theme="dark"] .user-badge__menu,
+[data-theme="dark"] .auth-gate__signin {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+
+/* ── Sidebar badge skeleton ─────────────────────────────────── */
+
+.badge-skeleton {
+  padding: 12px 16px;
+  border-top: 1px solid var(--ob-border);
+  font-size: 12px;
+}
+
+.badge-skeleton__title {
+  font-weight: 600;
+  color: var(--ob-text);
+  letter-spacing: 0.01em;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.badge-skeleton__row {
+  height: 8px;
+  border-radius: 3px;
+  margin-top: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.09) 0%,
+    rgba(0, 0, 0, 0.22) 50%,
+    rgba(0, 0, 0, 0.09) 100%
+  );
+  background-size: 200% 100%;
+  animation: badge-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+[data-theme="dark"] .badge-skeleton__row {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    rgba(255, 255, 255, 0.12) 100%
+  );
+  background-size: 200% 100%;
+}
+
+@keyframes badge-skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+
+/* ── Error boundary ──────────────────────────────────────────── */
+
+.error-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  height: 100%;
+  min-height: 240px;
+}
+
+.error-boundary__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 480px;
+  width: 100%;
+  padding: 24px;
+  border: 1px solid rgba(200, 40, 40, 0.24);
+  border-radius: 10px;
+  background: rgba(200, 40, 40, 0.04);
+  color: var(--ob-text-primary, #1a1a1a);
+}
+
+.error-boundary__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #b02020;
+}
+
+.error-boundary__detail {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--ob-text-secondary, rgba(0, 0, 0, 0.64));
+  background: var(--ob-bg-primary, #fff);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  padding: 8px 10px;
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-boundary__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.error-boundary__btn {
+  padding: 6px 14px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 6px;
+  background: var(--ob-bg-primary, #fff);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.error-boundary__btn:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.error-boundary__btn--primary {
+  background: var(--ob-text-primary, #1a1a1a);
+  color: var(--ob-bg-primary, #fff);
+  border-color: var(--ob-text-primary, #1a1a1a);
+}
+
+.error-boundary__btn--primary:hover {
+  opacity: 0.9;
+  background: var(--ob-text-primary, #1a1a1a);
+}
+
+
+/* ── Toast ────────────────────────────────────────────────────── */
+
+.toast-host {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  min-width: 240px;
+  max-width: 360px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  background: var(--ob-bg-primary, #fff);
+  color: var(--ob-text-primary, #1a1a1a);
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  pointer-events: auto;
+}
+
+.toast--error {
+  border-color: rgba(200, 40, 40, 0.24);
+}
+.toast--error .toast__message {
+  color: #b02020;
+}
+
+.toast--success {
+  border-color: rgba(16, 163, 127, 0.28);
+}
+.toast--success .toast__message {
+  color: #0f8268;
+}
+
+.toast__message {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.toast__close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  opacity: 0.6;
+}
+
+.toast__close:hover {
+  opacity: 1;
+}
+
+[data-theme="dark"] .toast {
+  border-color: rgba(255, 255, 255, 0.12);
+}

@@ -11,7 +11,7 @@
   "dependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@openbench/chat-ui": "file:../../../packages/chat-ui"
+    "@openbench/chat-ui": "file:../../../studio/chat-ui"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
