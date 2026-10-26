@@ -1,0 +1,44 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "dev.openbench/aggregate-data-mcp",
+  "title": "OpenBench Aggregate Data MCP",
+  "description": "General CSV/XLSX metadata inspection and read-only SQLite aggregation.",
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "openbench/aggregate-data-mcp:cpu",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "OPENBENCH_DASHBOARD_STATE_PATH",
+          "description": "Optional shared state file used to pass aggregate datasets to dashboard-generator-mcp.",
+          "isRequired": false
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "dev.openbench": {
+        "tools": [
+          "extract_metadata",
+          "aggregate_data"
+        ],
+        "permissions": {
+          "filesystem": {
+            "read": [
+              "/data",
+              "/general-chat/uploads"
+            ],
+            "readWrite": [
+              "/outputs"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

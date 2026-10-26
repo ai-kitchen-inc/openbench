@@ -1,0 +1,107 @@
+services:
+  sam-segmentation-mcp-cpu:
+    profiles: ["cpu"]
+    build:
+      context: .
+      target: base
+      args:
+        SAM3_PREINSTALL: ${SAM3_PREINSTALL:-required}
+        SAM3_HF_REPO: ${SAM3_HF_REPO:-facebook/sam3}
+        SAM3_HF_FILENAME: ${SAM3_HF_FILENAME:-sam3.pt}
+      secrets:
+        - hf_token
+    image: openbench/sam-segmentation-mcp:cpu
+    stdin_open: true
+    tty: false
+    environment:
+      SAM3_MODEL_PATH: /models/sam3.pt
+      SAM3_DEVICE: ${SAM3_DEVICE:-cpu}
+      SAM3_CONF: ${SAM3_CONF:-0.25}
+      SAM3_HALF: ${SAM3_HALF:-false}
+      SAM3_VERBOSE: ${SAM3_VERBOSE:-false}
+      MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-10485760}
+      MAX_IMAGE_PIXELS: ${MAX_IMAGE_PIXELS:-12000000}
+      IMAGE_INPUT_ROOTS: /general-chat/uploads,/data,/input
+    volumes:
+      - ./data:/data
+      - ./example-images:/input:ro
+    command: ["python", "-m", "app.mcp_server", "--transport", "stdio"]
+
+  sam-segmentation-mcp-gpu:
+    profiles: ["gpu"]
+    build:
+      context: .
+      target: gpu
+      args:
+        SAM3_PREINSTALL: ${SAM3_PREINSTALL:-required}
+        SAM3_HF_REPO: ${SAM3_HF_REPO:-facebook/sam3}
+        SAM3_HF_FILENAME: ${SAM3_HF_FILENAME:-sam3.pt}
+      secrets:
+        - hf_token
+    image: openbench/sam-segmentation-mcp:gpu
+    stdin_open: true
+    tty: false
+    environment:
+      SAM3_MODEL_PATH: /models/sam3.pt
+      SAM3_DEVICE: cuda
+      SAM3_CONF: ${SAM3_CONF:-0.25}
+      SAM3_HALF: ${SAM3_HALF:-true}
+      SAM3_VERBOSE: ${SAM3_VERBOSE:-false}
+      MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-10485760}
+      MAX_IMAGE_PIXELS: ${MAX_IMAGE_PIXELS:-12000000}
+      IMAGE_INPUT_ROOTS: /general-chat/uploads,/data,/input
+    volumes:
+      - ./data:/data
+      - ./example-images:/input:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]
+    command: ["python", "-m", "app.mcp_server", "--transport", "stdio"]
+
+  sam-segmentation-mcp-dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      target: base
+      args:
+        SAM3_PREINSTALL: ${SAM3_PREINSTALL:-required}
+        SAM3_HF_REPO: ${SAM3_HF_REPO:-facebook/sam3}
+        SAM3_HF_FILENAME: ${SAM3_HF_FILENAME:-sam3.pt}
+      secrets:
+        - hf_token
+    image: openbench/sam-segmentation-mcp:dev
+    environment:
+      SAM3_MODEL_PATH: /models/sam3.pt
+      SAM3_DEVICE: ${SAM3_DEVICE:-cpu}
+      SAM3_CONF: ${SAM3_CONF:-0.25}
+      SAM3_HALF: ${SAM3_HALF:-false}
+      SAM3_VERBOSE: ${SAM3_VERBOSE:-false}
+      MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-10485760}
+      MAX_IMAGE_PIXELS: ${MAX_IMAGE_PIXELS:-12000000}
+      IMAGE_INPUT_ROOTS: /general-chat/uploads,/data,/input
+    volumes:
+      - .:/app
+      - ./data:/data
+      - ./example-images:/input:ro
+    ports:
+      - "8001:8000"
+    command:
+      [
+        "python",
+        "-m",
+        "app.mcp_server",
+        "--transport",
+        "streamable-http",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]
+
+secrets:
+  hf_token:
+    environment: HF_TOKEN

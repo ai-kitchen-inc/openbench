@@ -1,0 +1,62 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "dev.openbench/image-search-mcp",
+  "title": "OpenBench Image Search MCP",
+  "description": "Local DINOv3 CIFAR-10 image similarity search over a persistent FAISS/HNSW index.",
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "openbench/image-search-mcp:cpu",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "DINO_MODEL_ID",
+          "description": "HuggingFace DINOv3 model id.",
+          "isRequired": false
+        },
+        {
+          "name": "DEVICE",
+          "description": "cpu, cuda, or auto.",
+          "isRequired": false
+        },
+        {
+          "name": "VECTOR_BACKEND",
+          "description": "auto, faiss, or hnswlib.",
+          "isRequired": false
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "dev.openbench": {
+        "tools": [
+          "search_similar_images",
+          "index_images",
+          "rebuild_index",
+          "list_index_stats",
+          "remove_image"
+        ],
+        "permissions": {
+          "network": {
+            "outbound": {
+              "allow_host": [
+                "huggingface.co",
+                "www.cs.toronto.edu"
+              ]
+            }
+          },
+          "filesystem": {
+            "readWrite": [
+              "/data",
+              "/models"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

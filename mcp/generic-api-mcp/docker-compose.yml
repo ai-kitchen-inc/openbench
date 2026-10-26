@@ -1,0 +1,41 @@
+services:
+  generic-api-mcp-cpu:
+    profiles: ["cpu"]
+    build:
+      context: .
+      target: base
+    image: openbench/generic-api-mcp:cpu
+    stdin_open: true
+    tty: false
+    environment:
+      GENERIC_API_USERNAME: ${GENERIC_API_USERNAME}
+      GENERIC_API_PASSWORD: ${GENERIC_API_PASSWORD}
+      GENERIC_API_TIMEOUT_SECONDS: ${GENERIC_API_TIMEOUT_SECONDS:-30}
+    command: ["python", "-m", "app.mcp_server", "--transport", "stdio"]
+
+  generic-api-mcp-dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      target: base
+    image: openbench/generic-api-mcp:dev
+    environment:
+      GENERIC_API_USERNAME: ${GENERIC_API_USERNAME}
+      GENERIC_API_PASSWORD: ${GENERIC_API_PASSWORD}
+      GENERIC_API_TIMEOUT_SECONDS: ${GENERIC_API_TIMEOUT_SECONDS:-30}
+    volumes:
+      - .:/app
+    ports:
+      - "8002:8000"
+    command:
+      [
+        "python",
+        "-m",
+        "app.mcp_server",
+        "--transport",
+        "streamable-http",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]
