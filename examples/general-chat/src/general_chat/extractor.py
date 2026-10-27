@@ -75,6 +75,11 @@ def _get_converter() -> Any:
     return _converter
 
 
+def get_document_converter() -> Any:
+    """Public accessor for the shared converter (URL ingestion reuses it)."""
+    return _get_converter()
+
+
 class DoclingContentExtractor:
     """Extract document text fast-first (pypdf/python-docx), with Docling as the
     OCR fallback for scanned PDFs and the primary path for PPTX/image OCR."""
@@ -105,10 +110,15 @@ class DoclingContentExtractor:
             pages,
         )
         ocr_text = self._extract_with_docling(stored_file, allow_pdf_fallback=False)
-        if ocr_text.strip():
+        if ocr_text.strip() and "(document appears empty" not in ocr_text:
             return ocr_text
         if text.strip():
             return text
+        if pages < 0:
+            # pypdf could not even open the file and OCR found nothing: the
+            # bytes are not a PDF. Report a failure, not an empty document,
+            # so the source lands as ``failed`` instead of ``ready``.
+            return f"[{stored_file.name}] (extraction failed: not a readable PDF)"
         return f"[{stored_file.name}] (document appears empty after extraction)"
 
     def _extract_docx(self, stored_file: StoredFile) -> str:
@@ -201,7 +211,12 @@ class DoclingContentExtractor:
             return f"[{stored_file.name}] (extraction failed: {exc})"
 
     def _pdf_fast(self, stored_file: StoredFile) -> tuple[str, int]:
-        """Extract PDF text with pypdf. Returns (text, page_count)."""
+        """Extract PDF text with pypdf.
+
+        Returns ``(text, page_count)``; ``page_count`` is ``-1`` when pypdf
+        could not read the file at all (corrupt or not a PDF), as opposed to
+        ``0`` for a PDF with no pages or pypdf missing.
+        """
         try:
             from pypdf import PdfReader
         except ImportError:
@@ -219,7 +234,7 @@ class DoclingContentExtractor:
             return "\n\n".join(parts).strip(), pages
         except Exception as exc:
             logger.warning("pypdf extraction failed for %s: %s", stored_file.name, exc)
-            return "", 0
+            return "", -1
 
     def _extract_with_python_docx(self, stored_file: StoredFile) -> str:
         try:

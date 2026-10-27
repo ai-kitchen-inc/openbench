@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import html
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
+import tempfile
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -16,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
-from general_chat.extractor import DoclingContentExtractor
+from general_chat.extractor import DoclingContentExtractor, get_document_converter
 
 if TYPE_CHECKING:
     from openbench.chat.files import StoredFile
@@ -844,8 +848,9 @@ class SourceParserRegistry:
         self, url: str, *, max_bytes: int = DEFAULT_MAX_SOURCE_BYTES
     ) -> tuple[str, ParsedSourceContent, int, str]:
         normalized = validate_url(url)
+        payload, content_type = fetch_url_text(normalized, max_bytes=max_bytes)
         try:
-            text = self._parse_url_with_docling(normalized)
+            text = self._parse_url_with_docling(normalized, payload, content_type)
             if text.strip():
                 return (
                     _title_from_text(text) or normalized,
@@ -856,7 +861,9 @@ class SourceParserRegistry:
         except Exception as exc:
             logger.info("Docling URL extraction failed for %s: %s", normalized, exc)
 
-        html_text, content_type = fetch_url_text(normalized, max_bytes=max_bytes)
+        if isinstance(payload, bytes):
+            raise ValueError(f"Unsupported website content type: {content_type}")
+        html_text = payload
         text = clean_html_text(html_text)
         if not text.strip():
             raise ValueError("No readable text could be extracted from the website.")
@@ -868,12 +875,29 @@ class SourceParserRegistry:
             content_type,
         )
 
-    def _parse_url_with_docling(self, url: str) -> str:
-        from docling.document_converter import DocumentConverter
+    def _parse_url_with_docling(self, url: str, payload: str | bytes, content_type: str) -> str:
+        """Convert already-fetched URL bytes with the process-wide converter.
 
-        converter = DocumentConverter()
-        result = converter.convert(url)
-        return result.document.export_to_markdown()
+        Writes ``payload`` to a temp file whose extension matches
+        ``content_type`` (Docling picks its backend from the extension) and
+        converts that. Never passes ``url`` to Docling: it would re-fetch
+        with its own client, outside the SSRF guard. Reuses the cached
+        converter from :mod:`general_chat.extractor` instead of building a
+        new one per URL, which loaded the layout/OCR models every time.
+        """
+        suffix = _URL_CONTENT_SUFFIXES.get(content_type)
+        if suffix is None:
+            raise ValueError(f"No Docling backend for {content_type}")
+        data = payload.encode("utf-8") if isinstance(payload, str) else payload
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = tmp.name
+        try:
+            result = get_document_converter().convert(tmp_path)
+            return result.document.export_to_markdown()
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
 
     def _parse_text_file(self, stored_file: StoredFile) -> str:
         path = Path(stored_file.path)
@@ -1986,32 +2010,149 @@ def kind_for_file(filename: str, mime_type: str) -> str:
     return "file"
 
 
+_URL_CONTENT_SUFFIXES = {
+    "text/html": ".html",
+    "application/xhtml+xml": ".html",
+    "text/markdown": ".md",
+    "application/pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+}
+_TEXT_URL_CONTENT_TYPES = {"text/markdown", "application/json", "application/xhtml+xml"}
+_MAX_URL_REDIRECTS = 5
+_MAX_URL_CHARS = 8192
+_BLOCKED_HOST_SUFFIXES = (".localhost", ".local", ".internal", ".home.arpa")
+_BLOCKED_HOSTS = {"localhost", "metadata.google.internal", "metadata"}
+
+
+def _is_public_ip(address: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+        or getattr(ip, "is_site_local", False)
+    )
+
+
+def _blocked_host_reason(host: str) -> str | None:
+    """Why ``host`` may not be fetched, or None when it looks public.
+
+    Rejects loopback/private/link-local literals (incl. the cloud metadata
+    endpoint 169.254.169.254 and alternate spellings such as ``127.1``,
+    ``2130706433`` or ``0x7f000001``, which ``ipaddress`` does not parse
+    but the OS resolver does) and hostnames that resolve to such addresses.
+    Resolution failure is not a block: the fetch will fail on its own.
+    """
+    if not host:
+        return "Website source must be a valid http or https URL."
+    if host in _BLOCKED_HOSTS or host.endswith(_BLOCKED_HOST_SUFFIXES):
+        return "Local URLs are not allowed as website sources."
+    literal = host.strip("[]")
+    try:
+        ipaddress.ip_address(literal)
+    except ValueError:
+        pass
+    else:
+        if not _is_public_ip(literal):
+            return "Local or private network URLs are not allowed as website sources."
+        return None
+    # Shorthand / integer / hex IPv4 forms ("127.1", "2130706433",
+    # "0x7f000001") are not ip_address() literals but every libc resolver
+    # accepts them; normalise through inet_aton before deciding.
+    try:
+        dotted = socket.inet_ntoa(socket.inet_aton(host))
+    except OSError:
+        dotted = None
+    if dotted is not None:
+        if not _is_public_ip(dotted):
+            return "Local or private network URLs are not allowed as website sources."
+        return None
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return None
+    for info in infos:
+        address = info[4][0]
+        if not _is_public_ip(address):
+            return "Local or private network URLs are not allowed as website sources."
+    return None
+
+
 def validate_url(url: str) -> str:
     value = url.strip()
+    if len(value) > _MAX_URL_CHARS:
+        raise ValueError("Website URL is too long.")
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("Website source must be a valid http or https URL.")
     host = (parsed.hostname or "").lower()
-    if host in {"localhost", "127.0.0.1", "::1"} or host.startswith("127."):
-        raise ValueError("Local URLs are not allowed as website sources.")
+    reason = _blocked_host_reason(host)
+    if reason:
+        raise ValueError(reason)
     return value
 
 
-def fetch_url_text(url: str, *, max_bytes: int) -> tuple[str, str]:
+def fetch_url_text(url: str, *, max_bytes: int) -> tuple[str | bytes, str]:
+    """Fetch ``url`` with every redirect hop re-validated and the body capped.
+
+    Returns ``(payload, content_type)``. ``payload`` is decoded text for
+    HTML/text responses and raw bytes for documents (PDF, Office). The
+    body is read in chunks and abandoned once it passes ``max_bytes`` so a
+    huge page can't be buffered in full first.
+    """
     import requests
 
-    response = requests.get(
-        url,
-        timeout=DEFAULT_DISCOVERY_TIMEOUT,
-        headers={"User-Agent": "OpenBench-GeneralChat/0.1"},
-    )
-    response.raise_for_status()
-    content_type = response.headers.get("content-type", "text/html").split(";")[0].strip()
-    raw = response.content
-    if len(raw) > max_bytes:
-        raise ValueError(f"Website response exceeds the {max_bytes} byte limit.")
-    response.encoding = response.encoding or "utf-8"
-    return response.text, content_type
+    current = url
+    with requests.Session() as session:
+        for _hop in range(_MAX_URL_REDIRECTS + 1):
+            response = session.get(
+                current,
+                timeout=DEFAULT_DISCOVERY_TIMEOUT,
+                headers={"User-Agent": "OpenBench-GeneralChat/0.1"},
+                allow_redirects=False,
+                stream=True,
+            )
+            try:
+                if response.is_redirect or response.is_permanent_redirect:
+                    location = response.headers.get("location", "")
+                    if not location:
+                        raise ValueError("Website redirect has no target.")
+                    current = validate_url(requests.compat.urljoin(current, location))
+                    continue
+                response.raise_for_status()
+                content_type = (
+                    response.headers.get("content-type", "text/html").split(";")[0].strip().lower()
+                )
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise ValueError(f"Website response exceeds the {max_bytes} byte limit.")
+                    chunks.append(chunk)
+                raw = b"".join(chunks)
+            finally:
+                response.close()
+            if content_type.startswith("text/") or content_type in _TEXT_URL_CONTENT_TYPES:
+                encoding = response.encoding or "utf-8"
+                try:
+                    return raw.decode(encoding, errors="replace"), content_type
+                except LookupError:
+                    return raw.decode("utf-8", errors="replace"), content_type
+            return raw, content_type
+    raise ValueError("Website redirected too many times.")
 
 
 class _ReadableHTMLParser(HTMLParser):
