@@ -440,8 +440,47 @@ def _resolve_mime(filename: str, content_type: str) -> str:
 
 def _resolve_request_session_id(body: dict) -> str | None:
     """Resolve the chat session id the same way AGUIHandler does."""
-    forwarded = body.get("forwardedProps") or {}
-    return forwarded.get("sessionId") or body.get("threadId")
+    if not isinstance(body, dict):
+        return None
+    forwarded = body.get("forwardedProps")
+    if not isinstance(forwarded, dict):
+        forwarded = {}
+    session_id = forwarded.get("sessionId") or body.get("threadId")
+    return str(session_id) if session_id else None
+
+
+async def _json_object_body(request: Request) -> dict:
+    """Parse the request body as a JSON object, or fail with 400.
+
+    A JSON array/string/number is valid JSON but not a chat payload; without
+    this guard ``body.get`` raises inside the handler and surfaces as 500.
+    """
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Request body must be valid JSON.") from None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object.")
+    return body
+
+
+_MAX_UPLOAD_NAME_CHARS = 180
+
+
+def _clamp_filename(filename: str) -> str:
+    """Bound an upload's basename so it fits every filesystem we write to.
+
+    ext4 and NTFS cap a path component at 255 bytes; a longer name made the
+    local store raise ``OSError`` and the upload fail with 500. The
+    extension is kept, the stem is cut.
+    """
+    name = Path(filename or "").name or "unnamed"
+    if len(name) <= _MAX_UPLOAD_NAME_CHARS:
+        return name
+    suffix = Path(name).suffix
+    if len(suffix) > 16:
+        suffix = ""
+    return name[: _MAX_UPLOAD_NAME_CHARS - len(suffix)].rstrip(". ") + suffix
 
 
 def _gcp_enabled() -> bool:
@@ -1829,7 +1868,7 @@ def create_app() -> FastAPI:
     ) -> dict:
         """Store a transient chat composer attachment for the next message."""
         owner = current_owner(request)
-        filename = file.filename or "unnamed"
+        filename = _clamp_filename(file.filename or "unnamed")
         mime_type = _resolve_mime(filename, file.content_type or "")
         if mime_type not in _ALLOWED_MIME_TYPES:
             raise HTTPException(status_code=400, detail=f"Unsupported attachment type: {mime_type}")
@@ -1897,7 +1936,7 @@ def create_app() -> FastAPI:
         admin global-sources upload (owner ``shared``).
         """
         srcs = _sources_for(owner)
-        filename = file.filename or "unnamed"
+        filename = _clamp_filename(file.filename or "unnamed")
         mime_type = _resolve_mime(filename, file.content_type or "")
         declared_size = getattr(file, "size", None)
         if isinstance(declared_size, int) and declared_size > multipart_upload_max_bytes:
@@ -3356,12 +3395,12 @@ def create_app() -> FastAPI:
     @app.post("/awp")
     async def agent_endpoint(request: Request):
         """AG-UI endpoint — streams assistant responses via SSE."""
-        body = await request.json()
+        body = await _json_object_body(request)
         return await _chat_turn(request, body)
 
     async def _chat_action(request: Request):
         owner = current_owner(request)
-        body = await request.json()
+        body = await _json_object_body(request)
         session_id = _resolve_request_session_id(body)
         try:
             session = _resolve_session(session_id, owner)
@@ -3401,7 +3440,7 @@ def create_app() -> FastAPI:
     async def agent_scoped_endpoint(agent_id: str, request: Request):
         """AG-UI SSE endpoint pinned to one agent."""
         profile = _require_enabled_agent(agent_id)
-        body = await request.json()
+        body = await _json_object_body(request)
         owner = current_owner(request)
         session_id = _resolve_request_session_id(body)
         try:

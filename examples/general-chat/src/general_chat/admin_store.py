@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 
 ROLES = ("admin", "user")
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Google-account shaped: ASCII local part, ASCII (punycode) domain. The
+# earlier ``[^@\s]+`` accepted "<script>@x.y" and similar markup.
+_EMAIL_RE = re.compile(r"^[a-z0-9!#$%&'*+/=?^_`{|}~.-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$")
 
 
 class DuplicateUserError(ValueError):
@@ -47,10 +49,19 @@ def normalize_email(email: str) -> str:
     return (email or "").strip().lower()
 
 
+_MAX_EMAIL_CHARS = 254
+_MAX_EMAIL_LOCAL_CHARS = 64
+
+
 def validate_email(email: str) -> str:
     normalized = normalize_email(email)
     if not _EMAIL_RE.match(normalized):
         raise ValueError(f"Invalid email address: {email!r}")
+    local, _, _domain = normalized.partition("@")
+    # RFC 5321: 64-char local part, 254-char address. Longer values can never
+    # match a real Google account and only bloat the user table.
+    if len(normalized) > _MAX_EMAIL_CHARS or len(local) > _MAX_EMAIL_LOCAL_CHARS:
+        raise ValueError("Email address is too long.")
     return normalized
 
 
