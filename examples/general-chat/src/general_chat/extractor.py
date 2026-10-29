@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -65,14 +66,68 @@ _fallback = FileContentExtractor()
 _converter: Any | None = None
 
 
+def _build_converter() -> Any:
+    """Build the shared converter with per-format pipeline options.
+
+    Images get a lighter pipeline than PDFs: OCR only, no table-structure
+    model. A photo or screenshot pasted into the chat is almost never a
+    table, and TableFormer was the single largest cost of an image upload
+    on the 2-vCPU production VM. Every pipeline gets ``num_threads`` set to
+    the real core count; Docling's default of 4 under-uses bigger hosts
+    and over-subscribes smaller ones. Older/partial Docling installs fall
+    back to the plain default converter.
+    """
+    from docling.document_converter import DocumentConverter
+
+    try:
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import AcceleratorOptions, PdfPipelineOptions
+        from docling.document_converter import ImageFormatOption, PdfFormatOption
+    except ImportError:
+        return DocumentConverter()
+
+    accelerator = AcceleratorOptions(num_threads=max(1, os.cpu_count() or 1))
+    pdf_options = PdfPipelineOptions(accelerator_options=accelerator)
+    image_options = PdfPipelineOptions(
+        accelerator_options=accelerator,
+        do_ocr=True,
+        do_table_structure=False,
+    )
+    return DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options),
+            InputFormat.IMAGE: ImageFormatOption(pipeline_options=image_options),
+        }
+    )
+
+
 def _get_converter() -> Any:
     """Return a lazily-built, process-wide Docling DocumentConverter."""
     global _converter
     if _converter is None:
-        from docling.document_converter import DocumentConverter
-
-        _converter = DocumentConverter()
+        _converter = _build_converter()
     return _converter
+
+
+def warm_up_converter() -> bool:
+    """Load the Docling models ahead of the first upload.
+
+    Building the converter is cheap; the layout/OCR models load lazily on
+    the first ``convert`` and that cold start (10-30 s on CPU, longer when
+    weights must be fetched) landed on whichever user uploaded first after
+    a restart. Call this from a background thread at process start. Never
+    raises — a failed warm-up only means the first upload pays the cost.
+    """
+    try:
+        converter = _get_converter()
+        from docling.datamodel.base_models import InputFormat
+
+        for input_format in (InputFormat.PDF, InputFormat.IMAGE):
+            converter.initialize_pipeline(input_format)
+        return True
+    except Exception as exc:
+        logger.warning("Docling warm-up failed; first conversion will load models: %s", exc)
+        return False
 
 
 def get_document_converter() -> Any:

@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from general_chat.agent import get_persona_dir
-from general_chat.extractor import DoclingContentExtractor
+from general_chat.extractor import DoclingContentExtractor, warm_up_converter
 from general_chat.source_index import index_source_record, source_index_enabled
 from general_chat.sources import (
     SourceParserRegistry,
@@ -45,6 +45,22 @@ def _get_source_parser() -> SourceParserRegistry:
     if _source_parser is None:
         _source_parser = SourceParserRegistry(document_extractor=DoclingContentExtractor())
     return _source_parser
+
+
+def _warm_up() -> None:
+    """Build the parser and load Docling models before the first message."""
+    _get_source_parser()
+    warm_up_converter()
+
+
+def _default_max_messages() -> int:
+    """In-flight Pub/Sub messages: one per core.
+
+    Parsing is CPU-bound (OCR, layout), so letting 8 files run at once on
+    a 2-vCPU host only made each one slower and pushed every upload toward
+    the ack deadline. GENERAL_CHAT_PUBSUB_MAX_MESSAGES still overrides.
+    """
+    return max(1, os.cpu_count() or 2)
 
 
 @dataclass(frozen=True)
@@ -233,6 +249,10 @@ def run_pubsub_worker() -> None:
             "Could not read runtime settings; using the default vector store", exc_info=True
         )
 
+    # Load Docling in the background so a post-deploy upload does not wait
+    # for model loading on top of its own parse.
+    threading.Thread(target=_warm_up, name="docling-warmup", daemon=True).start()
+
     subscriber = pubsub_v1.SubscriberClient()
     stop = threading.Event()
 
@@ -255,7 +275,7 @@ def run_pubsub_worker() -> None:
     # Bound in-flight messages so the client's lease-extension threads are not
     # starved by long CPU callbacks, and so multiple files overlap on I/O.
     flow_control = pubsub_v1.types.FlowControl(
-        max_messages=_env_int("GENERAL_CHAT_PUBSUB_MAX_MESSAGES", 8)
+        max_messages=_env_int("GENERAL_CHAT_PUBSUB_MAX_MESSAGES", _default_max_messages())
     )
     future = subscriber.subscribe(subscription, callback=callback, flow_control=flow_control)
     logger.info("Listening for GCS finalize events on %s", subscription)
