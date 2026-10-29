@@ -16,6 +16,7 @@ import re
 import secrets
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +48,7 @@ from general_chat.runtime_settings import (
     set_embedding_options_provider,
     set_model_options_provider,
 )
-from general_chat.extractor import DoclingContentExtractor
+from general_chat.extractor import DoclingContentExtractor, warm_up_converter
 from general_chat.google_drive import (
     MSG_FOLDER_EMPTY,
     DriveAccessError,
@@ -930,6 +931,28 @@ def create_app() -> FastAPI:
         except Exception:
             logger.warning("Attachment archive failed for %r", filename, exc_info=True)
 
+    _background_archives: set[asyncio.Future] = set()
+
+    def _archive_attachment_in_background(
+        filename: str, content: bytes, mime_type: str, session_id: str
+    ) -> None:
+        """Queue the forever-archive copy without holding the upload response.
+
+        The archive is a second full upload of the same bytes to another
+        bucket. The user's source is already stored by the time the
+        response goes out, so nothing downstream needs it — it used to add
+        one whole GCS round trip to every upload. Runs on the default
+        executor; ``_archive_attachment`` never raises.
+        """
+        if archiver is None:
+            return
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(
+            None, _archive_attachment, filename, content, mime_type, session_id
+        )
+        _background_archives.add(future)
+        future.add_done_callback(_background_archives.discard)
+
     def _mcp_upload_path(stored) -> str:
         destination = Path(upload_dir) / stored.id / Path(stored.name).name
         try:
@@ -1454,6 +1477,10 @@ def create_app() -> FastAPI:
         print("  Sessions API   : GET/DELETE /sessions[/{id}]")
         retention_days = privacy_cache.value.get("retention_days", 0)
         print(f"  Retention      : {retention_days or 'disabled'} days\n")
+        if _env_flag("GENERAL_CHAT_DOCLING_WARMUP", default=False):
+            # Local mode (no GCS worker) parses uploads in this process:
+            # load the Docling models now instead of on the first upload.
+            threading.Thread(target=warm_up_converter, name="docling-warmup", daemon=True).start()
         app.state.retention_task = asyncio.create_task(_retention_loop())
         live_dashboard_hub.bind_loop(asyncio.get_running_loop())
         if live_dashboard_enabled:
@@ -1874,8 +1901,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=f"Unsupported attachment type: {mime_type}")
         target_session_id = session_id or "default"
         content = await _read_upload_limited(file, multipart_upload_max_bytes)
-        _archive_attachment(filename, content, mime_type, target_session_id)
-        stored = _file_store_for_session(target_session_id).store(filename, content, mime_type)
+        _archive_attachment_in_background(filename, content, mime_type, target_session_id)
+        # Storing is a GCS upload in production: keep it off the event loop
+        # so one attachment does not stall every other request.
+        stored = await asyncio.to_thread(
+            _file_store_for_session(target_session_id).store, filename, content, mime_type
+        )
         _stamp_upload_owner(upload_dir, stored.id, owner)
         attachment = _attachment_from_stored_file(stored)
         print(
@@ -1949,9 +1980,7 @@ def create_app() -> FastAPI:
             )
 
         content = await _read_upload_limited(file, multipart_upload_max_bytes)
-        await asyncio.to_thread(
-            _archive_attachment, filename, content, mime_type, target_session_id
-        )
+        _archive_attachment_in_background(filename, content, mime_type, target_session_id)
         user_file_store = _file_store_for_session(target_session_id)
         stored = await asyncio.to_thread(user_file_store.store, filename, content, mime_type)
         _stamp_upload_owner(upload_dir, stored.id, owner)
