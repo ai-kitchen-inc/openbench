@@ -21,8 +21,16 @@ export const DIRECT_UPLOAD_THRESHOLD_BYTES = 25 * 1024 * 1024;
  * Cloud Storage upload path instead of multipart. */
 export { MAX_ATTACHMENTS_PER_MESSAGE, parseJsonResponse, readErrorMessage };
 export { formatSourceMeta, sourceKindLabel };
+/** Poll quickly at first — a small file is usually parsed within a second
+ * of the upload returning — then settle to 2 s so long OCR/transcription
+ * jobs don't hammer the API. ~3 min total before giving up. */
+const DIRECT_UPLOAD_POLL_SCHEDULE_MS = [400, 800, 1200];
 const DIRECT_UPLOAD_POLL_INTERVAL_MS = 2000;
 const DIRECT_UPLOAD_MAX_POLLS = 90;
+
+function pollDelayMs(attempt: number): number {
+  return DIRECT_UPLOAD_POLL_SCHEDULE_MS[attempt] ?? DIRECT_UPLOAD_POLL_INTERVAL_MS;
+}
 
 export type SourceItem = {
   id: string;
@@ -198,7 +206,7 @@ async function pollUploadedSource(
 ): Promise<SourceItem> {
   const includeText = options.includeText ?? false;
   for (let attempt = 0; attempt < DIRECT_UPLOAD_MAX_POLLS; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, DIRECT_UPLOAD_POLL_INTERVAL_MS));
+    await new Promise((resolve) => setTimeout(resolve, pollDelayMs(attempt)));
     const status = await fetchUploadStatus(fileId, sessionId, { includeText });
     if (status.source.status === "ready" || status.source.status === "failed") {
       return status.source;
@@ -219,7 +227,9 @@ export async function uploadComposerAttachment(
   if (fileId) {
     if (uploadedSource.status === "processing") {
       finalSource = await pollUploadedSource(fileId, sessionId, { includeText: true });
-    } else {
+    } else if (uploadedSource.extractedText === undefined) {
+      // The upload response already carries the text when parsing ran
+      // inline; only fetch again when it was omitted.
       finalSource = (await fetchUploadStatus(fileId, sessionId, { includeText: true })).source;
     }
   }
