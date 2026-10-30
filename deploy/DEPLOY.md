@@ -259,6 +259,7 @@ web config (`VITE_FIREBASE_*`) is baked into `deploy.sh` (it ships in the JS bun
 | `GENERAL_CHAT_GCP_BUCKET` / `GENERAL_CHAT_GCP_PUBSUB_SUBSCRIPTION` | GCS + worker |
 | `GENERAL_CHAT_PUBSUB_MAX_MESSAGES` | worker: files parsed at once (default = CPU count; parsing is CPU-bound, so more only makes each upload slower) |
 | `GENERAL_CHAT_DOCLING_WARMUP` | API only, `1` to load Docling models at startup. Only useful without the worker (local mode, Drive/URL ingestion); the worker always warms up |
+| `GENERAL_CHAT_IMAGE_READER` | `vlm` (default): uploaded images are read by the vision model (the API's `general-chat-vlm` provider, else Gemini from `GOOGLE_API_KEY` — `GENERAL_CHAT_VLM_MODEL` picks the model) in ~4-5 s with a transcript + description; Docling OCR stays the fallback. `docling` forces local OCR (~20 s/image on the VM) |
 | `OPENBENCH_DOWNLOAD_SECRET` | HMAC secret for signed `/downloads` links (`openssl rand -hex 32`); unset = legacy public-by-URL. Old unsigned links stop working once set — users re-run the export |
 | `OPENBENCH_DOWNLOAD_TTL_SECONDS` | signed-link lifetime (default `86400` = 24 h) |
 | `OPENBENCH_API_BIND=127.0.0.1` / `OPENBENCH_IMAGE` | keep API private; image to run |
@@ -743,8 +744,9 @@ within the ack deadline or messages redeliver (duplicate work + rising error rat
 oldest-unacked age). The worker loads the Docling models in a background thread
 at startup (so the first upload after a deploy is not also the model load) and
 parses `GENERAL_CHAT_PUBSUB_MAX_MESSAGES` files at once (default: CPU count).
-Images use an OCR-only pipeline (no table-structure model); the API never waits
-for the forever-archive copy. Applied settings:
+Images go to the vision model first (`GENERAL_CHAT_IMAGE_READER`, ~4-5 s) and
+only fall back to Docling's OCR-only pipeline when no VLM is reachable; the API
+never waits for the forever-archive copy. Applied settings:
 
 ```bash
 gcloud pubsub subscriptions update openbench-worker-file-processing \

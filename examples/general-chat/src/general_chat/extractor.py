@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from general_chat.image_reader import get_image_reader
 from openbench.chat.files import FileContentExtractor, StoredFile
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,8 @@ def _build_converter() -> Any:
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import AcceleratorOptions, PdfPipelineOptions
         from docling.document_converter import ImageFormatOption, PdfFormatOption
-    except ImportError:
+    except Exception as exc:  # ImportError, or a broken torch re-import under test
+        logger.info("Docling per-format options unavailable (%s); using defaults", exc)
         return DocumentConverter()
 
     accelerator = AcceleratorOptions(num_threads=max(1, os.cpu_count() or 1))
@@ -200,27 +202,60 @@ class DoclingContentExtractor:
             logger.warning("Image normalization failed for %s: %s", stored_file.name, exc)
             ocr_path = stored_file.path
 
-        try:
-            result = _get_converter().convert(ocr_path)
-            markdown = result.document.export_to_markdown().strip()
-        except ImportError as exc:
-            raise RuntimeError("docling is required for image OCR support.") from exc
-        except Exception as exc:
-            logger.warning("Docling image extraction failed for %s: %s", stored_file.name, exc)
-            markdown = ""
+        # Vision model first: one network call returns the transcript and a
+        # description in a few seconds, where Docling's layout+OCR pipeline
+        # took ~20 s per image on the 2-vCPU worker. Any failure (no key,
+        # quota, outage) falls through to Docling so uploads never depend on
+        # the API being up.
+        markdown = ""
+        summary = ""
+        reader_meta: dict[str, Any] = {}
+        reader = get_image_reader()
+        if reader is not None:
+            try:
+                read = reader.read(ocr_path)
+            except Exception as exc:
+                logger.warning(
+                    "VLM image read failed for %s; falling back to Docling: %s",
+                    stored_file.name,
+                    exc,
+                )
+            else:
+                markdown = read.ocr_text.strip()
+                summary = read.description.strip()
+                if markdown or summary:
+                    reader_meta = {"reader": "vlm", "readerModel": read.model}
+                else:
+                    logger.info(
+                        "VLM read returned nothing for %s; falling back to Docling",
+                        stored_file.name,
+                    )
+
+        if not reader_meta:
+            try:
+                result = _get_converter().convert(ocr_path)
+                markdown = result.document.export_to_markdown().strip()
+            except ImportError as exc:
+                raise RuntimeError("docling is required for image OCR support.") from exc
+            except Exception as exc:
+                logger.warning("Docling image extraction failed for %s: %s", stored_file.name, exc)
+                markdown = ""
+            reader_meta = {"reader": "docling"}
 
         # SVG: the markup itself is meaningful text even when OCR finds nothing.
         if svg_text and not markdown:
             markdown = svg_text.strip()
 
-        if not markdown:
+        if not markdown and not summary:
             raise ValueError(f"No OCR text could be extracted from {stored_file.name}.")
 
         image_format = _image_format(stored_file.name, stored_file.mime_type)
         dimensions = _image_dimensions(ocr_path)
         width = dimensions.get("width")
         height = dimensions.get("height")
-        description = _image_description(stored_file.name, image_format, width, height, markdown)
+        description = _image_description(
+            stored_file.name, image_format, width, height, markdown, summary=summary
+        )
         search_text = _build_image_search_text(
             stored_file.name,
             image_format,
@@ -237,6 +272,7 @@ class DoclingContentExtractor:
                 "format": image_format.lower(),
                 "width": width,
                 "height": height,
+                **reader_meta,
             },
         }
 
@@ -353,9 +389,17 @@ def _image_format(name: str, mime_type: str) -> str:
 
 
 def _image_description(
-    name: str, image_format: str, width: int | None, height: int | None, ocr_text: str
+    name: str,
+    image_format: str,
+    width: int | None,
+    height: int | None,
+    ocr_text: str,
+    *,
+    summary: str = "",
 ) -> str:
     size = f"{width}x{height}" if width and height else "unknown size"
+    if summary.strip():
+        return f"{image_format} image source {name} ({size}). {summary.strip()}"
     if ocr_text.strip():
         return f"{image_format} image source {name} ({size}) with OCR-detected text."
     return f"{image_format} image source {name} ({size}) with no OCR text detected."

@@ -2472,7 +2472,10 @@ class TestDoclingImageExtractor(unittest.TestCase):
             stored_at="2026-01-01T00:00:00+00:00",
         )
         fake_docling = self._mock_docling_module("Detected text")
-        with patch.dict(sys.modules, {"docling.document_converter": fake_docling}):
+        with (
+            patch.dict(sys.modules, {"docling.document_converter": fake_docling}),
+            patch("general_chat.extractor.get_image_reader", return_value=None),
+        ):
             payload = extractor.extract_image(stored)
 
         self.assertEqual(payload["metadata"]["format"], "jpeg")
@@ -2490,7 +2493,10 @@ class TestDoclingImageExtractor(unittest.TestCase):
             stored_at="2026-01-01T00:00:00+00:00",
         )
         fake_docling = self._mock_docling_module("Campaign headline")
-        with patch.dict(sys.modules, {"docling.document_converter": fake_docling}):
+        with (
+            patch.dict(sys.modules, {"docling.document_converter": fake_docling}),
+            patch("general_chat.extractor.get_image_reader", return_value=None),
+        ):
             payload = extractor.extract_image(stored)
 
         self.assertEqual(payload["metadata"]["format"], "webp")
