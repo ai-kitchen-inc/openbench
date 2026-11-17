@@ -100,7 +100,12 @@ def normalize_sqlite_url(url: str, base_dir: Path) -> str:
 def redact_url(url: str) -> str:
     """Mask the password portion of a SQLAlchemy URL for API responses."""
     try:
-        return sqlalchemy.engine.make_url(url).render_as_string(hide_password=True)
+        parsed = sqlalchemy.engine.make_url(url)
+        if parsed.password is None:
+            # Nothing to mask. Returning the input verbatim also avoids
+            # SQLAlchemy 2.1 percent-encoding Windows drive letters ("C%3A").
+            return url
+        return parsed.render_as_string(hide_password=True)
     except Exception:
         return "***"
 

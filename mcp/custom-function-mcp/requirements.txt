@@ -1,5 +1,6 @@
-# MCP runtime
-mcp[cli]>=1.0.0
+# MCP runtime. Capped below 2: mcp 2.x removed mcp.server.fastmcp, which
+# app/mcp_server.py imports.
+mcp[cli]>=1,<2
 
 # Preinstalled libraries available to user functions (no runtime pip).
 pandas>=2.0.0

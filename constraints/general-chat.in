@@ -1,0 +1,13 @@
+# Input for the pinned dependency set used by the general-chat and
+# controlled-source-chat images. Regenerate with scripts/compile_constraints.sh.
+-e .[google,chat,search,gcp,mcp,epub,media,output,tabular,vector]
+-e ./examples/general-chat
+-e ./examples/controlled-source-chat
+
+# Held at the major line production ran on 2026-11-17. Raise a hold only
+# together with a test pass (and when an advisory needs the newer line).
+google-genai<3
+pypdf<7
+python-dateutil<4
+websockets<17
+# soupsieve is NOT held: CVE-2026-126190 is only fixed in 4.0.0.
