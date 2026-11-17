@@ -50,7 +50,10 @@ vi.mock("firebase/app", () => ({
 
 vi.mock("firebase/auth", () => ({
   getAuth: vi.fn(() => ({})),
-  GoogleAuthProvider: vi.fn(() => ({})),
+  // Called with `new`, so the mock must be a function (vitest 4 rejects arrows).
+  GoogleAuthProvider: vi.fn(function () {
+    return {};
+  }),
   onIdTokenChanged: vi.fn((_auth, cb: IdTokenCallback) => {
     _state.callback = cb;
     cb(_state.user);

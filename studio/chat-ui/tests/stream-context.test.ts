@@ -78,17 +78,19 @@ function createMockStore() {
 function setupHttpAgent(events: Record<string, unknown>[]) {
   const unsubscribe = vi.fn();
   const MockedHttpAgent = HttpAgent as unknown as ReturnType<typeof vi.fn>;
-  MockedHttpAgent.mockImplementation(() => ({
-    run: () => ({
-      subscribe: (observer: Observer) => {
-        for (const event of events) {
-          observer.next(event);
-        }
-        observer.complete();
-        return { unsubscribe };
-      },
-    }),
-  }));
+  MockedHttpAgent.mockImplementation(function () {
+    return {
+      run: () => ({
+        subscribe: (observer: Observer) => {
+          for (const event of events) {
+            observer.next(event);
+          }
+          observer.complete();
+          return { unsubscribe };
+        },
+      }),
+    };
+  });
   return { unsubscribe };
 }
 
@@ -96,14 +98,16 @@ function setupHttpAgentAsync() {
   let capturedObserver: Observer | null = null;
   const unsubscribe = vi.fn();
   const MockedHttpAgent = HttpAgent as unknown as ReturnType<typeof vi.fn>;
-  MockedHttpAgent.mockImplementation(() => ({
-    run: () => ({
-      subscribe: (observer: Observer) => {
-        capturedObserver = observer;
-        return { unsubscribe };
-      },
-    }),
-  }));
+  MockedHttpAgent.mockImplementation(function () {
+    return {
+      run: () => ({
+        subscribe: (observer: Observer) => {
+          capturedObserver = observer;
+          return { unsubscribe };
+        },
+      }),
+    };
+  });
   return {
     unsubscribe,
     emit: (event: Record<string, unknown>) => capturedObserver?.next(event),
@@ -114,14 +118,16 @@ function setupHttpAgentAsync() {
 
 function setupHttpAgentError(err: Error) {
   const MockedHttpAgent = HttpAgent as unknown as ReturnType<typeof vi.fn>;
-  MockedHttpAgent.mockImplementation(() => ({
-    run: () => ({
-      subscribe: (observer: Observer) => {
-        observer.error(err);
-        return { unsubscribe: vi.fn() };
-      },
-    }),
-  }));
+  MockedHttpAgent.mockImplementation(function () {
+    return {
+      run: () => ({
+        subscribe: (observer: Observer) => {
+          observer.error(err);
+          return { unsubscribe: vi.fn() };
+        },
+      }),
+    };
+  });
 }
 
 // ── Tests ──

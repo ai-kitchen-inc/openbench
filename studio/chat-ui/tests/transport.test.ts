@@ -21,21 +21,23 @@ import { HttpAgent } from "@ag-ui/client";
 
 function createMockAgent(events: Record<string, unknown>[]) {
   const MockedHttpAgent = HttpAgent as unknown as ReturnType<typeof vi.fn>;
-  MockedHttpAgent.mockImplementation(() => ({
-    run: () => ({
-      subscribe: (observer: {
-        next: (e: Record<string, unknown>) => void;
-        error: (e: Error) => void;
-        complete: () => void;
-      }) => {
-        for (const event of events) {
-          observer.next(event);
-        }
-        observer.complete();
-        return { unsubscribe: vi.fn() };
-      },
-    }),
-  }));
+  MockedHttpAgent.mockImplementation(function () {
+    return {
+      run: () => ({
+        subscribe: (observer: {
+          next: (e: Record<string, unknown>) => void;
+          error: (e: Error) => void;
+          complete: () => void;
+        }) => {
+          for (const event of events) {
+            observer.next(event);
+          }
+          observer.complete();
+          return { unsubscribe: vi.fn() };
+        },
+      }),
+    };
+  });
 }
 
 /** Installs a fake ``XMLHttpRequest`` on ``globalThis`` that resolves
@@ -83,18 +85,20 @@ function installMockXHR(response: { status: number; responseText: string }): Moc
 
 function createMockAgentError(error: Error) {
   const MockedHttpAgent = HttpAgent as unknown as ReturnType<typeof vi.fn>;
-  MockedHttpAgent.mockImplementation(() => ({
-    run: () => ({
-      subscribe: (observer: {
-        next: (e: Record<string, unknown>) => void;
-        error: (e: Error) => void;
-        complete: () => void;
-      }) => {
-        observer.error(error);
-        return { unsubscribe: vi.fn() };
-      },
-    }),
-  }));
+  MockedHttpAgent.mockImplementation(function () {
+    return {
+      run: () => ({
+        subscribe: (observer: {
+          next: (e: Record<string, unknown>) => void;
+          error: (e: Error) => void;
+          complete: () => void;
+        }) => {
+          observer.error(error);
+          return { unsubscribe: vi.fn() };
+        },
+      }),
+    };
+  });
 }
 
 function createJSONResponse(data: unknown, status = 200): Response {
@@ -198,14 +202,16 @@ describe("AGUITransport events", () => {
   it("cancel() unsubscribes from active stream", async () => {
     const unsubMock = vi.fn();
     const MockedHttpAgent = HttpAgent as unknown as ReturnType<typeof vi.fn>;
-    MockedHttpAgent.mockImplementation(() => ({
-      run: () => ({
-        subscribe: () => {
-          // Never complete — simulates long-running stream
-          return { unsubscribe: unsubMock };
-        },
-      }),
-    }));
+    MockedHttpAgent.mockImplementation(function () {
+      return {
+        run: () => ({
+          subscribe: () => {
+            // Never complete — simulates long-running stream
+            return { unsubscribe: unsubMock };
+          },
+        }),
+      };
+    });
 
     const t = new AGUITransport(config);
 
