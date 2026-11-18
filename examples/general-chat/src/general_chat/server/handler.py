@@ -444,9 +444,7 @@ def _local_upload_path_from_attachment(attachment: Attachment) -> str | None:
     parts = attachment.url.strip("/").split("/", 2)
     if len(parts) != 3 or parts[0] != "uploads":
         return None
-    upload_root = Path(
-        os.getenv("GENERAL_CHAT_UPLOAD_DIR", str(_example_root() / "uploads"))
-    ).resolve()
+    upload_root = _upload_root()
     candidate = (upload_root / parts[1] / Path(parts[2]).name).resolve()
     try:
         candidate.relative_to(upload_root)
@@ -455,11 +453,54 @@ def _local_upload_path_from_attachment(attachment: Attachment) -> str | None:
     return str(candidate) if candidate.is_file() else None
 
 
+def _upload_root() -> Path:
+    return Path(os.getenv("GENERAL_CHAT_UPLOAD_DIR", str(_example_root() / "uploads"))).resolve()
+
+
+def _contained_upload_path(raw_path: str | None) -> str | None:
+    """Return ``raw_path`` only when it resolves inside the upload directory."""
+    # The value comes from request JSON: it may be any type, not only a string.
+    if not isinstance(raw_path, str) or not raw_path:
+        return None
+    try:
+        candidate = Path(raw_path).resolve()
+        candidate.relative_to(_upload_root())
+    except (ValueError, OSError):
+        return None
+    return str(candidate)
+
+
+def _sanitize_client_attachments(
+    attachments: list[Attachment] | None,
+) -> list[Attachment] | None:
+    """Neutralize disk paths on attachments supplied by the client.
+
+    Draft attachments come straight from the request body
+    (``forwardedProps.attachments``), so their ``path`` is attacker-chosen:
+    left alone, any signed-in user or embed visitor could point the vision
+    model, the PDF tools or an MCP server at an arbitrary server file such
+    as ``/proc/1/environ``. A legitimate client only echoes back the path
+    the upload endpoint returned, which is always inside the upload
+    directory, so anything else is dropped. Attachments the server builds
+    itself (source records) never pass through here.
+    """
+    for attachment in attachments or []:
+        attachment.path = _contained_upload_path(attachment.path)
+    return attachments
+
+
 def _is_image_attachment(attachment: Attachment) -> bool:
     return attachment.type == "image" or attachment.mime_type.startswith("image/")
 
 
 def _attachment_to_vision_item(attachment: Attachment) -> dict[str, Any] | None:
+    """Build the vision-model input for an image attachment.
+
+    Only a local ``path`` is passed on, never the attachment URL: the vision
+    provider fetches whatever reference it is given, and a client-chosen URL
+    would make the server request internal hosts. Client paths are already
+    confined to the upload directory by :func:`_sanitize_client_attachments`.
+    """
     if not _is_image_attachment(attachment):
         return None
 
@@ -476,7 +517,6 @@ def _attachment_to_vision_item(attachment: Attachment) -> dict[str, Any] | None:
         "type": "image",
         "mime_type": attachment.mime_type,
         "path": path,
-        "url": attachment.url,
     }
 
 
@@ -978,6 +1018,7 @@ class GeneralChatHandler(AGUIHandler):
 
     def _extract_content(self, body):
         content, draft_attachments = super()._extract_content(body)
+        draft_attachments = _sanitize_client_attachments(draft_attachments)
         attachments = _enrich_draft_attachments(draft_attachments)
         if self._redactor is not None:
             # Only user-supplied text is redacted: the message itself and

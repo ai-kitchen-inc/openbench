@@ -40,6 +40,21 @@ class MCPRegistryError(ValueError):
     """User-safe MCP registry error."""
 
 
+ENV_PASSTHROUGH_ENV = "GENERAL_CHAT_MCP_ENV_PASSTHROUGH"
+
+
+def env_passthrough_allowed(name: str) -> bool:
+    """Whether an imported MCP config may read host env var ``name``.
+
+    Controlled by the comma-separated ``GENERAL_CHAT_MCP_ENV_PASSTHROUGH``
+    list (empty by default: imported configs read no host variables).
+    """
+    allowed = {
+        item.strip() for item in os.getenv(ENV_PASSTHROUGH_ENV, "").split(",") if item.strip()
+    }
+    return name in allowed
+
+
 SERVER_STATUSES = {
     "enabled",
     "disabled",
@@ -1142,7 +1157,19 @@ class MCPServerRegistryStore:
 
     def _resolved_config_for_item(self, item: dict[str, Any]) -> dict[str, Any]:
         config = copy.deepcopy(dict(item.get("config") or {}))
-        return expand_env_vars(self._replace_secret_placeholders(config, item))
+        # Bundled configs were expanded when they were seeded, so a ``${VAR}``
+        # still present here came in through an import. Only names the
+        # operator listed may be read from this process's environment.
+        try:
+            return expand_env_vars(
+                self._replace_secret_placeholders(config, item),
+                allow=env_passthrough_allowed,
+            )
+        except ValueError as exc:
+            raise MCPRegistryError(
+                f"{exc} Add it to {ENV_PASSTHROUGH_ENV} to allow it, or store the "
+                "value as an MCP secret instead."
+            ) from exc
 
     def _replace_secret_placeholders(self, value: Any, item: dict[str, Any]) -> Any:
         if isinstance(value, str):

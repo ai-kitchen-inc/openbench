@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,21 +16,37 @@ from openbench.mcp.schema import normalize_server_name
 TransportName = Literal["stdio", "streamable-http", "sse"]
 
 
-def expand_env_vars(value: Any) -> Any:
-    """Recursively expand ``${VAR}`` and ``${VAR:-default}`` strings."""
+def expand_env_vars(value: Any, *, allow: Callable[[str], bool] | None = None) -> Any:
+    """Recursively expand ``${VAR}`` and ``${VAR:-default}`` strings.
+
+    Args:
+        value: String, dict or list to expand.
+        allow: Optional predicate over variable names. Configs written by the
+            operator can read any variable (the default). Configs supplied
+            through an API must pass a predicate: otherwise a user could
+            reference ``${SOME_SERVER_SECRET}`` in a URL or header and have
+            the process environment sent to a server they control.
+
+    Raises:
+        ValueError: ``allow`` rejects a referenced variable name.
+    """
     if isinstance(value, str):
         pattern = r"\$\{([^}:]+)(?::-([^}]*))?\}"
 
         def replace(match: re.Match[str]) -> str:
             name = match.group(1)
             default = match.group(2) or ""
+            if allow is not None and not allow(name):
+                raise ValueError(
+                    f"Environment variable {name!r} may not be referenced from this MCP config."
+                )
             return os.environ.get(name, default)
 
         return re.sub(pattern, replace, value)
     if isinstance(value, dict):
-        return {k: expand_env_vars(v) for k, v in value.items()}
+        return {k: expand_env_vars(v, allow=allow) for k, v in value.items()}
     if isinstance(value, list):
-        return [expand_env_vars(v) for v in value]
+        return [expand_env_vars(v, allow=allow) for v in value]
     return value
 
 

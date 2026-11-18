@@ -32,6 +32,7 @@ from general_chat.hermes_profile import (
     secret_env_name,
 )
 from general_chat.hermes_supervisor import BACKEND_DOCKER
+from general_chat.mcp_registry import env_passthrough_allowed
 from openbench.adapters.hermes import HermesAdapter, HermesAgent
 
 if TYPE_CHECKING:
@@ -171,6 +172,15 @@ def plan_managed_profile(
                 else:
                     warnings.append(f"Secret '{key}' untuk server MCP '{server.name}' belum diisi.")
             for name in _ENV_REF_RE.findall(_SECRET_REF_RE.sub("", text)):
+                # Only operator-listed host variables are copied into the
+                # agent's container; an MCP config must not be able to pull
+                # arbitrary server secrets into a runtime with terminal tools.
+                if not env_passthrough_allowed(name):
+                    warnings.append(
+                        f"Variabel lingkungan '{name}' pada server MCP '{server.name}' "
+                        "tidak diizinkan (GENERAL_CHAT_MCP_ENV_PASSTHROUGH); dilewati."
+                    )
+                    continue
                 if os.getenv(name):
                     env[name] = os.environ[name]
         servers.append(

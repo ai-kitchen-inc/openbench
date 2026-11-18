@@ -192,6 +192,9 @@ _SECRET_PATTERNS = [
     re.compile(r"(?i)(authorization:\s*bearer\s+)[^\s,}]+"),
     re.compile(r"(?i)(api[_-]?key['\"]?\s*[:=]\s*['\"]?)[^'\"\s,}]+"),
     re.compile(r"(?i)(token['\"]?\s*[:=]\s*['\"]?)[^'\"\s,}]+"),
+    # Password in URL userinfo, e.g. a database DSN passed as a CLI argument:
+    # postgresql://user:PASSWORD@host/db
+    re.compile(r"(?i)(\b[a-z][a-z0-9+.\-]*://[^/\s:@]+:)[^@\s/]+(?=@)"),
 ]
 
 

@@ -8,6 +8,11 @@ mcp:
     # this is the registry-side belt to that brace.
     denied_tools:
       - db_server.connect_to_database
+      # Arbitrary SQL chosen by the model (and so by any prompt injection) is
+      # off by default. Writes the product needs go through the typed tools
+      # (materialize_query, insert/update/delete), which MCP_ALLOW_WRITES gates.
+      # Set MCP_DB_DENIED_WRITE_TOOL to an empty value in .env.gcp to re-enable.
+      - ${MCP_DB_DENIED_WRITE_TOOL:-db_server.execute_unsafe_sql}
     max_timeout_seconds: 60
 
   servers:

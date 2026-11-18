@@ -19,6 +19,8 @@ mcp:
       - db_server
     denied_tools:
       - db_server.connect_to_database
+      # Same default as db-server-docker.yaml: no model-chosen arbitrary SQL.
+      - ${MCP_DB_DENIED_WRITE_TOOL:-db_server.execute_unsafe_sql}
     max_timeout_seconds: 60
 
   servers:

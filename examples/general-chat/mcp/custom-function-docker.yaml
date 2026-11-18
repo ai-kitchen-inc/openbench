@@ -23,6 +23,15 @@ mcp:
         - "1"
         - "--pids-limit"
         - "128"
+        # No writable image filesystem, no Linux capabilities, no privilege
+        # gain via setuid binaries; /tmp is the only scratch space.
+        - "--read-only"
+        - "--tmpfs"
+        - "/tmp:rw,size=64m"
+        - "--cap-drop"
+        - "ALL"
+        - "--security-opt"
+        - "no-new-privileges"
         - "-v"
         - "${CUSTOM_FN_DATA_PATH}:/data/functions:ro"
         # Overridable for local dev (e.g. custom-function-mcp:local); the

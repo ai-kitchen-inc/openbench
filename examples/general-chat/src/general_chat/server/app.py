@@ -77,6 +77,13 @@ from general_chat.mcp_bootstrap import (
     seed_config_names_from_env,
     seed_mcp_configs,
 )
+from general_chat.mcp_launch_policy import (
+    MODE_ANY,
+    MCPLaunchPolicyError,
+    check_import,
+    config_has_stdio,
+    stdio_import_mode,
+)
 from general_chat.mcp_registry import MCPRegistryError, MCPServerRegistryStore
 from general_chat.persona_templates import (
     DEFAULT_TEMPLATE_ID,
@@ -115,6 +122,7 @@ from general_chat.hermes_supervisor import BACKEND_DOCKER, HermesSupervisor
 from general_chat.server.auth import (
     LOCAL_OWNER,
     _extract_bearer_token,
+    assert_auth_posture,
     auth_enabled,
     current_group,
     current_owner,
@@ -124,6 +132,11 @@ from general_chat.server.auth import (
     require_firebase_user,
 )
 from general_chat.server.custom_functions import CustomFunctionError, CustomFunctionStore
+from general_chat.server.security_headers import (
+    apply_baseline_headers,
+    apply_spa_headers,
+    apply_untrusted_document_headers,
+)
 from general_chat.server.custom_skills import (
     MAX_RESOURCE_FILE_BYTES,
     CustomSkillError,
@@ -174,8 +187,10 @@ from openbench.chat.session_store import SessionOwnershipError
 from openbench.chat.transport import AGUIActionHandler
 from openbench.chat.transport.sessions import AGUISessionHandler
 from openbench.intelligence.protocol import route
+from openbench.mcp.standard_config import MCPConfigImportError, parse_standard_mcp_json
 from openbench.mcp.toolhive import ToolHiveError, ToolHiveService
 from openbench.utils.download_tokens import download_secret, verify_download_token
+from openbench.utils.path_guard import TOOL_FILE_ROOTS_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -605,7 +620,13 @@ def _queued_gcs_upload_record(
     )
 
 
+#: The OPENBENCH_TOOL_FILE_ROOTS value create_app() last derived by itself
+#: (None until it does), to tell it apart from one the operator set.
+_auto_tool_file_roots: str | None = None
+
+
 def create_app() -> FastAPI:
+    assert_auth_posture()
     example_root = get_persona_dir().parent
 
     default_upload_dir = example_root / "uploads"
@@ -639,6 +660,19 @@ def create_app() -> FastAPI:
     os.environ["OPENBENCH_PROFILE_DIR"] = profile_dir
     os.environ["OPENBENCH_EXPORT_DIR"] = download_dir
     os.environ["OPENBENCH_EXPORT_URL_BASE"] = "/downloads"
+    # Agent tools take file paths chosen by the model. Confine them to the
+    # directories this server owns so a prompt injection cannot read e.g.
+    # /proc/1/environ. An operator-set value wins (empty = unrestricted); a
+    # value this function wrote for an earlier app in the same process is
+    # replaced, so it always describes the app being created.
+    global _auto_tool_file_roots
+    if os.environ.get(TOOL_FILE_ROOTS_ENV) in (None, _auto_tool_file_roots):
+        tool_roots = [upload_dir, download_dir, storage_root, profile_dir, image_search_preview_dir]
+        gcs_cache_root = os.getenv("GENERAL_CHAT_GCP_CACHE_ROOT", "").strip()
+        if gcs_cache_root:
+            tool_roots.append(str(Path(gcs_cache_root).resolve()))
+        _auto_tool_file_roots = os.pathsep.join(tool_roots)
+        os.environ[TOOL_FILE_ROOTS_ENV] = _auto_tool_file_roots
 
     db_path = os.getenv("GENERAL_CHAT_MEMORY_DB", "general_chat_memory.db")
 
@@ -1348,6 +1382,18 @@ def create_app() -> FastAPI:
         return profile.id
 
     @app.middleware("http")
+    async def security_headers_middleware(request: Request, call_next):
+        response = await call_next(request)
+        apply_baseline_headers(
+            response, forwarded_proto=request.headers.get("x-forwarded-proto", "")
+        )
+        # Exported dashboards are HTML built from model output and are served
+        # from this origin: never let them execute as it.
+        if request.url.path.startswith("/downloads/"):
+            apply_untrusted_document_headers(response)
+        return response
+
+    @app.middleware("http")
     async def firebase_auth_middleware(request: Request, call_next):
         path = request.url.path
         if request.method.upper() != "OPTIONS" and _requires_auth_path(path):
@@ -1391,7 +1437,10 @@ def create_app() -> FastAPI:
                 # Local dev: optionally act as a plain "user" account
                 # (X-Local-Role header or GENERAL_CHAT_LOCAL_ROLE env).
                 # Default stays admin — no stamping, identical behavior.
-                role = local_role(request)
+                # A wrapper app that already authenticated the caller
+                # pre-stamps user_role; that wins, so its non-admin
+                # accounts cannot promote themselves with the header.
+                role = getattr(request.state, "user_role", None) or local_role(request)
                 if role != "admin":
                     request.state.user_role = role
                     group = local_group(request)
@@ -1711,12 +1760,24 @@ def create_app() -> FastAPI:
             else:
                 raise MCPRegistryError("Paste a JSON object containing mcpServers.")
             secrets = body.get("secrets") if isinstance(body.get("secrets"), dict) else None
+            try:
+                parsed_config = parse_standard_mcp_json(raw_config)
+            except MCPConfigImportError as exc:
+                raise MCPRegistryError(str(exc)) from exc
+            if config_has_stdio(parsed_config) and stdio_import_mode() != MODE_ANY:
+                # A stdio server is a command this process will spawn, i.e.
+                # code execution on the API host. The mcp_management
+                # capability is not enough for that: admins only, and only
+                # launch shapes the policy approves.
+                require_role(request, "admin")
+                check_import(parsed_config)
             return mcp_registry_store.import_config_json(raw_config, secret_values=secrets)
-        except MCPRegistryError as exc:
+        except (MCPRegistryError, MCPLaunchPolicyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/mcp/catalogs/toolhive/import-running")
     async def import_running_toolhive_workloads(request: Request) -> dict:
+        require_role(request, "admin")
         body = await request.json()
         names = body.get("names")
         try:
@@ -1744,6 +1805,8 @@ def create_app() -> FastAPI:
 
     @app.post("/toolhive/workloads")
     async def start_toolhive_workload(request: Request) -> dict:
+        # Starting a workload launches a container/process on the host.
+        require_role(request, "admin")
         body = await request.json()
         try:
             workload = toolhive_service.start_workload(
@@ -1756,7 +1819,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/toolhive/workloads/{name}/stop")
-    async def stop_toolhive_workload(name: str) -> dict:
+    async def stop_toolhive_workload(name: str, request: Request) -> dict:
+        require_role(request, "admin")
         try:
             toolhive_service.stop_workload(name)
             return {"ok": True, "name": name}
@@ -1764,7 +1828,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/toolhive/workloads/{name}/restart")
-    async def restart_toolhive_workload(name: str) -> dict:
+    async def restart_toolhive_workload(name: str, request: Request) -> dict:
+        require_role(request, "admin")
         try:
             toolhive_service.restart_workload(name)
             return {"ok": True, "name": name}
@@ -1772,7 +1837,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.delete("/toolhive/workloads/{name}")
-    async def delete_toolhive_workload(name: str) -> dict:
+    async def delete_toolhive_workload(name: str, request: Request) -> dict:
+        require_role(request, "admin")
         try:
             toolhive_service.delete_workload(name)
             return {"ok": True, "name": name}
@@ -3931,11 +3997,15 @@ def create_app() -> FastAPI:
         if record is not None and record.public:
             index_html = static_root / "index.html" if static_root is not None else None
             if index_html is not None and index_html.is_file():
-                return FileResponse(index_html, media_type="text/html")
+                return apply_spa_headers(
+                    FileResponse(index_html, media_type="text/html"), f"/d/{dashboard_id}"
+                )
         html_path = publish_store.load_html_path(dashboard_id)
         if html_path is None:
             raise HTTPException(status_code=404, detail="Dashboard not found")
-        return FileResponse(html_path, media_type="text/html")
+        return apply_untrusted_document_headers(
+            FileResponse(html_path, media_type="text/html")
+        )
 
     # Uploads are served through an explicit route (not a static mount) so
     # every read is checked against the requester's owner — see
@@ -3972,7 +4042,9 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="File not found") from None
         if not candidate.is_file():
             raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(candidate, media_type=_resolve_mime(safe_name, ""))
+        return apply_untrusted_document_headers(
+            FileResponse(candidate, media_type=_resolve_mime(safe_name, ""))
+        )
 
     if download_secret() is not None:
         # Signed downloads: the export skill tools appended ?exp=&sig= at
@@ -4018,13 +4090,14 @@ def create_app() -> FastAPI:
         @app.get("/{full_path:path}")
         async def serve_spa(full_path: str):
             file_path = (static_root / full_path).resolve()
-            if not str(file_path).startswith(str(static_root)):
-                from fastapi.responses import JSONResponse
-
+            # relative_to, not a string prefix: "/app/dist2/x" starts with
+            # "/app/dist" but is not inside it.
+            if not file_path.is_relative_to(static_root):
                 return JSONResponse({"error": "Not found"}, status_code=404)
-            if file_path.is_file():
+            if file_path.is_file() and file_path.suffix.lower() not in {".html", ".htm"}:
                 return FileResponse(file_path)
-            return FileResponse(static_root / "index.html")
+            shell = file_path if file_path.is_file() else static_root / "index.html"
+            return apply_spa_headers(FileResponse(shell), f"/{full_path}")
 
         assets_dir = static_root / "assets"
         if assets_dir.is_dir():

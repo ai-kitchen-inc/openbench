@@ -643,9 +643,37 @@ class TestMCPServerRegistryStore(unittest.TestCase):
             server = _external_servers(payload)[0]
             self.assertEqual(server["secrets"], [])
 
-            with patch.dict(environ, {"PLAYWRIGHT_TOKEN": "env-token"}, clear=True):
+            # The operator has to list the variable: an imported config may
+            # only read host environment variables that were allowed for it.
+            with patch.dict(
+                environ,
+                {
+                    "PLAYWRIGHT_TOKEN": "env-token",
+                    "GENERAL_CHAT_MCP_ENV_PASSTHROUGH": "OTHER_VAR, PLAYWRIGHT_TOKEN",
+                },
+                clear=True,
+            ):
                 runtime = store.build_enabled_client_config()
                 self.assertEqual(runtime.servers["playwright"].env["PLAYWRIGHT_TOKEN"], "env-token")
+
+    def test_imported_config_cannot_read_unlisted_host_environment(self):
+        # Without the allowlist an import could reference ${GOOGLE_API_KEY} in a
+        # URL, header or env entry and have the server's secret sent to it.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MCPServerRegistryStore(tmpdir)
+            store.import_config_json(PLAYWRIGHT_ENV_REF_CONFIG)
+
+            with patch.dict(environ, {"PLAYWRIGHT_TOKEN": "env-token"}, clear=True):
+                with self.assertRaisesRegex(MCPRegistryError, "GENERAL_CHAT_MCP_ENV_PASSTHROUGH"):
+                    store.build_enabled_client_config()
+
+            with patch.dict(
+                environ,
+                {"PLAYWRIGHT_TOKEN": "env-token", "GENERAL_CHAT_MCP_ENV_PASSTHROUGH": "SOMETHING_ELSE"},
+                clear=True,
+            ):
+                with self.assertRaises(MCPRegistryError):
+                    store.build_enabled_client_config()
 
     def test_import_managed_secret_fails_when_encryption_unavailable(self):
         with tempfile.TemporaryDirectory() as tmpdir:

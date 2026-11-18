@@ -181,18 +181,55 @@ def current_role(request: Request) -> str:
     """Return the access role for this request.
 
     Role is stamped on ``request.state.user_role`` by
-    :func:`require_firebase_user` when a user store is in play. With
-    auth disabled (local dev) or an ``owner_override`` from a wrapper
-    app (which enforces its own guardrails outermost), the request is
-    treated as admin. Any other authenticated request defaults to the
-    least-privileged ``user`` role.
+    :func:`require_firebase_user` when a user store is in play, by the
+    embed path, or by a wrapper app that authenticated the caller itself.
+    With auth disabled (local dev) and no stamp the request is treated as
+    admin. Any other request defaults to the least-privileged ``user``
+    role.
+
+    An ``owner_override`` alone never implies admin: it only says whose
+    data the request reads. A wrapper that sets it must stamp the role as
+    well, otherwise every one of its accounts (guests included) would be
+    an admin here.
     """
     role = getattr(request.state, "user_role", None)
     if role:
         return str(role)
-    if getattr(request.state, "owner_override", None) or not auth_enabled():
+    if not auth_enabled():
         return "admin"
     return "user"
+
+
+def assert_auth_posture() -> None:
+    """Refuse to start a deployed image with authentication silently off.
+
+    :func:`auth_enabled` is False whenever the Firebase project id is
+    missing, which turns every request into an unauthenticated admin.
+    That is the intended local-dev behavior, but on a deployment it means
+    one dropped env var exposes the admin API to the internet.
+
+    ``GENERAL_CHAT_STATIC_DIR`` marks a deployed image (it is baked into
+    the Dockerfiles and never set for local Vite dev). There, auth must be
+    either configured or switched off on purpose with
+    ``OPENBENCH_AUTH_DISABLED=1`` (wrapper apps that bring their own
+    auth do this).
+
+    Raises:
+        RuntimeError: Deployed image with neither Firebase auth nor an
+            explicit opt-out.
+    """
+    if not os.getenv("GENERAL_CHAT_STATIC_DIR", "").strip():
+        return
+    if os.getenv("GENERAL_CHAT_FIREBASE_PROJECT_ID", "").strip():
+        return
+    if _env_flag("OPENBENCH_AUTH_DISABLED", default=False):
+        return
+    raise RuntimeError(
+        "Refusing to start: GENERAL_CHAT_STATIC_DIR is set (deployed image) but "
+        "GENERAL_CHAT_FIREBASE_PROJECT_ID is missing, which would serve every "
+        "request as an unauthenticated admin. Set the Firebase project id, or "
+        "set OPENBENCH_AUTH_DISABLED=1 if another layer authenticates callers."
+    )
 
 
 def current_group(request: Request) -> str:

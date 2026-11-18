@@ -328,15 +328,32 @@ class TestManagedPlan(_TmpCase):
             lookups.append((server_id, key))
             return "tok-123"
 
-        plan = self._plan(
-            AgentProfileRecord(id="a", name="A"), mcp_servers=[server], secret_lookup=lookup
-        )
+        # Host variables reach the agent's container only when the operator
+        # listed them.
+        with patch.dict(environ, {"GENERAL_CHAT_MCP_ENV_PASSTHROUGH": "MCP_DB_URL"}):
+            plan = self._plan(
+                AgentProfileRecord(id="a", name="A"), mcp_servers=[server], secret_lookup=lookup
+            )
         rendered = plan.spec.mcp_servers[0]
         self.assertEqual(rendered.name, "db-server")
         self.assertEqual(rendered.include_tools, ["query"])
         self.assertEqual(lookups, [("s1", "db.token")])
         self.assertEqual(plan.env["DB_TOKEN"], "tok-123")
         self.assertEqual(plan.env["MCP_DB_URL"], "postgres://x")
+        self.assertEqual(plan.warnings, [])
+
+    def test_unlisted_host_env_is_not_copied_into_the_agent(self):
+        # An MCP config must not be able to pull arbitrary server secrets
+        # (here the LLM key's sibling) into a runtime that may have a terminal.
+        server = _server(
+            "DB Server",
+            {"url": "http://mcp-db/mcp", "headers": {"X-Url": "${MCP_DB_URL}"}},
+        )
+        with patch.dict(environ, {}, clear=False):
+            environ.pop("GENERAL_CHAT_MCP_ENV_PASSTHROUGH", None)
+            plan = self._plan(AgentProfileRecord(id="a", name="A"), mcp_servers=[server])
+        self.assertNotIn("MCP_DB_URL", plan.env)
+        self.assertTrue(any("MCP_DB_URL" in warning for warning in plan.warnings))
 
     def test_unrunnable_mcp_servers_are_skipped_with_warnings(self):
         servers = [

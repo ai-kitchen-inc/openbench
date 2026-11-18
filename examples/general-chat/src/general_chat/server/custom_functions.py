@@ -141,6 +141,13 @@ class CustomFunctionStore:
             "--memory", "512m",
             "--cpus", "1",
             "--pids-limit", "128",
+            # User code runs here: no writable image filesystem, no Linux
+            # capabilities, no privilege gain via setuid binaries. /tmp is the
+            # only scratch space (matplotlib's config dir lives there).
+            "--read-only",
+            "--tmpfs", "/tmp:rw,size=64m",
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
             image,
             "python", "-m", "app.runner", name, json.dumps(kwargs),
         ]
