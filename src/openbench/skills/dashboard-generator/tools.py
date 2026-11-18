@@ -1072,6 +1072,35 @@ def _public_url(path: Path) -> str:
     return sign_download_url(f"{base.rstrip('/')}/{path.name}")
 
 
+def _tool_path(path: str) -> Path | None:
+    """Return ``path`` as a Path, or None when the tool file jail refuses it.
+
+    The jail (``OPENBENCH_TOOL_FILE_ROOTS``, see ``openbench.utils.path_guard``)
+    is opt-in. A refused path is reported exactly like a missing file, so a
+    tool never reveals what exists outside the directories it may read.
+    """
+    from openbench.utils.path_guard import ToolPathError, resolve_tool_path
+
+    try:
+        return resolve_tool_path(path)
+    except (ToolPathError, TypeError):
+        return None
+
+
+def _safe_output_dir(output_dir: str | None) -> Path:
+    """Directory dashboards are written to.
+
+    A caller-supplied ``output_dir`` is honored only when the tool file jail
+    allows it; otherwise the configured export directory is used, so a tool
+    argument cannot make the server write HTML to an arbitrary location.
+    """
+    default = Path(os.environ.get("OPENBENCH_EXPORT_DIR") or "outputs").resolve()
+    if not output_dir:
+        return default
+    checked = _tool_path(output_dir)
+    return checked.resolve() if checked is not None else default
+
+
 def _dashboard_template_options(
     *,
     template_path: str | None = None,
@@ -1083,8 +1112,10 @@ def _dashboard_template_options(
     result: dict[str, Any] = {}
     if template_path:
         result["template_path"] = template_path
-        with contextlib.suppress(Exception):
-            result["template_text"] = Path(template_path).read_text(encoding="utf-8")
+        checked = _tool_path(template_path)
+        if checked is not None:
+            with contextlib.suppress(Exception):
+                result["template_text"] = checked.read_text(encoding="utf-8")
     if template_text:
         result["template_text"] = template_text
     if template_format:
@@ -1768,7 +1799,7 @@ def generate_dashboard(
 
     view_model = _hydrate_cached_datasets(view_model)
     title = str(view_model.get("title") or "OpenBench Dashboard")
-    out_dir = Path(output_dir or os.environ.get("OPENBENCH_EXPORT_DIR") or "outputs").resolve()
+    out_dir = _safe_output_dir(output_dir)
     out_name = _unique_dashboard_filename(title, filename)
     out_path = out_dir / out_name
     dashboard_template = _dashboard_template_options(

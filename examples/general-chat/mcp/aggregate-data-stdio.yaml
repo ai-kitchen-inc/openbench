@@ -18,6 +18,8 @@ mcp:
       env:
         PYTHONPATH: ${AGGREGATE_DATA_MCP_PYTHONPATH}
         OPENBENCH_DASHBOARD_STATE_PATH: ${OPENBENCH_DASHBOARD_STATE_PATH:-../../examples/general-chat/.openbench/dashboard_generator_state.json}
+        # File jail for path arguments (set by the API; empty = unrestricted).
+        OPENBENCH_TOOL_FILE_ROOTS: ${OPENBENCH_TOOL_FILE_ROOTS:-}
       namespace: aggregate_data
       allowed: true
       discovery_timeout_seconds: 20

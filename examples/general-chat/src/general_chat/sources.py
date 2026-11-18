@@ -5,12 +5,10 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import html
-import ipaddress
 import json
 import logging
 import os
 import re
-import socket
 import tempfile
 import uuid
 from dataclasses import asdict, dataclass
@@ -19,6 +17,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
+
+from openbench.utils import net_guard
 
 from general_chat.extractor import DoclingContentExtractor, get_document_converter
 
@@ -2022,70 +2022,21 @@ _URL_CONTENT_SUFFIXES = {
 _TEXT_URL_CONTENT_TYPES = {"text/markdown", "application/json", "application/xhtml+xml"}
 _MAX_URL_REDIRECTS = 5
 _MAX_URL_CHARS = 8192
-_BLOCKED_HOST_SUFFIXES = (".localhost", ".local", ".internal", ".home.arpa")
-_BLOCKED_HOSTS = {"localhost", "metadata.google.internal", "metadata"}
-
-
-def _is_public_ip(address: str) -> bool:
-    try:
-        ip = ipaddress.ip_address(address)
-    except ValueError:
-        return False
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-        or getattr(ip, "is_site_local", False)
-    )
+_BLOCKED_HOST_MESSAGES = {
+    net_guard.BLOCK_INVALID: "Website source must be a valid http or https URL.",
+    net_guard.BLOCK_LOCAL: "Local URLs are not allowed as website sources.",
+    net_guard.BLOCK_PRIVATE: "Local or private network URLs are not allowed as website sources.",
+}
 
 
 def _blocked_host_reason(host: str) -> str | None:
     """Why ``host`` may not be fetched, or None when it looks public.
 
-    Rejects loopback/private/link-local literals (incl. the cloud metadata
-    endpoint 169.254.169.254 and alternate spellings such as ``127.1``,
-    ``2130706433`` or ``0x7f000001``, which ``ipaddress`` does not parse
-    but the OS resolver does) and hostnames that resolve to such addresses.
-    Resolution failure is not a block: the fetch will fail on its own.
+    The check itself lives in :mod:`openbench.utils.net_guard` (shared with
+    the SDK tools); this wrapper only supplies the source-specific wording.
     """
-    if not host:
-        return "Website source must be a valid http or https URL."
-    if host in _BLOCKED_HOSTS or host.endswith(_BLOCKED_HOST_SUFFIXES):
-        return "Local URLs are not allowed as website sources."
-    literal = host.strip("[]")
-    try:
-        ipaddress.ip_address(literal)
-    except ValueError:
-        pass
-    else:
-        if not _is_public_ip(literal):
-            return "Local or private network URLs are not allowed as website sources."
-        return None
-    # Shorthand / integer / hex IPv4 forms ("127.1", "2130706433",
-    # "0x7f000001") are not ip_address() literals but every libc resolver
-    # accepts them; normalise through inet_aton before deciding.
-    try:
-        dotted = socket.inet_ntoa(socket.inet_aton(host))
-    except OSError:
-        dotted = None
-    if dotted is not None:
-        if not _is_public_ip(dotted):
-            return "Local or private network URLs are not allowed as website sources."
-        return None
-    try:
-        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
-    except socket.gaierror:
-        return None
-    for info in infos:
-        address = info[4][0]
-        if not _is_public_ip(address):
-            return "Local or private network URLs are not allowed as website sources."
-    return None
+    code = net_guard.blocked_host_reason(host)
+    return _BLOCKED_HOST_MESSAGES[code] if code else None
 
 
 def validate_url(url: str) -> str:

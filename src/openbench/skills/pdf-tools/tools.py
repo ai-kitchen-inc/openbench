@@ -46,6 +46,21 @@ def _error(message: str, source: str = "") -> dict[str, Any]:
     return result
 
 
+def _tool_path(path: str) -> Path | None:
+    """Return ``path`` as a Path, or None when the tool file jail refuses it.
+
+    The jail (``OPENBENCH_TOOL_FILE_ROOTS``, see ``openbench.utils.path_guard``)
+    is opt-in. A refused path is reported exactly like a missing file, so a
+    tool never reveals what exists outside the directories it may read.
+    """
+    from openbench.utils.path_guard import ToolPathError, resolve_tool_path
+
+    try:
+        return resolve_tool_path(path)
+    except (ToolPathError, TypeError):
+        return None
+
+
 def _export_dir() -> str | None:
     return os.environ.get("OPENBENCH_EXPORT_DIR") or None
 
@@ -121,8 +136,8 @@ def pdf_metadata(path: str) -> dict[str, Any]:
     except ImportError:
         return _error("pypdf required — install openbench[data]", path)
 
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(f"File not found: {path}", path)
 
     try:
@@ -182,8 +197,8 @@ def read_pdf(
     except ImportError:
         return _error("pypdf required — install openbench[data]", path)
 
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(f"File not found: {path}", path)
 
     try:
@@ -259,8 +274,8 @@ def read_pdf_page(path: str, page: int) -> dict[str, Any]:
     except ImportError:
         return _error("pypdf required — install openbench[data]", path)
 
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(f"File not found: {path}", path)
 
     try:
@@ -306,8 +321,8 @@ def extract_pdf_tables(path: str, page: int | None = None) -> dict[str, Any]:
     except ImportError:
         return _error("pdfplumber required — pip install pdfplumber", path)
 
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(f"File not found: {path}", path)
 
     try:
@@ -376,7 +391,8 @@ def merge_pdfs(paths: list[str], filename: str = "merged.pdf") -> dict[str, Any]
         return _error("`paths` must be a list of 2+ PDF file paths")
 
     for fp in paths:
-        if not Path(fp).exists():
+        checked = _tool_path(fp)
+        if checked is None or not checked.exists():
             return _error(f"File not found: {fp}")
 
     try:
@@ -421,8 +437,8 @@ def split_pdf(
     except ImportError:
         return _error("pypdf required — install openbench[data]", path)
 
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(f"File not found: {path}", path)
     if not isinstance(pages, list) or not pages:
         return _error("`pages` must be a non-empty list of page numbers", path)

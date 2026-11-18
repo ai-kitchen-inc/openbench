@@ -124,6 +124,24 @@ def _error(source: str, message: str) -> dict[str, Any]:
     return {"error": message, "source": source}
 
 
+def _tool_path(path: str) -> Path | None:
+    """Return ``path`` as a Path, or None when the tool file jail refuses it.
+
+    The jail (``OPENBENCH_TOOL_FILE_ROOTS``, see ``openbench.utils.path_guard``)
+    is opt-in and only available when the openbench package is installed
+    alongside this server (it is in the general-chat API image). A refused
+    path is reported exactly like a missing file.
+    """
+    try:
+        from openbench.utils.path_guard import ToolPathError, resolve_tool_path
+    except ImportError:
+        return Path(path)
+    try:
+        return resolve_tool_path(path)
+    except (ToolPathError, TypeError):
+        return None
+
+
 def _file_hash(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -145,8 +163,8 @@ def _read_dataframe(path: str, sheet: str | int | None = None):
     if pd is None:
         return None, None, "pandas is required - install openbench[data]"
 
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return None, None, f"File not found: {path}"
     if p.suffix.lower() not in _SUPPORTED_EXTENSIONS:
         return None, None, f"Unsupported aggregate source type: {p.suffix!r}"

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
+from app.net_guard import safe_get
+
 
 def load_image_path(image_path: str) -> Image.Image:
     """Load a local jpg/png/webp image path as RGB."""
@@ -32,16 +34,23 @@ def load_image_base64(image_base64: str) -> Image.Image:
         raise ValueError("image_base64 must be a valid base64-encoded jpg/png/webp image") from exc
 
 
+#: Upper bound for a fetched query image.
+_MAX_IMAGE_URL_BYTES = 25 * 1024 * 1024
+
+
 def load_image_url(image_url: str, *, timeout_seconds: float) -> Image.Image:
-    """Fetch an image URL and return RGB pixels."""
+    """Fetch an image URL and return RGB pixels.
+
+    The URL is a tool argument chosen by the model, so it goes through the
+    SSRF guard: public hosts only, every redirect hop re-checked, body capped.
+    """
     try:
-        import requests
+        import requests  # noqa: F401  (safe_get needs it; fail with a clear message)
     except ImportError as exc:
         raise ImportError("requests is required for image_url inputs") from exc
 
-    response = requests.get(image_url, timeout=timeout_seconds)
-    response.raise_for_status()
+    fetched = safe_get(image_url, max_bytes=_MAX_IMAGE_URL_BYTES, timeout=timeout_seconds)
     try:
-        return Image.open(BytesIO(response.content)).convert("RGB")
+        return Image.open(BytesIO(fetched.content)).convert("RGB")
     except UnidentifiedImageError as exc:
         raise ValueError(f"image_url did not return a supported image: {image_url}") from exc

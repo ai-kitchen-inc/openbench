@@ -62,6 +62,21 @@ def _error(source: str, message: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _tool_path(path: str) -> Path | None:
+    """Return ``path`` as a Path, or None when the tool file jail refuses it.
+
+    The jail (``OPENBENCH_TOOL_FILE_ROOTS``, see ``openbench.utils.path_guard``)
+    is opt-in. A refused path is reported exactly like a missing file, so a
+    tool never reveals what exists outside the directories it may read.
+    """
+    from openbench.utils.path_guard import ToolPathError, resolve_tool_path
+
+    try:
+        return resolve_tool_path(path)
+    except (ToolPathError, TypeError):
+        return None
+
+
 def _profile_dir() -> Path:
     """Return the directory for column profile storage.
 
@@ -167,8 +182,8 @@ def extract_file_context(path: str) -> dict[str, Any]:
     Never raises — returns ``{"error": "..."}`` on failure so the agent
     can continue reasoning.
     """
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(path, f"File not found: {path}")
 
     fmt = _detect_format(p)
@@ -245,8 +260,8 @@ def read_csv_file(
     except ImportError:
         return _error(path, "pandas is required — install openbench[data]")
 
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(path, f"File not found: {path}")
 
     if separator is None:
@@ -286,8 +301,8 @@ def read_excel_file(
     except ImportError:
         return _error(path, "pandas is required — install openbench[data]")
 
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(path, f"File not found: {path}")
 
     try:
@@ -316,8 +331,8 @@ def list_excel_sheets(path: str) -> dict[str, Any]:
     except ImportError:
         return _error(path, "pandas is required — install openbench[data]")
 
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(path, f"File not found: {path}")
 
     try:
@@ -406,8 +421,8 @@ def save_column_profile(
         ``{"saved": true, "file_hash": "...", "profile_path": "..."}``
         or ``{"error": "..."}``.
     """
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(path, f"File not found: {path}")
     if not isinstance(mappings, list) or not mappings:
         return _error(path, "`mappings` must be a non-empty list")
@@ -462,8 +477,8 @@ def get_column_profile(path: str) -> dict[str, Any]:
     Args:
         path: The file path.
     """
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(path, f"File not found: {path}")
     fhash = _file_hash(p)
     profile = _load_profile(fhash)
@@ -496,8 +511,8 @@ def update_column_profile(
         description: Optional human-readable description.
         sheet: Sheet name. Defaults to the first sheet.
     """
-    p = Path(path)
-    if not p.exists():
+    p = _tool_path(path)
+    if p is None or not p.exists():
         return _error(path, f"File not found: {path}")
     fhash = _file_hash(p)
     profile = _load_profile(fhash)

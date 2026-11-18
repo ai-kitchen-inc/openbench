@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import requests
 
 from app.config import AppConfig
+from app.net_guard import validate_public_url
 
 QueryParamValue = str | int | float | bool | None
 
@@ -30,12 +31,22 @@ class GenericAPIService:
         try:
             response = requests.get(
                 endpoint,
-                auth=self.config.auth,
+                # Credentials go only to hosts they were configured for.
+                auth=self.config.auth_for(urlparse(endpoint).hostname),
                 params=params,
                 timeout=self.config.timeout_seconds,
+                # A redirect could lead to an internal address (and would
+                # carry the credentials along): never follow one.
+                allow_redirects=False,
             )
         except requests.RequestException as exc:
             raise RuntimeError(f"Generic API request failed: {exc}") from exc
+
+        if 300 <= response.status_code < 400:
+            raise RuntimeError(
+                f"Generic API endpoint answered with a redirect (HTTP {response.status_code}); "
+                "redirects are not followed. Call the final URL directly."
+            )
 
         content_type = response.headers.get("content-type", "")
         if response.status_code >= 400:
@@ -58,7 +69,12 @@ class GenericAPIService:
         parsed = urlparse(endpoint)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("endpoint_url must be a valid http:// or https:// URL.")
-        return endpoint
+        # The URL comes from the model: refuse loopback, private-network and
+        # cloud-metadata targets so the tool cannot be aimed at internal services.
+        try:
+            return validate_public_url(endpoint)
+        except ValueError as exc:
+            raise ValueError(f"endpoint_url is not allowed: {exc}") from exc
 
     @staticmethod
     def _normalize_query_params(

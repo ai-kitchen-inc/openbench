@@ -26,14 +26,20 @@ class AppConfig:
     timeout_seconds: float = 30.0
     username: str | None = None
     password: str | None = field(default=None, repr=False)
+    #: Hosts the Basic Auth credentials may be sent to (lowercase).
+    allowed_hosts: frozenset[str] = frozenset()
 
     @classmethod
     def from_env(cls) -> AppConfig:
         """Build configuration from environment variables."""
+        hosts = os.getenv("GENERIC_API_ALLOWED_HOSTS", "")
         return cls(
             timeout_seconds=_env_float("GENERIC_API_TIMEOUT_SECONDS", 30.0),
             username=os.getenv("GENERIC_API_USERNAME") or None,
             password=os.getenv("GENERIC_API_PASSWORD") or None,
+            allowed_hosts=frozenset(
+                part.strip().lower() for part in hosts.split(",") if part.strip()
+            ),
         )
 
     @property
@@ -41,4 +47,16 @@ class AppConfig:
         """Return Basic Auth credentials when both optional env values are set."""
         if self.username and self.password:
             return (self.username, self.password)
+        return None
+
+    def auth_for(self, host: str | None) -> tuple[str, str] | None:
+        """Return the credentials only for a host they were configured for.
+
+        The endpoint URL is chosen by the model, so sending the credentials
+        to whatever host it names would hand them to any server a prompt
+        injection points at. ``GENERIC_API_ALLOWED_HOSTS`` lists the hosts
+        the credentials belong to; every other host is called without auth.
+        """
+        if host and host.lower() in self.allowed_hosts:
+            return self.auth
         return None

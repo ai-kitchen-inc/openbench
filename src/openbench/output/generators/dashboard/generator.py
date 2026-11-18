@@ -23,6 +23,7 @@ from openbench.output.generators.dashboard.datasets import (
 from openbench.output.generators.dashboard.formatting import _escape, _format_value, _slugify
 from openbench.output.generators.dashboard.normalizer import normalize_dashboard_view_model
 from openbench.output.generators.dashboard.styles import _DASHBOARD_CSS
+from openbench.utils.path_guard import resolve_tool_path
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +432,9 @@ class DashboardGenerator(OutputGenerator):
         source_name = ""
 
         if template_path:
-            path = Path(str(template_path)).expanduser().resolve()
+            # Raises ToolPathError (a ValueError) when the tool file jail is on
+            # and the template sits outside it.
+            path = resolve_tool_path(str(template_path)).expanduser().resolve()
             if not path.is_file():
                 raise ValueError(f"Dashboard template file not found: {template_path}")
             template_text = path.read_text(encoding="utf-8")

@@ -17,6 +17,10 @@ mcp:
         - GENERIC_API_USERNAME
         - "-e"
         - GENERIC_API_PASSWORD
+        # Comma-separated hosts the credentials above may be sent to; any other
+        # endpoint is called without them.
+        - "-e"
+        - GENERIC_API_ALLOWED_HOSTS
         - "-e"
         - GENERIC_API_TIMEOUT_SECONDS
         - openbench/generic-api-mcp:cpu

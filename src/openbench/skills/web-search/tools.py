@@ -19,7 +19,7 @@ import socket
 import time
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 __all__ = [
     "web_search",
@@ -35,6 +35,8 @@ _FETCH_MAX_BYTES = 2 * 1024 * 1024
 _FETCH_DEFAULT_MAX_CHARS = 20_000
 _FETCH_MAX_MAX_CHARS = 100_000
 _FETCH_USER_AGENT = "OpenBench-WebSearch/0.1"
+_FETCH_MAX_REDIRECTS = 5
+_FETCH_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 # Content types returned as raw decoded text (no HTML cleanup).
 _FETCH_RAW_TEXT_TYPES = {"application/json", "application/xml", "application/rss+xml"}
@@ -343,15 +345,34 @@ def fetch_url(url: str, max_chars: int = _FETCH_DEFAULT_MAX_CHARS) -> dict[str, 
     import requests
 
     try:
-        response = requests.get(
-            validated,
-            timeout=_FETCH_TIMEOUT_SECONDS,
-            headers={"User-Agent": _FETCH_USER_AGENT},
-            stream=True,
-        )
+        # Redirects are followed by hand so every hop passes the guard before
+        # it is requested: letting requests follow them would still send the
+        # request to an internal hop even if the final URL is rejected.
+        current = validated
+        for _hop in range(_FETCH_MAX_REDIRECTS + 1):
+            response = requests.get(
+                current,
+                timeout=_FETCH_TIMEOUT_SECONDS,
+                headers={"User-Agent": _FETCH_USER_AGENT},
+                stream=True,
+                allow_redirects=False,
+            )
+            location = (
+                response.headers.get("location")
+                if response.status_code in _FETCH_REDIRECT_STATUSES
+                else None
+            )
+            if not location:
+                break
+            response.close()
+            try:
+                current = _validate_public_http_url(urljoin(current, location))
+            except ValueError as exc:
+                return _error(str(exc))
+        else:
+            return _error("Too many redirects.")
         try:
-            # requests follows redirects — a public URL may 302 to an
-            # internal address, so the final URL must pass the guard too.
+            # Defence in depth: the URL the response reports must pass too.
             try:
                 _validate_public_http_url(str(response.url))
             except ValueError as exc:

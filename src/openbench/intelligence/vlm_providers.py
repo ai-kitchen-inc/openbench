@@ -10,12 +10,15 @@ import base64
 import logging
 import mimetypes
 import os
-from pathlib import Path
 from typing import Any
 
 from openbench.core.abstractions import LLMResponse, VLMProvider
+from openbench.utils.net_guard import safe_get
+from openbench.utils.path_guard import resolve_tool_path
 
 logger = logging.getLogger(__name__)
+
+_MAX_REMOTE_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 def _normalize_chat_completions_url(base_url: str) -> str:
@@ -30,7 +33,7 @@ def _normalize_chat_completions_url(base_url: str) -> str:
 
 def _path_to_data_url(path: str) -> str:
     """Encode a local image path as a data URL."""
-    p = Path(path).expanduser()
+    p = resolve_tool_path(path).expanduser()
     if not p.is_file():
         raise FileNotFoundError(f"Image file not found: {p}")
     mime_type = mimetypes.guess_type(p.name)[0] or "image/png"
@@ -95,19 +98,13 @@ def _image_ref_to_bytes(image: Any, timeout: float = 30.0) -> tuple[bytes, str]:
         return _data_url_to_bytes(value)
 
     if value.startswith(("http://", "https://")):
-        try:
-            import requests
-        except ImportError:
-            raise ImportError(
-                "requests is required to fetch remote Gemini VLM images. "
-                "Install with: pip install requests"
-            ) from None
-        response = requests.get(value, timeout=timeout)
-        response.raise_for_status()
-        mime_type = response.headers.get("content-type") or mimetypes.guess_type(value)[0]
-        return response.content, mime_type or "image/png"
+        # Image references can originate from chat input, so the fetch goes
+        # through the SSRF guard: public hosts only, every redirect re-checked.
+        fetched = safe_get(value, max_bytes=_MAX_REMOTE_IMAGE_BYTES, timeout=timeout)
+        mime_type = fetched.content_type or mimetypes.guess_type(value)[0]
+        return fetched.content, mime_type or "image/png"
 
-    p = Path(value).expanduser()
+    p = resolve_tool_path(value).expanduser()
     if not p.is_file():
         raise FileNotFoundError(f"Image file not found: {p}")
     mime_type = mimetypes.guess_type(p.name)[0] or "image/png"
