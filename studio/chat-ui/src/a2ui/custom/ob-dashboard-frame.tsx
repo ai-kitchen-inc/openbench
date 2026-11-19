@@ -1022,6 +1022,25 @@ function applyThemeToHtml(html: string): string {
  * plain anchor / new tab can't attach the bearer token). Otherwise fall back
  * to a normal link, which works in no-auth/local setups.
  */
+/**
+ * Policy pinned onto dashboard HTML before it is opened in a new tab.
+ *
+ * The HTML is generated from model output (and may embed a user-supplied
+ * template), while a `blob:` document shares the app's origin and therefore
+ * its stored sign-in token. This policy lets the document render (inline
+ * styles, embedded images/fonts) but run no script of any kind, load nothing
+ * from the app, and submit no form. A `<meta>` policy is used because a blob
+ * has no response headers; it must be the first thing in the document.
+ */
+const OPENED_DASHBOARD_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob: https:; " +
+  "font-src data: https:; form-action 'none'; base-uri 'none'";
+
+/** Prefix dashboard HTML with {@link OPENED_DASHBOARD_CSP}. Exported for tests. */
+export function lockDownDashboardHtml(html: string): string {
+  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${OPENED_DASHBOARD_CSP}">${html}`;
+}
+
 function OpenDashboardLink({ url }: { url: string }) {
   const loadHtml = useChatContextOptional()?.dashboardActions?.loadHtml;
   const [busy, setBusy] = useState(false);
@@ -1045,7 +1064,9 @@ function OpenDashboardLink({ url }: { url: string }) {
     setBusy(true);
     try {
       const html = await loadHtml(url);
-      const blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+      const blobUrl = URL.createObjectURL(
+        new Blob([lockDownDashboardHtml(html)], { type: "text/html" }),
+      );
       window.open(blobUrl, "_blank", "noopener,noreferrer");
       window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
     } catch {
@@ -1108,7 +1129,13 @@ function HtmlFallbackPreview({
 
   if (!loadHtml) {
     return (
-      <iframe title={title} src={url} className="ob-dashboard-frame__iframe" style={style} />
+      <iframe
+        title={title}
+        src={url}
+        sandbox=""
+        className="ob-dashboard-frame__iframe"
+        style={style}
+      />
     );
   }
   if (state === "error") {

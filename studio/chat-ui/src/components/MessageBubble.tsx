@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import type { ReactNode } from "react";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { SurfaceRenderer } from "../a2ui/surface-renderer";
@@ -13,6 +14,64 @@ import { formatTime } from "../core/utils";
 import type { A2UIAction, A2UISurface, Attachment, ChatMessage } from "../types";
 import { StepIndicator } from "./StepIndicator";
 import { StreamingIndicator } from "./StreamingIndicator";
+
+/**
+ * Allowlist for HTML inside message text.
+ *
+ * Message text is not trusted: an assistant reply can carry markup that came
+ * from a web page, an uploaded file or a shared source (prompt injection).
+ * `rehype-raw` turns that markup into real elements, so it must be followed by
+ * a sanitizer or `<iframe srcdoc>`, `<form>`, `<style>` and friends render
+ * inside the app's own origin, next to the signed-in user's token.
+ *
+ * The GitHub-style default schema keeps ordinary formatting (tables, lists,
+ * `<details>`, `<br>`, images, links with safe URL schemes) and drops
+ * everything executable. The only addition is the math classes `remark-math`
+ * puts on `<code>`, which `rehype-katex` (run after sanitizing) needs.
+ */
+const MESSAGE_HTML_SCHEMA = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [["className", /^language-./, "math-inline", "math-display"]],
+  },
+} as typeof defaultSchema;
+
+/** The prefix the sanitizer puts on every `id` (DOM-clobbering protection). */
+const ID_PREFIX = defaultSchema.clobberPrefix ?? "user-content-";
+
+interface HastNodeLike {
+  type: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNodeLike[];
+}
+
+/**
+ * Re-point in-page links at the ids the sanitizer just prefixed.
+ *
+ * The sanitizer renames `id="fn-1"` to `id="user-content-fn-1"` but leaves
+ * `href="#fn-1"` alone, which would break footnote references. Runs right
+ * after the sanitizer.
+ */
+function rehypePrefixFragmentLinks() {
+  function walk(node: HastNodeLike): void {
+    const href = node.properties?.href;
+    if (
+      node.type === "element" &&
+      node.tagName === "a" &&
+      node.properties &&
+      typeof href === "string" &&
+      href.startsWith("#") &&
+      href.length > 1 &&
+      !href.startsWith(`#${ID_PREFIX}`)
+    ) {
+      node.properties.href = `#${ID_PREFIX}${href.slice(1)}`;
+    }
+    for (const child of node.children ?? []) walk(child);
+  }
+  return (tree: HastNodeLike) => walk(tree);
+}
 
 export type SurfaceFooterRenderer = (params: {
   message: ChatMessage;
@@ -143,7 +202,15 @@ export function MessageBubble({
           <div className="chat-message__text ob-markdown">
             <ReactMarkdown
               remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
-              rehypePlugins={[rehypeRaw, rehypeKatex]}
+              // Ids are prefixed once, by the sanitizer (see ID_PREFIX), instead
+              // of by remark-rehype, so footnote ids are not prefixed twice.
+              remarkRehypeOptions={{ clobberPrefix: "" }}
+              rehypePlugins={[
+                rehypeRaw,
+                [rehypeSanitize, MESSAGE_HTML_SCHEMA],
+                rehypePrefixFragmentLinks,
+                rehypeKatex,
+              ]}
             >
               {message.content}
             </ReactMarkdown>

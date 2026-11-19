@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ObDashboardFrame } from "../src/a2ui/custom/ob-dashboard-frame";
+import { lockDownDashboardHtml, ObDashboardFrame } from "../src/a2ui/custom/ob-dashboard-frame";
 import type { A2UISurface } from "../src/types";
 
 vi.mock("recharts", () => {
@@ -649,5 +649,31 @@ describe("ObDashboardFrame", () => {
     const iframe = container.querySelector("iframe");
     expect(iframe).not.toBeNull();
     expect(iframe?.getAttribute("src")).toBe("/downloads/dashboard.html");
+    // The export is HTML built from model output: it is framed with every
+    // sandbox restriction on, so it cannot script or reach the app's origin.
+    expect(iframe?.getAttribute("sandbox")).toBe("");
+  });
+});
+
+describe("lockDownDashboardHtml", () => {
+  const dashboard = '<!doctype html><html><head><title>D</title></head><body><script>x()</script></body></html>';
+
+  it("puts a script-blocking policy first in the document", () => {
+    const locked = lockDownDashboardHtml(dashboard);
+    const metaAt = locked.indexOf('<meta http-equiv="Content-Security-Policy"');
+    expect(locked.startsWith("<!doctype html>")).toBe(true);
+    expect(metaAt).toBeGreaterThan(-1);
+    // The policy only governs content parsed after it.
+    expect(metaAt).toBeLessThan(locked.indexOf("<script>"));
+    expect(locked.endsWith(dashboard)).toBe(true);
+  });
+
+  it("allows no script source and no network access to the app", () => {
+    const policy = /content="([^"]+)"/.exec(lockDownDashboardHtml(dashboard))?.[1] ?? "";
+    expect(policy).toContain("default-src 'none'");
+    expect(policy).not.toContain("script-src");
+    expect(policy).not.toContain("'self'");
+    expect(policy).toContain("form-action 'none'");
+    expect(policy).toContain("base-uri 'none'");
   });
 });
