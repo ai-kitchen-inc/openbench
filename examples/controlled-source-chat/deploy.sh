@@ -90,10 +90,23 @@ cmd_run() {
   tavily_key="$(env_value TAVILY_API_KEY "$ENV_FILE")"
   [ -n "$tavily_key" ] || tavily_key="$(env_value TAVILY_API_KEY "$FALLBACK_ENV_FILE")"
 
+  # The service is public (--allow-unauthenticated) and its admin account can
+  # register MCP servers, i.e. run commands. The demo passwords from the README
+  # must never reach it: the app refuses to start without a real admin password.
+  local admin_password guest_password
+  admin_password="$(env_value CONTROLLED_CHAT_ADMIN_PASSWORD "$ENV_FILE")"
+  [ -n "$admin_password" ] || die "CONTROLLED_CHAT_ADMIN_PASSWORD not set in $ENV_FILE (choose a strong one)"
+  [ "$admin_password" != "admin123" ] || die "CONTROLLED_CHAT_ADMIN_PASSWORD is the published demo default; choose another"
+  guest_password="$(env_value CONTROLLED_CHAT_GUEST_PASSWORD "$ENV_FILE")"
+  [ "$guest_password" != "guest123" ] || die "CONTROLLED_CHAT_GUEST_PASSWORD is the published demo default; choose another or leave it unset"
+  [ -n "$guest_password" ] || warn "CONTROLLED_CHAT_GUEST_PASSWORD not set — the built-in guest account will not be able to sign in"
+
   # ^##^ delimiter: values (DB URL) may contain commas/colons.
   local env_vars="GOOGLE_API_KEY=${google_api_key}"
   env_vars="${env_vars}##GENERAL_CHAT_DATABASE_URL=${database_url}"
   env_vars="${env_vars}##CONTROLLED_CHAT_AUTH_SECRET=${auth_secret}"
+  env_vars="${env_vars}##CONTROLLED_CHAT_ADMIN_PASSWORD=${admin_password}"
+  if [ -n "$guest_password" ]; then env_vars="${env_vars}##CONTROLLED_CHAT_GUEST_PASSWORD=${guest_password}"; fi
   if [ -n "$tavily_key" ]; then env_vars="${env_vars}##TAVILY_API_KEY=${tavily_key}"; fi
 
   "$GCLOUD" run deploy "$SERVICE_NAME" \
@@ -131,10 +144,23 @@ cmd_verify() {
   if echo "$index" | grep -q 'admin123'; then die "login page still leaks demo credentials"; fi
   ok "no credential hint in page"
 
-  local token
+  # The published demo password must be rejected by the live service.
+  local demo_code
+  demo_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 -X POST "$url/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"admin123"}')"
+  [ "$demo_code" = "401" ] || die "admin login with the demo password returned $demo_code (expected 401)"
+  ok "demo admin password rejected"
+
+  local admin_password login_body token
+  admin_password="$(env_value CONTROLLED_CHAT_ADMIN_PASSWORD "$ENV_FILE")"
+  [ -n "$admin_password" ] || die "CONTROLLED_CHAT_ADMIN_PASSWORD not set in $ENV_FILE (needed to verify login)"
+  # Build the JSON body with python so any character in the password is escaped.
+  login_body="$(CSC_VERIFY_PASSWORD="$admin_password" python -c \
+    'import json,os; print(json.dumps({"username":"admin","password":os.environ["CSC_VERIFY_PASSWORD"]}))')"
   token="$(curl -s --max-time 60 -X POST "$url/auth/login" \
     -H 'Content-Type: application/json' \
-    -d '{"username":"admin","password":"admin123"}' | \
+    -d "$login_body" | \
     python -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)"
   [ -n "$token" ] || die "admin login failed"
   ok "admin login issues token"

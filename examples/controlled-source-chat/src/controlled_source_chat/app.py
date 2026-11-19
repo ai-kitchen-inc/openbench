@@ -29,6 +29,7 @@ from controlled_source_chat.auth import (
     ROLE_ADMIN,
     ROLE_GUEST,
     Account,
+    assert_password_posture,
     resolve_bearer,
     issue_token,
     verify_credentials,
@@ -48,6 +49,7 @@ _PREVIEW_CHARS = 500
 # the admin; guests only chat. Each entry is (methods, prefix) where methods
 # is None for "all methods".
 _GUEST_BLOCKED: tuple[tuple[frozenset[str] | None, str], ...] = (
+    (None, "/admin"),
     (None, "/chat/upload"),
     (None, "/chat/uploads"),
     (None, "/chat/attachments"),
@@ -96,6 +98,7 @@ def _is_guest_blocked(method: str, path: str) -> bool:
 
 
 def build_app() -> FastAPI:
+    assert_password_posture()
     app = create_app()
     storage_root = os.getenv("GENERAL_CHAT_STORAGE_ROOT", "").strip()
     if not storage_root:
@@ -204,6 +207,10 @@ def build_app() -> FastAPI:
                 headers={"WWW-Authenticate": "Bearer"},
             )
         request.state.owner_override = account.username
+        # General Chat runs with its own auth disabled under this wrapper and
+        # would treat an unstamped request as admin. Stamp the role so only
+        # this app's admins are admins there; everyone else is a plain user.
+        request.state.user_role = "admin" if account.role == ROLE_ADMIN else "user"
         if account.role == ROLE_GUEST and _is_guest_blocked(request.method, path):
             return JSONResponse(
                 {"detail": "Guests cannot manage sources or tools."},

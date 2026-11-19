@@ -180,5 +180,140 @@ class TestRoleGuard(ControlledSourceChatTestCase):
         self.assertEqual(as_guest, [])
 
 
+class TestGuestIsNotAdmin(ControlledSourceChatTestCase):
+    """General Chat runs with its own auth off under this wrapper.
+
+    It used to treat every request the wrapper let through as an admin, so
+    the guest account could use ``/admin/*``. The wrapper now stamps the
+    role and General Chat honors it.
+    """
+
+    _ADMIN_ROUTES = (
+        ("GET", "/admin/users"),
+        ("GET", "/admin/capabilities"),
+        ("GET", "/admin/runtime-settings"),
+        ("POST", "/admin/users"),
+        ("PUT", "/admin/capabilities"),
+    )
+
+    def test_guest_is_denied_every_admin_route(self):
+        client = self._client()
+        guest = self._login(client, "guest", "guest123")
+        for method, path in self._ADMIN_ROUTES:
+            response = client.request(method, path, headers=guest, json={})
+            self.assertEqual(response.status_code, 403, f"{method} {path}")
+
+    def test_guest_cannot_promote_itself_with_the_local_role_header(self):
+        client = self._client()
+        guest = {**self._login(client, "guest", "guest123"), "X-Local-Role": "admin"}
+        for method, path in self._ADMIN_ROUTES:
+            response = client.request(method, path, headers=guest, json={})
+            self.assertEqual(response.status_code, 403, f"{method} {path}")
+
+    def test_guest_is_reported_as_a_plain_user(self):
+        client = self._client()
+        guest = self._login(client, "guest", "guest123")
+        me = client.get("/account/me", headers=guest)
+        self.assertEqual(me.status_code, 200, me.text)
+        self.assertEqual(me.json().get("role"), "user")
+
+    def test_admin_keeps_admin_routes(self):
+        client = self._client()
+        admin = self._login(client, "admin", "admin123")
+        self.assertEqual(client.get("/admin/capabilities", headers=admin).status_code, 200)
+        me = client.get("/account/me", headers=admin)
+        self.assertEqual(me.json().get("role"), "admin")
+
+    def test_local_role_header_does_not_override_a_stamped_role(self):
+        # The header is only a local-dev aid; it never raises a stamped role.
+        client = self._client()
+        admin = {**self._login(client, "admin", "admin123"), "X-Local-Role": "user"}
+        self.assertEqual(client.get("/admin/capabilities", headers=admin).status_code, 200)
+
+
+class TestDeployedPasswordPosture(ControlledSourceChatTestCase):
+    """The published demo passwords must not work on a deployment."""
+
+    _POSTURE_VARS = (
+        "K_SERVICE",
+        "GENERAL_CHAT_STATIC_DIR",
+        "CONTROLLED_CHAT_ADMIN_PASSWORD",
+        "CONTROLLED_CHAT_GUEST_PASSWORD",
+        "CONTROLLED_CHAT_ALLOW_DEFAULT_PASSWORDS",
+    )
+
+    def _posture_env(self, **values: str) -> None:
+        """Set exactly ``values`` among the posture variables for this test.
+
+        Registered with addCleanup *before* any client is built, so it is
+        undone after the client's own environment patch (cleanups run in
+        reverse order) and nothing leaks into later tests.
+        """
+        patcher = patch.dict(environ, values, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for name in self._POSTURE_VARS:
+            if name not in values:
+                environ.pop(name, None)
+
+    def test_deployed_image_without_admin_password_refuses_to_start(self):
+        self._posture_env(K_SERVICE="controlled-source-chat")
+        with self.assertRaisesRegex(RuntimeError, "CONTROLLED_CHAT_ADMIN_PASSWORD"):
+            self._client()
+
+    def test_deployed_image_rejects_the_demo_default_even_when_set(self):
+        self._posture_env(
+            K_SERVICE="controlled-source-chat", CONTROLLED_CHAT_ADMIN_PASSWORD="admin123"
+        )
+        with self.assertRaises(RuntimeError):
+            self._client()
+
+    def test_deployed_image_with_real_passwords(self):
+        self._posture_env(
+            K_SERVICE="controlled-source-chat", CONTROLLED_CHAT_ADMIN_PASSWORD="Str0ng-One"
+        )
+        client = self._client()
+        for username, password in (
+            ("admin", "admin123"),
+            ("guest", "guest123"),
+            ("guest", ""),
+        ):
+            response = client.post("/auth/login", json={"username": username, "password": password})
+            self.assertEqual(response.status_code, 401, f"{username}/{password!r}")
+        ok = client.post("/auth/login", json={"username": "admin", "password": "Str0ng-One"})
+        self.assertEqual(ok.status_code, 200)
+
+    def test_static_dir_also_marks_a_deployment(self):
+        from controlled_source_chat import auth
+
+        self._posture_env(GENERAL_CHAT_STATIC_DIR="/app/dist")
+        with self.assertRaises(RuntimeError):
+            auth.assert_password_posture()
+
+    def test_explicit_opt_in_keeps_the_demo_passwords(self):
+        from controlled_source_chat import auth
+
+        self._posture_env(K_SERVICE="x", CONTROLLED_CHAT_ALLOW_DEFAULT_PASSWORDS="1")
+        auth.assert_password_posture()
+        self.assertEqual(auth._password_for("admin"), "admin123")
+        self.assertEqual(auth._password_for("guest"), "guest123")
+
+    def test_local_runs_keep_the_demo_passwords(self):
+        from controlled_source_chat import auth
+
+        self._posture_env()
+        auth.assert_password_posture()
+        self.assertEqual(auth._password_for("admin"), "admin123")
+
+    def test_posture_variables_do_not_leak_between_tests(self):
+        # Guards the ordering the helper relies on.
+        before = {name: environ.get(name) for name in self._POSTURE_VARS}
+        case = type(self)("test_deployed_image_with_real_passwords")
+        result = unittest.TestResult()
+        case.run(result)
+        self.assertTrue(result.wasSuccessful(), result.failures + result.errors)
+        self.assertEqual({name: environ.get(name) for name in self._POSTURE_VARS}, before)
+
+
 if __name__ == "__main__":
     unittest.main()

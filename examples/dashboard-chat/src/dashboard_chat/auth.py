@@ -54,12 +54,34 @@ _PASSWORD_ENV = {
 }
 
 
+ALLOW_DEFAULT_PASSWORDS_ENV = "DASHBOARD_CHAT_ALLOW_DEFAULT_PASSWORDS"
+
+
+def _default_passwords_allowed() -> bool:
+    """Whether the well-known demo passwords may be used.
+
+    They are published in the README, so they protect nothing on a reachable
+    deployment. ``DASHBOARD_CHAT_STATIC_DIR`` marks a prod-style run (the API
+    serving the built SPA); there, real passwords are required unless
+    ``DASHBOARD_CHAT_ALLOW_DEFAULT_PASSWORDS=1`` opts back in.
+    """
+    if os.getenv(ALLOW_DEFAULT_PASSWORDS_ENV, "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    return not os.getenv("DASHBOARD_CHAT_STATIC_DIR", "").strip()
+
+
 def _password_for(username: str) -> str | None:
+    """Return the built-in account's password, or None when it cannot log in."""
     env = _PASSWORD_ENV.get(username)
     if env is None:
         return None
     name, default = env
-    return os.getenv(name, "").strip() or default
+    configured = os.getenv(name, "").strip()
+    if _default_passwords_allowed():
+        return configured or default
+    if not configured or configured == default:
+        return None
+    return configured
 
 
 def _auth_secret() -> bytes:

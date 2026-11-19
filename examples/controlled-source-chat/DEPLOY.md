@@ -92,10 +92,19 @@ Baked into the image: `GENERAL_CHAT_STATIC_DIR` (SPA dist), `PORT=8080`.
 Everything else (storage root, soul dir, strict agent goal, shared-sources
 thread, `OPENBENCH_AUTH_DISABLED=1`) comes from `server.py` defaults.
 
-Optional overrides you can add to `.env` before `deploy.sh run`:
-`GENERAL_CHAT_MODEL` (default `gemini-3-flash-preview`),
-`CONTROLLED_CHAT_ADMIN_PASSWORD` / `CONTROLLED_CHAT_GUEST_PASSWORD` (defaults
-`admin123` / `guest123`).
+Required in `.env` before `deploy.sh run`: `CONTROLLED_CHAT_ADMIN_PASSWORD`
+(anything except the demo default `admin123`). The service is public and the
+admin account can register MCP servers, which run commands on the instance, so
+`deploy.sh run` stops without it and the app itself refuses to start in a
+deployed image whose admin password is unset or still the demo default.
+
+Optional: `CONTROLLED_CHAT_GUEST_PASSWORD` (without it the built-in guest
+account cannot sign in on a deployment; the demo default `guest123` is refused),
+`GENERAL_CHAT_MODEL` (default `gemini-3-flash-preview`).
+
+The demo defaults (`admin123` / `guest123`) still work for local runs. To keep
+them on a deployment anyway, set `CONTROLLED_CHAT_ALLOW_DEFAULT_PASSWORDS=1` on
+the Cloud Run service by hand; `deploy.sh` will not do that for you.
 
 ## Accounts
 
@@ -151,9 +160,14 @@ the curated source list must survive.
   downloads, published dashboards, custom functions, and admin-created extra
   users live on the instance filesystem and vanish on recycle. Parsed source
   content, sessions, and memory are in Postgres and survive.
-- **Default demo passwords** are kept deliberately (demo). Anyone with the URL
-  can sign in as admin — rotate via `CONTROLLED_CHAT_ADMIN_PASSWORD` /
-  `CONTROLLED_CHAT_GUEST_PASSWORD` env when that stops being acceptable.
+- **Passwords**: a deployment must set `CONTROLLED_CHAT_ADMIN_PASSWORD`; the
+  demo defaults are refused there (see "Required in `.env`" above). A revision
+  deployed before this rule may still be running with `admin123` — rotate it
+  with `gcloud run services update <service> --update-env-vars
+  CONTROLLED_CHAT_ADMIN_PASSWORD=...` or redeploy.
+- **Guests are plain users**: a guest (and any non-admin account) is stamped
+  with the `user` role, so `/admin/*` and every admin-only route return 403
+  for them.
 - **No dashboard PDF export**: chromium/playwright is not installed in this
   image (kept slim). `POST /dashboard/export/pdf` will fail.
 - **MCP registry**: `GENERAL_CHAT_MCP_ENABLED=0` and there is no Docker socket

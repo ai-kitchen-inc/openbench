@@ -39,12 +39,62 @@ _PASSWORD_ENV = {
 }
 
 
+ALLOW_DEFAULT_PASSWORDS_ENV = "CONTROLLED_CHAT_ALLOW_DEFAULT_PASSWORDS"
+
+
+def _is_deployed() -> bool:
+    """True inside a deployed image rather than a local demo run.
+
+    Cloud Run sets ``K_SERVICE``; the container image bakes in
+    ``GENERAL_CHAT_STATIC_DIR``. Neither is set by ``openbench demo run``.
+    """
+    return bool(os.getenv("K_SERVICE", "").strip() or os.getenv("GENERAL_CHAT_STATIC_DIR", "").strip())
+
+
+def _default_passwords_allowed() -> bool:
+    """Whether the well-known demo passwords may be used.
+
+    They are published in the README, so on a reachable deployment they are
+    no protection at all: the admin account can register MCP servers, which
+    run commands on the host. Local demo runs keep them; a deployment must
+    set real passwords (or opt in explicitly with
+    ``CONTROLLED_CHAT_ALLOW_DEFAULT_PASSWORDS=1``).
+    """
+    if os.getenv(ALLOW_DEFAULT_PASSWORDS_ENV, "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    return not _is_deployed()
+
+
 def _password_for(username: str) -> str | None:
+    """Return the built-in account's password, or None when it cannot log in."""
     env = _PASSWORD_ENV.get(username)
     if env is None:
         return None
     name, default = env
-    return os.getenv(name, "").strip() or default
+    configured = os.getenv(name, "").strip()
+    if _default_passwords_allowed():
+        return configured or default
+    # Deployed: only an operator-chosen value counts, and the published
+    # default is refused even when it was set explicitly.
+    if not configured or configured == default:
+        return None
+    return configured
+
+
+def assert_password_posture() -> None:
+    """Refuse to start a deployment whose admin account has no real password.
+
+    Raises:
+        RuntimeError: Deployed, default passwords not opted into, and
+            ``CONTROLLED_CHAT_ADMIN_PASSWORD`` is unset or the demo default.
+    """
+    if _password_for("admin") is None:
+        raise RuntimeError(
+            "Refusing to start: this is a deployed Controlled Source Chat image and "
+            "CONTROLLED_CHAT_ADMIN_PASSWORD is unset or still the published demo default. "
+            "Set a real admin password (and CONTROLLED_CHAT_GUEST_PASSWORD to enable the "
+            f"guest account), or set {ALLOW_DEFAULT_PASSWORDS_ENV}=1 to accept the risk."
+        )
 
 
 def _storage_root() -> Path:
