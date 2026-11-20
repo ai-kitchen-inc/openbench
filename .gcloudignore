@@ -126,3 +126,5 @@ examples/image-search-mcp/models/
 /output/
 /examples/general-chat/embed-demo/
 /.venv-*/
+# Local pnpm content-addressable store (git-ignored): never part of an image.
+/.pnpm-store/
