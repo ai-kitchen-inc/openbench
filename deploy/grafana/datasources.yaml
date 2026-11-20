@@ -13,9 +13,13 @@ datasources:
     access: proxy
     url: 34.61.185.118:5432
     database: appdata
-    user: mcp_app
+    # mcp_app by default; set GRAFANA_PG_USER=grafana_ro (SELECT-only role from
+    # deploy/appdb/roles.sql) and its password in GRAFANA_PG_PASSWORD so the
+    # datasource cannot write even if a viewer sends its own SQL.
+    user: $__env{GRAFANA_PG_USER}
     jsonData:
-      sslmode: disable
+      # The connection crosses the public internet to Cloud SQL: encrypt it.
+      sslmode: require
       postgresVersion: 1500
       maxOpenConns: 4
     secureJsonData:

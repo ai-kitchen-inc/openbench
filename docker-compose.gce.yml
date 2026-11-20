@@ -14,7 +14,14 @@ services:
       GENERAL_CHAT_UPLOAD_DIR: ${GENERAL_CHAT_UPLOAD_DIR:-/general-chat/uploads}
       GENERAL_CHAT_DOWNLOAD_DIR: ${GENERAL_CHAT_DOWNLOAD_DIR:-/general-chat/downloads}
       GENERAL_CHAT_GCP_CACHE_ROOT: ${GENERAL_CHAT_GCP_CACHE_ROOT:-/tmp/openbench-gcs-cache}
-      GENERAL_CHAT_SEED_ALL_MCP: ${GENERAL_CHAT_SEED_ALL_MCP:-1}
+      # Only the bundled MCP servers the product uses are (re)seeded at startup.
+      # The docker gateway, the npx filesystem server and generic_api are left
+      # out: each widens what a prompt injection can reach. Set
+      # GENERAL_CHAT_SEED_ALL_MCP=1 in .env.gcp to seed the whole bundle again.
+      # Servers seeded by an earlier release stay registered until an admin
+      # disables or removes them in the MCP panel.
+      GENERAL_CHAT_SEED_ALL_MCP: ${GENERAL_CHAT_SEED_ALL_MCP:-0}
+      GENERAL_CHAT_SEED_MCP_CONFIGS: ${GENERAL_CHAT_SEED_MCP_CONFIGS:-aggregate-data-stdio.yaml,dashboard-generator-stdio.yaml,db-server-docker.yaml,custom-function-docker.yaml,image-search-docker.yaml,sam-segmentation-docker.yaml,google-drive-mcp.yaml}
       GENERAL_CHAT_MCP_SANDBOX: ${GENERAL_CHAT_MCP_SANDBOX:-/general-chat/mcp-sandbox}
       GENERAL_CHAT_IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT: ${GENERAL_CHAT_IMAGE_SEARCH_CONTAINER_UPLOAD_ROOT:-/general-chat/uploads}
       GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR: ${GENERAL_CHAT_IMAGE_SEARCH_PREVIEW_DIR:-/general-chat/image-search/data/previews}
@@ -37,7 +44,9 @@ services:
       # (same path as GENERAL_CHAT_DATABASE_URL). The API interpolates these into
       # mcp/db-server-docker.yaml when it spawns the db_server container.
       MCP_DB_DATABASE_URL: ${MCP_DB_DATABASE_URL}
-      MCP_ALLOW_WRITES: ${MCP_ALLOW_WRITES:-1}
+      # Writes through the db_server MCP (insert/update/delete/materialize) are
+      # off unless .env.gcp sets MCP_ALLOW_WRITES=1.
+      MCP_ALLOW_WRITES: ${MCP_ALLOW_WRITES:-0}
       MCP_MAX_ROWS: ${MCP_MAX_ROWS:-1000}
       # Deploy-to-Grafana: API pushes dashboards over the compose network.
       GRAFANA_URL: ${GRAFANA_URL:-http://grafana:3000}
@@ -80,7 +89,14 @@ services:
       - /app-data/mcp-sandbox:/general-chat/mcp-sandbox
       - /app-data/image-search:/general-chat/image-search
       - /app-data/huggingface:/general-chat/huggingface
-      - /app-data/docker-config:/root/.docker
+      # Registry credentials are only read (image pulls), so the mount is
+      # read-only: code running in this container cannot plant a credential
+      # helper or rewrite the docker config. DOCKER_CONFIG_MOUNT_MODE=rw undoes it.
+      - /app-data/docker-config:/root/.docker:${DOCKER_CONFIG_MOUNT_MODE:-ro}
+      # The Docker socket makes this container root-equivalent on the host. It
+      # is required today (Hermes agents, custom-function sandbox, docker MCP
+      # servers are sibling containers); every route that can reach it is
+      # admin-only and launch-policy checked (general_chat/mcp_launch_policy.py).
       - /var/run/docker.sock:/var/run/docker.sock
       # Same path inside + outside the container so the sibling `docker run -v`
       # (custom_function MCP + test runs) resolves on the host.
@@ -126,8 +142,12 @@ services:
       - /app-data/huggingface:/general-chat/huggingface
 
   # Self-hosted Grafana behind nginx at /grafana/ (see deploy/DEPLOY.md).
-  # Anyone with a link can VIEW (anonymous Viewer); editing needs the admin
-  # login. Dashboards are pushed by the API via POST /api/dashboards/db.
+  # Viewing needs a Grafana login by default. Anonymous viewing is opt-in
+  # (GRAFANA_ANONYMOUS_ENABLED=true in .env.gcp): an anonymous Viewer can send
+  # its own SQL to the datasource through Grafana's query API, so only turn it
+  # on together with a read-only datasource role (GRAFANA_PG_USER=grafana_ro,
+  # see deploy/appdb/roles.sql). Dashboards are pushed by the API via
+  # POST /api/dashboards/db.
   grafana:
     image: grafana/grafana:11.1.0
     restart: unless-stopped
@@ -143,11 +163,12 @@ services:
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_ANONYMOUS_ENABLED:-false}
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       # Referenced by $__env{...} in the provisioned Postgres datasource.
+      GRAFANA_PG_USER: ${GRAFANA_PG_USER:-mcp_app}
       GRAFANA_PG_PASSWORD: ${GRAFANA_PG_PASSWORD}
     volumes:
       - /app-data/grafana:/var/lib/grafana

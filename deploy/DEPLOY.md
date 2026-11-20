@@ -524,11 +524,25 @@ runs next to the API and is served by nginx at
 **`https://chat.serebrum.co.id/grafana/`** (`GF_SERVER_ROOT_URL` +
 `serve_from_sub_path`). Access model:
 
-- **View** — anonymous access is enabled with the **Viewer** role: anyone with
-  a dashboard link can view it, no login (same trust model as the `/d/{id}`
-  public shares).
+- **View** — requires a Grafana login by default. Anonymous viewing
+  (`GRAFANA_ANONYMOUS_ENABLED=true` in the VM `.env.gcp`, then
+  `deploy.sh grafana`) lets anyone with a dashboard link view it, but it is
+  **not** the same trust model as a `/d/{id}` public share: an anonymous
+  Viewer can send its *own* SQL to the datasource through Grafana's query API
+  (`/grafana/api/ds/query`), so it can read every table the datasource role
+  can read, and with the default `mcp_app` role also write to `mart`. Only
+  enable it together with the read-only role below, and only if every table
+  in `appdata` may be read by anyone on the internet.
 - **Edit** — requires the admin login (`admin` / `GRAFANA_ADMIN_PASSWORD` in
   the VM `.env.gcp`). Sign-up is disabled.
+- **Datasource role** — `mcp_app` unless `GRAFANA_PG_USER` is set. For a
+  SELECT-only datasource: put `GRAFANA_RO_PASSWORD=<new password>` in
+  `.env.gcp`, run `deploy.sh init-appdb` (creates `grafana_ro`), then set
+  `GRAFANA_PG_USER=grafana_ro` and `GRAFANA_PG_PASSWORD=<same password>` and
+  run `deploy.sh grafana`. The `grafana_ro` block in `deploy/appdb/roles.sql`
+  has not been run against the production instance yet — check its output the
+  first time.
+- **Transport** — the datasource connects to Cloud SQL with `sslmode: require`.
 
 **Deploy flow:** the dashboard frame's **Deploy** button posts the ViewModel to
 `POST /dashboard/deploy/grafana` (Firebase-auth). The API converts it with
@@ -665,6 +679,41 @@ chat with the agent. On the VM:
 Set agents back to Runtime: OpenBench (stops their containers), or remove
 `GENERAL_CHAT_HERMES_BACKEND` from `.env.gcp` + recreate the API, then
 `sudo docker rm -f $(sudo docker ps -aq --filter name=hermes-)`.
+
+## Security switches
+
+Secure defaults, each reversible from the VM's `.env.gcp` (the API and worker
+load it via `env_file`; recreate the containers after a change:
+`sudo docker-compose --env-file .env.gcp -f docker-compose.gce.yml up -d`).
+
+| Default behavior | Variable to change it |
+|---|---|
+| Importing a **command-based (stdio) MCP server** through the API is admin-only and must match the launch policy: `docker run` of an approved image with a closed set of flags (no `--privileged`, no host mounts, never the Docker socket), `docker mcp gateway run`, or `npx -y <approved package>`. Remote (URL) servers still only need the `mcp_management` capability. | `GENERAL_CHAT_MCP_STDIO_IMPORT=allowlist\|off\|any`; `GENERAL_CHAT_MCP_DOCKER_IMAGE_PREFIXES`, `GENERAL_CHAT_MCP_NPX_PACKAGES`, `GENERAL_CHAT_MCP_DOCKER_VOLUME_ROOTS` (comma-separated) |
+| An imported MCP config may not read host environment variables (`${VAR}`); bundled configs are unaffected. | `GENERAL_CHAT_MCP_ENV_PASSTHROUGH=NAME,NAME` |
+| ToolHive start/stop/restart/delete and import-running are admin-only. | — |
+| The image refuses to start when `GENERAL_CHAT_STATIC_DIR` is set but `GENERAL_CHAT_FIREBASE_PROJECT_ID` is not (it would serve every request as an unauthenticated admin). | `OPENBENCH_AUTH_DISABLED=1` (only when another layer authenticates) |
+| The SPA is served with a Content-Security-Policy; `/embed/*` stays frameable by other sites, everything else only by this origin. | `GENERAL_CHAT_CSP_MODE=enforce\|report-only\|off` |
+| Exported dashboards (`/downloads/*.html`), published snapshots (`/d/{id}`) and uploaded HTML/SVG are served sandboxed (no script, opaque origin). | — |
+| Agent tools can only open files under the upload, download, storage, profile, image-preview and GCS-cache directories. | `OPENBENCH_TOOL_FILE_ROOTS=<dir>:<dir>` (empty = unrestricted) |
+| Only the bundled MCP servers the product uses are seeded at startup (not the docker gateway, the npx filesystem server or `generic_api`). Servers seeded by an earlier release stay registered until an admin disables them in the MCP panel. | `GENERAL_CHAT_SEED_ALL_MCP=1` or `GENERAL_CHAT_SEED_MCP_CONFIGS=a.yaml,b.yaml` |
+| `db_server` writes are off and its arbitrary-SQL tool is denied. | `MCP_ALLOW_WRITES=1`; `MCP_DB_DENIED_WRITE_TOOL=` (empty) |
+| The Docker config mount in the API container is read-only. | `DOCKER_CONFIG_MOUNT_MODE=rw` |
+| Grafana needs a login to view. | `GRAFANA_ANONYMOUS_ENABLED=true` (see the Grafana section first) |
+| Custom-function containers run read-only, without capabilities, with `no-new-privileges`. | — |
+
+**Known gap:** the API container still mounts the Docker socket (Hermes agents,
+the custom-function sandbox and docker-based MCP servers are sibling
+containers), which makes it root-equivalent on the VM. The routes that reach it
+are admin-only and policy-checked; removing the mount needs a separate launcher
+service.
+
+**Dependencies are pinned.** Both app images install exactly
+`constraints/general-chat.txt` and build their frontends with
+`pnpm install --frozen-lockfile`. To update Python dependencies:
+`bash scripts/compile_constraints.sh --upgrade`, audit
+(`uvx pip-audit -r constraints/general-chat.txt --no-deps --disable-pip`), run
+the tests, commit. `constraints/general-chat.in` holds the few packages kept on
+the major line production already ran.
 
 ## Verify
 

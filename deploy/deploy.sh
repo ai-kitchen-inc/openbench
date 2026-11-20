@@ -361,8 +361,10 @@ cmd_init_appdb() {
     [ -n \"\$admin\" ] || { echo 'APPDATA_ADMIN_URL missing in .env.gcp'; exit 1; }; \
     maint=\"\${admin%/*}/postgres\"; \
     pw=\$(printf '%s' \"\$mcpurl\" | sed -E 's#.*://[^:]+:([^@]+)@.*#\1#'); \
+    ropw=\$(grep '^GRAFANA_RO_PASSWORD=' $VM_DEPLOY_DIR/.env.gcp | cut -d= -f2- | tr -d '\r'); \
     sudo docker run --rm -i $PSQL_IMAGE \
-      psql \"\$maint\" -v ON_ERROR_STOP=1 -v mcp_password=\"\$pw\" -f - < /tmp/appdb-roles.sql && \
+      psql \"\$maint\" -v ON_ERROR_STOP=1 -v mcp_password=\"\$pw\" -v grafana_ro_password=\"\$ropw\" \
+      -f - < /tmp/appdb-roles.sql && \
     rm -f /tmp/appdb-roles.sql && echo INITED" \
     || die "init-appdb failed"
   ok "appdata + mart + mcp_app ready"
