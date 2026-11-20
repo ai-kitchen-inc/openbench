@@ -26,6 +26,60 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # Example frontends. general-chat and controlled-source-chat ship to
+  # production; the rest are kept patched so the JS audit job stays green.
+  - package-ecosystem: npm
+    directories:
+      - "/examples/general-chat/frontend"
+      - "/examples/controlled-source-chat/frontend"
+      - "/examples/dashboard-chat/frontend"
+      - "/examples/lci-mini/frontend"
+      - "/examples/chat/frontend"
+      - "/examples/lighthouser/frontend"
+      - "/examples/sales-analytics/frontend"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - frontend
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Standalone MCP servers (each has its own requirements.txt and image).
+  - package-ecosystem: pip
+    directories:
+      - "/mcp/aggregate-data-mcp"
+      - "/mcp/custom-function-mcp"
+      - "/mcp/dashboard-generator-mcp"
+      - "/mcp/generic-api-mcp"
+      - "/mcp/image-search-mcp"
+      - "/mcp/sam-segmentation-mcp"
+      - "/examples/general-chat/mcp/db-server"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Base images pinned by digest in the Dockerfiles at the repo root. Without
+  # this, a pinned image would never pick up OS security updates.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: "chore(deps)"
+
   # GitHub Actions
   - package-ecosystem: github-actions
     directory: "/"

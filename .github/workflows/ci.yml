@@ -65,15 +65,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Same pnpm and Node majors as the production image build
+      # (Dockerfile.general-chat), so CI resolves what ships.
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10.33.3
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           cache-dependency-path: studio/chat-ui/pnpm-lock.yaml
 
@@ -90,4 +92,40 @@ jobs:
         run: pnpm test:run
 
       - name: Build
+        run: pnpm build
+
+  # The general-chat SPA is what production serves. It was never built in CI,
+  # so a type error only surfaced 15 minutes into a Cloud Build.
+  frontend-general-chat:
+    name: Frontend (general-chat)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.3
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The SPA depends on the SDK through "file:../../../studio/chat-ui",
+      # which must be built before the SPA install packs it.
+      - name: Build chat-ui
+        working-directory: studio/chat-ui
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: Install dependencies
+        working-directory: examples/general-chat/frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        working-directory: examples/general-chat/frontend
+        run: pnpm test:run
+
+      - name: Build
+        working-directory: examples/general-chat/frontend
         run: pnpm build

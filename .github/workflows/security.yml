@@ -36,3 +36,57 @@ jobs:
           # advisories without a fix available.
           require-hashes: false
           ignore-vulns: ""
+
+  # The job above audits whatever `.[all]` resolves to today on Python 3.12.
+  # Production does not run that: the general-chat and controlled-source-chat
+  # images install exactly constraints/general-chat.txt on Python 3.13. Audit
+  # that file so an advisory against a shipped version fails CI.
+  pip-audit-pinned:
+    name: pip-audit (pinned production set)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Audit constraints/general-chat.txt
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit -r constraints/general-chat.txt --no-deps --disable-pip
+
+  # `pnpm audit` reads the lockfile only. Example frontends consume the SDK as
+  # a `file:` dependency, which audit does not descend into, so the SDK is
+  # audited as its own entry (its dependencies are bundled into what ships).
+  js-audit:
+    name: pnpm audit (${{ matrix.dir }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir:
+          - studio/chat-ui
+          - examples/general-chat/frontend
+          - examples/controlled-source-chat/frontend
+          - examples/dashboard-chat/frontend
+          - examples/lci-mini/frontend
+          - examples/chat/frontend
+          - examples/lighthouser/frontend
+          - examples/sales-analytics/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.3
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Audit
+        working-directory: ${{ matrix.dir }}
+        run: pnpm audit --audit-level high
